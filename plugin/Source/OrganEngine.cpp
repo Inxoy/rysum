@@ -81,12 +81,43 @@ void OrganEngine::gainsFor (Pos pos, float* out) const noexcept
 /** direction gains, distance level, air absorption, room send and Doppler of one voice for this block */
 void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double blockSeconds) noexcept
 {
-    const Pos pos = currentPosition (v.stop, v.key, p);
+    // per-pipe envelopes
+    for (int j = 0; j < kNumEnvs; ++j)
+    {
+        auto& e = v.menv[(size_t) j];
+        if (! v.held && e.gate) e.releaseGate();
+        e.advance (p.mod.env[(size_t) j], (float) blockSeconds);
+    }
+    // per-pipe modulation targets
+    std::array<float, kNumPipeTargets> pm {};
+    bool anyMod = false;
+    for (const auto& r : p.mod.routes)
+        if (r.src >= 0 && r.target >= 0 && r.target < kNumPipeTargets && r.amount != 0.0f)
+        {
+            pm[(size_t) r.target] += r.amount * voiceSource (v, r.src, p);
+            anyMod = true;
+        }
+
+    Pos pos = currentPosition (v.stop, v.key, p);
+    if (anyMod)
+    {
+        pos.az = wrapAz (pos.az + 180.0f * pm[tgtAz]);
+        pos.el = juce::jlimit (-90.0f, 90.0f, pos.el + 90.0f * pm[tgtEl]);
+        const float dm = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
+        pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * dm);
+    }
+    modAz[(size_t) v.stop][(size_t) v.key] = 180.0f * pm[tgtAz];
+    modEl[(size_t) v.stop][(size_t) v.key] = 90.0f * pm[tgtEl];
+    modDistMul[(size_t) v.stop][(size_t) v.key] = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
+    v.modCents1 = 1200.0f * juce::jlimit (-4.0f, 4.0f, pm[tgtPitch]);
+
     gainsFor (pos, v.g1.data());
     const float sg = p.stopGain[(size_t) v.stop];
-    const float g = sg * distanceGain (pos.dist, p.distAmount);
+    const float lvl = anyMod ? dbToGain (juce::jlimit (-100.0f, 12.0f, 36.0f * pm[tgtLevel])) : 1.0f;
+    const float g = sg * lvl * distanceGain (pos.dist, p.distAmount);
     for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] *= g;
-    v.send1 = sg * distanceGain (pos.dist, p.distAmount * 0.35f);       // the room fades much less with distance
+    v.send1 = sg * lvl * distanceGain (pos.dist, p.distAmount * 0.35f);       // the room fades much less with distance
+    if (anyMod && pm[tgtSend] != 0.0f) v.send1 *= dbToGain (juce::jlimit (-100.0f, 24.0f, 24.0f * pm[tgtSend]));
 
     // jumps: a ~4 ms glide so the teleport is sudden but does not click
     if (! v.fresh && (Motion) p.motionMode[(size_t) v.stop] == Motion::Jumps && blockSeconds > 0.0)
@@ -96,7 +127,8 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     }
 
     // air: far pipes lose their highs
-    const float fc = juce::jlimit (1200.0f, 20000.0f, 20000.0f / (1.0f + p.air * pos.dist / 5.0f));
+    float fc = juce::jlimit (1200.0f, 20000.0f, 20000.0f / (1.0f + p.air * pos.dist / 5.0f));
+    if (anyMod && pm[tgtBright] != 0.0f) fc = juce::jlimit (40.0f, 20000.0f, fc * std::exp2 (6.0f * pm[tgtBright]));
     v.airA = fc >= 19999.0f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / (float) sr);
 
     // Doppler from the radial speed (not for teleporting pipes)
@@ -211,6 +243,10 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples)
     v->detuneRnd = dr.bi();
     v->frozen = false; v->freezeMix = 0.0f; v->grainTimer = 0;
     for (auto& g : v->grains) g.on = false;
+    for (auto& e : v->menv) { e.reset(); e.trigger(); }
+    v->keyPos = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
+    v->randMod = lastRandom;
+    v->modCents0 = v->modCents1 = 0.0f;
 }
 
 void OrganEngine::releaseVoice (Voice& v)
@@ -276,6 +312,9 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p)
 {
     keyHeld[(size_t) key] = true;
     keySustained[(size_t) key] = false;
+    globalTrig = true;
+    lastKeyPos = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
+    lastRandom = rng.bi();
 
     // click: blend between the console position and the average position of the pipes
     std::array<float, kMaxAmbiChannels> console {}, pipes {}, tmp {};
@@ -335,6 +374,7 @@ void OrganEngine::handleMidi (const juce::MidiMessage& m, const EngineParams& p)
         if (sustainPedal) { keySustained[(size_t) k] = true; return; }
         keyUp (k, p);
     }
+    else if (m.isController() && m.getControllerNumber() == 1) modWheel = (float) m.getControllerValue() / 127.0f;
     else if (m.isSustainPedalOn()) sustainPedal = true;
     else if (m.isSustainPedalOff())
     {
@@ -442,6 +482,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                     a *= 1.0f + tremAmp * t;
                 }
                 v.dop += 0.08f * (v.dopTarget - v.dop);
+                cents += v.modCents0 + (v.modCents1 - v.modCents0) * (float) (start + i) * inv;
                 rate = v.baseRate * std::exp2 (cents / 1200.0f) * v.dop;
                 amp = a;
             }
@@ -567,6 +608,67 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
     }
 }
 
+// ---------------------------------------------------------------------------
+// modulation
+// ---------------------------------------------------------------------------
+void OrganEngine::advanceModulation (const EngineParams& p, double dt) noexcept
+{
+    const ModParams& m = haveLastMod ? lastMod : p.mod;       // last slice's (possibly modulated) settings
+    for (int i = 0; i < kNumLfos; ++i)
+    {
+        const auto& L = m.lfo[(size_t) i];
+        const double q = lfoDivQuarters (L.div);
+        double ph = lfoPhase[(size_t) i];
+        if (L.sync && p.playing) ph = p.ppq / q;
+        else                     ph += (L.sync ? p.bpm / 60.0 / q : (double) L.rate) * dt;
+        if (std::abs (ph) > 1.0e6) ph = std::fmod (ph, 1000.0);
+        lfoPhase[(size_t) i] = ph;
+        lfoPhaseOut[(size_t) i] = ph;
+        globalSrc[(size_t) (srcLfo1 + i)] = lfoValue (L.shape, ph, 0);
+    }
+    bool any = false;
+    for (int k = 0; k < kNumKeys; ++k) any = any || keyHeld[(size_t) k] || keySustained[(size_t) k];
+    for (int j = 0; j < kNumEnvs; ++j)
+    {
+        auto& e = globalEnv[(size_t) j];
+        if (globalTrig) e.trigger();
+        if (! any && e.gate) e.releaseGate();
+        e.advance (m.env[(size_t) j], (float) dt);
+        globalSrc[(size_t) (srcEnv1 + j)] = e.level;
+    }
+    globalTrig = false;
+    globalSrc[srcKey] = lastKeyPos;
+    globalSrc[srcModWheel] = modWheel;
+    globalSrc[srcRandom] = lastRandom;
+    for (int i = 0; i < kNumSources; ++i) sourceOut[(size_t) i] = globalSrc[(size_t) i];
+}
+
+float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) const noexcept
+{
+    if (src >= srcLfo1 && src < srcLfo1 + kNumLfos)
+    {
+        const int i = src - srcLfo1;
+        const auto& L = p.mod.lfo[(size_t) i];
+        float off = 0.0f;
+        if (L.spread > 0.0f)
+            off = L.spread * (L.spreadMode == 0 ? (float) v.key / (float) kNumKeys
+                                                : hash01 ((uint32_t) (v.stop * 131 + v.key * 7 + 1)));
+        return lfoValue (L.shape, lfoPhase[(size_t) i] + off, 0);
+    }
+    if (src >= srcEnv1 && src < srcEnv1 + kNumEnvs)
+    {
+        const int j = src - srcEnv1;
+        return p.mod.env[(size_t) j].perPipe ? v.menv[(size_t) j].level : globalEnv[(size_t) j].level;
+    }
+    switch (src)
+    {
+        case srcKey:      return v.keyPos;
+        case srcModWheel: return modWheel;
+        case srcRandom:   return v.randMod;
+        default:          return 0.0f;
+    }
+}
+
 void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& pIn)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -583,6 +685,9 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
         chunkMidi.addEvents (midi, start, len, -start);
         EngineParams pc = pIn;
         pc.ppq = pIn.ppq + (start / sr) * pIn.bpm / 60.0;
+        advanceModulation (pc, len / sr);
+        if (modHook != nullptr) modHook->modulate (pc, globalSrc.data());
+        lastMod = pc.mod; haveLastMod = true;
         roomOffset = start;
         processChunk (view, chunkMidi, pc);
     }
@@ -668,9 +773,9 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     for (auto& v : voices)
     {
         if (! v.active) continue;
-        if (! v.fresh) { v.g0 = v.g1; v.send0 = v.send1; }
+        if (! v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.modCents0 = v.modCents1; }
         updateVoiceSpatial (v, p, blockSeconds);
-        if (v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.fresh = false; }
+        if (v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.modCents0 = v.modCents1; v.fresh = false; }
     }
     auto initFresh = [&] ()
     {
@@ -678,7 +783,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             if (v.active && v.fresh)
             {
                 updateVoiceSpatial (v, p, blockSeconds);
-                v.g0 = v.g1; v.send0 = v.send1; v.fresh = false;
+                v.g0 = v.g1; v.send0 = v.send1; v.modCents0 = v.modCents1; v.fresh = false;
                 v.dop = v.dopTarget;
             }
     };

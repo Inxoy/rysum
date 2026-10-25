@@ -8,7 +8,8 @@
 
 class RysumProcessor : public juce::AudioProcessor,
                        private juce::Timer,
-                       private juce::AsyncUpdater
+                       private juce::AsyncUpdater,
+                       private rysum::ModHook
 {
 public:
     RysumProcessor();
@@ -44,7 +45,24 @@ public:
     juce::MidiKeyboardState keyboardState;
 
     /** current parameters as the engine sees them (also used by the UI for positions) */
-    rysum::EngineParams readParams() const;
+    rysum::EngineParams readParams (const float* values = nullptr) const;
+
+    // ---- modulation (routes: message thread writes, audio thread reads)
+    int getParamIndex (const juce::String& id) const;
+    juce::RangedAudioParameter* getParamAt (int i) const { return i >= 0 && i < (int) prmList.size() ? prmList[(size_t) i] : nullptr; }
+    int getNumParams() const { return (int) prmList.size(); }
+    bool isModTarget (int i) const { return i >= 0 && i < (int) prmList.size() && isFloatParam[(size_t) i]; }
+    /** normalised value after modulation, NaN if the parameter is not modulated right now */
+    float getModulatedNorm (int index) const;
+    int getRouteSrc (int r) const { return routeSrc[(size_t) r].load(); }
+    int getRouteTgt (int r) const { return routeTgt[(size_t) r].load(); }
+    void setRoute (int r, int src, int target);
+    int addRoute (int src, int target, float amount);     // first free slot, -1 if full
+    void clearRoute (int r);
+    juce::String targetId (int target) const;
+    int targetFromId (const juce::String& id) const;
+    juce::String getModAmountId (int r) const { return "mod" + juce::String (r + 1) + "Amt"; }
+    std::atomic<int> routeVersion { 0 };
 
     // samples
     void loadSamples (const juce::File& folder);
@@ -80,6 +98,29 @@ private:
     void timerCallback() override;
     void handleAsyncUpdate() override;
     void applyCcOverrides (rysum::EngineParams&) const;
+    void modulate (rysum::EngineParams& p, const float* globalSources) override;
+
+    struct Indices
+    {
+        std::array<int, rysum::kNumStops> stop {}, vol {}, swind {}, motion {}, rate {}, depth {}, ellipse {};
+        int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
+            freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
+            releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
+            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0;
+        std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
+        std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
+        std::array<int, rysum::kNumRoutes> modAmt {};
+    } ix;
+    std::vector<juce::RangedAudioParameter*> prmList;
+    std::vector<std::atomic<float>*> rawList;
+    std::vector<char> isFloatParam;
+    std::map<juce::String, int> paramIndex;
+    std::array<std::atomic<int>, rysum::kNumRoutes> routeSrc {}, routeTgt {};
+    std::vector<float> modVals, modOff;              // audio thread
+    std::vector<char> modHitFlag;
+    std::vector<int> hits, prevHits;
+    std::unique_ptr<std::atomic<float>[]> modNorm;
+    bool haveModVals = false;
     std::vector<juce::RangedAudioParameter*> ccTargets;
     std::array<std::atomic<float>, 17> ccPending {};
     std::map<std::string, std::atomic<float>*> extraParams;

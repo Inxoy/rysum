@@ -86,6 +86,33 @@ public:
             proc->loadIr (irFile);
         }
 
+        // modulation: LFO 1 -> global wind (a parameter), LFO 2 -> pipe direction with spread, envelope -> distance
+        {
+            using namespace rysum;
+            auto setP = [&] (const char* id, float v) { auto* a = proc->apvts.getParameter (id); a->setValueNotifyingHost (a->convertTo0to1 (v)); };
+            const int windIdx = proc->getParamIndex ("wind");
+            proc->setRoute (0, srcLfo1, kGlobalTargetBase + windIdx);         setP ("mod1Amt", 0.4f);
+            proc->setRoute (1, srcLfo2, tgtAz);                               setP ("mod2Amt", 0.5f);
+            proc->setRoute (2, srcEnv1, tgtDist);                             setP ("mod3Amt", 0.3f);
+            proc->setRoute (3, srcLfo3, kGlobalTargetBase + proc->getParamIndex ("irWet")); setP ("mod4Amt", -0.3f);
+            setP ("lfo1Rate", 2.0f); setP ("lfo2Spread", 1.0f); setP ("lfo2Rate", 0.7f); setP ("lfo4Spread", 0.6f);
+            setP ("lfo3Shape", 4.0f);
+            float lo = 2, hi = -1;
+            for (int b = 0; b < 120; ++b)
+            {
+                juce::MidiBuffer mb;
+                if (b == 1) for (int m : { 45, 52, 57, 64, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
+                proc->processBlock (buf, mb);
+                const float n = proc->getModulatedNorm (windIdx);
+                if (! std::isnan (n)) { lo = juce::jmin (lo, n); hi = juce::jmax (hi, n); }
+            }
+            for (int b = 0; b < 200 && ! (proc->getModulatedNorm (windIdx) > 0.3f); ++b) { juce::MidiBuffer none; proc->processBlock (buf, none); }
+            const float base = proc->apvts.getParameter ("wind")->getValue();
+            std::cout << "wind modulated: base " << base << " range " << lo << " .. " << hi
+                      << ((hi - lo > 0.3f && lo <= base + 1e-4f && hi > base) ? "  ok" : "  FAIL") << std::endl;
+            std::cout << "not modulated -> NaN: " << (std::isnan (proc->getModulatedNorm (proc->getParamIndex ("air"))) ? "ok" : "FAIL") << std::endl;
+        }
+
         editor.reset (dynamic_cast<RysumEditor*> (proc->createEditor()));
         editor->setSize (1120, 720);
         auto* content = editor->getChildComponent (0);
@@ -103,6 +130,7 @@ public:
         shoot (0, "ui_spieltisch.png");
         shoot (1, "ui_raum.png");
         shoot (2, "ui_klang.png");
+        shoot (3, "ui_mod.png");
 
         // state round trip
         juce::MemoryBlock mbk;

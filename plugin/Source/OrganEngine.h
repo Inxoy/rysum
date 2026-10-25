@@ -4,6 +4,7 @@
 #include "SampleLibrary.h"
 #include "Spatial.h"
 #include "Degrade.h"
+#include "Modulation.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 #include <memory>
@@ -52,6 +53,17 @@ struct EngineParams
     // freeze
     bool  freeze = false;
     float freezeSmear = 0.5f, freezeRelease = 2.0f;
+
+    // modulation (LFOs, envelopes, routings)
+    ModParams mod;
+};
+
+/** called by the engine before every 64-sample slice: lets the processor modulate any parameter.
+    'globalSources' holds kNumSources values (LFOs without spread, global envelopes, last key, mod wheel, last random). */
+struct ModHook
+{
+    virtual ~ModHook() = default;
+    virtual void modulate (EngineParams& p, const float* globalSources) = 0;
 };
 
 class OrganEngine
@@ -79,6 +91,13 @@ public:
     std::atomic<int>      activeVoices { 0 }, frozenVoices { 0 };
     std::atomic<float>    meterL { 0.0f }, meterR { 0.0f };
     std::array<std::atomic<uint64_t>, kNumStops> soundingMask {};   // bit k = pipe k of that stop sounds
+
+    void setModHook (ModHook* h) noexcept { modHook = h; }
+
+    // modulation state for the UI
+    std::array<std::atomic<double>, kNumLfos> lfoPhaseOut {};
+    std::array<std::atomic<float>, kNumSources> sourceOut {};
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> modAz, modEl, modDistMul;   // per pipe, while sounding
 
     /** ask the engine to play one pipe for ~1.5 s. Lock-free, UI thread. */
     void requestPreview (int stop, int key);
@@ -125,6 +144,10 @@ private:
         float lpAir = 0.0f, airA = 1.0f; // air absorption by distance
         float prevDist = -1.0f, dop = 1.0f, dopTarget = 1.0f;
         float detuneRnd = 0.0f;          // -1..1, fixed per pipe
+        // modulation
+        std::array<EnvState, kNumEnvs> menv {};
+        float keyPos = 0.0f, randMod = 0.0f;
+        float modCents0 = 0.0f, modCents1 = 0.0f;
         // freeze
         bool frozen = false;
         float freezeMix = 0.0f;
@@ -155,6 +178,8 @@ private:
     void renderRange (juce::AudioBuffer<float>& out, int start, int end, int blockLen, const EngineParams& p);
     void updateVoiceSpatial (Voice& v, const EngineParams& p, double blockSeconds) noexcept;
     float readSample (const float* d, int len, double pos) const noexcept;
+    void advanceModulation (const EngineParams& p, double dt) noexcept;
+    float voiceSource (const Voice& v, int src, const EngineParams& p) const noexcept;
     float grainSample (Voice& v, double rate, float smear) noexcept;
 
     std::shared_ptr<const SampleLibrary> library;
@@ -168,6 +193,14 @@ private:
     static constexpr int kSubBlock = 64;
     void processChunk (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& p);
     juce::MidiBuffer chunkMidi;
+    ModHook* modHook = nullptr;
+    std::array<double, kNumLfos> lfoPhase {};
+    std::array<EnvState, kNumEnvs> globalEnv {};
+    std::array<float, kNumSources> globalSrc {};
+    bool globalTrig = false;
+    float lastKeyPos = 0.0f, lastRandom = 0.0f, modWheel = 0.0f;
+    ModParams lastMod;
+    bool haveLastMod = false;
     int roomOffset = 0;
     double sr = 48000.0;
     int maxBlock = 512;

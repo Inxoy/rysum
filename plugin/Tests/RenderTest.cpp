@@ -466,6 +466,93 @@ int main (int argc, char** argv)
         check (std::abs (e.motionPhase[2].load() - expect) < 1.0e-9, "tempo sync: phase follows the host position");
     }
 
+    // ---------------- modulation ----------------
+    {
+        const double msr = 48000.0;
+        auto run = [&] (std::function<void (EngineParams&)> setup, std::vector<int> midis, double secs, int mode, int ch, double offAt,
+                        const juce::String& name)
+        {
+            OrganEngine e; e.prepare (msr, 512); e.setLibrary (lib);
+            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+            p.outputMode = mode;
+            setup (p);
+            juce::AudioBuffer<float> b (ch, 512), all (ch, (int) (msr * secs));
+            for (int pos = 0; pos < all.getNumSamples(); pos += 512)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) for (int m : midis) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
+                if (offAt > 0 && pos == ((int) (offAt * msr) / 512) * 512) for (int m : midis) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                e.process (b, mb, p);
+                for (int c = 0; c < ch; ++c) all.copyFrom (c, pos, b, c, 0, juce::jmin (512, all.getNumSamples() - pos));
+            }
+            writeWav (outDir.getChildFile (name + ".wav"), all, msr);
+            return all;
+        };
+        auto rms = [&] (const juce::AudioBuffer<float>& b, double t0, double t1)
+        { return juce::Decibels::gainToDecibels (b.getRMSLevel (0, (int) (t0 * msr), (int) ((t1 - t0) * msr))); };
+        auto pitchAt = [&] (const juce::AudioBuffer<float>& b, double t0, double len, double f0)
+        {
+            const float* x = b.getReadPointer (0) + (int) (t0 * msr);
+            const int N = (int) (len * msr);
+            auto ac = [&] (int lag) { double s = 0; for (int i = 0; i < N - lag; ++i) s += (double) x[i] * x[i + lag]; return s; };
+            int bestLag = 0; double best = -1e18;
+            for (int lag = (int) (msr / (f0 * 1.15)); lag <= (int) (msr / (f0 / 1.15)); ++lag) { const double v = ac (lag); if (v > best) { best = v; bestLag = lag; } }
+            const double y0 = ac (bestLag - 1), y1 = ac (bestLag), y2 = ac (bestLag + 1);
+            return msr / (bestLag + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2));
+        };
+
+        {   // LFO square 1 Hz -> pipe level +-10.8 dB
+            auto b = run ([] (EngineParams& p) { p.mod.lfo[0].shape = shSquare; p.mod.lfo[0].rate = 1.0f; p.mod.routes[0] = { srcLfo1, tgtLevel, 0.3f }; },
+                          { 69 }, 3.0, 0, 2, -1, "14_mod_lfo_level");
+            const float hi = rms (b, 1.1, 1.4), lo = rms (b, 1.6, 1.9);
+            std::cout << "mod level: high " << hi << " dB, low " << lo << " dB" << std::endl;
+            check (hi - lo > 18.0f && hi - lo < 25.0f, "LFO -> pipe level (expect 21.6 dB swing)");
+        }
+        {   // LFO square 1 Hz -> pitch +-24 ct
+            auto b = run ([] (EngineParams& p) { p.mod.lfo[1].shape = shSquare; p.mod.lfo[1].rate = 1.0f; p.mod.routes[3] = { srcLfo2, tgtPitch, 0.02f }; },
+                          { 69 }, 3.0, 0, 2, -1, "15_mod_lfo_pitch");
+            const double fHi = pitchAt (b, 1.1, 0.3, meantoneHz (69)), fLo = pitchAt (b, 1.6, 0.3, meantoneHz (69));
+            const double d = 1200.0 * std::log2 (fHi / fLo);
+            std::cout << "mod pitch: " << fHi << " / " << fLo << " Hz = " << d << " ct" << std::endl;
+            check (std::abs (d - 48.0) < 3.0, "LFO -> pipe pitch (expect 48 ct)");
+        }
+        {   // per-pipe envelope -> distance: far at the envelope peak, back to base when it has decayed
+            auto b = run ([] (EngineParams& p)
+                          {
+                              p.mod.env[0] = { true, 0.0f, 0.4f, 0.8f, 0.0f, 1.0f };
+                              p.mod.routes[5] = { srcEnv1, tgtDist, 0.5f };
+                          }, { 57, 64, 69 }, 4.0, 1, 4, -1, "16_mod_env_distance");
+            const float farL = rms (b, 0.4, 0.5), nearL = rms (b, 3.0, 3.5);
+            std::cout << "mod env->distance: at peak " << farL << " dB, later " << nearL << " dB" << std::endl;
+            check (nearL - farL > 4.0f, "per-pipe envelope -> distance");
+        }
+        {   // global envelope with release: level follows the key
+            auto b = run ([] (EngineParams& p)
+                          {
+                              p.mod.env[1] = { false, 0.0f, 0.01f, 0.1f, 1.0f, 0.5f };
+                              p.mod.routes[7] = { srcEnv2, tgtLevel, 0.0f };
+                          }, { 69 }, 2.0, 0, 2, 1.0, "17_mod_global_env");
+            check (rms (b, 0.5, 0.9) > -60.0f, "global envelope scene renders");
+        }
+        {   // the wave: sine LFO 0.5 Hz on direction with full keyboard spread (listen in AmbiX)
+            auto b = run ([] (EngineParams& p)
+                          {
+                              p.mod.lfo[2].rate = 0.5f; p.mod.lfo[2].spread = 1.0f;
+                              p.mod.routes[2] = { srcLfo3, tgtAz, 0.5f };
+                              p.mod.lfo[3].shape = shSmooth; p.mod.lfo[3].rate = 3.0f; p.mod.lfo[3].spread = 1.0f; p.mod.lfo[3].spreadMode = 1;
+                              p.mod.routes[9] = { srcLfo4, tgtBright, -0.4f };
+                          }, { 45, 48, 52, 57, 60, 64, 69, 72, 76 }, 8.0, 3, 16, -1, "18_mod_wave_ambix3");
+            check (rms (b, 1.0, 7.0) > -60.0f, "spread wave scene renders");
+        }
+        {   // spread maths: offset along the keyboard
+            check (std::abs (lfoValue (shSine, 0.25, 0) - 1.0f) < 1e-6f && std::abs (lfoValue (shTriangle, 0.75, 0) + 1.0f) < 1e-6f, "LFO shapes");
+            EnvState es; EnvParams ep { true, 0.0f, 0.1f, 0.1f, 0.5f, 0.1f };
+            es.trigger(); for (int i = 0; i < 100; ++i) es.advance (ep, 0.01f);
+            const float sus = es.level; es.releaseGate(); for (int i = 0; i < 200; ++i) es.advance (ep, 0.01f);
+            check (std::abs (sus - 0.5f) < 0.01f && es.level == 0.0f, "envelope sustain + release");
+        }
+    }
+
     std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl;
     return failures;
 }

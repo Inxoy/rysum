@@ -71,7 +71,7 @@ Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.
 The plugin's output bus is declared as 5th-order Ambisonics (36 ch). In stereo
 mode only channels 1/2 carry sound.
 
-## 3. The three pages
+## 3. The four pages
 
 **Spieltisch** – click the stop knobs (photos) to pull/push stops. Under every stop:
 *Lautst.* (volume, −48…+12 dB) and *Wind* – how far the stop is drawn: below 100 % the
@@ -121,6 +121,30 @@ outside the circle = below the horizon). Select a stop on the right, then
   motion to the host tempo and song position (speeds count as written at 120 BPM; for
   free speed glissandi switch it off).
 
+**Modulation**
+- *LFO 1–4*: shape (sine, triangle, saw, square, random steps, smooth random), *Tempo*
+  0.01–20 Hz or *Sync* to the project tempo (note values), *Versatz je Pfeife* (spread):
+  0 % = all pipes move together, 100 % = one full cycle spread across the pipes – along the
+  keyboard (a wave running from low to high) or randomly. The dots in the display show
+  where each key's pipe is on the wave. Spread only acts on the *Pfeife:* targets.
+- *Hüllkurve 1–2* (envelopes): delay, attack, decay, sustain, release. *Pro Pfeife* = every
+  note runs its own envelope; *Global* = one envelope, every key restarts it and it
+  releases when all keys are up. Global targets (any parameter) always follow the global
+  envelope.
+- Further sources: *Tastenlage* (low key −1 … high key +1), *Modrad* (CC 1), *Zufall je Ton*
+  (a new random value per key press).
+- *Zuordnungen* (12 slots): source → target, amount ±100 %. Targets:
+  - *Pfeife: Richtung / Höhe / Abstand / Lautstärke / Tonhöhe / Helligkeit / Hall-Anteil* –
+    act on every pipe separately (at 100 %: ±180°, ±90°, ×8 distance, ±36 dB, ±12 semitones,
+    ±6 octaves of brightness, ±24 dB room send);
+  - every continuous parameter of the plugin (stop volume, motion speed, wind, Verfall,
+    Doppler, Hall, even the LFO speeds themselves …), amount = share of the slider's range.
+- **Right-click any slider** → *Modulieren mit …* picks a free slot directly (or removes an
+  existing one). A modulated slider shows a white bar and arrow where the modulation takes it
+  right now.
+- Everything is updated every 64 samples (≈1.3 ms), so even fast LFOs stay smooth. Amounts
+  are automatable parameters; sources and targets of the slots are saved with the project.
+
 Pipes the preprocessing flagged as unusable (Gedackt f and f♯ in the current
 samples) are replaced by the neighbouring pipe, pitch-shifted to the exact
 meantone pitch. Noise samples you delete from `samples\noise` are simply skipped.
@@ -156,7 +180,8 @@ plugin/
     Degrade.h           "Verfall"
     PluginProcessor.*   parameters, state, sample loading
     Convolver.*         impulse-response reverb (stereo / AmbiX)
-    PluginEditor.*, ConsoleView.*, SpaceView.*, KlangView.*, Theme.h   interface
+    Modulation.h        LFOs, envelopes, routing definitions
+    PluginEditor.*, ConsoleView.*, SpaceView.*, KlangView.*, ModView.*, Theme.h   interface
   Resources/            photos, fonts (OFL), grain texture
   Tests/                offline render test + UI snapshot tool (optional)
 ```

@@ -5,11 +5,15 @@
 #include "ConsoleView.h"
 #include "SpaceView.h"
 #include "KlangView.h"
+#include "ModView.h"
 
 /** fixed 1120 x 720 design, scaled as a whole when the window is resized */
-class RysumContent : public juce::Component
+class RysumContent : public juce::Component, public rysum::ui::ModUiAccess
 {
 public:
+    void showModMenu (juce::Component& target, const juce::String& paramId) override;
+    int paramIndexFor (const juce::String& paramId) override { return proc.getParamIndex (paramId); }
+    float modulatedNorm (int index) override { return proc.getModulatedNorm (index); }
     explicit RysumContent (RysumProcessor&);
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
@@ -22,7 +26,8 @@ private:
     rysum::ui::ConsoleView console;
     rysum::ui::SpaceView space;
     rysum::ui::KlangView klang;
-    std::array<juce::TextButton, 3> tabs;
+    rysum::ui::ModView mod;
+    std::array<juce::TextButton, 4> tabs;
     juce::ComboBox outputChoice;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputAttachment;
     int current = 0;

@@ -83,7 +83,8 @@ target_sources(Rysum PRIVATE
     Source/PluginEditor.cpp
     Source/ConsoleView.cpp
     Source/SpaceView.cpp
-    Source/KlangView.cpp)
+    Source/KlangView.cpp
+    Source/ModView.cpp)
 
 target_include_directories(Rysum PRIVATE Source)
 
@@ -130,7 +131,7 @@ if(RYSUM_BUILD_TESTS)
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
         Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
-        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp)
+        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0

@@ -155,7 +155,14 @@ public:
         g.setColour (col::track);
         g.fillRect ((float) x, cy - 1.0f, (float) w, 2.0f);
         g.setColour (col::ink);
-        g.fillRect ((float) x, cy - 1.0f, pos - (float) x, 2.0f);
+        if (s.getProperties().contains ("bipolar"))
+        {
+            const float mid = (float) x + (float) w * 0.5f;
+            g.fillRect (juce::jmin (mid, pos), cy - 1.0f, std::abs (pos - mid), 2.0f);
+            g.setColour (col::faint);
+            g.fillRect (mid - 0.5f, cy - 4.0f, 1.0f, 8.0f);
+        }
+        else g.fillRect ((float) x, cy - 1.0f, pos - (float) x, 2.0f);
         g.setColour (s.isMouseOverOrDragging() ? col::white : col::ink);
         g.fillRect (pos - 1.5f, cy - 7.0f, 3.0f, 14.0f);
     }
@@ -163,13 +170,39 @@ public:
     int getSliderThumbRadius (juce::Slider&) override { return 2; }
 };
 
-/** label + value + thin slider, attached to a parameter */
-class ParamRow : public juce::Component
+/** implemented by the editor content: right-click modulation menu + live modulation values for the sliders */
+struct ModUiAccess
+{
+    virtual ~ModUiAccess() = default;
+    virtual void showModMenu (juce::Component& target, const juce::String& paramId) = 0;
+    virtual int paramIndexFor (const juce::String& paramId) = 0;
+    virtual float modulatedNorm (int paramIndex) = 0;       // NaN = not modulated
+};
+
+/** slider that hands right-clicks to a callback instead of dragging */
+class RowSlider : public juce::Slider
+{
+public:
+    std::function<void()> onRightClick;
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { if (onRightClick) onRightClick(); return; }
+        juce::Slider::mouseDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override { if (! e.mods.isPopupMenu()) juce::Slider::mouseDrag (e); }
+    void mouseUp (const juce::MouseEvent& e) override   { if (! e.mods.isPopupMenu()) juce::Slider::mouseUp (e); }
+};
+
+/** label + value + thin slider, attached to a parameter. Right-click = modulation menu; a modulated
+    parameter shows where the modulation takes it right now. */
+class ParamRow : public juce::Component, private juce::Timer
 {
 public:
     ParamRow (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& name, bool compactRow = false)
-        : title (name), compact (compactRow)
+        : title (name), compact (compactRow), id (paramId)
     {
+        slider.onRightClick = [this] { openMenu(); };
+        startTimerHz (25);
         slider.setSliderStyle (juce::Slider::LinearHorizontal);
         slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         slider.setDoubleClickReturnValue (true, (double) state.getParameterRange (paramId).convertFrom0to1 (
@@ -197,11 +230,57 @@ public:
         else         slider.setBounds (getLocalBounds().withTrimmedTop (16).withHeight (18));
     }
 
-    juce::Slider slider;
+    void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) openMenu(); }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        if (findAccess()) modNorm = access->modulatedNorm (index);
+        if (std::isnan (modNorm) || param == nullptr) return;
+        const auto sb = slider.getBounds().toFloat();
+        const float x0 = (float) slider.getX() + (float) slider.getPositionOfValue (slider.getValue());
+        const float x1 = (float) slider.getX() + (float) slider.getPositionOfValue (param->convertFrom0to1 (modNorm));
+        const float cy = sb.getCentreY();
+        g.setColour (col::white.withAlpha (0.55f));
+        g.fillRect (juce::jmin (x0, x1), cy + 4.0f, std::abs (x1 - x0), 2.0f);
+        juce::Path tri;
+        tri.addTriangle (x1 - 4.0f, cy + 10.0f, x1 + 4.0f, cy + 10.0f, x1, cy + 4.0f);
+        g.setColour (col::white);
+        g.fillPath (tri);
+    }
+
+    RowSlider slider;
+    const juce::String& getParamId() const { return id; }
 
 private:
+    void openMenu()
+    {
+        if (auto* a = findParentComponentOfClass<ModUiAccess>()) a->showModMenu (*this, id);
+    }
+
+    bool findAccess()
+    {
+        if (access == nullptr)
+        {
+            access = findParentComponentOfClass<ModUiAccess>();
+            if (access != nullptr) index = access->paramIndexFor (id);
+        }
+        return access != nullptr;
+    }
+
+    void timerCallback() override
+    {
+        if (! isShowing() || ! findAccess()) return;
+        const float n = access->modulatedNorm (index);
+        const bool was = ! std::isnan (modNorm), is = ! std::isnan (n);
+        if (was != is || (is && std::abs (n - modNorm) > 0.0005f)) { modNorm = n; repaint(); }
+    }
+
     juce::String title;
     bool compact = false;
+    juce::String id;
+    ModUiAccess* access = nullptr;
+    int index = -1;
+    float modNorm = std::numeric_limits<float>::quiet_NaN();
     juce::RangedAudioParameter* param = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 };

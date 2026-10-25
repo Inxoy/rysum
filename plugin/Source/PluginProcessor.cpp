@@ -117,6 +117,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                       NormalisableRange<float> (0.0f, 180.0f, 0.1f), 40.0f,
                                                       AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")); })));
     }
+
+    // ---- modulation
+    auto hz = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, v < 1.0f ? 3 : 2) + " Hz"; });
+    auto secs = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+                { return v < 1.0f ? String (roundToInt (v * 1000.0f)) + " ms" : String (v, 2) + " s"; });
+    for (int i = 0; i < kNumLfos; ++i)
+    {
+        const String n = "LFO " + String (i + 1);
+        const String id = "lfo" + String (i + 1);
+        const float rates[] { 0.25f, 0.5f, 2.0f, 0.1f };
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { id + "Shape", 1 }, n + " Form", lfoShapeNames(), i == 3 ? (int) shSmooth : (int) shSine));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { id + "Rate", 1 }, n + " Tempo", NormalisableRange<float> (0.01f, 20.0f, 0.001f, 0.3f), rates[i], hz));
+        l.add (std::make_unique<AudioParameterBool> (ParameterID { id + "Sync", 1 }, n + " Sync", false));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { id + "Div", 1 }, n + " Notenwert", lfoDivNames(), 2));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { id + "Spread", 1 }, n + " Versatz", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { id + "SpreadMode", 1 }, n + " Versatz-Art", StringArray { "Tastatur", "Zufall" }, 0));
+    }
+    for (int j = 0; j < kNumEnvs; ++j)
+    {
+        const String n = String::fromUTF8 ("H\xc3\xbcllkurve ") + String (j + 1);
+        const String id = "env" + String (j + 1);
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { id + "Mode", 1 }, n + " Modus", StringArray { "Pro Pfeife", "Global" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { id + "Delay", 1 },   n + String::fromUTF8 (" Verz\xc3\xb6gerung"), NormalisableRange<float> (0.0f, 10.0f, 0.001f, 0.35f), 0.0f, secs));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { id + "Attack", 1 },  n + " Anstieg",  NormalisableRange<float> (0.001f, 20.0f, 0.001f, 0.3f), j == 0 ? 0.3f : 3.0f, secs));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { id + "Decay", 1 },   n + " Abfall",   NormalisableRange<float> (0.001f, 20.0f, 0.001f, 0.3f), j == 0 ? 1.0f : 4.0f, secs));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { id + "Sustain", 1 }, n + " Halten",   NormalisableRange<float> (0, 1), j == 0 ? 0.6f : 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { id + "Release", 1 }, n + " Ausklang", NormalisableRange<float> (0.001f, 20.0f, 0.001f, 0.3f), j == 0 ? 1.5f : 3.0f, secs));
+    }
+    for (int r = 0; r < kNumRoutes; ++r)
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "mod" + String (r + 1) + "Amt", 1 }, "Modulation " + String (r + 1) + " Menge",
+                                                      NormalisableRange<float> (-1.0f, 1.0f, 0.001f), 0.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+                                                      { return (v > 0.0005f ? "+" : "") + String (roundToInt (v * 100.0f)) + " %"; })));
     return l;
 }
 
@@ -164,6 +197,52 @@ RysumProcessor::RysumProcessor()
     ccTargets.push_back (apvts.getParameter ("tremDepth"));
     for (auto& c : ccPending) c = std::numeric_limits<float>::quiet_NaN();
 
+    // ---- parameter table (modulation works on indices into it)
+    for (auto* prm : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (prm))
+        {
+            paramIndex[rp->getParameterID()] = (int) prmList.size();
+            prmList.push_back (rp);
+            rawList.push_back (apvts.getRawParameterValue (rp->getParameterID()));
+            isFloatParam.push_back (dynamic_cast<juce::AudioParameterFloat*> (rp) != nullptr && rp->getParameterID() != "output" ? 1 : 0);
+        }
+    const int N = (int) prmList.size();
+    modVals.assign ((size_t) N, 0.0f);
+    modOff.assign ((size_t) N, 0.0f);
+    modHitFlag.assign ((size_t) N, 0);
+    modNorm.reset (new std::atomic<float>[(size_t) N]);
+    for (int i = 0; i < N; ++i) modNorm[i] = std::numeric_limits<float>::quiet_NaN();
+    hits.reserve (kNumRoutes); prevHits.reserve (kNumRoutes);
+    auto I = [this] (const juce::String& id) { jassert (paramIndex.count (id) > 0); return paramIndex.at (id); };
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        ix.stop[(size_t) s] = I (stopParamId (s)); ix.vol[(size_t) s] = I (volParamId (s)); ix.swind[(size_t) s] = I (windParamId (s));
+        ix.motion[(size_t) s] = I (motionParamId (s)); ix.rate[(size_t) s] = I (rateParamId (s));
+        ix.depth[(size_t) s] = I (depthParamId (s)); ix.ellipse[(size_t) s] = I (ellipseParamId (s));
+    }
+    ix.doppler = I ("doppler"); ix.air = I ("air"); ix.distAmount = I ("distAmount"); ix.temperament = I ("temperament");
+    ix.pitch = I ("pitch"); ix.detune = I ("detune"); ix.tremOn = I ("tremOn"); ix.tremRate = I ("tremRate"); ix.tremDepth = I ("tremDepth");
+    ix.freeze = I ("freeze"); ix.freezeSmear = I ("freezeSmear"); ix.freezeRelease = I ("freezeRelease"); ix.motionSync = I ("motionSync");
+    ix.master = I ("master"); ix.output = I ("output"); ix.click = I ("click"); ix.clickBlend = I ("clickBlend");
+    ix.releaseClick = I ("releaseClick"); ix.stopPull = I ("stopPull"); ix.wind = I ("wind");
+    ix.degAmount = I ("degAmount"); ix.degGrain = I ("degGrain"); ix.degBits = I ("degBits"); ix.degRate = I ("degRate");
+    ix.degWobble = I ("degWobble"); ix.degDropouts = I ("degDropouts"); ix.degMode = I ("degMode");
+    ix.irDry = I ("irDry"); ix.irWet = I ("irWet");
+    for (int i = 0; i < kNumLfos; ++i)
+    {
+        const juce::String id = "lfo" + juce::String (i + 1);
+        ix.lfoShape[(size_t) i] = I (id + "Shape"); ix.lfoRate[(size_t) i] = I (id + "Rate"); ix.lfoSync[(size_t) i] = I (id + "Sync");
+        ix.lfoDiv[(size_t) i] = I (id + "Div"); ix.lfoSpread[(size_t) i] = I (id + "Spread"); ix.lfoSpreadMode[(size_t) i] = I (id + "SpreadMode");
+    }
+    for (int j = 0; j < kNumEnvs; ++j)
+    {
+        const juce::String id = "env" + juce::String (j + 1);
+        ix.envMode[(size_t) j] = I (id + "Mode"); ix.envDelay[(size_t) j] = I (id + "Delay"); ix.envAttack[(size_t) j] = I (id + "Attack");
+        ix.envDecay[(size_t) j] = I (id + "Decay"); ix.envSustain[(size_t) j] = I (id + "Sustain"); ix.envRelease[(size_t) j] = I (id + "Release");
+    }
+    for (int r = 0; r < kNumRoutes; ++r) { ix.modAmt[(size_t) r] = I ("mod" + juce::String (r + 1) + "Amt"); routeSrc[(size_t) r] = -1; routeTgt[(size_t) r] = -1; }
+    engine.setModHook (this);
+
     startTimer (250);   // first tick: find + load the samples (after a possible setStateInformation)
 }
 
@@ -194,48 +273,166 @@ void RysumProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         juce::MessageManager::callAsync ([this, alive = aliveFlag] { if (alive->load()) loadIr (irFile); });   // resample IR
 }
 
-EngineParams RysumProcessor::readParams() const
+EngineParams RysumProcessor::readParams (const float* vals) const
 {
+    auto V = [this, vals] (int i) { return vals != nullptr ? vals[i] : rawList[(size_t) i]->load(); };
     EngineParams p;
     for (int s = 0; s < kNumStops; ++s)
     {
-        p.stopOn[(size_t) s] = stopParams[(size_t) s]->load() > 0.5f;
-        p.stopGain[(size_t) s] = dbToGain (volParams[(size_t) s]->load());
-        p.stopWind[(size_t) s] = windParams[(size_t) s]->load();
-        p.motionMode[(size_t) s] = (int) motionParams[(size_t) s]->load();
-        p.motionRate[(size_t) s] = rateParams[(size_t) s]->load();
-        p.motionDepth[(size_t) s] = depthParams[(size_t) s]->load();
-        p.ellipse[(size_t) s] = ellipseParams[(size_t) s]->load();
+        p.stopOn[(size_t) s] = V (ix.stop[(size_t) s]) > 0.5f;
+        p.stopGain[(size_t) s] = dbToGain (V (ix.vol[(size_t) s]));
+        p.stopWind[(size_t) s] = V (ix.swind[(size_t) s]);
+        p.motionMode[(size_t) s] = (int) V (ix.motion[(size_t) s]);
+        p.motionRate[(size_t) s] = V (ix.rate[(size_t) s]);
+        p.motionDepth[(size_t) s] = V (ix.depth[(size_t) s]);
+        p.ellipse[(size_t) s] = V (ix.ellipse[(size_t) s]);
     }
-    auto x = [this] (const char* id) { return extraParams.at (id)->load(); };
-    p.doppler = x ("doppler");
-    p.air = x ("air");
-    p.distAmount = x ("distAmount");
-    p.tuneCents = temperamentShift ((int) x ("temperament"));
-    p.pitchCents = x ("pitch");
-    p.detune = x ("detune");
-    p.tremOn = x ("tremOn") > 0.5f;
-    p.tremRate = x ("tremRate");
-    p.tremDepth = x ("tremDepth");
-    p.freeze = x ("freeze") > 0.5f;
-    p.freezeSmear = x ("freezeSmear");
-    p.freezeRelease = x ("freezeRelease");
-    p.sync = x ("motionSync") > 0.5f;
-    p.masterGain = dbToGain (master->load());
-    p.outputMode = (int) output->load();
-    p.clickLevel = click->load();
-    p.clickBlend = clickBlend->load();
-    p.releaseClick = releaseClick->load();
-    p.stopPull = stopPull->load();
-    p.wind = wind->load();
-    p.deg.amount = degAmount->load();
-    p.deg.grain = degGrain->load();
-    p.deg.bits = degBits->load();
-    p.deg.rateHz = degRate->load();
-    p.deg.wobble = degWobble->load();
-    p.deg.dropouts = degDropouts->load();
-    p.deg.perPipe = degMode->load() < 0.5f;
+    p.doppler = V (ix.doppler);
+    p.air = V (ix.air);
+    p.distAmount = V (ix.distAmount);
+    p.tuneCents = temperamentShift ((int) V (ix.temperament));
+    p.pitchCents = V (ix.pitch);
+    p.detune = V (ix.detune);
+    p.tremOn = V (ix.tremOn) > 0.5f;
+    p.tremRate = V (ix.tremRate);
+    p.tremDepth = V (ix.tremDepth);
+    p.freeze = V (ix.freeze) > 0.5f;
+    p.freezeSmear = V (ix.freezeSmear);
+    p.freezeRelease = V (ix.freezeRelease);
+    p.sync = V (ix.motionSync) > 0.5f;
+    p.masterGain = dbToGain (V (ix.master));
+    p.outputMode = (int) V (ix.output);
+    p.clickLevel = V (ix.click);
+    p.clickBlend = V (ix.clickBlend);
+    p.releaseClick = V (ix.releaseClick);
+    p.stopPull = V (ix.stopPull);
+    p.wind = V (ix.wind);
+    p.deg.amount = V (ix.degAmount);
+    p.deg.grain = V (ix.degGrain);
+    p.deg.bits = V (ix.degBits);
+    p.deg.rateHz = V (ix.degRate);
+    p.deg.wobble = V (ix.degWobble);
+    p.deg.dropouts = V (ix.degDropouts);
+    p.deg.perPipe = V (ix.degMode) < 0.5f;
+
+    for (int i = 0; i < kNumLfos; ++i)
+    {
+        auto& L = p.mod.lfo[(size_t) i];
+        L.shape = (int) V (ix.lfoShape[(size_t) i]);
+        L.rate = V (ix.lfoRate[(size_t) i]);
+        L.sync = V (ix.lfoSync[(size_t) i]) > 0.5f;
+        L.div = (int) V (ix.lfoDiv[(size_t) i]);
+        L.spread = V (ix.lfoSpread[(size_t) i]);
+        L.spreadMode = (int) V (ix.lfoSpreadMode[(size_t) i]);
+    }
+    for (int j = 0; j < kNumEnvs; ++j)
+    {
+        auto& E = p.mod.env[(size_t) j];
+        E.perPipe = V (ix.envMode[(size_t) j]) < 0.5f;
+        E.delay = V (ix.envDelay[(size_t) j]);
+        E.attack = V (ix.envAttack[(size_t) j]);
+        E.decay = V (ix.envDecay[(size_t) j]);
+        E.sustain = V (ix.envSustain[(size_t) j]);
+        E.release = V (ix.envRelease[(size_t) j]);
+    }
+    for (int r = 0; r < kNumRoutes; ++r)
+        p.mod.routes[(size_t) r] = { routeSrc[(size_t) r].load(), routeTgt[(size_t) r].load(), V (ix.modAmt[(size_t) r]) };
     return p;
+}
+
+// ---------------------------------------------------------------------------
+// modulation of plugin parameters (audio thread, every 64 samples)
+// ---------------------------------------------------------------------------
+void RysumProcessor::modulate (EngineParams& p, const float* src)
+{
+    const int N = (int) rawList.size();
+    for (int i = 0; i < N; ++i) modVals[(size_t) i] = rawList[(size_t) i]->load();
+    hits.clear();
+    for (int r = 0; r < kNumRoutes; ++r)
+    {
+        const int sIdx = routeSrc[(size_t) r].load(), t = routeTgt[(size_t) r].load() - kGlobalTargetBase;
+        if (sIdx < 0 || sIdx >= kNumSources || t < 0 || t >= N || ! isFloatParam[(size_t) t]) continue;
+        const float a = modVals[(size_t) ix.modAmt[(size_t) r]];
+        if (a == 0.0f) continue;
+        if (! modHitFlag[(size_t) t]) { modHitFlag[(size_t) t] = 1; modOff[(size_t) t] = 0.0f; hits.push_back (t); }
+        modOff[(size_t) t] += a * src[sIdx];
+    }
+    for (int t : prevHits) modNorm[t] = std::numeric_limits<float>::quiet_NaN();
+    for (int t : hits)
+    {
+        auto* prm = prmList[(size_t) t];
+        const float n = juce::jlimit (0.0f, 1.0f, prm->convertTo0to1 (modVals[(size_t) t]) + modOff[(size_t) t]);
+        modVals[(size_t) t] = prm->convertFrom0to1 (n);
+        modNorm[t] = n;
+        modHitFlag[(size_t) t] = 0;
+    }
+    std::swap (hits, prevHits);
+    haveModVals = true;
+    if (prevHits.empty()) return;            // nothing global is modulated: p already holds these values
+
+    EngineParams q = readParams (modVals.data());
+    applyCcOverrides (q);
+    q.bpm = p.bpm; q.ppq = p.ppq; q.playing = p.playing;
+    p = q;
+}
+
+int RysumProcessor::getParamIndex (const juce::String& id) const
+{
+    auto it = paramIndex.find (id);
+    return it == paramIndex.end() ? -1 : it->second;
+}
+
+float RysumProcessor::getModulatedNorm (int index) const
+{
+    return index >= 0 && index < (int) prmList.size() ? modNorm[index].load() : std::numeric_limits<float>::quiet_NaN();
+}
+
+juce::String RysumProcessor::targetId (int target) const
+{
+    if (target < 0) return {};
+    if (target < kNumPipeTargets) return pipeTargetId (target);
+    const int i = target - kGlobalTargetBase;
+    return i >= 0 && i < (int) prmList.size() ? prmList[(size_t) i]->getParameterID() : juce::String();
+}
+
+int RysumProcessor::targetFromId (const juce::String& id) const
+{
+    if (id.startsWith ("pipe:")) { const int t = id.fromFirstOccurrenceOf (":", false, false).getIntValue(); return t >= 0 && t < kNumPipeTargets ? t : -1; }
+    const int i = getParamIndex (id);
+    return i >= 0 && isFloatParam[(size_t) i] ? kGlobalTargetBase + i : -1;
+}
+
+void RysumProcessor::setRoute (int r, int src, int target)
+{
+    if (r < 0 || r >= kNumRoutes) return;
+    routeSrc[(size_t) r] = src;
+    routeTgt[(size_t) r] = target;
+    ++routeVersion;
+}
+
+int RysumProcessor::addRoute (int src, int target, float amount)
+{
+    for (int r = 0; r < kNumRoutes; ++r)
+        if (routeSrc[(size_t) r].load() < 0 && routeTgt[(size_t) r].load() < 0)
+        {
+            setRoute (r, src, target);
+            if (auto* a = prmList[(size_t) ix.modAmt[(size_t) r]])
+            {
+                a->beginChangeGesture(); a->setValueNotifyingHost (a->convertTo0to1 (amount)); a->endChangeGesture();
+            }
+            return r;
+        }
+    return -1;
+}
+
+void RysumProcessor::clearRoute (int r)
+{
+    if (r < 0 || r >= kNumRoutes) return;
+    setRoute (r, -1, -1);
+    if (auto* a = prmList[(size_t) ix.modAmt[(size_t) r]])
+    {
+        a->beginChangeGesture(); a->setValueNotifyingHost (a->convertTo0to1 (0.0f)); a->endChangeGesture();
+    }
 }
 
 void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -290,8 +487,10 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     const int n = buffer.getNumSamples();
     const bool stereo = params.outputMode == 0;
     const int used = juce::jmin (buffer.getNumChannels(), stereo ? 2 : (params.outputMode + 1) * (params.outputMode + 1));
-    const float dryTarget = irDry->load() <= -59.9f ? 0.0f : dbToGain (irDry->load());
-    const float wetTarget = irWet->load() <= -59.9f ? 0.0f : dbToGain (irWet->load());
+    const float dryDb = haveModVals ? modVals[(size_t) ix.irDry] : irDry->load();
+    const float wetDb = haveModVals ? modVals[(size_t) ix.irWet] : irWet->load();
+    const float dryTarget = dryDb <= -59.9f ? 0.0f : dbToGain (dryDb);
+    const float wetTarget = wetDb <= -59.9f ? 0.0f : dbToGain (wetDb);
 
     if (irActive != nullptr && used > 0)
     {
@@ -502,6 +701,15 @@ void RysumProcessor::getStateInformation (juce::MemoryBlock& destData)
         st.setProperty ("distance", L.distance, nullptr);
         extra.appendChild (st, nullptr);
     }
+    {
+        juce::ValueTree mod ("MOD");
+        for (int r = 0; r < kNumRoutes; ++r)
+        {
+            mod.setProperty ("src" + juce::String (r), routeSrc[(size_t) r].load(), nullptr);
+            mod.setProperty ("tgt" + juce::String (r), targetId (routeTgt[(size_t) r].load()), nullptr);
+        }
+        extra.appendChild (mod, nullptr);
+    }
     state.removeChild (state.getChildWithName ("EXTRA"), nullptr);
     state.appendChild (extra, nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
@@ -516,10 +724,20 @@ void RysumProcessor::setStateInformation (const void* data, int sizeInBytes)
     auto extra = state.getChildWithName ("EXTRA");
     apvts.replaceState (state);
 
+    {
+        const auto mod = extra.getChildWithName ("MOD");
+        for (int r = 0; r < kNumRoutes; ++r)
+        {
+            const int src = mod.isValid() ? (int) mod.getProperty ("src" + juce::String (r), -1) : -1;
+            const int tgt = mod.isValid() ? targetFromId (mod.getProperty ("tgt" + juce::String (r)).toString()) : -1;
+            setRoute (r, src >= 0 && src < kNumSources ? src : -1, tgt);
+        }
+    }
     if (extra.isValid())
     {
         for (auto st : extra)
         {
+            if (! st.hasType ("STOP")) continue;
             const int s = stopIndexForId (st["id"].toString());
             if (s < 0) continue;
             auto& L = layouts[(size_t) s];
