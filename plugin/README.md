@@ -95,7 +95,7 @@ outside the circle = below the horizon). Select a stop on the right, then
 - *Bewegung*: Statisch, Rotation (horizontal), Pendel, Drift, Vertikal (turns over your
   head: front → up → back → down), Sprünge (every pipe suddenly jumps to a new random place
   around its position, each at its own moment; *Tiefe* = how far). *Geschwindigkeit* runs
-  from −2 to +2 Hz: negative = the other direction. Changing the speed never resets the
+  from −10 to +10 Hz: negative = the other direction. Changing the speed never resets the
   position, so you can do smooth speed glissandi (also by automation). *Ellipse* squashes
   the path so pipes come closer in front and move away behind (gives Doppler, see Klang).
 - *Hall*: load an impulse response (WAV/AIFF/FLAC, up to 10 s). 4/9/16/25/36 channels are

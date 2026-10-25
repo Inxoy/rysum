@@ -324,6 +324,19 @@ int main (int argc, char** argv)
         scenes.push_back (s);
     }
 
+    {   // 13. fast: rotation glissando -10 Hz .. +10 Hz in 5th order, then jumps at 10 Hz
+        Scene s { "13_fast_rotation_ambix5", 5, 36, nullptr, {}, 14.0 };
+        for (int m : { 57, 64, 69 }) note (s.midiAll, m, 0.2, 13.5);
+        s.params = [] (EngineParams& p, double t)
+        {
+            p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0;
+            p.motionMode[0] = (int) (t < 10.0 ? Motion::Rotation : Motion::Jumps);
+            p.motionRate[0] = t < 10.0 ? (float) (-10.0 + 20.0 * juce::jlimit (0.0, 1.0, t / 10.0)) : 10.0f;
+            p.motionDepth[0] = 90.0f;
+        };
+        scenes.push_back (s);
+    }
+
     {   // 10. Doppler: rotation 0.5 Hz with an elliptic orbit (closest in front)
         Scene s { "10_doppler_ellipse_stereo", 0, 2, nullptr, {}, 9.0 };
         note (s.midiAll, 69, 0.2, 8.5);

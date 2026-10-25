@@ -40,6 +40,7 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     roomSend.assign ((size_t) maxBlock, 0.0f);
     gust.assign ((size_t) (maxBlock / 16 + 4), 0.0f);
     trem.assign ((size_t) (maxBlock / 16 + 4), 0.0f);
+    chunkMidi.ensureSize (8192);
     for (auto& v : voices) v.active = false;
     for (auto& n : noise) n.active = false;
     keyHeld.fill (false);
@@ -86,6 +87,13 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     const float g = sg * distanceGain (pos.dist, p.distAmount);
     for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] *= g;
     v.send1 = sg * distanceGain (pos.dist, p.distAmount * 0.35f);       // the room fades much less with distance
+
+    // jumps: a ~4 ms glide so the teleport is sudden but does not click
+    if (! v.fresh && (Motion) p.motionMode[(size_t) v.stop] == Motion::Jumps && blockSeconds > 0.0)
+    {
+        const float k = 1.0f - (float) std::exp (-blockSeconds / 0.004);
+        for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] = v.g0[(size_t) c] + k * (v.g1[(size_t) c] - v.g0[(size_t) c]);
+    }
 
     // air: far pipes lose their highs
     const float fc = juce::jlimit (1200.0f, 20000.0f, 20000.0f / (1.0f + p.air * pos.dist / 5.0f));
@@ -377,7 +385,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
     gustPhase += n * dt * (0.5 + 6.0 * turb);
     tremPhase = std::fmod (tremPhase + n * dt * p.tremRate, 1.0);
 
-    float* send = roomSend.data() + start;
+    float* send = roomSend.data() + roomOffset + start;
     const float inv = 1.0f / (float) blockLen;
 
     for (auto& v : voices)
@@ -562,6 +570,33 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
 void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& pIn)
 {
     juce::ScopedNoDenormals noDenormals;
+    const int n = out.getNumSamples();
+    if (n <= 0) return;
+    if ((int) roomSend.size() < n) roomSend.assign ((size_t) n, 0.0f);     // safety (prepare() sizes it)
+
+    // render in short slices: every slice gets fresh positions, so even 10 Hz motion stays smooth
+    for (int start = 0; start < n; start += kSubBlock)
+    {
+        const int len = juce::jmin (kSubBlock, n - start);
+        juce::AudioBuffer<float> view (out.getArrayOfWritePointers(), out.getNumChannels(), start, len);
+        chunkMidi.clear();
+        chunkMidi.addEvents (midi, start, len, -start);
+        EngineParams pc = pIn;
+        pc.ppq = pIn.ppq + (start / sr) * pIn.bpm / 60.0;
+        roomOffset = start;
+        processChunk (view, chunkMidi, pc);
+    }
+    roomOffset = 0;
+
+    // meters
+    const float pk0 = out.getNumChannels() > 0 ? out.getMagnitude (0, 0, n) : 0.0f;
+    const float pk1 = out.getNumChannels() > 1 ? (order == 0 ? out.getMagnitude (1, 0, n) : pk0) : 0.0f;
+    meterL = juce::jmax (pk0, meterL.load() * 0.9f);
+    meterR = juce::jmax (pk1, meterR.load() * 0.9f);
+}
+
+void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& pIn)
+{
     EngineParams p = pIn;                // local copy with derived values
     p.deg.prepareBlock (sr);
     out.clear();
@@ -569,9 +604,9 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
     if (numSamples <= 0) return;
     if ((int) scratch.size() < numSamples)       // safety (should not happen: prepare() sizes them)
     {
-        scratch.assign ((size_t) numSamples, 0.0f); scratchRamp.assign ((size_t) numSamples, 0.0f); roomSend.assign ((size_t) numSamples, 0.0f);
+        scratch.assign ((size_t) numSamples, 0.0f); scratchRamp.assign ((size_t) numSamples, 0.0f);
     }
-    std::fill (roomSend.begin(), roomSend.begin() + numSamples, 0.0f);
+    std::fill (roomSend.begin() + roomOffset, roomSend.begin() + roomOffset + numSamples, 0.0f);
     const double blockSeconds = numSamples / sr;
 
     order = juce::jlimit (0, kMaxOrder, p.outputMode);
@@ -676,7 +711,6 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
     }
 
     // ---- master gain (smoothed) + meters
-    float pk0 = 0.0f, pk1 = 0.0f;
     const float step = (p.masterGain - masterSmoothed) / (float) numSamples;
     for (int c = 0; c < usedChannels; ++c)
     {
@@ -686,13 +720,9 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
     }
     {
         float g = masterSmoothed;
-        for (int i = 0; i < numSamples; ++i) { g += step; roomSend[(size_t) i] *= g; }
+        for (int i = 0; i < numSamples; ++i) { g += step; roomSend[(size_t) (roomOffset + i)] *= g; }
     }
     masterSmoothed = p.masterGain;
-    if (out.getNumChannels() > 0) pk0 = out.getMagnitude (0, 0, numSamples);
-    if (out.getNumChannels() > 1) pk1 = order == 0 ? out.getMagnitude (1, 0, numSamples) : pk0;
-    meterL = juce::jmax (pk0, meterL.load() * 0.9f);
-    meterR = juce::jmax (pk1, meterR.load() * 0.9f);
 
     // ---- bookkeeping for the UI
     int count = 0, frozen = 0;

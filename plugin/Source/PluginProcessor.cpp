@@ -109,8 +109,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         const String name = prettyLabel (kStops[(size_t) s].label);
         l.add (std::make_unique<AudioParameterChoice> (ParameterID { motionParamId (s), 1 }, name + " Bewegung", motionNames(), 0));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { rateParamId (s), 1 }, name + " Geschwindigkeit",
-                                                      NormalisableRange<float> (-2.0f, 2.0f, 0.001f, 0.35f, true), 0.08f,
-                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0 ? "+" : "") + String (v, 3) + " Hz"; })));
+                                                      NormalisableRange<float> (-10.0f, 10.0f, 0.001f, 0.3f, true), 0.08f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0 ? "+" : "") + String (v, std::abs (v) < 1.0f ? 3 : 2) + " Hz"; })));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { ellipseParamId (s), 1 }, name + " Ellipse",
                                                       NormalisableRange<float> (0.0f, 0.9f, 0.001f), 0.0f, pct));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { depthParamId (s), 1 }, name + " Tiefe",

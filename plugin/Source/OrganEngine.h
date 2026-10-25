@@ -164,6 +164,11 @@ private:
     bool sustainPedal = false;
     std::array<bool, kNumStops> lastStopOn {};
     bool firstBlock = true;
+    /** positions/gains are updated every kSubBlock samples so fast motion (up to 10 Hz) stays smooth */
+    static constexpr int kSubBlock = 64;
+    void processChunk (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& p);
+    juce::MidiBuffer chunkMidi;
+    int roomOffset = 0;
     double sr = 48000.0;
     int maxBlock = 512;
     int usedChannels = 2;
