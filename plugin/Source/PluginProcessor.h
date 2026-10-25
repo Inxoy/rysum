@@ -64,6 +64,15 @@ public:
     juce::String getModAmountId (int r) const { return "mod" + juce::String (r + 1) + "Amt"; }
     std::atomic<int> routeVersion { 0 };
 
+    // ---- patches (message thread)
+    static juce::File getPatchFolder();
+    static juce::Array<juce::File> getPatchFiles();
+    static juce::String cleanPatchName (const juce::String&);
+    bool savePatch (const juce::String& name);
+    bool loadPatch (const juce::File& f);
+    juce::String getPatchName() const { return patchName; }
+    int patchVersion = 0;
+
     // samples
     void loadSamples (const juce::File& folder);
     juce::File getSamplesFolder() const { return samplesFolder; }
@@ -99,6 +108,10 @@ private:
     void handleAsyncUpdate() override;
     void applyCcOverrides (rysum::EngineParams&) const;
     void modulate (rysum::EngineParams& p, const float* globalSources) override;
+    juce::ValueTree makeState (bool forPatch);
+    void applyState (juce::ValueTree state, bool forPatch);
+    void writeFactoryPatches();
+    juce::String patchName;
 
     struct Indices
     {

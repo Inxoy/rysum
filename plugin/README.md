@@ -149,6 +149,19 @@ Pipes the preprocessing flagged as unusable (Gedackt f and f♯ in the current
 samples) are replaced by the neighbouring pipe, pitch-shifted to the exact
 meantone pitch. Noise samples you delete from `samples\noise` are simply skipped.
 
+### Patches
+
+The bar at the top left: ◀ / ▶ step through the patches, the name opens the list,
+*Speichern* saves (same name = replace). A patch holds everything that makes the sound:
+stops, all sliders, pipe layouts and positions, muted pipes, modulation routings and the
+loaded impulse response (by file path). It does **not** change the output format
+(stereo / AmbiX order belongs to the track) or the samples folder.
+
+Patches are plain files in `Documents\Rysum\Patches\*.rysum` – copy, rename, back up or
+share them. On first start six example patches are written there (Init, Plenum, Welle durch
+die Pfeifen, Atmende Wolke, Verfall, Gläserne Sprünge); deleted ones are not re-created.
+The project in Reaper still remembers everything on its own, patches are extra.
+
 ## 4. MIDI
 
 MIDI note = sounding pitch (C2 = 36 … a″ = 81). C♯2, D♯2, F♯2, G♯2 and g♯″ do not

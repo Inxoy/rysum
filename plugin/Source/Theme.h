@@ -108,6 +108,15 @@ public:
         setColour (juce::PopupMenu::highlightedTextColourId, col::bg);
         setColour (juce::TooltipWindow::backgroundColourId, col::panel);
         setColour (juce::TooltipWindow::textColourId, col::ink);
+        setColour (juce::AlertWindow::backgroundColourId, col::panel);
+        setColour (juce::AlertWindow::textColourId, col::ink);
+        setColour (juce::AlertWindow::outlineColourId, col::border);
+        setColour (juce::TextEditor::backgroundColourId, col::bg);
+        setColour (juce::TextEditor::textColourId, col::ink);
+        setColour (juce::TextEditor::outlineColourId, col::border);
+        setColour (juce::TextEditor::focusedOutlineColourId, col::dim);
+        setColour (juce::TextEditor::highlightColourId, col::faint);
+        setColour (juce::CaretComponent::caretColourId, col::ink);
         setDefaultSansSerifTypeface (Assets::get().sans);
     }
 

@@ -640,6 +640,7 @@ void RysumProcessor::timerCallback()
     if (! autoLoadDone)
     {
         autoLoadDone = true;
+        writeFactoryPatches();
         startAutoLoad();
         if (irFile.existsAsFile()) loadIr (irFile);
     }
@@ -670,12 +671,13 @@ void RysumProcessor::setPipePosition (int stop, int key, Pos p)
 // ---------------------------------------------------------------------------
 // state
 // ---------------------------------------------------------------------------
-void RysumProcessor::getStateInformation (juce::MemoryBlock& destData)
+juce::ValueTree RysumProcessor::makeState (bool forPatch)
 {
     auto state = apvts.copyState();
     juce::ValueTree extra ("EXTRA");
-    extra.setProperty ("samplesFolder", samplesFolder.getFullPathName(), nullptr);
+    if (! forPatch) extra.setProperty ("samplesFolder", samplesFolder.getFullPathName(), nullptr);
     extra.setProperty ("irFile", irFile.getFullPathName(), nullptr);
+    extra.setProperty ("patch", patchName, nullptr);
     for (int s = 0; s < kNumStops; ++s)
     {
         juce::ValueTree st ("STOP");
@@ -712,17 +714,58 @@ void RysumProcessor::getStateInformation (juce::MemoryBlock& destData)
     }
     state.removeChild (state.getChildWithName ("EXTRA"), nullptr);
     state.appendChild (extra, nullptr);
-    if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
+    return state;
+}
+
+void RysumProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = makeState (false).createXml()) copyXmlToBinary (*xml, destData);
 }
 
 void RysumProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr) return;
-    auto state = juce::ValueTree::fromXml (*xml);
+    applyState (juce::ValueTree::fromXml (*xml), false);
+}
+
+void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
+{
     if (! state.hasType (apvts.state.getType())) return;
     auto extra = state.getChildWithName ("EXTRA");
+    const float keepOutput = output->load();
+    if (forPatch)
+    {
+        // a patch sets every parameter: ones missing in the file (older patches) go to their defaults
+        state = state.createCopy();
+        for (auto* prm : prmList)
+            if (! state.getChildWithProperty ("id", prm->getParameterID()).isValid())
+            {
+                juce::ValueTree t ("PARAM");
+                t.setProperty ("id", prm->getParameterID(), nullptr);
+                t.setProperty ("value", prm->convertFrom0to1 (prm->getDefaultValue()), nullptr);
+                state.appendChild (t, nullptr);
+            }
+    }
     apvts.replaceState (state);
+    if (forPatch)
+    {
+        // the output format belongs to the track, not to the sound
+        if (auto* o = apvts.getParameter ("output")) o->setValueNotifyingHost (o->convertTo0to1 (keepOutput));
+        // stops the patch does not describe get their default layout
+        for (int s = 0; s < kNumStops; ++s)
+        {
+            bool found = false;
+            for (auto st : extra) found = found || (st.hasType ("STOP") && stopIndexForId (st["id"].toString()) == s);
+            if (! found)
+            {
+                layouts[(size_t) s] = defaultLayout (s);
+                applyLayout (s);
+                for (auto& m : engine.muted[(size_t) s]) m = false;
+            }
+        }
+    }
+    patchName = extra["patch"].toString();
 
     {
         const auto mod = extra.getChildWithName ("MOD");
@@ -769,7 +812,7 @@ void RysumProcessor::setStateInformation (const void* data, int sizeInBytes)
             if (autoLoadDone) loadIr (irf);           // otherwise the first timer tick loads it
         }
         else if (irf == juce::File() && irFile != juce::File() && autoLoadDone) clearIr();
-        const juce::File f (extra["samplesFolder"].toString());
+        const juce::File f (forPatch ? juce::File() : juce::File (extra["samplesFolder"].toString()));
         if (f != juce::File() && f != samplesFolder && SampleLibrary::looksLikeSampleFolder (f))
         {
             samplesFolder = f;
@@ -777,6 +820,111 @@ void RysumProcessor::setStateInformation (const void* data, int sizeInBytes)
         }
     }
     ++changeCounter;
+}
+
+// ---------------------------------------------------------------------------
+// patches: XML files in Documents/Rysum/Patches
+// ---------------------------------------------------------------------------
+juce::File RysumProcessor::getPatchFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rysum").getChildFile ("Patches");
+}
+
+juce::Array<juce::File> RysumProcessor::getPatchFiles()
+{
+    auto files = getPatchFolder().findChildFiles (juce::File::findFiles, false, "*.rysum");
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
+               { return a.getFileNameWithoutExtension().compareNatural (b.getFileNameWithoutExtension()) < 0; });
+    return files;
+}
+
+juce::String RysumProcessor::cleanPatchName (const juce::String& name)
+{
+    return juce::File::createLegalFileName (name.trim()).trim();
+}
+
+bool RysumProcessor::savePatch (const juce::String& name)
+{
+    const auto clean = cleanPatchName (name);
+    if (clean.isEmpty()) return false;
+    auto folder = getPatchFolder();
+    if (! folder.createDirectory()) return false;
+    patchName = clean;
+    auto xml = makeState (true).createXml();
+    if (xml == nullptr) return false;
+    const bool ok = xml->writeTo (folder.getChildFile (clean + ".rysum"));
+    ++patchVersion;
+    return ok;
+}
+
+bool RysumProcessor::loadPatch (const juce::File& f)
+{
+    auto xml = juce::XmlDocument::parse (f);
+    if (xml == nullptr) return false;
+    auto state = juce::ValueTree::fromXml (*xml);
+    if (! state.hasType (apvts.state.getType())) return false;
+    applyState (state, true);
+    patchName = f.getFileNameWithoutExtension();
+    ++patchVersion;
+    return true;
+}
+
+void RysumProcessor::writeFactoryPatches()
+{
+    auto folder = getPatchFolder();
+    if (folder.getChildFile (".factory_written").existsAsFile()) return;     // only once, so deleted patches stay deleted
+    if (! folder.createDirectory()) return;
+
+    struct Route { int src; juce::String tgt; float amt; };
+    auto make = [&] (const juce::String& name, std::vector<std::pair<juce::String, double>> values, std::vector<Route> routesIn)
+    {
+        juce::ValueTree state (apvts.state.getType());
+        for (auto* prm : prmList)
+        {
+            float v = prm->convertFrom0to1 (prm->getDefaultValue());
+            for (auto& kv : values) if (kv.first == prm->getParameterID()) v = (float) kv.second;
+            juce::ValueTree t ("PARAM");
+            t.setProperty ("id", prm->getParameterID(), nullptr);
+            t.setProperty ("value", v, nullptr);
+            state.appendChild (t, nullptr);
+        }
+        juce::ValueTree extra ("EXTRA"), mod ("MOD");
+        extra.setProperty ("irFile", "", nullptr);
+        extra.setProperty ("patch", name, nullptr);
+        for (int r = 0; r < kNumRoutes; ++r)
+        {
+            const bool used = r < (int) routesIn.size();
+            mod.setProperty ("src" + juce::String (r), used ? routesIn[(size_t) r].src : -1, nullptr);
+            mod.setProperty ("tgt" + juce::String (r), used ? routesIn[(size_t) r].tgt : juce::String(), nullptr);
+            if (used)
+                for (int i = 0; i < state.getNumChildren(); ++i)
+                    if (state.getChild (i)["id"].toString() == getModAmountId (r))
+                        state.getChild (i).setProperty ("value", routesIn[(size_t) r].amt, nullptr);
+        }
+        extra.appendChild (mod, nullptr);
+        state.appendChild (extra, nullptr);
+        if (auto xml = state.createXml()) xml->writeTo (folder.getChildFile (name + ".rysum"));
+    };
+    const auto pipe = [] (int t) { return pipeTargetId (t); };
+
+    make ("01 Init", {}, {});
+    make ("02 Plenum", { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 } }, {});
+    make (u8 ("03 Welle durch die Pfeifen"),
+          { { "stop0", 1 }, { "stop2", 1 }, { "lfo2Rate", 0.35f }, { "lfo2Spread", 1.0f }, { "lfo3Rate", 0.21f }, { "lfo3Spread", 1.0f } },
+          { { srcLfo2, pipe (tgtAz), 0.5f }, { srcLfo3, pipe (tgtEl), 0.25f } });
+    make ("04 Atmende Wolke",
+          { { "stop1", 1 }, { "stop3", 1 }, { "env1Attack", 3.0f }, { "env1Decay", 4.0f }, { "env1Sustain", 0.4f }, { "env1Release", 4.0f },
+            { "lfo4Spread", 1.0f }, { "lfo4SpreadMode", 1 }, { "lfo4Rate", 0.6f }, { "tremOn", 1 }, { "tremRate", 3.2f }, { "tremDepth", 0.35f } },
+          { { srcEnv1, pipe (tgtDist), 0.4f }, { srcLfo4, pipe (tgtBright), -0.35f }, { srcLfo4, pipe (tgtLevel), -0.15f } });
+    make ("05 Verfall",
+          { { "stop0", 1 }, { "stop1", 1 }, { "degAmount", 0.6f }, { "degDropouts", 0.2f }, { "motion0", 3 }, { "motion1", 3 },
+            { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.15f } },
+          { { srcLfo1, "degAmount", 0.35f } });
+    make (u8 ("06 Gl\xc3\xa4serne Spr\xc3\xbcnge"),
+          { { "stop3", 1 }, { "stop4", 1 }, { "motion3", 5 }, { "motion4", 5 }, { "rate3", 1.5f }, { "rate4", 2.5f }, { "depth3", 90 }, { "depth4", 120 },
+            { "freezeSmear", 0.8f } },
+          { { srcRandom, pipe (tgtPitch), 0.01f } });
+    folder.getChildFile (".factory_written").replaceWithText ("1");
 }
 
 juce::AudioProcessorEditor* RysumProcessor::createEditor() { return new RysumEditor (*this); }

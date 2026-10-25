@@ -86,6 +86,28 @@ public:
             proc->loadIr (irFile);
         }
 
+        // patches
+        {
+            auto files = RysumProcessor::getPatchFiles();
+            std::cout << "factory patches: " << files.size() << (files.size() >= 6 ? "  ok" : "  FAIL") << std::endl;
+            juce::File welle;
+            for (auto& f : files) if (f.getFileName().contains ("Welle")) welle = f;
+            const float outBefore = proc->apvts.getRawParameterValue ("output")->load();
+            const bool loaded = proc->loadPatch (welle);
+            std::cout << "load factory patch: " << ((loaded && proc->getRouteSrc (0) == rysum::srcLfo2 && proc->getRouteTgt (0) == rysum::tgtAz
+                                                      && proc->apvts.getRawParameterValue ("stop0")->load() > 0.5f
+                                                      && proc->apvts.getRawParameterValue ("output")->load() == outBefore) ? "ok" : "FAIL") << std::endl;
+            auto* w = proc->apvts.getParameter ("wind");
+            w->setValueNotifyingHost (0.33f);
+            proc->savePatch ("Test Patch");
+            w->setValueNotifyingHost (0.9f);
+            proc->setRoute (0, -1, -1);
+            proc->loadPatch (RysumProcessor::getPatchFolder().getChildFile ("Test Patch.rysum"));
+            std::cout << "save / load patch: " << ((std::abs (w->getValue() - 0.33f) < 0.01f && proc->getRouteSrc (0) == rysum::srcLfo2
+                                                    && proc->getPatchName() == "Test Patch") ? "ok" : "FAIL") << std::endl;
+            w->setValueNotifyingHost (0.0f);
+        }
+
         // modulation: LFO 1 -> global wind (a parameter), LFO 2 -> pipe direction with spread, envelope -> distance
         {
             using namespace rysum;

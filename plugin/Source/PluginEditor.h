@@ -20,6 +20,9 @@ public:
     void resized() override;
     void showView (int v);
     void tick();
+    void showPatchMenu();
+    void stepPatch (int delta);
+    void askSavePatch();
 
 private:
     RysumProcessor& proc;
@@ -29,6 +32,9 @@ private:
     rysum::ui::ModView mod;
     std::array<juce::TextButton, 4> tabs;
     juce::ComboBox outputChoice;
+    juce::TextButton patchPrev { juce::String::fromUTF8 ("\xe2\x97\x80") }, patchNext { juce::String::fromUTF8 ("\xe2\x96\xb6") },
+                     patchName, patchSave { "Speichern" };
+    int shownPatchVersion = -1;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputAttachment;
     int current = 0;
     juce::Image grainLayer;
