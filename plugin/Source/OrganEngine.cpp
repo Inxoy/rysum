@@ -1,0 +1,492 @@
+#include "OrganEngine.h"
+
+namespace rysum
+{
+OrganEngine::OrganEngine()
+{
+    voices.resize ((size_t) kMaxVoices);
+    noise.resize ((size_t) kMaxNoiseVoices);
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        std::array<Pos, kNumKeys> pos {};
+        generateLayout (defaultLayout (s), s, pos);
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            baseAz[(size_t) s][(size_t) k] = pos[(size_t) k].az;
+            baseEl[(size_t) s][(size_t) k] = pos[(size_t) k].el;
+            muted[(size_t) s][(size_t) k] = false;
+        }
+    }
+    uint32_t seed = 1;
+    for (auto& v : voices) { v.deg.reset (seed++ * 7919u); XorShift r (seed * 31u); v.wobble.init (r); }
+}
+
+void OrganEngine::prepare (double sampleRate, int maxBlockSize)
+{
+    sr = sampleRate > 0 ? sampleRate : 48000.0;
+    maxBlock = juce::jmax (1, maxBlockSize);
+    scratch.assign ((size_t) maxBlock, 0.0f);
+    scratchRamp.assign ((size_t) maxBlock, 0.0f);
+    for (auto& v : voices) v.active = false;
+    for (auto& n : noise) n.active = false;
+    keyHeld.fill (false);
+    keySustained.fill (false);
+    firstBlock = true;
+}
+
+void OrganEngine::setLibrary (std::shared_ptr<const SampleLibrary> lib)
+{
+    for (auto& v : voices) v.active = false;
+    for (auto& n : noise) n.active = false;
+    library = std::move (lib);
+    windPos = 0.0;
+}
+
+void OrganEngine::requestPreview (int stop, int key)
+{
+    const auto scope = previewFifo.write (1);
+    if (scope.blockSize1 > 0) previewQueue[(size_t) scope.startIndex1] = { stop, key };
+    else if (scope.blockSize2 > 0) previewQueue[(size_t) scope.startIndex2] = { stop, key };
+}
+
+Pos OrganEngine::currentPosition (int stop, int key, const EngineParams& p, double t) const noexcept
+{
+    Pos base { baseAz[(size_t) stop][(size_t) key].load(), baseEl[(size_t) stop][(size_t) key].load() };
+    return applyMotion (base, (Motion) p.motionMode[(size_t) stop], p.motionRate[(size_t) stop],
+                        p.motionDepth[(size_t) stop], t, (uint32_t) (stop * 101 + key * 7 + 1));
+}
+
+void OrganEngine::gainsFor (Pos pos, float* out) const noexcept
+{
+    std::fill (out, out + kMaxAmbiChannels, 0.0f);
+    if (order == 0) encodeStereo (pos.az, out);
+    else            encodeAmbiX (pos.az, pos.el, order, out);
+}
+
+// ---------------------------------------------------------------------------
+float OrganEngine::readSample (const float* d, int len, double pos) const noexcept
+{
+    // 4-point cubic Hermite
+    const int i = (int) pos;
+    const float f = (float) (pos - i);
+    auto at = [d, len] (int j) { return (j >= 0 && j < len) ? d[j] : 0.0f; };
+    const float xm1 = at (i - 1), x0 = at (i), x1 = at (i + 1), x2 = at (i + 2);
+    const float c1 = 0.5f * (x1 - xm1);
+    const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+    const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+    return ((c3 * f + c2) * f + c1) * f + x0;
+}
+
+void OrganEngine::startVoice (int stop, int key, int previewSamples)
+{
+    if (library == nullptr) return;
+    const Pipe& pipe = library->pipes[(size_t) stop][(size_t) key];
+    if (! pipe.valid || pipe.sample == nullptr) return;
+    if (previewSamples < 0 && muted[(size_t) stop][(size_t) key].load()) return;
+
+    Voice* v = nullptr;
+    for (auto& c : voices) if (! c.active) { v = &c; break; }
+    if (v == nullptr)
+    {
+        // steal the oldest releasing voice, else the oldest one
+        Voice* oldest = nullptr;
+        for (auto& c : voices)
+            if (! c.held && (oldest == nullptr || c.age < oldest->age)) oldest = &c;
+        if (oldest == nullptr)
+            for (auto& c : voices)
+                if (oldest == nullptr || c.age < oldest->age) oldest = &c;
+        v = oldest;
+    }
+
+    v->active = true;
+    v->stop = stop; v->key = key;
+    v->pipe = &pipe;
+    v->data = pipe.sample->data.data();
+    v->length = pipe.sample->size();
+    v->pos = 0.0;
+    v->baseRate = pipe.rate * kSampleFileRate / sr;     // pipe.rate already contains file-rate / 48k
+    v->looping = pipe.hasLoop();
+    if (v->looping)
+    {
+        const int loopLen = pipe.loopEnd - pipe.loopStart;
+        v->loopXf = juce::jlimit (16, juce::jmax (16, pipe.loopStart), juce::jmin (1440, loopLen / 3));
+    }
+    v->held = true;
+    v->relXfade = false;
+    v->killing = false;
+    v->killGain = 1.0f;
+    v->previewRemain = previewSamples;
+    v->age = ++ageCounter;
+    v->fresh = true;
+    v->env = 0.0f; v->held1 = 0.0f;
+}
+
+void OrganEngine::releaseVoice (Voice& v)
+{
+    if (! v.held) return;
+    v.held = false;
+    const Pipe& p = *v.pipe;
+    const int relLenFile = (int) (0.04 * kSampleFileRate);
+    const double target = (double) juce::jmax (0, p.release - relLenFile);
+    if (v.pos < target)
+    {
+        // crossfade from wherever we are (usually inside the loop) to just before the
+        // recorded key release, then let the real release tail play
+        v.relXfade = true;
+        v.relPos = target;
+        v.relCount = 0;
+        v.relLen = juce::jmax (1, (int) (0.04 * sr));
+    }
+    else
+    {
+        v.looping = false;
+    }
+}
+
+void OrganEngine::releaseStopKey (int stop, int key)
+{
+    for (auto& v : voices)
+        if (v.active && v.held && v.stop == stop && v.key == key && v.previewRemain < 0)
+            releaseVoice (v);
+}
+
+void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex)
+{
+    if (pool.empty() || gain <= 0.0001f) return;
+    int idx = (int) (rng.uni() * (float) pool.size());
+    if (pool.size() > 1 && idx == lastIndex) idx = (idx + 1) % (int) pool.size();
+    idx = juce::jlimit (0, (int) pool.size() - 1, idx);
+    lastIndex = idx;
+    const auto& s = pool[(size_t) idx].sample;
+    NoiseVoice* nv = nullptr;
+    for (auto& n : noise) if (! n.active) { nv = &n; break; }
+    if (nv == nullptr) nv = &noise[(size_t) (rng.next() % noise.size())];
+    nv->active = true;
+    nv->data = s->data.data();
+    nv->length = s->size();
+    nv->pos = 0.0;
+    nv->rate = s->sampleRate / sr * (0.97 + 0.06 * rng.uni());     // tiny variation per click
+    nv->gain = gain * (0.85f + 0.3f * rng.uni());
+    std::copy (gains, gains + kMaxAmbiChannels, nv->g.begin());
+}
+
+void OrganEngine::keyDown (int key, float velocity, const EngineParams& p)
+{
+    keyHeld[(size_t) key] = true;
+    keySustained[(size_t) key] = false;
+
+    // click: blend between the console position and the average position of the pipes
+    std::array<float, kMaxAmbiChannels> console {}, pipes {}, tmp {};
+    gainsFor ({ p.consoleAz, p.consoleEl }, console.data());
+    int n = 0;
+    const double t = timeSeconds.load();
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        if (! p.stopOn[(size_t) s]) continue;
+        gainsFor (currentPosition (s, key, p, t), tmp.data());
+        for (int c = 0; c < kMaxAmbiChannels; ++c) pipes[(size_t) c] += tmp[(size_t) c];
+        ++n;
+    }
+    std::array<float, kMaxAmbiChannels> g {};
+    for (int c = 0; c < kMaxAmbiChannels; ++c)
+        g[(size_t) c] = n > 0 ? (1.0f - p.clickBlend) * console[(size_t) c] + p.clickBlend * pipes[(size_t) c] / (float) n
+                              : console[(size_t) c];
+    if (library != nullptr)
+        playNoise (library->clicksDown.empty() ? library->clicksOther : library->clicksDown,
+                   p.clickLevel * (0.55f + 0.45f * velocity) * 1.6f, g.data(), lastDown);
+
+    for (int s = 0; s < kNumStops; ++s)
+        if (p.stopOn[(size_t) s])
+        {
+            releaseStopKey (s, key);
+            startVoice (s, key);
+        }
+}
+
+void OrganEngine::keyUp (int key, const EngineParams& p)
+{
+    if (! keyHeld[(size_t) key]) return;
+    keyHeld[(size_t) key] = false;
+    std::array<float, kMaxAmbiChannels> console {};
+    gainsFor ({ p.consoleAz, p.consoleEl }, console.data());
+    if (library != nullptr)
+        playNoise (library->clicksUp.empty() ? library->clicksOther : library->clicksUp,
+                   p.releaseClick * 1.6f, console.data(), lastUp);
+    for (int s = 0; s < kNumStops; ++s) releaseStopKey (s, key);
+}
+
+void OrganEngine::handleMidi (const juce::MidiMessage& m, const EngineParams& p)
+{
+    if (m.isNoteOn())
+    {
+        const int k = keyIndexForMidi (m.getNoteNumber());
+        if (k >= 0) keyDown (k, m.getFloatVelocity(), p);
+    }
+    else if (m.isNoteOff())
+    {
+        const int k = keyIndexForMidi (m.getNoteNumber());
+        if (k < 0) return;
+        if (sustainPedal) { keySustained[(size_t) k] = true; return; }
+        keyUp (k, p);
+    }
+    else if (m.isSustainPedalOn()) sustainPedal = true;
+    else if (m.isSustainPedalOff())
+    {
+        sustainPedal = false;
+        for (int k = 0; k < kNumKeys; ++k)
+            if (keySustained[(size_t) k]) { keySustained[(size_t) k] = false; keyUp (k, p); }
+    }
+    else if (m.isAllNotesOff() || m.isAllSoundOff())
+    {
+        for (int k = 0; k < kNumKeys; ++k)
+            if (keyHeld[(size_t) k]) keyUp (k, p);
+        if (m.isAllSoundOff())
+            for (auto& v : voices) if (v.active) { v.killing = true; }
+    }
+}
+
+// ---------------------------------------------------------------------------
+void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end, int blockLen, const EngineParams& p)
+{
+    const int n = end - start;
+    if (n <= 0) return;
+    const bool perPipeDeg = p.deg.perPipe && p.deg.amount > 0.0001f;
+    const float wobAmt = p.deg.amount * p.deg.wobble;
+    const double dt = 1.0 / sr;
+    const float killStep = (float) (1.0 / (0.005 * sr));
+
+    for (auto& v : voices)
+    {
+        if (! v.active) continue;
+        const float* d = v.data;
+        const int len = v.length;
+        const Pipe& pipe = *v.pipe;
+        const int loopLen = pipe.loopEnd - pipe.loopStart;
+        float* buf = scratch.data();
+        bool finished = false;
+
+        double rate = v.baseRate;
+        float amp = 1.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            if (wobAmt > 0.0001f && (i & 15) == 0)       // wind wobble, updated every 16 samples
+            {
+                v.wobble.advance (dt * 16.0);
+                const float w = v.wobble.value();
+                rate = v.baseRate * std::exp2 (wobAmt * 28.0f * w / 1200.0f);
+                amp = 1.0f + 0.3f * wobAmt * w;
+            }
+
+            float x;
+            if (v.looping && v.pos >= pipe.loopEnd - v.loopXf)
+            {
+                const float t = (float) ((v.pos - (pipe.loopEnd - v.loopXf)) / v.loopXf);
+                x = (1.0f - t) * readSample (d, len, v.pos) + t * readSample (d, len, v.pos - loopLen);
+            }
+            else x = readSample (d, len, v.pos);
+
+            bool jumped = false;
+            if (v.relXfade)
+            {
+                const float g = (float) v.relCount / (float) v.relLen;
+                x = x * (1.0f - g) + readSample (d, len, v.relPos) * g;
+                v.relPos += rate;
+                if (++v.relCount >= v.relLen)
+                {
+                    // crossfade done: continue from the release reader, no more looping
+                    v.relXfade = false; v.looping = false; v.pos = v.relPos; jumped = true;
+                }
+            }
+            if (! jumped)
+            {
+                v.pos += rate;
+                if (v.looping && v.pos >= pipe.loopEnd) v.pos -= loopLen;
+            }
+
+            if (v.killing)
+            {
+                v.killGain -= killStep;
+                if (v.killGain <= 0.0f) { finished = true; x = 0.0f; }
+                x *= juce::jmax (0.0f, v.killGain);
+            }
+
+            x *= amp;
+
+            if (perPipeDeg)
+            {
+                const auto f = v.deg.frame (p.deg, sr);
+                x = DegradeState::process (x, v.held1, v.env, f, p.deg);
+            }
+
+            buf[i] = x;
+
+            if (v.previewRemain > 0 && --v.previewRemain == 0) releaseVoice (v);
+            if (v.pos >= len - 2) { finished = true; for (int j = i + 1; j < n; ++j) buf[j] = 0.0f; break; }
+            if (finished) { for (int j = i + 1; j < n; ++j) buf[j] = 0.0f; break; }
+        }
+
+        // add to the output with the gain ramp of this block:
+        // o += buf * (ga + d*i)  ==  o += ga*buf + d*(buf*i)   (two vectorised passes per channel)
+        const float inv = 1.0f / (float) blockLen;
+        float* bufRamp = scratchRamp.data();
+        for (int i = 0; i < n; ++i) bufRamp[i] = buf[i] * (float) i;
+        for (int c = 0; c < usedChannels; ++c)
+        {
+            const float a = v.g0[(size_t) c], b = v.g1[(size_t) c];
+            float* o = out.getWritePointer (c) + start;
+            const float ga = a + (b - a) * (float) start * inv;
+            const float dg = (b - a) * inv;
+            if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf, ga, n);
+            if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufRamp, dg, n);
+        }
+        if (finished) v.active = false;
+    }
+
+    // noise one-shots
+    for (auto& nv : noise)
+    {
+        if (! nv.active) continue;
+        for (int i = 0; i < n; ++i)
+        {
+            if (nv.pos >= nv.length - 2) { nv.active = false; break; }
+            const float x = readSample (nv.data, nv.length, nv.pos) * nv.gain;
+            nv.pos += nv.rate;
+            for (int c = 0; c < usedChannels; ++c)
+                if (std::abs (nv.g[(size_t) c]) > 1.0e-9f) out.getWritePointer (c)[start + i] += x * nv.g[(size_t) c];
+        }
+    }
+
+    // wind: omnidirectional (W) in Ambisonics, centre in stereo
+    if (library != nullptr && ! library->wind.empty())
+    {
+        const auto& w = *library->wind.front();
+        const int wl = w.size();
+        const float target = p.wind * 2.0f;
+        const double wr = w.sampleRate / sr;
+        if (wl > 4 && (target > 0.0001f || windGain > 0.0001f))
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                windGain += 0.0005f * (target - windGain);
+                float x = readSample (w.data.data(), wl, windPos) * windGain;
+                windPos += wr;
+                if (windPos >= wl - 2) windPos -= (wl - 2);
+                if (order == 0) { out.getWritePointer (0)[start + i] += x * 0.7071f; if (usedChannels > 1) out.getWritePointer (1)[start + i] += x * 0.7071f; }
+                else out.getWritePointer (0)[start + i] += x;
+            }
+        }
+    }
+}
+
+void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& pIn)
+{
+    juce::ScopedNoDenormals noDenormals;
+    EngineParams p = pIn;                // local copy with derived values
+    p.deg.prepareBlock (sr);
+    out.clear();
+    const int numSamples = out.getNumSamples();
+    if (numSamples <= 0) return;
+    if ((int) scratch.size() < numSamples) { scratch.assign ((size_t) numSamples, 0.0f); scratchRamp.assign ((size_t) numSamples, 0.0f); }   // safety
+
+    order = juce::jlimit (0, kMaxOrder, p.outputMode);
+    usedChannels = juce::jmin (out.getNumChannels(), order == 0 ? 2 : (order + 1) * (order + 1));
+
+    // ---- stops pulled / pushed
+    if (firstBlock) { lastStopOn = p.stopOn; firstBlock = false; }
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        if (p.stopOn[(size_t) s] == lastStopOn[(size_t) s]) continue;
+        std::array<float, kMaxAmbiChannels> console {};
+        gainsFor ({ p.consoleAz, p.consoleEl }, console.data());
+        if (library != nullptr)
+            playNoise (library->stopPulls, p.stopPull * (p.stopOn[(size_t) s] ? 1.4f : 1.1f), console.data(), lastPull);
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            if (p.stopOn[(size_t) s] && keyHeld[(size_t) k]) startVoice (s, k);
+            if (! p.stopOn[(size_t) s]) releaseStopKey (s, k);
+        }
+    }
+    lastStopOn = p.stopOn;
+
+    // ---- previews requested by the UI
+    {
+        const auto scope = previewFifo.read (previewFifo.getNumReady());
+        auto doOne = [this] (int idx) { auto r = previewQueue[(size_t) idx]; startVoice (r.first, r.second, (int) (1.6 * sr)); };
+        for (int i = 0; i < scope.blockSize1; ++i) doOne (scope.startIndex1 + i);
+        for (int i = 0; i < scope.blockSize2; ++i) doOne (scope.startIndex2 + i);
+    }
+
+    // ---- spatial gains for this block (end-of-block targets, ramped from the previous ones)
+    const double t0 = timeSeconds.load();
+    const double tEnd = t0 + numSamples / sr;
+    auto updateGains = [&] ()
+    {
+        for (auto& v : voices)
+        {
+            if (! v.active) continue;
+            if (! v.fresh) v.g0 = v.g1;
+            gainsFor (currentPosition (v.stop, v.key, p, tEnd), v.g1.data());
+            if (v.fresh) { v.g0 = v.g1; v.fresh = false; }
+        }
+    };
+    updateGains();
+
+    // ---- render, split at MIDI events
+    int pos = 0;
+    for (const auto meta : midi)
+    {
+        const int at = juce::jlimit (0, numSamples, meta.samplePosition);
+        renderRange (out, pos, at, numSamples, p);
+        pos = at;
+        handleMidi (meta.getMessage(), p);
+        // voices started mid-block take the end-of-block gains right away
+        for (auto& v : voices)
+            if (v.active && v.fresh) { gainsFor (currentPosition (v.stop, v.key, p, tEnd), v.g1.data()); v.g0 = v.g1; v.fresh = false; }
+    }
+    // voices started by stop changes / previews before any MIDI
+    for (auto& v : voices)
+        if (v.active && v.fresh) { gainsFor (currentPosition (v.stop, v.key, p, tEnd), v.g1.data()); v.g0 = v.g1; v.fresh = false; }
+    renderRange (out, pos, numSamples, numSamples, p);
+
+    // ---- degradation on the sum
+    if (! p.deg.perPipe && p.deg.amount > 0.0001f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto f = sumDeg.frame (p.deg, sr);
+            for (int c = 0; c < usedChannels; ++c)
+            {
+                float* o = out.getWritePointer (c);
+                o[i] = DegradeState::process (o[i], sumHeld[(size_t) c], sumEnv[(size_t) c], f, p.deg);
+            }
+        }
+    }
+
+    // ---- master gain (smoothed) + meters
+    float pk0 = 0.0f, pk1 = 0.0f;
+    const float step = (p.masterGain - masterSmoothed) / (float) numSamples;
+    for (int c = 0; c < usedChannels; ++c)
+    {
+        float g = masterSmoothed;
+        float* o = out.getWritePointer (c);
+        for (int i = 0; i < numSamples; ++i) { g += step; o[i] *= g; }
+    }
+    masterSmoothed = p.masterGain;
+    if (out.getNumChannels() > 0) pk0 = out.getMagnitude (0, 0, numSamples);
+    if (out.getNumChannels() > 1) pk1 = order == 0 ? out.getMagnitude (1, 0, numSamples) : pk0;
+    meterL = juce::jmax (pk0, meterL.load() * 0.9f);
+    meterR = juce::jmax (pk1, meterR.load() * 0.9f);
+
+    // ---- bookkeeping for the UI
+    int count = 0;
+    std::array<uint64_t, kNumStops> sounding {};
+    for (auto& v : voices) if (v.active) { ++count; sounding[(size_t) v.stop] |= (uint64_t) 1 << v.key; }
+    for (int s = 0; s < kNumStops; ++s) soundingMask[(size_t) s] = sounding[(size_t) s];
+    activeVoices = count;
+    uint64_t mask = 0;
+    for (int k = 0; k < kNumKeys; ++k) if (keyHeld[(size_t) k] || keySustained[(size_t) k]) mask |= (uint64_t) 1 << k;
+    heldMask = mask;
+    timeSeconds = tEnd;
+    lastParams = p;
+}
+} // namespace rysum
