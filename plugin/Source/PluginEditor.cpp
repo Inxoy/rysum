@@ -5,18 +5,25 @@ using namespace rysum::ui;
 
 static constexpr int kW = 1120, kH = 720, kHeader = 56;
 
-RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p)
+RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p)
 {
     addAndMakeVisible (console);
     addChildComponent (space);
-    const char* names[] { "Spieltisch", "Raum" };
-    for (int i = 0; i < 2; ++i)
+    addChildComponent (klang);
+    const char* names[] { "Spieltisch", "Raum", "Klang" };
+    for (int i = 0; i < 3; ++i)
     {
         tabs[(size_t) i].setButtonText (juce::String (names[i]).toUpperCase());
         tabs[(size_t) i].onClick = [this, i] { showView (i); };
         addAndMakeVisible (tabs[(size_t) i]);
     }
     showView (0);
+
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("output")))
+        outputChoice.addItemList (choice->choices, 1);
+    outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "output", outputChoice);
+    outputChoice.setTooltip ("Ausgabeformat: Stereo oder AmbiX (ACN/SN3D)");
+    addAndMakeVisible (outputChoice);
 
     // grain over the whole interface, rendered once
     grainLayer = juce::Image (juce::Image::ARGB, kW, kH, true);
@@ -32,7 +39,8 @@ void RysumContent::showView (int v)
     current = v;
     console.setVisible (v == 0);
     space.setVisible (v == 1);
-    for (int i = 0; i < 2; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
+    klang.setVisible (v == 2);
+    for (int i = 0; i < 3; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
 }
 
 void RysumContent::resized()
@@ -40,15 +48,18 @@ void RysumContent::resized()
     auto body = getLocalBounds().withTrimmedTop (kHeader);
     console.setBounds (body);
     space.setBounds (body);
-    const int tw[] { 112, 72 };
-    int x = 508;
-    for (int i = 0; i < 2; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
+    klang.setBounds (body);
+    const int tw[] { 112, 72, 76 };
+    int x = 470;
+    for (int i = 0; i < 3; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
+    outputChoice.setBounds (kW - 28 - 60 - 170, 14, 170, 28);
 }
 
 void RysumContent::tick()
 {
     if (console.isVisible()) console.refresh();
     if (space.isVisible()) space.refresh();
+    if (klang.isVisible()) klang.refresh();
     repaint (0, 0, kW, kHeader);
 }
 
@@ -69,9 +80,12 @@ void RysumContent::paint (juce::Graphics& g)
                 head.withTrimmedLeft (140).withWidth (320), juce::Justification::centredLeft);
 
     const int out = (int) proc.apvts.getRawParameterValue ("output")->load();
-    juce::String o = out == 0 ? juce::String ("Stereo") : "AmbiX " + juce::String (out) + u8 (". Ord. \xc2\xb7 ") + juce::String ((out + 1) * (out + 1)) + " ch";
-    g.setColour (col::dim);
-    g.drawText (o, head.withTrimmedLeft (760).withTrimmedRight (110), juce::Justification::centredRight);
+    const int needed = out == 0 ? 2 : (out + 1) * (out + 1);
+    const int have = proc.getTotalNumOutputChannels();
+    juce::String o = juce::String (needed) + " ch";
+    if (have < needed) o = u8 ("Spur: nur ") + juce::String (have) + " ch!";
+    g.setColour (have < needed ? col::white : col::faint);
+    g.drawText (o, juce::Rectangle<int> (kW - 28 - 60 - 170 - 130, 0, 120, kHeader), juce::Justification::centredRight);
     g.setColour (col::faint);
     g.drawText (juce::String (proc.engine.activeVoices.load()) + " St.", head.withTrimmedLeft (980), juce::Justification::centredRight);
 }

@@ -99,6 +99,9 @@ public:
         setColour (juce::TextButton::textColourOffId, col::dim);
         setColour (juce::TextButton::textColourOnId, col::bg);
         setColour (juce::ComboBox::outlineColourId, col::border);
+        setColour (juce::ComboBox::backgroundColourId, col::bg);
+        setColour (juce::ComboBox::textColourId, col::ink);
+        setColour (juce::ComboBox::arrowColourId, col::dim);
         setColour (juce::PopupMenu::backgroundColourId, col::panel);
         setColour (juce::PopupMenu::textColourId, col::ink);
         setColour (juce::PopupMenu::highlightedBackgroundColourId, col::ink);
@@ -123,6 +126,9 @@ public:
             g.drawRect (r, 1.0f);
         }
     }
+
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return Assets::get().monoFont (12.0f); }
+    juce::Font getPopupMenuFont() override { return Assets::get().monoFont (13.0f); }
 
     juce::Font getTextButtonFont (juce::TextButton&, int h) override { return Assets::get().monoFont (juce::jmin (12.0f, (float) h * 0.55f)); }
 

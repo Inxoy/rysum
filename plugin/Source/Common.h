@@ -49,6 +49,46 @@ inline double meantoneHz (int midi) noexcept
     return kA4 * std::pow (2.0, (midi / 12 - 5) + (kMeantoneCents[midi % 12] - kMeantoneCents[9]) / 1200.0);
 }
 
+// --------------------------------------------------------------------------
+// Temperaments (cents above C). The samples are in 1/4-comma meantone; another
+// temperament is reached by shifting each pitch class, a' stays where it is.
+// --------------------------------------------------------------------------
+inline juce::StringArray temperamentNames()
+{
+    return { juce::String::fromUTF8 ("\xc2\xbc-Komma mittelt\xc3\xb6nig (Original)"), juce::String::fromUTF8 ("\xe2\x85\x99-Komma mittelt\xc3\xb6nig"),
+             "Werckmeister III", "Kirnberger III", "Vallotti", "Pythagoreisch", "Gleichstufig" };
+}
+
+inline std::array<double, 12> temperamentCents (int t)
+{
+    switch (t)
+    {
+        case 1:
+        {
+            const double f = 701.955 - 21.506 / 6.0;           // 1/6-comma fifth
+            auto m = [] (double v) { return std::fmod (std::fmod (v, 1200.0) + 1200.0, 1200.0); };
+            return { 0.0, m (7 * f), m (2 * f), m (-3 * f), m (4 * f), m (-1 * f), m (6 * f), m (f), m (8 * f), m (3 * f), m (-2 * f), m (5 * f) };
+        }
+        case 2: return { 0, 90.225, 192.180, 294.135, 390.225, 498.045, 588.270, 696.090, 792.180, 888.270, 996.090, 1092.180 };
+        case 3: return { 0, 90.225, 193.157, 294.135, 386.314, 498.045, 590.224, 696.578, 792.180, 889.735, 996.090, 1088.269 };
+        case 4: return { 0, 94.135, 196.090, 298.045, 392.180, 501.955, 592.180, 698.045, 796.090, 894.135, 1000.000, 1090.225 };
+        case 5: return { 0, 113.685, 203.910, 294.135, 407.820, 498.045, 611.730, 701.955, 815.640, 905.865, 996.090, 1109.775 };
+        case 6: return { 0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100 };
+        default: return { kMeantoneCents[0], kMeantoneCents[1], kMeantoneCents[2], kMeantoneCents[3], kMeantoneCents[4], kMeantoneCents[5],
+                          kMeantoneCents[6], kMeantoneCents[7], kMeantoneCents[8], kMeantoneCents[9], kMeantoneCents[10], kMeantoneCents[11] };
+    }
+}
+
+/** shift in cents per pitch class to go from the recorded meantone to temperament t (a' fixed) */
+inline std::array<float, 12> temperamentShift (int t)
+{
+    const auto c = temperamentCents (t);
+    std::array<float, 12> s {};
+    for (int i = 0; i < 12; ++i)
+        s[(size_t) i] = (float) ((c[(size_t) i] - c[9]) - (kMeantoneCents[i] - kMeantoneCents[9]));
+    return s;
+}
+
 inline juce::String helmholtzName (int midi)
 {
     static const char* names[12] { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B" };

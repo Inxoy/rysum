@@ -4,6 +4,7 @@
 #include "Theme.h"
 #include "ConsoleView.h"
 #include "SpaceView.h"
+#include "KlangView.h"
 
 /** fixed 1120 x 720 design, scaled as a whole when the window is resized */
 class RysumContent : public juce::Component
@@ -20,7 +21,10 @@ private:
     RysumProcessor& proc;
     rysum::ui::ConsoleView console;
     rysum::ui::SpaceView space;
-    std::array<juce::TextButton, 2> tabs;
+    rysum::ui::KlangView klang;
+    std::array<juce::TextButton, 3> tabs;
+    juce::ComboBox outputChoice;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputAttachment;
     int current = 0;
     juce::Image grainLayer;
 };

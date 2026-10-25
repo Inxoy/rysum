@@ -74,11 +74,13 @@ private:
     SpaceCircle circle;
     std::vector<std::unique_ptr<StopRow>> stopButtons;
     std::array<juce::TextButton, 6> layoutButtons;
-    std::array<juce::TextButton, 4> motionButtons;
-    std::array<juce::TextButton, 6> outputButtons;
-    juce::Slider width, centre, elevation, spread;
-    std::unique_ptr<ParamRow> rateRow, depthRow;
-    juce::Rectangle<int> left, right, stopsBox, layoutBox, motionBox, outputBox;
+    std::array<juce::TextButton, 6> motionButtons;
+    juce::Slider width, centre, elevation, spread, distance;
+    std::unique_ptr<ParamRow> rateRow, depthRow, ellipseRow, irDry, irWet;
+    juce::TextButton irLoad { juce::String::fromUTF8 ("Impulsantwort laden \xe2\x80\xa6") }, irClear { "x" }, irFuma { "FuMa" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> irFumaAttachment;
+    std::unique_ptr<juce::FileChooser> chooser;
+    juce::Rectangle<int> left, right, stopsBox, layoutBox, motionBox, hallBox;
     bool updating = false;
 };
 } // namespace rysum::ui

@@ -4,9 +4,11 @@
 
 namespace rysum
 {
-/** Position on the sphere in degrees. Azimuth: 0 = front, +90 = left (AmbiX convention).
+/** Position in degrees + distance in metres. Azimuth: 0 = front, +90 = left (AmbiX convention).
     Elevation: 0 = horizon, +90 = zenith. */
-struct Pos { float az = 0.0f, el = 0.0f; };
+struct Pos { float az = 0.0f, el = 0.0f, dist = 6.0f; };
+
+constexpr float kMinDist = 0.5f, kMaxDist = 60.0f, kRefDist = 4.0f;   // gain 1 at kRefDist
 
 inline float wrapAz (float a) noexcept
 {
@@ -63,9 +65,12 @@ inline void encodeStereo (float azDeg, float* out) noexcept
 // --------------------------------------------------------------------------
 // Motion
 // --------------------------------------------------------------------------
-enum class Motion { Static = 0, Rotation, Pendulum, Drift };
+enum class Motion { Static = 0, Rotation, Pendulum, Drift, Vertical, Jumps };
 
-inline juce::StringArray motionNames() { return { "Statisch", "Rotation", "Pendel", "Drift" }; }
+inline juce::StringArray motionNames()
+{
+    return { "Statisch", "Rotation", "Pendel", "Drift", "Vertikal", juce::String::fromUTF8 ("Spr\xc3\xbcnge") };
+}
 
 /** smooth pseudo-random function of time, -1..1, different per seed */
 inline float smoothNoise (double t, uint32_t seed) noexcept
@@ -78,24 +83,65 @@ inline float smoothNoise (double t, uint32_t seed) noexcept
                      + 0.8 * std::sin (two_pi * f3 * t + p3)) / 2.4);
 }
 
-inline Pos applyMotion (Pos base, Motion mode, float rateHz, float depthDeg, double t, uint32_t seed) noexcept
+/** Moves a pipe. 'phase' is the integrated motion phase in cycles (speed in Hz integrated
+    over time by the engine), so changing the speed never makes the position jump;
+    a negative speed simply runs the phase backwards (other direction). */
+inline Pos applyMotion (Pos base, Motion mode, double phase, float depthDeg, uint32_t seed, float ellipse = 0.0f) noexcept
 {
     switch (mode)
     {
         case Motion::Rotation:
-            base.az = wrapAz (base.az + (float) std::fmod (360.0 * rateHz * t, 360.0));
+            base.az = wrapAz (base.az + (float) (360.0 * (phase - std::floor (phase))));
             break;
+        case Motion::Vertical:
+        {
+            // turn around the left-right axis: front -> up -> back -> down
+            const double a = juce::MathConstants<double>::twoPi * (phase - std::floor (phase));
+            const double az = juce::degreesToRadians ((double) base.az), el = juce::degreesToRadians ((double) base.el);
+            const double x = std::cos (el) * std::cos (az), y = std::cos (el) * std::sin (az), z = std::sin (el);
+            const double x2 = x * std::cos (a) - z * std::sin (a);
+            const double z2 = x * std::sin (a) + z * std::cos (a);
+            base.az = (float) juce::radiansToDegrees (std::atan2 (y, x2));
+            base.el = (float) juce::radiansToDegrees (std::asin (juce::jlimit (-1.0, 1.0, z2)));
+            break;
+        }
         case Motion::Pendulum:
-            base.az = wrapAz (base.az + depthDeg * (float) std::sin (juce::MathConstants<double>::twoPi * rateHz * t));
+            base.az = wrapAz (base.az + depthDeg * (float) std::sin (juce::MathConstants<double>::twoPi * phase));
             break;
         case Motion::Drift:
-            base.az = wrapAz (base.az + depthDeg * smoothNoise (rateHz * t, seed));
-            base.el = juce::jlimit (-90.0f, 90.0f, base.el + 0.4f * depthDeg * smoothNoise (rateHz * t, seed + 7777u));
+            base.az = wrapAz (base.az + depthDeg * smoothNoise (phase, seed));
+            base.el = juce::jlimit (-90.0f, 90.0f, base.el + 0.4f * depthDeg * smoothNoise (phase, seed + 7777u));
+            base.dist *= 1.0f + 0.4f * (depthDeg / 180.0f) * smoothNoise (phase * 0.7, seed + 999u);
             break;
+        case Motion::Jumps:
+        {
+            // sudden jumps to random places around the base position; every pipe jumps at its own moment
+            XorShift off (seed * 31u + 7u);
+            const double idx = std::floor (phase + off.uni());
+            XorShift r ((uint32_t) (seed * 7919u) ^ (uint32_t) (int64_t) idx * 104729u);
+            r.next(); r.next();
+            base.az = wrapAz (base.az + depthDeg * r.bi());
+            base.el = juce::jlimit (-90.0f, 90.0f, base.el + 0.5f * depthDeg * r.bi());
+            base.dist *= 1.0f + 0.6f * (depthDeg / 180.0f) * r.bi();
+            break;
+        }
         case Motion::Static:
         default: break;
     }
+    if (ellipse > 0.0f)
+    {
+        // elliptic orbit: pipes come closer when they pass in front of the listener
+        const float a = juce::degreesToRadians (base.az), e = juce::degreesToRadians (base.el);
+        base.dist *= 1.0f - ellipse * std::cos (e) * std::cos (a);
+    }
+    base.dist = juce::jlimit (kMinDist, kMaxDist, base.dist);
     return base;
+}
+
+/** gain from distance (1 at kRefDist), 'amount' 0 = no distance effect, 1 = physical 1/r */
+inline float distanceGain (float dist, float amount) noexcept
+{
+    return juce::jlimit (0.0f, 4.0f, std::pow (kRefDist / juce::jmax (kMinDist, dist), amount));
 }
 
 // --------------------------------------------------------------------------
@@ -116,6 +162,7 @@ struct LayoutSettings
     float center = 0.0f;       // azimuth of the centre
     float elevation = 0.0f;
     float spread = 10.0f;      // elevation spread
+    float distance = 6.0f;     // metres
 };
 
 inline void generateLayout (const LayoutSettings& s, int stopIndex, std::array<Pos, kNumKeys>& out)
@@ -131,7 +178,7 @@ inline void generateLayout (const LayoutSettings& s, int stopIndex, std::array<P
     for (int k = 0; k < kNumKeys; ++k)
     {
         const float r = rank[(size_t) k];
-        Pos p { s.center, s.elevation };
+        Pos p { s.center, s.elevation, s.distance };
         switch ((Layout) s.type)
         {
             case Layout::Case:
@@ -144,14 +191,15 @@ inline void generateLayout (const LayoutSettings& s, int stopIndex, std::array<P
                 break;
             }
             case Layout::Pitch:   p.az = s.center + half - r * s.width; p.el = s.elevation; break;
-            case Layout::Scatter: p.az = s.center + rnd.bi() * half;   p.el = s.elevation + rnd.bi() * s.spread; break;
+            case Layout::Scatter: p.az = s.center + rnd.bi() * half;   p.el = s.elevation + rnd.bi() * s.spread; p.dist *= 1.0f + 0.45f * rnd.bi(); break;
             case Layout::Ring:    p.az = s.center + 360.0f * r;        p.el = s.elevation; break;
-            case Layout::Spiral:  p.az = s.center + 720.0f * r;        p.el = s.elevation - s.spread + 2.0f * s.spread * r; break;
+            case Layout::Spiral:  p.az = s.center + 720.0f * r;        p.el = s.elevation - s.spread + 2.0f * s.spread * r; p.dist *= 1.5f - r; break;
             case Layout::Zone:    p.az = s.center + rnd.bi() * half * 0.15f; p.el = s.elevation + rnd.bi() * s.spread * 0.3f; break;
             default: break;
         }
         p.az = wrapAz (p.az);
         p.el = juce::jlimit (-90.0f, 90.0f, p.el);
+        p.dist = juce::jlimit (kMinDist, kMaxDist, p.dist);
         out[(size_t) k] = p;
     }
 }
@@ -165,6 +213,7 @@ inline LayoutSettings defaultLayout (int stopIndex)
     s.center = 0.0f;
     s.elevation = 4.0f + 7.0f * (float) stopIndex;
     s.spread = 10.0f;
+    s.distance = 5.0f + 0.5f * (float) stopIndex;
     return s;
 }
 } // namespace rysum

@@ -78,10 +78,12 @@ juce_add_binary_data(RysumData
 target_sources(Rysum PRIVATE
     Source/SampleLibrary.cpp
     Source/OrganEngine.cpp
+    Source/Convolver.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/ConsoleView.cpp
-    Source/SpaceView.cpp)
+    Source/SpaceView.cpp
+    Source/KlangView.cpp)
 
 target_include_directories(Rysum PRIVATE Source)
 
@@ -97,6 +99,7 @@ target_link_libraries(Rysum
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_audio_formats
+        juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -115,23 +118,24 @@ if(RYSUM_BUILD_TESTS)
     target_sources(RysumRenderTest PRIVATE
         Tests/RenderTest.cpp
         Source/SampleLibrary.cpp
-        Source/OrganEngine.cpp)
+        Source/OrganEngine.cpp
+        Source/Convolver.cpp)
     target_include_directories(RysumRenderTest PRIVATE Source)
     target_compile_definitions(RysumRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(RysumRenderTest PRIVATE
-        juce::juce_audio_basics juce::juce_audio_formats juce::juce_core juce::juce_events
+        juce::juce_audio_basics juce::juce_audio_formats juce::juce_core juce::juce_events juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
-        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
-        Source/ConsoleView.cpp Source/SpaceView.cpp)
+        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
+        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
     target_link_libraries(RysumUiSnapshot PRIVATE RysumData
-        juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats
+        juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 endif()

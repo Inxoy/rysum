@@ -57,19 +57,21 @@ The plugin finds the samples by itself in `D:\RYSUM_plugin\rysum_plugin\samples`
 `rysum_samples.json`.
 
 ### Stereo
-Output "Stereo" (Raum page → Ausgabe). The plugin writes to channels 1/2.
+Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.
 
 ### Ambisonics (AmbiX, ACN/SN3D)
 1. Set the track to enough channels: click the track's **Route** button →
    *Track channels*: 4 (1st order), 9, 16, 25 or **36 (5th order)**.
-2. In the plugin choose Ausgabe **1. … 5. Ord.** – the header shows the channel count.
+2. In the plugin choose the output format in the dropdown at the top right (Stereo or
+   AmbiX 1.–5. Ordnung). Next to it you see how many channels that needs; it turns white
+   with a warning if the track has fewer.
 3. Decode after the plugin, e.g. IEM *BinauralDecoder* (headphones) or *AllRADecoder*
    (speakers) – the format is the same as the IEM suite (ACN order, SN3D).
 
 The plugin's output bus is declared as 5th-order Ambisonics (36 ch). In stereo
 mode only channels 1/2 carry sound.
 
-## 3. The two pages
+## 3. The three pages
 
 **Spieltisch** – click the stop knobs (photos) to pull/push stops. Under every stop:
 *Lautst.* (volume, −48…+12 dB) and *Wind* – how far the stop is drawn: below 100 % the
@@ -88,8 +90,36 @@ outside the circle = below the horizon). Select a stop on the right, then
 - drag a dot to move one pipe,
 - drag on empty space to turn the whole stop around you,
 - *Anordnung*: layout generators (organ case C/C♯ side, pitch, scatter, ring,
-  spiral, zone) with width / centre / height / spread,
-- *Bewegung*: static, rotation, pendulum, drift – speed and depth (automatable).
+  spiral, zone) with width / centre / height / spread / *Abstand* (distance, 1–40 m;
+  bigger dots = nearer),
+- *Bewegung*: Statisch, Rotation (horizontal), Pendel, Drift, Vertikal (turns over your
+  head: front → up → back → down), Sprünge (every pipe suddenly jumps to a new random place
+  around its position, each at its own moment; *Tiefe* = how far). *Geschwindigkeit* runs
+  from −2 to +2 Hz: negative = the other direction. Changing the speed never resets the
+  position, so you can do smooth speed glissandi (also by automation). *Ellipse* squashes
+  the path so pipes come closer in front and move away behind (gives Doppler, see Klang).
+- *Hall*: load an impulse response (WAV/AIFF/FLAC, up to 10 s). 4/9/16/25/36 channels are
+  read as AmbiX (ACN/SN3D); for a first-order B-format recording in FuMa order (W X Y Z,
+  e.g. from some older tools) switch on *FuMa*. 2 channels = stereo, 1 = mono. The omni part
+  of the organ is fed into the IR; *Direkt* and *Hall* set the dry and room levels, *x*
+  removes the IR. The IR is resampled to the project rate and normalised automatically.
+
+**Klang**
+- *Stimmung*: temperament (¼-comma meantone = the original recording, ⅙-comma,
+  Werckmeister III, Kirnberger III, Vallotti, Pythagorean, equal). a′ stays put, the other
+  pitch classes are shifted. *Stimmton* moves everything (±200 ct, shown as a′ in Hz).
+  *Verstimmung* gives every pipe its own fixed random detune (0–60 ct).
+- *Tremulant*: on/off, speed, depth – pitch + level wave shared by all pipes, plus a bit
+  of wind noise.
+- *Freeze*: while on, released notes do not stop but turn into a grain cloud from the
+  pipe's sustain. *Verwischen* = longer, more detuned grains. Switching it off lets the
+  frozen notes fade over *Ausklang*.
+- *Entfernung · Doppler*: *Doppler* (pitch shift when a pipe's distance changes – with
+  Ellipse or Drift; Sprünge never glide), *Entfernung → Lautstärke* (far pipes quieter),
+  *Luft* (far pipes duller). Far pipes also send more into the Hall.
+- *MIDI*: *MIDI-CC an* switches the CC mapping below; *Bewegung im Tempo* locks all
+  motion to the host tempo and song position (speeds count as written at 120 BPM; for
+  free speed glissandi switch it off).
 
 Pipes the preprocessing flagged as unusable (Gedackt f and f♯ in the current
 samples) are replaced by the neighbouring pipe, pitch-shifted to the exact
@@ -99,6 +129,18 @@ meantone pitch. Noise samples you delete from `samples\noise` are simply skipped
 
 MIDI note = sounding pitch (C2 = 36 … a″ = 81). C♯2, D♯2, F♯2, G♯2 and g♯″ do not
 exist on the organ and stay silent (short octave). Sustain pedal (CC64) works.
+
+With *MIDI-CC an* (Klang page):
+
+| CC | function |
+|----|----------|
+| 11 | Wind (global) / swell |
+| 20–26 | stops on/off (Praestant, Gedackt, Octave 4′, Octave 2′, Sesquialtera, Mixtur, Trompete) |
+| 27–33 | stop wind (same order) |
+| 66 | Freeze (sostenuto pedal) |
+| 1 | Tremulant depth (mod wheel) |
+| 64 | Sustain |
+
 All stops and settings are plugin parameters, so they can be automated or
 MIDI-learned in Reaper.
 
@@ -113,7 +155,8 @@ plugin/
     Spatial.h           AmbiX encoder (ACN/SN3D), stereo panning, layouts, motion
     Degrade.h           "Verfall"
     PluginProcessor.*   parameters, state, sample loading
-    PluginEditor.*, ConsoleView.*, SpaceView.*, Theme.h   interface
+    Convolver.*         impulse-response reverb (stereo / AmbiX)
+    PluginEditor.*, ConsoleView.*, SpaceView.*, KlangView.*, Theme.h   interface
   Resources/            photos, fonts (OFL), grain texture
   Tests/                offline render test + UI snapshot tool (optional)
 ```
