@@ -18,7 +18,8 @@ OrganEngine::OrganEngine()
         }
     }
     uint32_t seed = 1;
-    for (auto& v : voices) { v.deg.reset (seed++ * 7919u); XorShift r (seed * 31u); v.wobble.init (r); }
+    for (auto& v : voices) { v.deg.reset (seed++ * 7919u); XorShift r (seed * 31u); v.wobble.init (r); v.breath.init (r);
+                             v.breath.f1 *= 6.0f; v.breath.f2 *= 4.0f; v.breath.f3 *= 2.0f; }
 }
 
 void OrganEngine::prepare (double sampleRate, int maxBlockSize)
@@ -27,6 +28,7 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     maxBlock = juce::jmax (1, maxBlockSize);
     scratch.assign ((size_t) maxBlock, 0.0f);
     scratchRamp.assign ((size_t) maxBlock, 0.0f);
+    gust.assign ((size_t) (maxBlock / 16 + 4), 0.0f);
     for (auto& v : voices) v.active = false;
     for (auto& n : noise) n.active = false;
     keyHeld.fill (false);
@@ -54,6 +56,14 @@ Pos OrganEngine::currentPosition (int stop, int key, const EngineParams& p, doub
     Pos base { baseAz[(size_t) stop][(size_t) key].load(), baseEl[(size_t) stop][(size_t) key].load() };
     return applyMotion (base, (Motion) p.motionMode[(size_t) stop], p.motionRate[(size_t) stop],
                         p.motionDepth[(size_t) stop], t, (uint32_t) (stop * 101 + key * 7 + 1));
+}
+
+void OrganEngine::voiceGains (const Voice& v, const EngineParams& p, double t, float* out) const noexcept
+{
+    gainsFor (currentPosition (v.stop, v.key, p, t), out);
+    const float g = p.stopGain[(size_t) v.stop];
+    if (std::abs (g - 1.0f) > 1.0e-6f)
+        for (int c = 0; c < kMaxAmbiChannels; ++c) out[c] *= g;
 }
 
 void OrganEngine::gainsFor (Pos pos, float* out) const noexcept
@@ -119,6 +129,7 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples)
     v->age = ++ageCounter;
     v->fresh = true;
     v->env = 0.0f; v->held1 = 0.0f;
+    v->windSm = -1.0f; v->lp = 0.0f; v->lpA = 1.0f;
 }
 
 void OrganEngine::releaseVoice (Voice& v)
@@ -252,8 +263,26 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
     if (n <= 0) return;
     const bool perPipeDeg = p.deg.perPipe && p.deg.amount > 0.0001f;
     const float wobAmt = p.deg.amount * p.deg.wobble;
+    // "Windschwankung" gets disproportionately wilder towards 100 %
+    const float wobCents = 30.0f * wobAmt + 320.0f * wobAmt * wobAmt * wobAmt * wobAmt;
+    const float wobLevel = 0.3f * wobAmt + 0.6f * wobAmt * wobAmt * wobAmt * wobAmt;
+    const float wobSpeed = 1.0f + 5.0f * wobAmt * wobAmt * wobAmt;
+    // global wind: above ~35 % the wind supply starts to shake – shared by all pipes (same wind chest)
+    const float turbLin = juce::jlimit (0.0f, 1.0f, (p.wind - 0.35f) / 0.65f);
+    const float turb = turbLin * turbLin;
+    const float turbCents = 190.0f * turb, turbAmp = 0.75f * turb;
     const double dt = 1.0 / sr;
     const float killStep = (float) (1.0 / (0.005 * sr));
+    const float twoPiOverSr = (float) (juce::MathConstants<double>::twoPi / sr);
+
+    // shared gust curve for this range (one value per 16 samples)
+    const int steps = n / 16 + 2;
+    if ((int) gust.size() < steps) gust.assign ((size_t) steps, 0.0f);
+    for (int j = 0; j < steps; ++j)
+    {
+        gust[(size_t) j] = turb > 0.0f ? smoothNoise (gustPhase + j * 16.0 * dt * (0.5 + 6.0 * turb), 4242u) : 0.0f;
+    }
+    gustPhase += n * dt * (0.5 + 6.0 * turb);
 
     for (auto& v : voices)
     {
@@ -264,17 +293,44 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         const int loopLen = pipe.loopEnd - pipe.loopStart;
         float* buf = scratch.data();
         bool finished = false;
+        const float windTarget = juce::jlimit (0.0f, 1.0f, p.stopWind[(size_t) v.stop]);
 
         double rate = v.baseRate;
         float amp = 1.0f;
         for (int i = 0; i < n; ++i)
         {
-            if (wobAmt > 0.0001f && (i & 15) == 0)       // wind wobble, updated every 16 samples
+            if ((i & 15) == 0)       // control rate: every 16 samples
             {
-                v.wobble.advance (dt * 16.0);
-                const float w = v.wobble.value();
-                rate = v.baseRate * std::exp2 (wobAmt * 28.0f * w / 1200.0f);
-                amp = 1.0f + 0.3f * wobAmt * w;
+                // stop wind: a half-drawn stop starves the pipe – quieter, flatter, unsteady, duller
+                if (v.windSm < 0.0f) v.windSm = windTarget;
+                v.windSm += 0.03f * (windTarget - v.windSm);
+                const float w = v.windSm, lack = 1.0f - w;
+                float cents = -75.0f * lack * std::sqrt (lack);
+                float a = std::pow (w, 1.6f);
+                if (lack > 0.001f)
+                {
+                    v.breath.advance (dt * 16.0 * (1.0 + 3.0 * lack));
+                    const float br = v.breath.value();
+                    cents += 35.0f * lack * lack * br;
+                    a *= 1.0f + 0.4f * lack * br;
+                }
+                v.lpA = w > 0.995f ? 1.0f : 1.0f - std::exp (-twoPiOverSr * (250.0f + 16000.0f * w * w));
+
+                if (wobAmt > 0.0001f)
+                {
+                    v.wobble.advance (dt * 16.0 * wobSpeed);
+                    const float wv = v.wobble.value();
+                    cents += wobCents * wv;
+                    a *= juce::jmax (0.0f, 1.0f + wobLevel * wv);
+                }
+                if (turb > 0.0f)
+                {
+                    const float g = gust[(size_t) (i >> 4)];
+                    cents += turbCents * g;
+                    a *= juce::jmax (0.05f, 1.0f + turbAmp * g);
+                }
+                rate = v.baseRate * std::exp2 (cents / 1200.0f);
+                amp = a;
             }
 
             float x;
@@ -310,7 +366,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 x *= juce::jmax (0.0f, v.killGain);
             }
 
-            x *= amp;
+            v.lp += v.lpA * (x - v.lp);
+            x = v.lp * amp;
 
             if (perPipeDeg)
             {
@@ -368,7 +425,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             for (int i = 0; i < n; ++i)
             {
                 windGain += 0.0005f * (target - windGain);
-                float x = readSample (w.data.data(), wl, windPos) * windGain;
+                const float gst = turb > 0.0f ? gust[(size_t) (i >> 4)] : 0.0f;
+                float x = readSample (w.data.data(), wl, windPos) * windGain * juce::jmax (0.0f, 1.0f + 1.6f * turb * gst + 1.5f * turb);
                 windPos += wr;
                 if (windPos >= wl - 2) windPos -= (wl - 2);
                 if (order == 0) { out.getWritePointer (0)[start + i] += x * 0.7071f; if (usedChannels > 1) out.getWritePointer (1)[start + i] += x * 0.7071f; }
@@ -425,7 +483,7 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
         {
             if (! v.active) continue;
             if (! v.fresh) v.g0 = v.g1;
-            gainsFor (currentPosition (v.stop, v.key, p, tEnd), v.g1.data());
+            voiceGains (v, p, tEnd, v.g1.data());
             if (v.fresh) { v.g0 = v.g1; v.fresh = false; }
         }
     };
@@ -441,11 +499,11 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
         handleMidi (meta.getMessage(), p);
         // voices started mid-block take the end-of-block gains right away
         for (auto& v : voices)
-            if (v.active && v.fresh) { gainsFor (currentPosition (v.stop, v.key, p, tEnd), v.g1.data()); v.g0 = v.g1; v.fresh = false; }
+            if (v.active && v.fresh) { voiceGains (v, p, tEnd, v.g1.data()); v.g0 = v.g1; v.fresh = false; }
     }
     // voices started by stop changes / previews before any MIDI
     for (auto& v : voices)
-        if (v.active && v.fresh) { gainsFor (currentPosition (v.stop, v.key, p, tEnd), v.g1.data()); v.g0 = v.g1; v.fresh = false; }
+        if (v.active && v.fresh) { voiceGains (v, p, tEnd, v.g1.data()); v.g0 = v.g1; v.fresh = false; }
     renderRange (out, pos, numSamples, numSamples, p);
 
     // ---- degradation on the sum

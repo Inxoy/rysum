@@ -57,6 +57,8 @@ public:
 
     static juce::String stopParamId (int s)   { return "stop" + juce::String (s); }
     static juce::String motionParamId (int s) { return "motion" + juce::String (s); }
+    static juce::String volParamId (int s)    { return "vol" + juce::String (s); }
+    static juce::String windParamId (int s)   { return "swind" + juce::String (s); }
     static juce::String rateParamId (int s)   { return "rate" + juce::String (s); }
     static juce::String depthParamId (int s)  { return "depth" + juce::String (s); }
 
@@ -83,7 +85,7 @@ private:
     std::atomic<bool> loading { false };
     bool autoLoadDone = false;
 
-    std::array<std::atomic<float>*, rysum::kNumStops> stopParams {}, motionParams {}, rateParams {}, depthParams {};
+    std::array<std::atomic<float>*, rysum::kNumStops> stopParams {}, motionParams {}, rateParams {}, depthParams {}, volParams {}, windParams {};
     std::atomic<float> *master = nullptr, *output = nullptr, *click = nullptr, *clickBlend = nullptr, *releaseClick = nullptr,
                        *stopPull = nullptr, *wind = nullptr, *degAmount = nullptr, *degGrain = nullptr, *degBits = nullptr,
                        *degRate = nullptr, *degWobble = nullptr, *degDropouts = nullptr, *degMode = nullptr;

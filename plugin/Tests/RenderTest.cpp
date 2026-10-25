@@ -193,6 +193,28 @@ int main (int argc, char** argv)
         scenes.push_back (s2);
     }
 
+    {   // 7. stop wind: Praestant slowly closed and opened again (like pulling the stop in and out)
+        Scene s { "07_stopwind_sweep_stereo", 0, 2, nullptr, {}, 12.0 };
+        for (int m : { 53, 60, 65, 69 }) note (s.midiAll, m, 0.2, 11.0);
+        s.params = [] (EngineParams& p, double t)
+        {
+            p.stopOn = {}; p.stopOn[0] = true;
+            const double x = juce::jlimit (0.0, 1.0, (t - 1.0) / 10.0);           // 0..1 over 1..11 s
+            p.stopWind[0] = (float) std::abs (1.0 - 2.0 * x);                        // 1 -> 0 -> 1
+        };
+        scenes.push_back (s);
+    }
+    {   // 8. global wind 0 -> 100 %
+        Scene s { "08_global_wind_ramp_stereo", 0, 2, nullptr, {}, 14.0 };
+        for (int m : { 48, 55, 60, 64 }) note (s.midiAll, m, 0.2, 13.0);
+        s.params = [] (EngineParams& p, double t)
+        {
+            p.stopOn = {}; p.stopOn[0] = p.stopOn[2] = true;
+            p.wind = (float) juce::jlimit (0.0, 1.0, t / 12.0);
+        };
+        scenes.push_back (s);
+    }
+
     for (auto& sc : scenes)
     {
         OrganEngine e;

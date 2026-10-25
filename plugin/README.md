@@ -28,6 +28,22 @@ The build itself takes a few minutes too. When it is done you have:
 
 After changing code, only the second command (`cmake --build build --config Release`) is needed.
 
+### Trying a new version next to the stable one
+
+Build a second copy called **Rysum Dev** into its own folder. It has its own plugin ID, so
+Reaper lists both and your old projects keep using the stable "Rysum":
+
+```powershell
+cd D:\RYSUM_plugin\rysum_plugin\plugin
+cmake -B build-dev -G "Visual Studio 17 2022" -A x64 -DRYSUM_DEV=ON
+cmake --build build-dev --config Release
+```
+
+Result: `build-dev\Rysum_artefacts\Release\VST3\Rysum Dev.vst3`. Add
+`D:\RYSUM_plugin\rysum_plugin\plugin\build-dev\Rysum_artefacts\Release\VST3` to Reaper's VST
+paths once and re-scan. When you're happy with a new version, rebuild the stable one
+(`cmake --build build --config Release`, with Reaper closed).
+
 ## 2. Use it in Reaper
 
 Either copy the whole `Rysum.vst3` folder to `C:\Program Files\Common Files\VST3`
@@ -53,14 +69,19 @@ Output "Stereo" (Raum page → Ausgabe). The plugin writes to channels 1/2.
 The plugin's output bus is declared as 5th-order Ambisonics (36 ch). In stereo
 mode only channels 1/2 carry sound.
 
-## 3. The three pages
+## 3. The two pages
 
-**Spieltisch** – click the stop knobs (photos) to pull/push stops. *Traktur* is the
-noise layer (key click, how much of the click goes into the pipe's attack position,
-release click, stop-pull sound, wind). *Verfall* is the degradation: amount, grain,
+**Spieltisch** – click the stop knobs (photos) to pull/push stops. Under every stop:
+*Lautst.* (volume, −48…+12 dB) and *Wind* – how far the stop is drawn: below 100 % the
+pipes get quieter, flatter, unsteady and duller, at 0 % they are silent (move it while
+holding chords). *Traktur* is the noise layer (key click, how much of the click goes into
+the pipe's attack position, release click, stop-pull sound, *Wind (global)*: blower noise,
+and above ~35 % an increasingly unstable wind supply that shakes the pitch and level of
+all pipes together – wild at 100 %). *Verfall* is the degradation: amount, grain,
 bit depth, sample rate, unstable wind (pitch/level wobble), dropouts – applied to
 each pipe before it is placed in space ("pro Pfeife") or to the whole output
-("Summe"). The keyboard strip can be clicked to play.
+("Summe"); *Windschwankung* also gets disproportionately wilder towards 100 %. The
+keyboard strip can be clicked to play.
 
 **Raum** – every pipe of every stop as a dot (top view: centre = zenith, edge = horizon,
 outside the circle = below the horizon). Select a stop on the right, then
@@ -70,13 +91,9 @@ outside the circle = below the horizon). Select a stop on the right, then
   spiral, zone) with width / centre / height / spread,
 - *Bewegung*: static, rotation, pendulum, drift – speed and depth (automatable).
 
-**Pfeifen** – inspect every pipe: level across the keyboard, waveform with loop and
-release, measured pitch vs. meantone, source recording. *Vorhören* plays the pipe,
-*Stumm* mutes it. Double-click a key to hear it.
-
 Pipes the preprocessing flagged as unusable (Gedackt f and f♯ in the current
 samples) are replaced by the neighbouring pipe, pitch-shifted to the exact
-meantone pitch; they are marked "ersetzt" on the Pfeifen page.
+meantone pitch. Noise samples you delete from `samples\noise` are simply skipped.
 
 ## 4. MIDI
 
@@ -96,7 +113,7 @@ plugin/
     Spatial.h           AmbiX encoder (ACN/SN3D), stereo panning, layouts, motion
     Degrade.h           "Verfall"
     PluginProcessor.*   parameters, state, sample loading
-    PluginEditor.*, ConsoleView.*, SpaceView.*, PipesView.*, Theme.h   interface
+    PluginEditor.*, ConsoleView.*, SpaceView.*, Theme.h   interface
   Resources/            photos, fonts (OFL), grain texture
   Tests/                offline render test + UI snapshot tool (optional)
 ```

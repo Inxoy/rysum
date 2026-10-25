@@ -38,6 +38,7 @@ public:
         {
             juce::MidiBuffer mb;
             if (b == 2) for (int m : { 57, 64, 69 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
+            if (b == 1) { proc->apvts.getParameter ("swind2")->setValueNotifyingHost (0.4f); proc->apvts.getParameter ("vol1")->setValueNotifyingHost (0.6f); }
             proc->processBlock (buf, mb);
         }
 
@@ -57,7 +58,6 @@ public:
         };
         shoot (0, "ui_spieltisch.png");
         shoot (1, "ui_raum.png");
-        shoot (2, "ui_pfeifen.png");
 
         // state round trip
         juce::MemoryBlock mbk;

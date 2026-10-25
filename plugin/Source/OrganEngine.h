@@ -14,13 +14,15 @@ namespace rysum
 struct EngineParams
 {
     std::array<bool, kNumStops> stopOn {};
+    std::array<float, kNumStops> stopGain { 1, 1, 1, 1, 1, 1, 1 };   // linear
+    std::array<float, kNumStops> stopWind { 1, 1, 1, 1, 1, 1, 1 };   // 0 = stop closed (silent) .. 1 = fully pulled
     float masterGain = 1.0f;
     int   outputMode = 0;              // 0 = stereo, 1..5 = AmbiX order
     float clickLevel = 0.65f;          // key-down click
     float clickBlend = 0.45f;          // 0 = clicks at the console, 1 = clicks at the pipes (into the attack)
     float releaseClick = 0.4f;         // key-up click
     float stopPull = 0.7f;             // stop pull / push sound
-    float wind = 0.15f;                // blower / wind noise
+    float wind = 0.15f;                // global wind: blower noise, above ~35 % increasingly unstable (gusts)
     float consoleAz = 0.0f, consoleEl = -10.0f;
     DegradeParams deg;
     std::array<int,   kNumStops> motionMode {};
@@ -83,7 +85,9 @@ private:
         // degradation
         DegradeState deg;
         float held1 = 0.0f, env = 0.0f;
-        Wobble wobble;
+        Wobble wobble, breath;
+        float windSm = -1.0f;            // smoothed stop wind (-1 = take target directly)
+        float lp = 0.0f, lpA = 1.0f;     // tone filter for under-winded pipes
     };
 
     struct NoiseVoice
@@ -105,6 +109,7 @@ private:
     void playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex);
     void gainsFor (Pos pos, float* out) const noexcept;
     void renderRange (juce::AudioBuffer<float>& out, int start, int end, int blockLen, const EngineParams& p);
+    void voiceGains (const Voice& v, const EngineParams& p, double t, float* out) const noexcept;
     float readSample (const float* d, int len, double pos) const noexcept;
 
     std::shared_ptr<const SampleLibrary> library;
@@ -126,6 +131,8 @@ private:
     // wind
     double windPos = 0.0;
     float windGain = 0.0f;
+    double gustPhase = 0.0;
+    std::vector<float> gust;          // shared wind-supply gusts, one value per 16 samples
 
     // sum-mode degradation
     DegradeState sumDeg { 99 };

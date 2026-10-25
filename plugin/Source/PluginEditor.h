@@ -4,7 +4,6 @@
 #include "Theme.h"
 #include "ConsoleView.h"
 #include "SpaceView.h"
-#include "PipesView.h"
 
 /** fixed 1120 x 720 design, scaled as a whole when the window is resized */
 class RysumContent : public juce::Component
@@ -21,8 +20,7 @@ private:
     RysumProcessor& proc;
     rysum::ui::ConsoleView console;
     rysum::ui::SpaceView space;
-    rysum::ui::PipesView pipes;
-    std::array<juce::TextButton, 3> tabs;
+    std::array<juce::TextButton, 2> tabs;
     int current = 0;
     juce::Image grainLayer;
 };

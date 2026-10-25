@@ -49,7 +49,7 @@ private:
     RysumProcessor& proc;
     std::vector<std::unique_ptr<StopTile>> tiles;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> tileAttachments;
-    std::vector<std::unique_ptr<ParamRow>> noiseRows, decayRows;
+    std::vector<std::unique_ptr<ParamRow>> noiseRows, decayRows, stopVol, stopWind;
     juce::TextButton perPipe { "pro Pfeife" }, onSum { "Summe" };
     juce::Slider volume;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAttachment;

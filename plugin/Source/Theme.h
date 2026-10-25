@@ -56,7 +56,7 @@ struct Assets
         wall      = img (wall_jpg, wall_jpgSize);
         keys      = img (keys_jpg, keys_jpgSize);
         knobBare  = img (knob_bare_jpg, knob_bare_jpgSize);
-        knobs[0]  = {};                                           // Praestant: no photo of the label
+        knobs[0]  = img (k_praestant_jpg, k_praestant_jpgSize);   // Praestant: a lever on the organ – photo of its pipes
         knobs[1]  = img (k_gedackt_jpg, k_gedackt_jpgSize);
         knobs[2]  = img (k_oktave4_jpg, k_oktave4_jpgSize);
         knobs[3]  = img (k_oktave2_jpg, k_oktave2_jpgSize);
@@ -161,8 +161,8 @@ public:
 class ParamRow : public juce::Component
 {
 public:
-    ParamRow (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& name)
-        : title (name)
+    ParamRow (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& name, bool compactRow = false)
+        : title (name), compact (compactRow)
     {
         slider.setSliderStyle (juce::Slider::LinearHorizontal);
         slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -176,21 +176,26 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().removeFromTop (18);
-        g.setColour (col::ink);
-        g.setFont (Assets::get().sansFont (14.0f));
+        auto r = getLocalBounds().removeFromTop (compact ? 13 : 18);
+        g.setColour (compact ? col::mute : col::ink);
+        g.setFont (compact ? Assets::get().monoFont (10.0f) : Assets::get().sansFont (14.0f));
         g.drawText (title, r, juce::Justification::centredLeft);
         g.setColour (col::dim);
-        g.setFont (Assets::get().monoFont (12.0f));
+        g.setFont (Assets::get().monoFont (compact ? 10.0f : 12.0f));
         g.drawText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r, juce::Justification::centredRight);
     }
 
-    void resized() override { slider.setBounds (getLocalBounds().withTrimmedTop (16).withHeight (18)); }
+    void resized() override
+    {
+        if (compact) slider.setBounds (getLocalBounds().withTrimmedTop (11).withHeight (14));
+        else         slider.setBounds (getLocalBounds().withTrimmedTop (16).withHeight (18));
+    }
 
     juce::Slider slider;
 
 private:
     juce::String title;
+    bool compact = false;
     juce::RangedAudioParameter* param = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 };

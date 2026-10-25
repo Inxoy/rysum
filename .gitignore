@@ -1,0 +1,17 @@
+# Python virtual environment
+.venv/
+
+# plugin build output (any build, build-dev, ...)
+plugin/build*/
+plugin/test_renders/
+
+# Visual Studio / compiler leftovers
+.vs/
+*.pdb
+*.ipch
+*.obj
+*.lib
+*.ilk
+
+# Ableton analysis files
+*.asd

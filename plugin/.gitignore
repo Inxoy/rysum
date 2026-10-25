@@ -1,4 +1,5 @@
-build/
+# build folders of the plugin (Visual Studio output, can be hundreds of MB)
+build*/
 test_renders/
 *.user
 .vs/

@@ -55,8 +55,10 @@ void StopTile::paintButton (juce::Graphics& g, bool over, bool)
     auto cap = caption.withTrimmedTop (6.0f).reduced (3.0f, 0.0f);
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::dim);
-    g.drawText (juce::String (juce::CharPointer_UTF8 (kStops[(size_t) stop].footage)).replace ("'", juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xb2"))),
-                cap, juce::Justification::centredLeft);
+    // the Praestant photo shows pipes, not a labelled knob – name it in the caption
+    const auto capText = stop == 0 ? prettyLabel (kStops[0].label)
+                                   : juce::String (juce::CharPointer_UTF8 (kStops[(size_t) stop].footage)).replace ("'", juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xb2")));
+    g.drawText (capText, cap, juce::Justification::centredLeft);
     auto stateR = cap.removeFromRight (80.0f);
     g.setColour (on ? col::ink : col::faint);
     g.drawText (on ? "gezogen" : "ab", stateR, juce::Justification::centredRight);
@@ -133,11 +135,17 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
         addAndMakeVisible (*t);
         tileAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, RysumProcessor::stopParamId (s), *t));
         tiles.push_back (std::move (t));
+
+        // per stop: volume + wind (a half-drawn stop: quieter, flatter, unsteady; 0 = silent)
+        stopVol.push_back (std::make_unique<ParamRow> (proc.apvts, RysumProcessor::volParamId (s), u8 ("Lautst."), true));
+        stopWind.push_back (std::make_unique<ParamRow> (proc.apvts, RysumProcessor::windParamId (s), "Wind", true));
+        addAndMakeVisible (*stopVol.back());
+        addAndMakeVisible (*stopWind.back());
     }
 
     const std::pair<const char*, const char*> noise[] {
         { "click", "Tastenklick" }, { "clickBlend", "Klick \xe2\x86\x92 ins Anschlagen" }, { "releaseClick", "Loslassklick" },
-        { "stopPull", "Registerzug" }, { "wind", "Wind" } };
+        { "stopPull", "Registerzug" }, { "wind", "Wind (global)" } };
     for (auto& n : noise)
     {
         noiseRows.push_back (std::make_unique<ParamRow> (proc.apvts, n.first, juce::String (juce::CharPointer_UTF8 (n.second))));
@@ -187,15 +195,20 @@ void ConsoleView::resized()
     keyboardArea = r.removeFromBottom (116);
     r.reduce (28, 0);
     r.removeFromTop (22);
-    stopsArea = r.removeFromTop (172);
+    stopsArea = r.removeFromTop (214);
     {
         auto t = stopsArea.withTrimmedTop (26);
         const int gap = 12;
         const int w = (t.getWidth() - gap * 6) / 7;
         for (int s = 0; s < kNumStops; ++s)
-            tiles[(size_t) s]->setBounds (t.getX() + s * (w + gap) - 3, t.getY() - 3, w + 6, t.getHeight() + 3);
+        {
+            const int x = t.getX() + s * (w + gap);
+            tiles[(size_t) s]->setBounds (x - 3, t.getY() - 3, w + 6, 110 + 22 + 3);
+            stopVol[(size_t) s]->setBounds (x, t.getY() + 136, w, 26);
+            stopWind[(size_t) s]->setBounds (x, t.getY() + 162, w, 26);
+        }
     }
-    r.removeFromTop (20);
+    r.removeFromTop (12);
     auto panels = r.withTrimmedBottom (14);
     const int gap = 28;
     const int total = panels.getWidth() - 2 * gap;
@@ -211,7 +224,7 @@ void ConsoleView::resized()
     onSum.setBounds (decayArea.getRight() - 70, decayArea.getY() + 8, 70, 20);
 
     auto o = outArea.withTrimmedTop (40);
-    meterArea = o.removeFromTop (150).removeFromLeft (110);
+    meterArea = o.removeFromTop (120).removeFromLeft (110);
     volume.setBounds (meterArea.getRight() - 30, meterArea.getY(), 28, meterArea.getHeight());
     folderButton.setBounds (outArea.getX(), outArea.getBottom() - 24, outArea.getWidth(), 22);
 
@@ -229,6 +242,8 @@ void ConsoleView::refresh()
     meterR = proc.engine.meterR.load();
     for (auto& r : noiseRows) r->repaint();
     for (auto& r : decayRows) r->repaint();
+    for (auto& r : stopVol) r->repaint();
+    for (auto& r : stopWind) r->repaint();
     keys.repaint();
     repaint (outArea);
 }
@@ -276,7 +291,7 @@ void ConsoleView::paint (juce::Graphics& g)
     meterBar ({ m.getX() + 4, m.getY(), 10, m.getHeight() }, meterL);
     meterBar ({ m.getX() + 20, m.getY(), 10, m.getHeight() }, meterR);
 
-    auto info = outArea.withTrimmedTop (200);
+    auto info = outArea.withTrimmedTop (170);
     g.setFont (A.sansFont (14.0f));
     g.setColour (col::ink);
     g.drawText (juce::String (juce::CharPointer_UTF8 ("Lautst\xc3\xa4rke")), info.removeFromTop (18), juce::Justification::centredLeft);

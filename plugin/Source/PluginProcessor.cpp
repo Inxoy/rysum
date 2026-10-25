@@ -39,6 +39,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
 
     for (int s = 0; s < kNumStops; ++s)
         l.add (std::make_unique<AudioParameterBool> (ParameterID { stopParamId (s), 1 }, prettyLabel (kStops[(size_t) s].label), s == 0));
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        const String name = prettyLabel (kStops[(size_t) s].label);
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { volParamId (s), 1 }, name + u8 (" Lautst\xc3\xa4rke"),
+                                                      NormalisableRange<float> (-48.0f, 12.0f, 0.1f), 0.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0 ? "+" : "") + String (v, 1) + " dB"; })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { windParamId (s), 1 }, name + " Wind", NormalisableRange<float> (0, 1), 1.0f, pct));
+    }
 
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "master", 1 }, u8 ("Lautst\xc3\xa4rke"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f), -12.0f,
                                                   AudioParameterFloatAttributes().withLabel ("dB")));
@@ -82,6 +90,8 @@ RysumProcessor::RysumProcessor()
     for (int s = 0; s < kNumStops; ++s)
     {
         stopParams[(size_t) s]   = apvts.getRawParameterValue (stopParamId (s));
+        volParams[(size_t) s]    = apvts.getRawParameterValue (volParamId (s));
+        windParams[(size_t) s]   = apvts.getRawParameterValue (windParamId (s));
         motionParams[(size_t) s] = apvts.getRawParameterValue (motionParamId (s));
         rateParams[(size_t) s]   = apvts.getRawParameterValue (rateParamId (s));
         depthParams[(size_t) s]  = apvts.getRawParameterValue (depthParamId (s));
@@ -131,6 +141,8 @@ EngineParams RysumProcessor::readParams() const
     for (int s = 0; s < kNumStops; ++s)
     {
         p.stopOn[(size_t) s] = stopParams[(size_t) s]->load() > 0.5f;
+        p.stopGain[(size_t) s] = dbToGain (volParams[(size_t) s]->load());
+        p.stopWind[(size_t) s] = windParams[(size_t) s]->load();
         p.motionMode[(size_t) s] = (int) motionParams[(size_t) s]->load();
         p.motionRate[(size_t) s] = rateParams[(size_t) s]->load();
         p.motionDepth[(size_t) s] = depthParams[(size_t) s]->load();

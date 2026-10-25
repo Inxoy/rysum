@@ -5,13 +5,12 @@ using namespace rysum::ui;
 
 static constexpr int kW = 1120, kH = 720, kHeader = 56;
 
-RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), pipes (p)
+RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p)
 {
     addAndMakeVisible (console);
     addChildComponent (space);
-    addChildComponent (pipes);
-    const char* names[] { "Spieltisch", "Raum", "Pfeifen" };
-    for (int i = 0; i < 3; ++i)
+    const char* names[] { "Spieltisch", "Raum" };
+    for (int i = 0; i < 2; ++i)
     {
         tabs[(size_t) i].setButtonText (juce::String (names[i]).toUpperCase());
         tabs[(size_t) i].onClick = [this, i] { showView (i); };
@@ -33,9 +32,7 @@ void RysumContent::showView (int v)
     current = v;
     console.setVisible (v == 0);
     space.setVisible (v == 1);
-    pipes.setVisible (v == 2);
-    for (int i = 0; i < 3; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
-    if (v == 2) pipes.refresh();
+    for (int i = 0; i < 2; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
 }
 
 void RysumContent::resized()
@@ -43,17 +40,15 @@ void RysumContent::resized()
     auto body = getLocalBounds().withTrimmedTop (kHeader);
     console.setBounds (body);
     space.setBounds (body);
-    pipes.setBounds (body);
-    const int tw[] { 112, 72, 88 };
-    int x = 468;
-    for (int i = 0; i < 3; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
+    const int tw[] { 112, 72 };
+    int x = 508;
+    for (int i = 0; i < 2; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
 }
 
 void RysumContent::tick()
 {
     if (console.isVisible()) console.refresh();
     if (space.isVisible()) space.refresh();
-    if (pipes.isVisible()) pipes.refresh();
     repaint (0, 0, kW, kHeader);
 }
 

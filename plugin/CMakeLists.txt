@@ -26,12 +26,26 @@ endif()
 # ---------------------------------------------------------------------------
 # Plugin
 # ---------------------------------------------------------------------------
+# A second, independent copy for trying out new versions next to the stable one:
+#   cmake -B build-dev -G "Visual Studio 17 2022" -A x64 -DRYSUM_DEV=ON
+# builds "Rysum Dev" with its own plugin ID, so both can be installed and used at once.
+option(RYSUM_DEV "Build the side-by-side development version 'Rysum Dev'" OFF)
+if(RYSUM_DEV)
+    set(RYSUM_PRODUCT "Rysum Dev")
+    set(RYSUM_CODE Rys2)
+    set(RYSUM_BUNDLE "org.rysum.organ.dev")
+else()
+    set(RYSUM_PRODUCT "Rysum")
+    set(RYSUM_CODE Rys1)
+    set(RYSUM_BUNDLE "org.rysum.organ")
+endif()
+
 juce_add_plugin(Rysum
-    PRODUCT_NAME "Rysum"
+    PRODUCT_NAME "${RYSUM_PRODUCT}"
     COMPANY_NAME "Rysum"
-    BUNDLE_ID "org.rysum.organ"
+    BUNDLE_ID "${RYSUM_BUNDLE}"
     PLUGIN_MANUFACTURER_CODE Rysm
-    PLUGIN_CODE Rys1
+    PLUGIN_CODE ${RYSUM_CODE}
     FORMATS VST3 Standalone
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
@@ -49,6 +63,7 @@ juce_add_binary_data(RysumData
         Resources/IBMPlexSansCondensed-SemiBold.ttf
         Resources/IBMPlexMono-Regular.ttf
         Resources/UnifrakturMaguntia-Book.ttf
+        Resources/k_praestant.jpg
         Resources/k_gedackt.jpg
         Resources/k_mixtur.jpg
         Resources/k_oktave2.jpg
@@ -66,8 +81,7 @@ target_sources(Rysum PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/ConsoleView.cpp
-    Source/SpaceView.cpp
-    Source/PipesView.cpp)
+    Source/SpaceView.cpp)
 
 target_include_directories(Rysum PRIVATE Source)
 
@@ -112,7 +126,7 @@ if(RYSUM_BUILD_TESTS)
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
         Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
-        Source/ConsoleView.cpp Source/SpaceView.cpp Source/PipesView.cpp)
+        Source/ConsoleView.cpp Source/SpaceView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
