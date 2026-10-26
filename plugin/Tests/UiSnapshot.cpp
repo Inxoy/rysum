@@ -132,6 +132,23 @@ public:
             const float base = proc->apvts.getParameter ("wind")->getValue();
             std::cout << "wind modulated: base " << base << " range " << lo << " .. " << hi
                       << ((hi - lo > 0.3f && lo <= base + 1e-4f && hi > base) ? "  ok" : "  FAIL") << std::endl;
+            {
+                auto prm = proc->readParams();
+                // a silent pipe (Praestant C, not played) and a sounding one (a)
+                float dSilent = 0, dSound = 0;
+                for (int k : { 0, 20 })
+                {
+                    const auto a = proc->engine.currentPosition (0, k, prm), b = proc->engine.displayPosition (0, k, prm);
+                    (k == 0 ? dSilent : dSound) = std::abs (rysum::wrapAz (b.az - a.az)) + std::abs (b.dist - a.dist);
+                }
+                std::cout << "raum shows modulation: silent " << dSilent << ", sounding " << dSound
+                          << ((dSilent > 0.5f && dSound > 0.5f) ? "  ok" : "  FAIL") << std::endl;
+                proc->setRoute (19, rysum::srcLfo4, rysum::tgtEl);
+                setP ("mod20Amt", 0.2f);
+                juce::MidiBuffer none; proc->processBlock (buf, none);
+                auto prm2 = proc->readParams();
+                std::cout << "slot 20: " << ((prm2.mod.routes[19].src == rysum::srcLfo4 && std::abs (prm2.mod.routes[19].amount - 0.2f) < 1e-4f) ? "ok" : "FAIL") << std::endl;
+            }
             std::cout << "not modulated -> NaN: " << (std::isnan (proc->getModulatedNorm (proc->getParamIndex ("air"))) ? "ok" : "FAIL") << std::endl;
         }
 

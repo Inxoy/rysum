@@ -133,7 +133,7 @@ outside the circle = below the horizon). Select a stop on the right, then
   envelope.
 - Further sources: *Tastenlage* (low key −1 … high key +1), *Modrad* (CC 1), *Zufall je Ton*
   (a new random value per key press).
-- *Zuordnungen* (12 slots): source → target, amount ±100 %. Targets:
+- *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 %. Targets:
   - *Pfeife: Richtung / Höhe / Abstand / Lautstärke / Tonhöhe / Helligkeit / Hall-Anteil* –
     act on every pipe separately (at 100 %: ±180°, ±90°, ×8 distance, ±36 dB, ±12 semitones,
     ±6 octaves of brightness, ±24 dB room send);
@@ -141,7 +141,8 @@ outside the circle = below the horizon). Select a stop on the right, then
     Doppler, Hall, even the LFO speeds themselves …), amount = share of the slider's range.
 - **Right-click any slider** → *Modulieren mit …* picks a free slot directly (or removes an
   existing one). A modulated slider shows a white bar and arrow where the modulation takes it
-  right now.
+  right now. In the Raum view the pipes move with *Pfeife: Richtung / Höhe / Abstand*
+  modulation (silent pipes show the LFO part; sounding ones also their envelopes).
 - Everything is updated every 64 samples (≈1.3 ms), so even fast LFOs stay smooth. Amounts
   are automatable parameters; sources and targets of the slots are saved with the project.
 

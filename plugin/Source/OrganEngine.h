@@ -105,6 +105,11 @@ public:
     /** position of a pipe right now (base + motion), for the UI */
     Pos currentPosition (int stop, int key, const EngineParams& p) const noexcept;
 
+    /** position as heard: motion + per-pipe modulation (direction, height, distance). UI thread.
+        Sounding pipes use the engine's own values (incl. per-pipe envelopes / random per note),
+        silent pipes the LFOs, key position, mod wheel and global envelopes. */
+    Pos displayPosition (int stop, int key, const EngineParams& p) const noexcept;
+
     /** integrated motion phase per stop (cycles); speed changes only change its slope */
     std::array<std::atomic<double>, kNumStops> motionPhase {};
 

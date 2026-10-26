@@ -65,7 +65,7 @@ void SpaceCircle::paint (juce::Graphics& g)
             g.setOpacity (isSel ? 1.0f : (on ? 0.75f : 0.3f));
             for (int k = 0; k < kNumKeys; ++k)
             {
-                const auto pos = proc.engine.currentPosition (s, k, params);
+                const auto pos = proc.engine.displayPosition (s, k, params);
                 const auto p = toScreen (pos);
                 const bool snd = (sounding >> k) & 1;
                 if (snd)
@@ -91,7 +91,7 @@ void SpaceCircle::mouseDown (const juce::MouseEvent& e)
     float best = 10.0f;
     for (int k = 0; k < kNumKeys; ++k)
     {
-        const float d = toScreen (proc.engine.currentPosition (selected, k, params)).getDistanceFrom (e.position);
+        const float d = toScreen (proc.engine.displayPosition (selected, k, params)).getDistanceFrom (e.position);
         if (d < best) { best = d; dragKey = k; }
     }
     rotating = dragKey < 0;

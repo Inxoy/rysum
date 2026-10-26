@@ -90,12 +90,18 @@ ModView::ModView (RysumProcessor& p) : proc (p)
         R.amount.getProperties().set ("bipolar", true);
         R.amount.setDoubleClickReturnValue (true, 0.0);
         R.amountAtt = std::make_unique<SliderAtt> (st, proc.getModAmountId (r), R.amount);
-        R.amount.onValueChange = [this, r] { repaint (routes[(size_t) r].row); };
+        R.amount.onValueChange = [this, r] { list.repaint (routes[(size_t) r].row); };
+        R.amount.setScrollWheelEnabled (false);          // the wheel scrolls the list
         R.clear.setTooltip ("Zuordnung entfernen");
         R.clear.onClick = [this, r] { proc.clearRoute (r); syncRoutes(); };
         for (juce::Component* c : { (juce::Component*) &R.src, (juce::Component*) &R.tgt, (juce::Component*) &R.amount, (juce::Component*) &R.clear })
-            addAndMakeVisible (c);
+            list.addAndMakeVisible (c);
     }
+    matrixView.setViewedComponent (&list, false);
+    matrixView.setScrollBarsShown (true, false);
+    matrixView.setScrollBarThickness (6);
+    matrixView.setSingleStepSizes (kRowH, kRowH);
+    addAndMakeVisible (matrixView);
     syncRoutes();
 }
 
@@ -119,7 +125,7 @@ void ModView::syncRoutes()
     }
     updating = false;
     lastRouteVersion = proc.routeVersion.load();
-    repaint (matrixBox);
+    list.repaint();
 }
 
 void ModView::routeEdited (int r)
@@ -179,16 +185,18 @@ void ModView::resized()
     }
     matrixBox = { r.getX() + 2 * (cw + gap), y2, 2 * cw + gap, botH };
     auto m = matrixBox.withTrimmedTop (38 + 16);
-    const int rh = juce::jmin (24, m.getHeight() / kNumRoutes);
+    matrixView.setBounds (m);
+    list.setSize (m.getWidth() - 10, kRowH * kNumRoutes);
     for (int i = 0; i < kNumRoutes; ++i)
     {
         auto& R = routes[(size_t) i];
-        auto row = m.removeFromTop (rh);
+        auto row = juce::Rectangle<int> (0, i * kRowH, list.getWidth(), kRowH);
         R.row = row;
         auto rr = row.reduced (0, 1);
-        R.src.setBounds (rr.removeFromLeft (112));
-        rr.removeFromLeft (18);
-        R.tgt.setBounds (rr.removeFromLeft (206));
+        rr.removeFromLeft (22);                        // slot number
+        R.src.setBounds (rr.removeFromLeft (104));
+        rr.removeFromLeft (18);                        // live source value
+        R.tgt.setBounds (rr.removeFromLeft (196));
         rr.removeFromLeft (10);
         R.clear.setBounds (rr.removeFromRight (22));
         rr.removeFromRight (50);
@@ -208,7 +216,7 @@ void ModView::refresh()
         repaint (L.scope);
     }
     for (auto& E : envs) repaint (E.scope.withRight (E.box.getRight()));
-    for (int r = 0; r < kNumRoutes; ++r) repaint (routes[(size_t) r].row.withWidth (16).translated (112, 0));
+    list.repaint();
 }
 
 void ModView::paint (juce::Graphics& g)
@@ -309,16 +317,27 @@ void ModView::paint (juce::Graphics& g)
         auto h = matrixBox.withTrimmedTop (38).withHeight (14);
         g.setFont (A.monoFont (10.0f));
         g.setColour (col::faint);
-        g.drawText ("Quelle", h.withWidth (112), juce::Justification::centredLeft);
-        g.drawText ("Ziel", h.withTrimmedLeft (130).withWidth (206), juce::Justification::centredLeft);
-        g.drawText ("Menge", h.withTrimmedLeft (346), juce::Justification::centredLeft);
+        g.drawText ("Quelle", h.withTrimmedLeft (22).withWidth (104), juce::Justification::centredLeft);
+        g.drawText ("Ziel", h.withTrimmedLeft (144).withWidth (196), juce::Justification::centredLeft);
+        g.drawText ("Menge", h.withTrimmedLeft (350), juce::Justification::centredLeft);
     }
+}
+
+void MatrixList::paint (juce::Graphics& g)
+{
+    auto& A = Assets::get();
+    auto& proc = owner.proc;
     for (int r = 0; r < kNumRoutes; ++r)
     {
-        auto& R = routes[(size_t) r];
+        auto& R = owner.routes[(size_t) r];
         const int s = proc.getRouteSrc (r);
         // live source value as a small bar between source and target
-        auto mark = juce::Rectangle<float> ((float) R.row.getX() + 115.0f, (float) R.row.getCentreY() - 6.0f, 10.0f, 12.0f);
+        g.setColour (r % 2 == 0 ? col::panel.withAlpha (0.0f) : col::panel.withAlpha (0.5f));
+        g.fillRect (R.row);
+        g.setColour (s >= 0 ? col::mute : col::faint.withAlpha (0.6f));
+        g.setFont (A.monoFont (10.0f));
+        g.drawText (juce::String (r + 1), R.row.withWidth (18), juce::Justification::centredRight);
+        auto mark = juce::Rectangle<float> ((float) R.row.getX() + 130.0f, (float) R.row.getCentreY() - 6.0f, 10.0f, 12.0f);
         if (s >= 0)
         {
             const float v = juce::jlimit (-1.0f, 1.0f, proc.engine.sourceOut[(size_t) s].load());

@@ -200,7 +200,7 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
     juce::PopupMenu with;
     const auto names = modSourceNames();
     for (int s = 0; s < kNumSources; ++s) with.addItem (1 + s, names[s]);
-    m.addSubMenu (free ? juce::String ("Modulieren mit") : u8 ("Modulieren mit (alle 12 Pl\xc3\xa4tze belegt)"), with, free);
+    m.addSubMenu (free ? juce::String ("Modulieren mit") : u8 ("Modulieren mit (alle ") + juce::String (kNumRoutes) + u8 (" Pl\xc3\xa4tze belegt)"), with, free);
     for (int r = 0; r < kNumRoutes; ++r)
         if (proc.getRouteTgt (r) == kGlobalTargetBase + idx && proc.getRouteSrc (r) >= 0)
         {

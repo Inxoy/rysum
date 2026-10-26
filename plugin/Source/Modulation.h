@@ -9,7 +9,7 @@ namespace rysum
 // ---------------------------------------------------------------------------
 // Modulation: 4 LFOs, 2 envelopes, fixed sources, 12 routings
 // ---------------------------------------------------------------------------
-constexpr int kNumLfos = 4, kNumEnvs = 2, kNumRoutes = 12;
+constexpr int kNumLfos = 4, kNumEnvs = 2, kNumRoutes = 24;
 
 enum ModSource
 {

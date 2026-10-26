@@ -643,17 +643,60 @@ void OrganEngine::advanceModulation (const EngineParams& p, double dt) noexcept
     for (int i = 0; i < kNumSources; ++i) sourceOut[(size_t) i] = globalSrc[(size_t) i];
 }
 
+static inline float lfoSpreadOffset (const LfoParams& L, int stop, int key) noexcept
+{
+    if (L.spread <= 0.0f) return 0.0f;
+    return L.spread * (L.spreadMode == 0 ? (float) key / (float) kNumKeys : hash01 ((uint32_t) (stop * 131 + key * 7 + 1)));
+}
+
+Pos OrganEngine::displayPosition (int stop, int key, const EngineParams& p) const noexcept
+{
+    Pos pos = currentPosition (stop, key, p);
+    float az = 0.0f, el = 0.0f, dm = 1.0f;
+    if ((soundingMask[(size_t) stop].load() >> key) & 1)
+    {
+        az = modAz[(size_t) stop][(size_t) key].load();
+        el = modEl[(size_t) stop][(size_t) key].load();
+        dm = modDistMul[(size_t) stop][(size_t) key].load();
+    }
+    else
+    {
+        std::array<float, kNumPipeTargets> pm {};
+        bool any = false;
+        for (const auto& r : p.mod.routes)
+        {
+            if (r.src < 0 || r.target < 0 || r.target > tgtDist || r.amount == 0.0f) continue;
+            float v = 0.0f;
+            if (r.src >= srcLfo1 && r.src < srcLfo1 + kNumLfos)
+            {
+                const auto& L = p.mod.lfo[(size_t) (r.src - srcLfo1)];
+                v = lfoValue (L.shape, lfoPhaseOut[(size_t) (r.src - srcLfo1)].load() + lfoSpreadOffset (L, stop, key), 0);
+            }
+            else if (r.src >= srcEnv1 && r.src < srcEnv1 + kNumEnvs)
+                v = p.mod.env[(size_t) (r.src - srcEnv1)].perPipe ? 0.0f : sourceOut[(size_t) r.src].load();
+            else if (r.src == srcKey)      v = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
+            else if (r.src == srcModWheel) v = sourceOut[srcModWheel].load();
+            pm[(size_t) r.target] += r.amount * v;
+            any = true;
+        }
+        if (! any) return pos;
+        az = 180.0f * pm[tgtAz];
+        el = 90.0f * pm[tgtEl];
+        dm = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
+    }
+    pos.az = wrapAz (pos.az + az);
+    pos.el = juce::jlimit (-90.0f, 90.0f, pos.el + el);
+    pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * dm);
+    return pos;
+}
+
 float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) const noexcept
 {
     if (src >= srcLfo1 && src < srcLfo1 + kNumLfos)
     {
         const int i = src - srcLfo1;
         const auto& L = p.mod.lfo[(size_t) i];
-        float off = 0.0f;
-        if (L.spread > 0.0f)
-            off = L.spread * (L.spreadMode == 0 ? (float) v.key / (float) kNumKeys
-                                                : hash01 ((uint32_t) (v.stop * 131 + v.key * 7 + 1)));
-        return lfoValue (L.shape, lfoPhase[(size_t) i] + off, 0);
+        return lfoValue (L.shape, lfoPhase[(size_t) i] + lfoSpreadOffset (L, v.stop, v.key), 0);
     }
     if (src >= srcEnv1 && src < srcEnv1 + kNumEnvs)
     {

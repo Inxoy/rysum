@@ -117,6 +117,8 @@ public:
         setColour (juce::TextEditor::focusedOutlineColourId, col::dim);
         setColour (juce::TextEditor::highlightColourId, col::faint);
         setColour (juce::CaretComponent::caretColourId, col::ink);
+        setColour (juce::ScrollBar::thumbColourId, col::faint);
+        setColour (juce::ScrollBar::trackColourId, juce::Colours::transparentBlack);
         setDefaultSansSerifTypeface (Assets::get().sans);
     }
 

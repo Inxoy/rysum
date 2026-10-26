@@ -5,7 +5,19 @@
 
 namespace rysum::ui
 {
-/** fourth page: 4 LFOs, 2 envelopes, 12 routings */
+class ModView;
+
+/** the scrollable list of routings */
+class MatrixList : public juce::Component
+{
+public:
+    explicit MatrixList (ModView& o) : owner (o) {}
+    void paint (juce::Graphics&) override;
+private:
+    ModView& owner;
+};
+
+/** fourth page: 4 LFOs, 2 envelopes, 24 routings (scrollable) */
 class ModView : public juce::Component
 {
 public:
@@ -19,6 +31,7 @@ public:
     static void fillTargetMenu (juce::PopupMenu& menu, RysumProcessor& proc, int idOffset);
 
 private:
+    friend class MatrixList;
     using ComboAtt  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
     using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -57,6 +70,9 @@ private:
     std::array<Env, kNumEnvs> envs;
     std::array<Route, kNumRoutes> routes;
     juce::Rectangle<int> matrixBox;
+    MatrixList list { *this };
+    juce::Viewport matrixView;
+    static constexpr int kRowH = 24;
     int lastRouteVersion = -1;
     bool updating = false;
 };
