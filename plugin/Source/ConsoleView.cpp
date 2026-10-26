@@ -56,7 +56,7 @@ void StopTile::paintButton (juce::Graphics& g, bool over, bool)
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::dim);
     // the Praestant photo shows pipes, not a labelled knob – name it in the caption
-    const auto capText = stop == 0 ? prettyLabel (kStops[0].label)
+    const auto capText = (stop == 0 || stop == kPraestant16) ? prettyLabel (kStops[(size_t) stop].label)
                                    : juce::String (juce::CharPointer_UTF8 (kStops[(size_t) stop].footage)).replace ("'", juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xb2")));
     g.drawText (capText, cap, juce::Justification::centredLeft);
     auto stateR = cap.removeFromRight (80.0f);
@@ -199,10 +199,10 @@ void ConsoleView::resized()
     {
         auto t = stopsArea.withTrimmedTop (26);
         const int gap = 12;
-        const int w = (t.getWidth() - gap * 6) / 7;
+        const int w = (t.getWidth() - gap * (kNumStops - 1)) / kNumStops;
         for (int s = 0; s < kNumStops; ++s)
         {
-            const int x = t.getX() + s * (w + gap);
+            const int x = t.getX() + displaySlot (s) * (w + gap);
             tiles[(size_t) s]->setBounds (x - 3, t.getY() - 3, w + 6, 110 + 22 + 3);
             stopVol[(size_t) s]->setBounds (x, t.getY() + 136, w, 26);
             stopWind[(size_t) s]->setBounds (x, t.getY() + 162, w, 26);

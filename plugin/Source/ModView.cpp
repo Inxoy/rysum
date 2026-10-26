@@ -92,9 +92,15 @@ ModView::ModView (RysumProcessor& p) : proc (p)
         R.amountAtt = std::make_unique<SliderAtt> (st, proc.getModAmountId (r), R.amount);
         R.amount.onValueChange = [this, r] { list.repaint (routes[(size_t) r].row); };
         R.amount.setScrollWheelEnabled (false);          // the wheel scrolls the list
+        R.uni.setTooltip (juce::String::fromUTF8 ("\xc2\xb1 bipolar: LFOs schwingen um den Reglerwert.  + unipolar: nur in eine Richtung (0 \xe2\x80\xa6 Menge)."));
+        R.uni.onClick = [this, r]
+        {
+            proc.setRouteUni (r, ! proc.getRouteUni (r));
+            syncRoutes();
+        };
         R.clear.setTooltip ("Zuordnung entfernen");
         R.clear.onClick = [this, r] { proc.clearRoute (r); syncRoutes(); };
-        for (juce::Component* c : { (juce::Component*) &R.src, (juce::Component*) &R.tgt, (juce::Component*) &R.amount, (juce::Component*) &R.clear })
+        for (juce::Component* c : { (juce::Component*) &R.src, (juce::Component*) &R.tgt, (juce::Component*) &R.amount, (juce::Component*) &R.clear, (juce::Component*) &R.uni })
             list.addAndMakeVisible (c);
     }
     matrixView.setViewedComponent (&list, false);
@@ -122,6 +128,8 @@ void ModView::syncRoutes()
         const int s = proc.getRouteSrc (r), t = proc.getRouteTgt (r);
         R.src.setSelectedId (s >= 0 ? s + 1 : 0, juce::dontSendNotification);
         R.tgt.setSelectedId (comboIdFromTarget (t), juce::dontSendNotification);
+        R.uni.setButtonText (proc.getRouteUni (r) ? "+" : juce::String::fromUTF8 ("\xc2\xb1"));
+        R.uni.setToggleState (proc.getRouteUni (r), juce::dontSendNotification);
     }
     updating = false;
     lastRouteVersion = proc.routeVersion.load();
@@ -199,7 +207,9 @@ void ModView::resized()
         R.tgt.setBounds (rr.removeFromLeft (196));
         rr.removeFromLeft (10);
         R.clear.setBounds (rr.removeFromRight (22));
-        rr.removeFromRight (50);
+        rr.removeFromRight (48);
+        R.uni.setBounds (rr.removeFromRight (22));
+        rr.removeFromRight (6);
         R.amount.setBounds (rr);
     }
 }
@@ -357,7 +367,20 @@ void MatrixList::paint (juce::Graphics& g)
         {
             g.setColour (proc.getRouteTgt (r) >= 0 && s >= 0 ? col::dim : col::faint);
             g.setFont (A.monoFont (11.0f));
-            g.drawText (a->getCurrentValueAsText(), R.clear.getBounds().translated (-50, 0).withWidth (46), juce::Justification::centredRight);
+            g.drawText (a->getCurrentValueAsText(), R.clear.getBounds().translated (-48, 0).withWidth (44), juce::Justification::centredRight);
+        }
+    }
+}
+void MatrixList::mouseDown (const juce::MouseEvent& e)
+{
+    for (int r = 0; r < kNumRoutes; ++r)
+    {
+        auto& R = owner.routes[(size_t) r];
+        const auto area = R.clear.getBounds().translated (-48, 0).withWidth (44);
+        if (area.contains (e.getPosition()))
+        {
+            editor.open (*this, area.expanded (2, 0), owner.proc.apvts.getParameter (owner.proc.getModAmountId (r)));
+            return;
         }
     }
 }

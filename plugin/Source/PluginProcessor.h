@@ -59,6 +59,8 @@ public:
     void setRoute (int r, int src, int target);
     int addRoute (int src, int target, float amount);     // first free slot, -1 if full
     void clearRoute (int r);
+    bool getRouteUni (int r) const { return routeUni[(size_t) r].load(); }
+    void setRouteUni (int r, bool uni);
     juce::String targetId (int target) const;
     int targetFromId (const juce::String& id) const;
     juce::String getModAmountId (int r) const { return "mod" + juce::String (r + 1) + "Amt"; }
@@ -129,13 +131,14 @@ private:
     std::vector<char> isFloatParam;
     std::map<juce::String, int> paramIndex;
     std::array<std::atomic<int>, rysum::kNumRoutes> routeSrc {}, routeTgt {};
+    std::array<std::atomic<bool>, rysum::kNumRoutes> routeUni {};
     std::vector<float> modVals, modOff;              // audio thread
     std::vector<char> modHitFlag;
     std::vector<int> hits, prevHits;
     std::unique_ptr<std::atomic<float>[]> modNorm;
     bool haveModVals = false;
     std::vector<juce::RangedAudioParameter*> ccTargets;
-    std::array<std::atomic<float>, 17> ccPending {};
+    std::array<std::atomic<float>, 3 + 2 * rysum::kNumStops> ccPending {};
     std::map<std::string, std::atomic<float>*> extraParams;
     void startAutoLoad();
     void setStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); loadStatus = s; }

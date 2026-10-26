@@ -14,6 +14,17 @@ public:
     void showModMenu (juce::Component& target, const juce::String& paramId) override;
     int paramIndexFor (const juce::String& paramId) override { return proc.getParamIndex (paramId); }
     float modulatedNorm (int index) override { return proc.getModulatedNorm (index); }
+    int routesFor (int paramIndex, int* out, int maxCount) override
+    {
+        int n = 0;
+        for (int r = 0; r < rysum::kNumRoutes && n < maxCount; ++r)
+            if (proc.getRouteSrc (r) >= 0 && proc.getRouteTgt (r) == rysum::kGlobalTargetBase + paramIndex) out[n++] = r;
+        return n;
+    }
+    int routeSource (int r) override { return proc.getRouteSrc (r); }
+    bool routeUni (int r) override { return proc.getRouteUni (r); }
+    juce::RangedAudioParameter* routeAmountParam (int r) override { return proc.apvts.getParameter (proc.getModAmountId (r)); }
+    juce::String routeLabel (int r) override { const int s = proc.getRouteSrc (r); return s >= 0 ? rysum::modSourceNames()[s] : juce::String(); }
     explicit RysumContent (RysumProcessor&);
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;

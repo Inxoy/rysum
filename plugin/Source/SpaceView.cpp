@@ -142,6 +142,9 @@ SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected)
         stopButtons.push_back (std::make_unique<StopRow> (s));
         stopButtons.back()->onClick = [this, s] { selectStop (s); };
         addAndMakeVisible (*stopButtons.back());
+        pullButtons.push_back (std::make_unique<PullToggle>());
+        addAndMakeVisible (*pullButtons.back());
+        pullAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, RysumProcessor::stopParamId (s), *pullButtons.back()));
     }
     const auto lnames = layoutNames();
     for (int i = 0; i < 6; ++i)
@@ -252,9 +255,16 @@ void SpaceView::resized()
     circle.setBounds (left.reduced (20, 34).withTrimmedTop (10));
 
     auto rr = right;
-    stopsBox = rr.removeFromTop (20 + 7 * 20);
+    stopsBox = rr.removeFromTop (20 + kNumStops * 19);
     auto sb = stopsBox.withTrimmedTop (20);
-    for (auto& b : stopButtons) b->setBounds (sb.removeFromTop (20).reduced (0, 1));
+    for (int slot = 0; slot < kNumStops; ++slot)
+    {
+        const int s = kDisplayOrder[(size_t) slot];
+        auto row = sb.removeFromTop (19);
+        pullButtons[(size_t) s]->setBounds (row.removeFromLeft (16));
+        row.removeFromLeft (4);
+        stopButtons[(size_t) s]->setBounds (row.reduced (0, 1));
+    }
     rr.removeFromTop (8);
 
     layoutBox = rr.removeFromTop (32 + 48 + 5 * 20);
@@ -308,7 +318,9 @@ void SpaceView::refresh()
     for (int s = 0; s < kNumStops; ++s)
     {
         const auto txt = mnames[(int) proc.apvts.getRawParameterValue (RysumProcessor::motionParamId (s))->load()];
-        if (stopButtons[(size_t) s]->motion != txt) { stopButtons[(size_t) s]->motion = txt; stopButtons[(size_t) s]->repaint(); }
+        const bool pulled = proc.apvts.getRawParameterValue (RysumProcessor::stopParamId (s))->load() > 0.5f;
+        if (stopButtons[(size_t) s]->motion != txt || stopButtons[(size_t) s]->pulled != pulled)
+        { stopButtons[(size_t) s]->motion = txt; stopButtons[(size_t) s]->pulled = pulled; stopButtons[(size_t) s]->repaint(); }
     }
     if (rateRow) rateRow->repaint();
     if (depthRow) depthRow->repaint();

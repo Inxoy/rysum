@@ -15,8 +15,9 @@ namespace rysum
 struct EngineParams
 {
     std::array<bool, kNumStops> stopOn {};
-    std::array<float, kNumStops> stopGain { 1, 1, 1, 1, 1, 1, 1 };   // linear
-    std::array<float, kNumStops> stopWind { 1, 1, 1, 1, 1, 1, 1 };   // 0 = stop closed (silent) .. 1 = fully pulled
+    std::array<float, kNumStops> stopGain = ones();   // linear
+    std::array<float, kNumStops> stopWind = ones();   // 0 = stop closed (silent) .. 1 = fully pulled
+    static std::array<float, kNumStops> ones() { std::array<float, kNumStops> a {}; a.fill (1.0f); return a; }
     float masterGain = 1.0f;
     int   outputMode = 0;              // 0 = stereo, 1..5 = AmbiX order
     float clickLevel = 0.65f;          // key-down click
@@ -168,6 +169,7 @@ private:
         int length = 0;
         double pos = 0.0, rate = 1.0;
         float gain = 0.0f, send = 0.0f;
+        float lp = 0.0f, lpA = 1.0f;          // tone (soft clicks are duller)
         std::array<float, kMaxAmbiChannels> g {};
     };
 
@@ -178,7 +180,14 @@ private:
     void releaseVoice (Voice& v);
     void freezeVoice (Voice& v);
     void releaseStopKey (int stop, int key);
-    void playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send);
+    void playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone = 1.0f);
+    static float clickCurve (float v) noexcept { return 0.04f + 0.96f * v * std::sqrt (v); }          // velocity -> level
+    float clickTone (float v) const noexcept                                                          // velocity -> one-pole coefficient
+    {
+        const float fc = 900.0f * std::pow (20000.0f / 900.0f, juce::jlimit (0.0f, 1.0f, v * 1.25f));
+        return fc >= 19999.0f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / (float) sr);
+    }
+    std::array<float, kNumKeys> keyVelocity {};
     void gainsFor (Pos pos, float* out) const noexcept;
     void renderRange (juce::AudioBuffer<float>& out, int start, int end, int blockLen, const EngineParams& p);
     void updateVoiceSpatial (Voice& v, const EngineParams& p, double blockSeconds) noexcept;

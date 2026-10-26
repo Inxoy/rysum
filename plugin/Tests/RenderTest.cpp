@@ -394,7 +394,7 @@ int main (int argc, char** argv)
     // pitch check at a different host sample rate: Praestant a' must stay at its recorded pitch,
     // the substituted Gedackt f must land on meantone f
     for (double hostSr : { 44100.0, 48000.0, 96000.0 })
-    for (auto [stop, midi] : { std::pair<int, int> { 0, 69 }, std::pair<int, int> { 1, 53 } })
+    for (auto [stop, midi] : { std::pair<int, int> { 0, 69 }, std::pair<int, int> { 1, 53 }, std::pair<int, int> { kPraestant16, 69 } })
     {
         OrganEngine e;
         e.prepare (hostSr, 512);
@@ -411,7 +411,7 @@ int main (int argc, char** argv)
         // autocorrelation pitch on 0.5..1.5 s
         const float* x = all.getReadPointer (0) + (int) (0.5 * hostSr);
         const int N = (int) hostSr;
-        const double f0nom = meantoneHz (midi);
+        const double f0nom = meantoneHz (midi) * (stop == kPraestant16 ? 0.5 : 1.0);     // the 16' sounds an octave lower
         int bestLag = 0; double best = -1e9;
         for (int lag = (int) (hostSr / (f0nom * 1.1)); lag <= (int) (hostSr / (f0nom / 1.1)); ++lag)
         {

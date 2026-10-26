@@ -73,6 +73,15 @@ mode only channels 1/2 carry sound.
 
 ## 3. The four pages
 
+**Every slider:** click its value to type a number (in the units shown: `50` on a % slider
+= 50 %, `300 ms` or `1.5 s`, `440` on the Stimmton = a′ in Hz, `22` on Abtastrate = 22 kHz),
+Return applies. Double-click the slider = default. Right-click = modulation.
+
+**Stops:** eight – the seven recorded ones plus a *Praestant 16′*, made from the Praestant 8′
+samples played an octave lower (it comes first in the lists; its parameters are added after the
+others, so older projects and patches still load). Default volumes are set so all stops start
+about equally loud (measured K-weighted loudness of all pipes, including their default distance).
+
 **Spieltisch** – click the stop knobs (photos) to pull/push stops. Under every stop:
 *Lautst.* (volume, −48…+12 dB) and *Wind* – how far the stop is drawn: below 100 % the
 pipes get quieter, flatter, unsteady and duller, at 0 % they are silent (move it while
@@ -133,12 +142,18 @@ outside the circle = below the horizon). Select a stop on the right, then
   envelope.
 - Further sources: *Tastenlage* (low key −1 … high key +1), *Modrad* (CC 1), *Zufall je Ton*
   (a new random value per key press).
-- *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 %. Targets:
+- *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 % (click the
+  amount to type it), and **± / +**: ± = bipolar (an LFO swings around the slider value),
+  + = unipolar (it only pushes one way, 0 … amount; envelopes and the mod wheel are 0 … 1 anyway).
+  Targets:
   - *Pfeife: Richtung / Höhe / Abstand / Lautstärke / Tonhöhe / Helligkeit / Hall-Anteil* –
     act on every pipe separately (at 100 %: ±180°, ±90°, ×8 distance, ±36 dB, ±12 semitones,
     ±6 octaves of brightness, ±24 dB room send);
   - every continuous parameter of the plugin (stop volume, motion speed, wind, Verfall,
     Doppler, Hall, even the LFO speeds themselves …), amount = share of the slider's range.
+- **At the slider itself:** a modulated slider shows each routing's range as a red bar with a
+  small red lozenge at the full-amount end – drag the lozenge to set the amount right there
+  (Shift = 5 % steps); the white tick shows where the modulation is right now.
 - **Right-click any slider** → *Modulieren mit …* picks a free slot directly (or removes an
   existing one). A modulated slider shows a white bar and arrow where the modulation takes it
   right now. In the Raum view the pipes move with *Pfeife: Richtung / Höhe / Abstand*
@@ -165,7 +180,8 @@ The project in Reaper still remembers everything on its own, patches are extra.
 
 ## 4. MIDI
 
-MIDI note = sounding pitch (C2 = 36 … a″ = 81). C♯2, D♯2, F♯2, G♯2 and g♯″ do not
+MIDI note = sounding pitch (C2 = 36 … a″ = 81). Velocity shapes the key clicks: a light touch
+gives a quieter and duller click, also when the key comes up. C♯2, D♯2, F♯2, G♯2 and g♯″ do not
 exist on the organ and stay silent (short octave). Sustain pedal (CC64) works.
 
 With *MIDI-CC an* (Klang page):
@@ -174,7 +190,9 @@ With *MIDI-CC an* (Klang page):
 |----|----------|
 | 11 | Wind (global) / swell |
 | 20–26 | stops on/off (Praestant, Gedackt, Octave 4′, Octave 2′, Sesquialtera, Mixtur, Trompete) |
+| 19 | Praestant 16′ on/off |
 | 27–33 | stop wind (same order) |
+| 34 | Praestant 16′ wind |
 | 66 | Freeze (sostenuto pedal) |
 | 1 | Tremulant depth (mod wheel) |
 | 64 | Sustain |

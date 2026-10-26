@@ -13,8 +13,10 @@ class MatrixList : public juce::Component
 public:
     explicit MatrixList (ModView& o) : owner (o) {}
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;      // click an amount to type it
 private:
     ModView& owner;
+    InlineValueEditor editor;
 };
 
 /** fourth page: 4 LFOs, 2 envelopes, 24 routings (scrollable) */
@@ -58,6 +60,7 @@ private:
         RowSlider amount;
         std::unique_ptr<SliderAtt> amountAtt;
         juce::TextButton clear { juce::String::fromUTF8 ("\xc3\x97") };
+        juce::TextButton uni { juce::String::fromUTF8 ("\xc2\xb1") };
         juce::Rectangle<int> row;
     };
 

@@ -43,7 +43,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     {
         const String name = prettyLabel (kStops[(size_t) s].label);
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { volParamId (s), 1 }, name + u8 (" Lautst\xc3\xa4rke"),
-                                                      NormalisableRange<float> (-48.0f, 12.0f, 0.1f), 0.0f,
+                                                      NormalisableRange<float> (-48.0f, 12.0f, 0.1f), kDefaultStopVolume[(size_t) s],
                                                       AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0 ? "+" : "") + String (v, 1) + " dB"; })));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { windParamId (s), 1 }, name + " Wind", NormalisableRange<float> (0, 1), 1.0f, pct));
     }
@@ -53,17 +53,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "output", 1 }, "Ausgabe",
                                                    StringArray { "Stereo", "AmbiX 1. Ordnung", "AmbiX 2. Ordnung", "AmbiX 3. Ordnung", "AmbiX 4. Ordnung", "AmbiX 5. Ordnung" }, 0));
 
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "click", 1 },        "Tastenklick",        NormalisableRange<float> (0, 1), 0.65f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "click", 1 },        "Tastenklick",        NormalisableRange<float> (0, 1), 0.2f, pct));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "clickBlend", 1 },   "Klick ins Anschlagen", NormalisableRange<float> (0, 1), 0.45f, pct));
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "releaseClick", 1 }, "Loslassklick",       NormalisableRange<float> (0, 1), 0.40f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "releaseClick", 1 }, "Loslassklick",       NormalisableRange<float> (0, 1), 0.2f, pct));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "stopPull", 1 },     "Registerzug",        NormalisableRange<float> (0, 1), 0.70f, pct));
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "wind", 1 },         "Wind",               NormalisableRange<float> (0, 1), 0.15f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "wind", 1 },         "Wind",               NormalisableRange<float> (0, 1), 0.0f, pct));
 
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degAmount", 1 },   "Verfall Menge",     NormalisableRange<float> (0, 1), 0.0f, pct));
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degGrain", 1 },    u8 ("K\xc3\xb6rnung"),          NormalisableRange<float> (0, 1), 0.5f, pct));
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degBits", 1 },     "Bittiefe",          NormalisableRange<float> (3.0f, 16.0f, 0.1f), 12.0f,
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degGrain", 1 },    u8 ("K\xc3\xb6rnung"),          NormalisableRange<float> (0, 1), 0.0f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degBits", 1 },     "Bittiefe",          NormalisableRange<float> (3.0f, 16.0f, 0.1f), 16.0f,
                                                   AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " bit"; })));
-    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degRate", 1 },     "Abtastrate",        NormalisableRange<float> (600.0f, 48000.0f, 1.0f, 0.35f), 22050.0f,
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degRate", 1 },     "Abtastrate",        NormalisableRange<float> (600.0f, 48000.0f, 1.0f, 0.35f), 48000.0f,
                                                   AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v >= 1000 ? String (v / 1000.0f, 2) + " kHz" : String (roundToInt (v)) + " Hz"; })));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degWobble", 1 },   "Windschwankung",    NormalisableRange<float> (0, 1), 0.2f, pct));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degDropouts", 1 }, "Aussetzer",         NormalisableRange<float> (0, 1), 0.08f, pct));
@@ -336,7 +336,7 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         E.release = V (ix.envRelease[(size_t) j]);
     }
     for (int r = 0; r < kNumRoutes; ++r)
-        p.mod.routes[(size_t) r] = { routeSrc[(size_t) r].load(), routeTgt[(size_t) r].load(), V (ix.modAmt[(size_t) r]) };
+        p.mod.routes[(size_t) r] = { routeSrc[(size_t) r].load(), routeTgt[(size_t) r].load(), V (ix.modAmt[(size_t) r]), routeUni[(size_t) r].load() };
     return p;
 }
 
@@ -355,7 +355,7 @@ void RysumProcessor::modulate (EngineParams& p, const float* src)
         const float a = modVals[(size_t) ix.modAmt[(size_t) r]];
         if (a == 0.0f) continue;
         if (! modHitFlag[(size_t) t]) { modHitFlag[(size_t) t] = 1; modOff[(size_t) t] = 0.0f; hits.push_back (t); }
-        modOff[(size_t) t] += a * src[sIdx];
+        modOff[(size_t) t] += a * shapeSource (sIdx, src[sIdx], routeUni[(size_t) r].load());
     }
     for (int t : prevHits) modNorm[t] = std::numeric_limits<float>::quiet_NaN();
     for (int t : hits)
@@ -425,9 +425,17 @@ int RysumProcessor::addRoute (int src, int target, float amount)
     return -1;
 }
 
+void RysumProcessor::setRouteUni (int r, bool uni)
+{
+    if (r < 0 || r >= kNumRoutes) return;
+    routeUni[(size_t) r] = uni;
+    ++routeVersion;
+}
+
 void RysumProcessor::clearRoute (int r)
 {
     if (r < 0 || r >= kNumRoutes) return;
+    routeUni[(size_t) r] = false;
     setRoute (r, -1, -1);
     if (auto* a = prmList[(size_t) ix.modAmt[(size_t) r]])
     {
@@ -454,11 +462,14 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             if (! m.isController()) continue;
             const int cc = m.getControllerNumber(), v = m.getControllerValue();
             int target = -1; float value = 0.0f;
-            if (cc == 11)                  { target = 0; value = v / 127.0f; }                       // expression -> global wind
-            else if (cc >= 20 && cc <= 26) { target = 1 + (cc - 20); value = v >= 64 ? 1.0f : 0.0f; } // stops on / off
-            else if (cc >= 27 && cc <= 33) { target = 8 + (cc - 27); value = v / 127.0f; }           // stop wind
-            else if (cc == 66)             { target = 15; value = v >= 64 ? 1.0f : 0.0f; }           // sostenuto -> freeze
-            else if (cc == 1)              { target = 16; value = v / 127.0f; }                      // mod wheel -> tremulant depth
+            const int ns = kNumStops;
+            if (cc == 11)                  { target = 0; value = v / 127.0f; }                            // expression -> global wind
+            else if (cc >= 20 && cc <= 26) { target = 1 + (cc - 20); value = v >= 64 ? 1.0f : 0.0f; }      // stops on / off
+            else if (cc == 19)             { target = 1 + kPraestant16; value = v >= 64 ? 1.0f : 0.0f; }   // Praestant 16'
+            else if (cc >= 27 && cc <= 33) { target = 1 + ns + (cc - 27); value = v / 127.0f; }           // stop wind
+            else if (cc == 34)             { target = 1 + ns + kPraestant16; value = v / 127.0f; }        // Praestant 16' wind
+            else if (cc == 66)             { target = 1 + 2 * ns; value = v >= 64 ? 1.0f : 0.0f; }        // sostenuto -> freeze
+            else if (cc == 1)              { target = 2 + 2 * ns; value = v / 127.0f; }                   // mod wheel -> tremulant depth
             if (target >= 0) { ccPending[(size_t) target] = value; any = true; }
         }
         if (any) triggerAsyncUpdate();
@@ -533,10 +544,10 @@ void RysumProcessor::applyCcOverrides (EngineParams& p) const
     for (int s = 0; s < kNumStops; ++s)
     {
         if (! std::isnan (v = get (1 + s))) p.stopOn[(size_t) s] = v > 0.5f;
-        if (! std::isnan (v = get (8 + s))) p.stopWind[(size_t) s] = v;
+        if (! std::isnan (v = get (1 + kNumStops + s))) p.stopWind[(size_t) s] = v;
     }
-    if (! std::isnan (v = get (15))) p.freeze = v > 0.5f;
-    if (! std::isnan (v = get (16))) p.tremDepth = v;
+    if (! std::isnan (v = get (1 + 2 * kNumStops))) p.freeze = v > 0.5f;
+    if (! std::isnan (v = get (2 + 2 * kNumStops))) p.tremDepth = v;
 }
 
 void RysumProcessor::handleAsyncUpdate()
@@ -709,6 +720,7 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
         {
             mod.setProperty ("src" + juce::String (r), routeSrc[(size_t) r].load(), nullptr);
             mod.setProperty ("tgt" + juce::String (r), targetId (routeTgt[(size_t) r].load()), nullptr);
+            if (routeUni[(size_t) r].load()) mod.setProperty ("uni" + juce::String (r), true, nullptr);
         }
         extra.appendChild (mod, nullptr);
     }
@@ -774,6 +786,7 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             const int src = mod.isValid() ? (int) mod.getProperty ("src" + juce::String (r), -1) : -1;
             const int tgt = mod.isValid() ? targetFromId (mod.getProperty ("tgt" + juce::String (r)).toString()) : -1;
             setRoute (r, src >= 0 && src < kNumSources ? src : -1, tgt);
+            routeUni[(size_t) r] = mod.isValid() && (bool) mod.getProperty ("uni" + juce::String (r), false);
         }
     }
     if (extra.isValid())
@@ -872,10 +885,13 @@ bool RysumProcessor::loadPatch (const juce::File& f)
 void RysumProcessor::writeFactoryPatches()
 {
     auto folder = getPatchFolder();
-    if (folder.getChildFile (".factory_written").existsAsFile()) return;     // only once, so deleted patches stay deleted
+    // written once per factory-set version, so deleted patches stay deleted until a new set comes
+    constexpr int kFactoryVersion = 2;
+    const auto marker = folder.getChildFile (".factory_written");
+    if (marker.existsAsFile() && marker.loadFileAsString().trim().getIntValue() >= kFactoryVersion) return;
     if (! folder.createDirectory()) return;
 
-    struct Route { int src; juce::String tgt; float amt; };
+    struct Route { int src; juce::String tgt; float amt; bool uni = false; };
     auto make = [&] (const juce::String& name, std::vector<std::pair<juce::String, double>> values, std::vector<Route> routesIn)
     {
         juce::ValueTree state (apvts.state.getType());
@@ -896,6 +912,7 @@ void RysumProcessor::writeFactoryPatches()
             const bool used = r < (int) routesIn.size();
             mod.setProperty ("src" + juce::String (r), used ? routesIn[(size_t) r].src : -1, nullptr);
             mod.setProperty ("tgt" + juce::String (r), used ? routesIn[(size_t) r].tgt : juce::String(), nullptr);
+            if (used && routesIn[(size_t) r].uni) mod.setProperty ("uni" + juce::String (r), true, nullptr);
             if (used)
                 for (int i = 0; i < state.getNumChildren(); ++i)
                     if (state.getChild (i)["id"].toString() == getModAmountId (r))
@@ -924,7 +941,43 @@ void RysumProcessor::writeFactoryPatches()
           { { "stop3", 1 }, { "stop4", 1 }, { "motion3", 5 }, { "motion4", 5 }, { "rate3", 1.5f }, { "rate4", 2.5f }, { "depth3", 90 }, { "depth4", 120 },
             { "freezeSmear", 0.8f } },
           { { srcRandom, pipe (tgtPitch), 0.01f } });
-    folder.getChildFile (".factory_written").replaceWithText ("1");
+    // ---- set 2
+    make (u8 ("07 Praestant 16\xe2\x80\xb2 Grund"), { { "stop7", 1 }, { "stop0", 1 }, { "stop1", 1 } }, {});
+    make (u8 ("08 Plenum mit 16\xe2\x80\xb2"),
+          { { "stop7", 1 }, { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 }, { "stop6", 1 }, { "click", 0.35f } }, {});
+    make (u8 ("09 Tremulant-Fl\xc3\xb6te"),
+          { { "stop1", 1 }, { "stop2", 1 }, { "tremOn", 1 }, { "tremRate", 5.2f }, { "tremDepth", 0.45f } }, {});
+    make ("10 Kreisende Mixtur",
+          { { "stop3", 1 }, { "stop5", 1 }, { "motion3", 1 }, { "motion5", 1 }, { "rate3", 0.3f }, { "rate5", -0.22f },
+            { "ellipse3", 0.5f }, { "ellipse5", 0.5f }, { "doppler", 1.0f } }, {});
+    make ("11 Werckmeister-Plenum",
+          { { "temperament", 2 }, { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 } }, {});
+    make ("12 Schwebung",
+          { { "stop0", 1 }, { "stop2", 1 }, { "detune", 12.0f }, { "lfo1Rate", 0.13f }, { "lfo1Spread", 1.0f }, { "lfo1SpreadMode", 1 } },
+          { { srcLfo1, pipe (tgtPitch), 0.006f } });
+    make ("13 Sterbende Orgel",
+          { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "wind", 0.55f }, { "degAmount", 0.35f }, { "degWobble", 0.5f },
+            { "lfo4Shape", (float) shSmooth }, { "lfo4Rate", 0.09f }, { "lfo3Shape", (float) shSmooth }, { "lfo3Rate", 0.05f } },
+          { { srcLfo4, "swind0", -0.45f, true }, { srcLfo3, "swind2", -0.5f, true }, { srcLfo4, "degAmount", 0.3f, true } });
+    make ("14 Eingefroren",
+          { { "stop7", 1 }, { "stop1", 1 }, { "freeze", 1 }, { "freezeSmear", 0.8f }, { "freezeRelease", 6.0f },
+            { "lfo2Rate", 0.04f }, { "lfo2Spread", 1.0f } },
+          { { srcLfo2, pipe (tgtAz), 0.5f } });
+    make (u8 ("15 Trompeten-Spr\xc3\xbcnge im Takt"),
+          { { "stop6", 1 }, { "motion6", 5 }, { "rate6", 2.0f }, { "depth6", 100.0f }, { "motionSync", 1 },
+            { "lfo2Shape", (float) shSquare }, { "lfo2Sync", 1 }, { "lfo2Div", 5 } },
+          { { srcLfo2, pipe (tgtLevel), -0.25f, true } });
+    make ("16 Glockenausklang",
+          { { "stop3", 1 }, { "stop4", 1 }, { "env1Attack", 0.005f }, { "env1Decay", 2.5f }, { "env1Sustain", 0.0f }, { "env1Release", 1.0f } },
+          { { srcEnv1, pipe (tgtLevel), 0.45f }, { srcEnv1, pipe (tgtBright), 0.3f } });
+    make ("17 Atem im Tempo",
+          { { "stop0", 1 }, { "stop1", 1 }, { "lfo1Sync", 1 }, { "lfo1Div", 2 }, { "lfo1Shape", (float) shTriangle } },
+          { { srcLfo1, "swind0", -0.35f, true }, { srcLfo1, "swind1", -0.35f, true } });
+    make ("18 Tiefe Wolke",
+          { { "stop7", 1 }, { "stop1", 1 }, { "lfo3Shape", (float) shSmooth }, { "lfo3Rate", 0.3f }, { "lfo3Spread", 1.0f }, { "lfo3SpreadMode", 1 } },
+          { { srcRandom, pipe (tgtDist), 0.4f }, { srcLfo3, pipe (tgtAz), 0.3f }, { srcRandom, pipe (tgtEl), 0.25f } });
+
+    marker.replaceWithText (juce::String (kFactoryVersion));
 }
 
 juce::AudioProcessorEditor* RysumProcessor::createEditor() { return new RysumEditor (*this); }

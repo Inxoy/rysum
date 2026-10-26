@@ -8,7 +8,7 @@
 
 namespace rysum
 {
-constexpr int kNumStops = 7;
+constexpr int kNumStops = 8;
 constexpr int kNumKeys  = 41;
 constexpr int kMaxOrder = 5;
 constexpr int kMaxAmbiChannels = (kMaxOrder + 1) * (kMaxOrder + 1);   // 36
@@ -115,7 +115,17 @@ constexpr std::array<StopInfo, kNumStops> kStops {{
     { "sesquialtera", "Sesquialtera",  "II fach" },
     { "mixtur",       "Mixtur",        "III-IV fach" },
     { "trompete",     "Trompete 8'",   "8'" },
+    { "praestant16",  "Praestant 16'", "16'" },     // made from the Praestant 8' an octave lower
 }};
+
+/** order on screen: the 16' first, as on a stop list (parameter / state indices stay as they are) */
+constexpr std::array<int, kNumStops> kDisplayOrder { 7, 0, 1, 2, 3, 4, 5, 6 };
+constexpr int kPraestant16 = 7;
+
+/** default stop volumes (dB): measured perceived loudness (K-weighted, all pipes) of the cleaned samples,
+    including the default distances in the room, so all stops start roughly equally loud */
+constexpr std::array<float, kNumStops> kDefaultStopVolume { -2.0f, 4.0f, -0.5f, 1.0f, 1.0f, -0.5f, -1.5f, 0.5f };
+inline int displaySlot (int stop) { for (int i = 0; i < kNumStops; ++i) if (kDisplayOrder[(size_t) i] == stop) return i; return stop; }
 
 inline int stopIndexForId (const juce::String& id)
 {

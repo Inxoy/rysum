@@ -4,6 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "RysumBinaryData.h"
 #include "Common.h"
+#include "Modulation.h"
 
 namespace rysum::ui
 {
@@ -91,6 +92,7 @@ struct Assets
         knobs[4]  = img (k_sesquialtera_jpg, k_sesquialtera_jpgSize);
         knobs[5]  = img (k_mixtur_jpg, k_mixtur_jpgSize);
         knobs[6]  = img (k_trompete_jpg, k_trompete_jpgSize);
+        knobs[7]  = knobs[0];      // Praestant 16': the same pipes, an octave lower
     }
 };
 
@@ -276,24 +278,129 @@ struct ModUiAccess
     virtual void showModMenu (juce::Component& target, const juce::String& paramId) = 0;
     virtual int paramIndexFor (const juce::String& paramId) = 0;
     virtual float modulatedNorm (int paramIndex) = 0;       // NaN = not modulated
+    // routings that act on a parameter (for drawing / dragging their range at the slider)
+    virtual int routesFor (int paramIndex, int* out, int maxCount) = 0;
+    virtual int routeSource (int r) = 0;
+    virtual bool routeUni (int r) = 0;
+    virtual juce::RangedAudioParameter* routeAmountParam (int r) = 0;
+    virtual juce::String routeLabel (int r) = 0;
 };
 
-/** slider that hands right-clicks to a callback instead of dragging */
+/** parses what someone typed into a value field, in the units the parameter shows
+    ("50" on a % slider = 50 %, "300 ms", "1.5 s", "440" on the pitch = a' in Hz, "22 kHz" ...) */
+inline float parseValueText (juce::RangedAudioParameter& p, const juce::String& typed)
+{
+    auto t = typed.trim().replace (",", ".");
+    const auto lower = t.toLowerCase();
+    const auto shown = p.getCurrentValueAsText().toLowerCase();
+    int i = 0;
+    while (i < t.length() && ! (juce::CharacterFunctions::isDigit (t[i]) || t[i] == '-' || t[i] == '+' || t[i] == '.')) ++i;
+    const float num = t.substring (i).replace ("+", "").getFloatValue();
+    const auto range = p.getNormalisableRange();
+    float v = num;
+    if (p.getParameterID() == "pitch")
+    {
+        // a' in Hz (as shown) or cents
+        if (lower.contains ("ct") || std::abs (num) <= 50.0f) v = num;
+        else v = (float) (1200.0 * std::log2 (num / kA4));
+    }
+    else if (shown.contains ("%") && range.end <= 1.0f + 1.0e-6f) v = num / 100.0f;
+    else if (shown.contains ("khz")) v = lower.contains ("khz") || ! lower.contains ("hz") ? num * 1000.0f : num;
+    else if (shown.endsWith (" ms") || shown.endsWith (" s"))
+    {
+        if (lower.contains ("ms")) v = num / 1000.0f;
+        else if (lower.contains ("s")) v = num;
+        else v = shown.endsWith (" ms") ? num / 1000.0f : num;
+    }
+    return juce::jlimit (range.start, range.end, v);
+}
+
+/** a one-line text field over a value: Return applies, Escape / clicking elsewhere cancels */
+class InlineValueEditor
+{
+public:
+    void open (juce::Component& parent, juce::Rectangle<int> area, juce::RangedAudioParameter* p)
+    {
+        if (p == nullptr) return;
+        param = p;
+        ed = std::make_unique<juce::TextEditor>();
+        ed->setFont (Assets::get().monoFont (12.0f));
+        ed->setJustification (juce::Justification::centredRight);
+        ed->setText (p->getCurrentValueAsText(), false);
+        ed->setBounds (area);
+        ed->setIndents (3, 1);
+        parent.addAndMakeVisible (*ed);
+        ed->selectAll();
+        ed->grabKeyboardFocus();
+        ed->onReturnKey = [this]
+        {
+            const float v = parseValueText (*param, ed->getText());
+            param->beginChangeGesture();
+            param->setValueNotifyingHost (param->convertTo0to1 (v));
+            param->endChangeGesture();
+            close();
+        };
+        ed->onEscapeKey = [this] { close(); };
+        ed->onFocusLost = [this] { close(); };
+    }
+    bool isOpen() const { return ed != nullptr; }
+private:
+    void close()
+    {
+        // deferred: we may be inside one of the editor's own callbacks
+        if (ed == nullptr) return;
+        auto* e = ed.release();
+        e->onReturnKey = nullptr; e->onEscapeKey = nullptr; e->onFocusLost = nullptr;
+        e->setVisible (false);
+        juce::MessageManager::callAsync ([e] { delete e; });
+    }
+    std::unique_ptr<juce::TextEditor> ed;
+    juce::RangedAudioParameter* param = nullptr;
+};
+
+/** slider that hands right-clicks to a callback and lets its owner grab presses (range handles) */
 class RowSlider : public juce::Slider
 {
 public:
     std::function<void()> onRightClick;
+    std::function<bool (const juce::MouseEvent&)> interceptDown;      // return true to take the drag
+    std::function<void (const juce::MouseEvent&)> interceptDrag, interceptUp;
+
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) { if (onRightClick) onRightClick(); return; }
-        juce::Slider::mouseDown (e);
+        intercepting = interceptDown && interceptDown (e);
+        if (! intercepting) juce::Slider::mouseDown (e);
     }
-    void mouseDrag (const juce::MouseEvent& e) override { if (! e.mods.isPopupMenu()) juce::Slider::mouseDrag (e); }
-    void mouseUp (const juce::MouseEvent& e) override   { if (! e.mods.isPopupMenu()) juce::Slider::mouseUp (e); }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) return;
+        if (intercepting) { if (interceptDrag) interceptDrag (e); return; }
+        juce::Slider::mouseDrag (e);
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) return;
+        if (intercepting) { intercepting = false; if (interceptUp) interceptUp (e); return; }
+        juce::Slider::mouseUp (e);
+    }
+    void mouseDoubleClick (const juce::MouseEvent& e) override { if (! intercepting) juce::Slider::mouseDoubleClick (e); }
+
+    /** normalised (0..1 of the parameter) value under an x position */
+    double proportionAtX (float x)
+    {
+        const double x0 = getPositionOfValue (getMinimum()), x1 = getPositionOfValue (getMaximum());
+        return juce::jlimit (0.0, 1.0, (x - x0) / juce::jmax (1.0, x1 - x0));
+    }
+private:
+    bool intercepting = false;
 };
 
-/** label + value + thin slider, attached to a parameter. Right-click = modulation menu; a modulated
-    parameter shows where the modulation takes it right now. */
+/** label + value + thin slider, attached to a parameter.
+    - click the value to type a number
+    - right-click = modulation menu
+    - modulated: the red bar is each routing's range (drag its lozenge to change the amount),
+      the white tick is where the modulation takes the parameter right now */
 class ParamRow : public juce::Component, private juce::Timer
 {
 public:
@@ -301,6 +408,9 @@ public:
         : title (name), compact (compactRow), id (paramId)
     {
         slider.onRightClick = [this] { openMenu(); };
+        slider.interceptDown = [this] (const juce::MouseEvent& e) { return handleDown (e); };
+        slider.interceptDrag = [this] (const juce::MouseEvent& e) { handleDrag (e); };
+        slider.interceptUp = [this] (const juce::MouseEvent&) { handleUp(); };
         startTimerHz (25);
         slider.setSliderStyle (juce::Slider::LinearHorizontal);
         slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -314,13 +424,22 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().removeFromTop (compact ? 13 : 18);
+        auto r = headerArea();
         g.setColour (compact ? col::mute : col::ink);
         g.setFont (compact ? Assets::get().monoFont (10.0f) : Assets::get().sansFont (14.0f));
         g.drawText (title, r, juce::Justification::centredLeft);
-        g.setColour (col::dim);
         g.setFont (Assets::get().monoFont (compact ? 10.0f : 12.0f));
-        g.drawText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r, juce::Justification::centredRight);
+        if (dragRoute >= 0 && access != nullptr)
+        {
+            auto* a = access->routeAmountParam (dragRoute);
+            g.setColour (col::rubric.brighter (0.4f));
+            g.drawText (access->routeLabel (dragRoute) + ": " + (a != nullptr ? a->getCurrentValueAsText() : juce::String()), r, juce::Justification::centredRight);
+        }
+        else
+        {
+            g.setColour (valueHover ? col::white : col::dim);
+            g.drawText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r, juce::Justification::centredRight);
+        }
     }
 
     void resized() override
@@ -329,28 +448,96 @@ public:
         else         slider.setBounds (getLocalBounds().withTrimmedTop (16).withHeight (18));
     }
 
-    void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu()) openMenu(); }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { openMenu(); return; }
+        if (valueArea().contains (e.getPosition()))
+            editor.open (*this, valueArea().expanded (2, 1).withTrimmedLeft (-30), param);
+    }
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const bool h = valueArea().contains (e.getPosition());
+        if (h != valueHover) { valueHover = h; setMouseCursor (h ? juce::MouseCursor::IBeamCursor : juce::MouseCursor::NormalCursor); repaint (headerArea()); }
+    }
+    void mouseExit (const juce::MouseEvent&) override { if (valueHover) { valueHover = false; setMouseCursor (juce::MouseCursor::NormalCursor); repaint (headerArea()); } }
 
     void paintOverChildren (juce::Graphics& g) override
     {
-        if (findAccess()) modNorm = access->modulatedNorm (index);
-        if (std::isnan (modNorm) || param == nullptr) return;
+        if (param == nullptr || ! findAccess()) return;
+        modNorm = access->modulatedNorm (index);
         const auto sb = slider.getBounds().toFloat();
-        const float x0 = (float) slider.getX() + (float) slider.getPositionOfValue (slider.getValue());
-        const float x1 = (float) slider.getX() + (float) slider.getPositionOfValue (param->convertFrom0to1 (modNorm));
         const float cy = sb.getCentreY();
-        g.setColour (col::white.withAlpha (0.55f));
-        g.fillRect (juce::jmin (x0, x1), cy + 4.0f, std::abs (x1 - x0), 2.0f);
-        juce::Path tri;
-        tri.addTriangle (x1 - 4.0f, cy + 10.0f, x1 + 4.0f, cy + 10.0f, x1, cy + 4.0f);
-        g.setColour (col::white);
-        g.fillPath (tri);
+        auto xOfNorm = [this] (float n) { return (float) slider.getX() + (float) slider.getPositionOfValue (param->convertFrom0to1 (juce::jlimit (0.0f, 1.0f, n))); };
+
+        // routing ranges (red) with a draggable lozenge at the full-amount end
+        nHandles = access->routesFor (index, handleRoute.data(), (int) handleRoute.size());
+        const float base = param->getValue();
+        for (int i = 0; i < nHandles; ++i)
+        {
+            const int r = handleRoute[(size_t) i];
+            auto* ap = access->routeAmountParam (r);
+            if (ap == nullptr) continue;
+            const float amt = ap->convertFrom0to1 (ap->getValue());
+            const float lo = base + amt * sourceMin (access->routeSource (r), access->routeUni (r)), hi = base + amt;
+            const float y = cy + (compact ? 4.5f : 5.5f) + 3.5f * (float) i;
+            const float xa = xOfNorm (juce::jmin (lo, hi)), xb = xOfNorm (juce::jmax (lo, hi));
+            g.setColour (col::rubric.withAlpha (r == dragRoute ? 1.0f : 0.85f));
+            g.fillRect (xa, y - 0.75f, juce::jmax (1.0f, xb - xa), 1.5f);
+            const float hx = xOfNorm (hi);
+            handleX[(size_t) i] = hx - (float) slider.getX();
+            handleY[(size_t) i] = y - (float) slider.getY();
+            g.setColour (col::rubric.brighter (r == dragRoute ? 0.6f : 0.3f));
+            juce::Path p;
+            p.startNewSubPath (hx, y - 3.0f); p.lineTo (hx + 2.5f, y); p.lineTo (hx, y + 3.0f); p.lineTo (hx - 2.5f, y); p.closeSubPath();
+            g.fillPath (p);
+        }
+        // where the modulation is right now
+        if (! std::isnan (modNorm))
+        {
+            const float x1 = xOfNorm (modNorm);
+            g.setColour (col::white);
+            g.fillRect (x1 - 1.0f, cy - 5.0f, 2.0f, 10.0f);
+        }
     }
 
     RowSlider slider;
     const juce::String& getParamId() const { return id; }
 
 private:
+    juce::Rectangle<int> headerArea() const { return getLocalBounds().removeFromTop (compact ? 13 : 18); }
+    juce::Rectangle<int> valueArea() const { return headerArea().removeFromRight (compact ? 64 : 84); }
+
+    bool handleDown (const juce::MouseEvent& e)
+    {
+        for (int i = 0; i < nHandles; ++i)
+            if (std::abs (e.position.x - handleX[(size_t) i]) < 6.0f && std::abs (e.position.y - handleY[(size_t) i]) < 4.0f)
+            {
+                dragRoute = handleRoute[(size_t) i];
+                if (auto* ap = access->routeAmountParam (dragRoute)) ap->beginChangeGesture();
+                handleDrag (e);
+                return true;
+            }
+        return false;
+    }
+    void handleDrag (const juce::MouseEvent& e)
+    {
+        if (dragRoute < 0 || access == nullptr) return;
+        auto* ap = access->routeAmountParam (dragRoute);
+        if (ap == nullptr) return;
+        const float n = (float) slider.proportionAtX (e.position.x);
+        float amt = juce::jlimit (-1.0f, 1.0f, n - param->getValue());
+        if (e.mods.isShiftDown()) amt = std::round (amt * 20.0f) / 20.0f;        // shift: 5 % steps
+        ap->setValueNotifyingHost (ap->convertTo0to1 (amt));
+        repaint();
+    }
+    void handleUp()
+    {
+        if (dragRoute >= 0 && access != nullptr)
+            if (auto* ap = access->routeAmountParam (dragRoute)) ap->endChangeGesture();
+        dragRoute = -1;
+        repaint();
+    }
+
     void openMenu()
     {
         if (auto* a = findParentComponentOfClass<ModUiAccess>()) a->showModMenu (*this, id);
@@ -370,8 +557,10 @@ private:
     {
         if (! isShowing() || ! findAccess()) return;
         const float n = access->modulatedNorm (index);
+        std::array<int, 3> rr {};
+        const int nr = access->routesFor (index, rr.data(), 3);
         const bool was = ! std::isnan (modNorm), is = ! std::isnan (n);
-        if (was != is || (is && std::abs (n - modNorm) > 0.0005f)) { modNorm = n; repaint(); }
+        if (was != is || (is && std::abs (n - modNorm) > 0.0005f) || nr != nHandles) { modNorm = n; repaint(); }
     }
 
     juce::String title;
@@ -382,6 +571,11 @@ private:
     float modNorm = std::numeric_limits<float>::quiet_NaN();
     juce::RangedAudioParameter* param = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+    InlineValueEditor editor;
+    bool valueHover = false;
+    std::array<int, 3> handleRoute {};
+    std::array<float, 3> handleX {}, handleY {};
+    int nHandles = 0, dragRoute = -1;
 };
 
 /** a small printer's lozenge ornament */
@@ -432,11 +626,19 @@ inline void drawSectionTitle (juce::Graphics& g, juce::Rectangle<int> r, const j
 /** dot style per stop, as in the mockup */
 inline void drawStopDot (juce::Graphics& g, int stop, juce::Point<float> c, float size, bool highlight)
 {
-    const juce::Colour fills[] { col::ink, col::mute, col::ink, col::mute, col::dim, col::dim, col::white };
+    const juce::Colour fills[] { col::ink, col::mute, col::ink, col::mute, col::dim, col::dim, col::white, col::ink };
+    auto r = juce::Rectangle<float> (size, size).withCentre (c);
+    g.setColour (highlight ? col::white : fills[juce::jlimit (0, 7, stop)]);
+    if (stop == kPraestant16)
+    {
+        juce::Path p;
+        const float h = size * 0.75f;
+        p.startNewSubPath (c.x, c.y - h); p.lineTo (c.x + h, c.y); p.lineTo (c.x, c.y + h); p.lineTo (c.x - h, c.y); p.closeSubPath();
+        g.fillPath (p);
+        return;
+    }
     const bool hollow = stop == 2 || stop == 3 || stop == 5;
     const bool square = stop >= 4;
-    auto r = juce::Rectangle<float> (size, size).withCentre (c);
-    g.setColour (highlight ? col::white : fills[stop]);
     if (square) { if (hollow) g.drawRect (r, 1.0f); else g.fillRect (r); }
     else        { if (hollow) g.drawEllipse (r.reduced (0.5f), 1.0f); else g.fillEllipse (r); }
 }

@@ -2,7 +2,7 @@
 
 namespace rysum
 {
-static std::shared_ptr<const Sample> readMono (juce::AudioFormatManager& fm, const juce::File& f)
+static std::shared_ptr<const Sample> readMono (juce::AudioFormatManager& fm, const juce::File& f, int fadeAfter = -1)
 {
     std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
     if (r == nullptr || r->lengthInSamples <= 0 || r->lengthInSamples > (1 << 26))
@@ -21,6 +21,14 @@ static std::shared_ptr<const Sample> readMono (juce::AudioFormatManager& fm, con
         float v = 0.0f;
         for (int c = 0; c < ch; ++c) v += buf.getSample (c, i);
         s->data[(size_t) i] = v / (float) ch;
+    }
+    // pipes: a soft fade over the last part of the tail (never before the recorded key release),
+    // so the wind noise does not stop abruptly even with older samples
+    if (fadeAfter >= 0 && fadeAfter < n - 32)
+    {
+        const int len = juce::jmin ((int) (0.25 * r->sampleRate), (n - fadeAfter) / 2);
+        for (int i = 0; i < len; ++i)
+            s->data[(size_t) (n - len + i)] *= 0.5f + 0.5f * std::cos (juce::MathConstants<float>::pi * (float) i / (float) len);
     }
     return s;
 }
@@ -102,7 +110,7 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load (const juce::File& folder, ju
                     if (ki < 0) continue;
                     auto& p = lib->pipes[(size_t) si][(size_t) ki];
                     p.file = pv["file"].toString();
-                    p.sample = readMono (fm, folder.getChildFile (p.file));
+                    p.sample = readMono (fm, folder.getChildFile (p.file), pv["release"].isVoid() ? 0 : (int) pv["release"]);
                     if (p.sample == nullptr) { lib->warnings.add ("missing file " + p.file); continue; }
 
                     const int len = p.sample->size();
@@ -173,6 +181,20 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load (const juce::File& folder, ju
             dst.hasCents = false;
             ++lib->substitutedPipes;
         }
+    }
+
+    // Praestant 16': the Praestant 8' pipes an octave lower (played at half speed)
+    for (int k = 0; k < kNumKeys; ++k)
+    {
+        auto& dst = lib->pipes[(size_t) kPraestant16][(size_t) k];
+        const auto& src = lib->pipes[0][(size_t) k];
+        if (! src.valid) continue;
+        dst = src;
+        dst.rate = src.rate * 0.5;
+        dst.midi = src.midi - 12;
+        dst.nominalHz = src.nominalHz * 0.5;
+        dst.measuredHz = src.measuredHz * 0.5;
+        dst.flags.add ("Praestant 8' eine Oktave tiefer");
     }
 
     // noise layer

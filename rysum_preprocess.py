@@ -23,8 +23,19 @@ What it does differently from note_isolation.py
 * Loop points are searched in the sustain (normalised cross-correlation),
   the key-up position is stored, so the plugin can loop and then play the
   real release.
+* Mono first: each recording is turned into one mono track before anything
+  else (per note, the two mics are time-aligned and summed; if they still
+  cancel, the louder mic is used). All timing – note detection, onsets,
+  release, loop points – is then computed on that mono track.
 * Noise layer: key clicks (paired into key-down / key-up), stop-pull sounds
   and a wind/blower loop taken from the gaps between notes.
+* Clean-up (per pipe, after cutting): a zero-phase high-pass at about half
+  the pipe's fundamental removes blower rumble / sub information, and a
+  spectral noise reduction with a noise print from the silent gaps of the same
+  recording lowers the constant wind noise (moderately, so the pipe's own
+  breath and chiff stay). The tail then ends where the cleaned release reaches
+  the remaining noise and is faded out softly instead of being cut.
+  --no-clean writes the samples as before.
 
 Usage:  python rysum_preprocess.py            (run inside rysum_plugin/)
         python rysum_preprocess.py --raw raw_unprocessed_files --out samples
@@ -35,7 +46,7 @@ import numpy as np
 import soundfile as sf
 import librosa
 from scipy.ndimage import uniform_filter1d, binary_closing
-from scipy.signal import fftconvolve
+from scipy.signal import fftconvolve, butter, sosfiltfilt, stft, istft
 
 # --------------------------------------------------------------------------
 # Instrument
@@ -87,8 +98,18 @@ MAX_TAIL = 5.0            # s
 FADE_OUT = 0.040          # s
 LOOP_WIN = 2048           # samples compared at the loop seam
 JUNK = 4.0                # max emission cost
+MONO = True               # write mono files (time-aligned sum of both mics); --stereo keeps L/R
+MONO_MAX_LAG = 200        # samples (~4 ms) searched to line the two mics up
+MONO_MIN_EFF = 0.6        # if the aligned sum still cancels more than this, use the stronger mic alone
 STEADY_DB = 3.0           # std of the sustain level above which a pipe is flagged unsteady
 SKIP = 2.5                # cost of declaring a segment junk (not a key)
+CLEAN = True              # high-pass + noise reduction + soft tails (--no-clean to switch off)
+HP_RATIO = 0.55           # high-pass corner = this x the lowest fundamental of the pipe
+HP_MIN = 25.0             # Hz
+NR_DB = 15.0              # maximum noise reduction (dB)
+NR_OVER = 1.6             # over-subtraction factor of the noise print
+NR_FFT = 2048
+TAIL_FADE = 0.35          # s, soft fade at the very end of each pipe
 
 
 def env_db(mono):
@@ -250,13 +271,140 @@ def extract_note(x, db, floor, s, e, next_on, prev_end, sr):
                 plateau_db=float(plateau), steadiness=float(np.std(uniform_filter1d(db[att:rel], 20))) if rel > att + 4 else 99.0)
 
 
+def _shift(r, lag):
+    """delay (lag > 0) or advance r by lag samples, zero padded"""
+    if lag > 0: return np.r_[np.zeros(lag, r.dtype), r[:-lag]]
+    if lag < 0: return np.r_[r[-lag:], np.zeros(-lag, r.dtype)]
+    return r
+
+
+def to_mono(y, a=None, b=None):
+    """Two spaced mics summed naively cancel many partials (up to -13 dB here).
+    The right channel is shifted by the lag that maximises its correlation with
+    the left inside y[a:b] (the steady part), then both are summed and the loss
+    of summing is compensated so the pipe keeps its level. If the channels
+    still cancel badly, the louder channel is used alone."""
+    if y.ndim == 1 or y.shape[1] == 1:
+        return (y if y.ndim == 1 else y[:, 0]).copy(), dict(method='mono', lag=0, efficiency=1.0)
+    L, R = y[:, 0].astype(np.float64), y[:, 1].astype(np.float64)
+    a = 0 if a is None else max(0, a); b = len(y) if b is None or b - a < 4096 else b
+    l, r = L[a:b], R[a:b]
+    M = MONO_MAX_LAG
+    c = fftconvolve(l, r[::-1], mode='full'); mid = len(r) - 1
+    lag = int(np.argmax(c[mid - M:mid + M + 1])) - M          # R shifted by lag matches L best
+    R2 = _shift(R, lag)
+    l2, r2 = L[a + M:b - M], R2[a + M:b - M]
+    p_ch = 0.5 * (np.mean(l2 ** 2) + np.mean(r2 ** 2)) + 1e-20
+    eff = float(np.mean((l2 + r2) ** 2) / (4 * p_ch))           # 1 = coherent, 0.5 = uncorrelated
+    if eff >= MONO_MIN_EFF:
+        mono = 0.5 * (L + R2) / math.sqrt(eff)                  # keep the average channel level
+        info = dict(method='aligned_sum', lag=lag, efficiency=round(eff, 3))
+    else:
+        louder = 0 if np.mean(l ** 2) >= np.mean(r ** 2) else 1
+        mono = y[:, louder].astype(np.float64)
+        info = dict(method='left' if louder == 0 else 'right', lag=0, efficiency=round(eff, 3))
+    peak = np.max(np.abs(mono))
+    if peak > 0.999:                                           # never clip (rare): scale down, note it
+        mono *= 0.999 / peak; info['gain_reduced_db'] = round(20 * math.log10(0.999 / peak), 2)
+    return mono.astype(np.float32), info
+
+
+def mono_track(x, sr):
+    """Step 1: turn a stereo recording into ONE mono track before any timing
+    analysis. Every pipe stands somewhere else relative to the two mics, so the
+    alignment lag is found per note: the file is cut into regions (one note each,
+    borders in the middle of the gaps) and each region is aligned + summed with
+    to_mono(). Returns the mono track and the list of regions with their info."""
+    if x.shape[1] == 1:
+        return x[:, 0].copy(), []
+    db = env_db(x.mean(1))
+    _, segs = find_notes(db, sr)
+    M = np.zeros(len(x), np.float32)
+    regions = []
+    bounds = [0] + [((e0 + s1) // 2) * HOP for (_, e0), (s1, _) in zip(segs[:-1], segs[1:])] + [len(x)]
+    for (s, e), r0, r1 in zip(segs, bounds[:-1], bounds[1:]):
+        q = (e - s) * HOP // 4                               # steady middle of the note
+        y = x[r0:r1]
+        m, info = to_mono(y, s * HOP - r0 + q, e * HOP - r0 - q)
+        M[r0:r1] = m
+        info['lr_correlation'] = round(float(np.corrcoef(y[:, 0], y[:, 1])[0, 1]), 3)
+        regions.append((r0, r1, info))
+    if not segs:
+        M[:], info = to_mono(x)
+    return M, regions
+
+
+# --------------------------------------------------------------------------
+# Clean-up: rumble, wind noise, soft tails
+# --------------------------------------------------------------------------
+def noise_print(mono, db, floor, sr):
+    """average power spectrum of the quiet gaps between notes (blower + room noise)"""
+    quiet = db < floor + 3
+    idx = np.repeat(quiet, HOP)[:len(mono)]
+    q = mono[:len(idx)][idx]
+    if len(q) < NR_FFT * 8:                                # not enough silence: use the quietest 5 %
+        q = mono[np.argsort(np.abs(mono))[:max(NR_FFT * 8, len(mono) // 20)]]
+    _, _, Z = stft(q, fs=sr, nperseg=NR_FFT, noverlap=NR_FFT * 3 // 4)
+    return np.mean(np.abs(Z) ** 2, axis=1)
+
+
+def clean_pipe(y, sr, f_low, npsd):
+    """y: mono float array of one pipe. Returns the cleaned pipe."""
+    x = y.astype(np.float64)
+    # 1) zero-phase high-pass below the fundamental (rumble / sub)
+    fc = max(HP_MIN, HP_RATIO * f_low)
+    sos = butter(2, fc / (sr / 2), btype='highpass', output='sos')
+    pad = min(len(x) - 1, int(sr * 0.5))
+    x = sosfiltfilt(sos, x, padlen=pad)
+    # 2) spectral noise reduction (Wiener-like gain with a floor, smoothed in time and frequency)
+    if npsd is not None and NR_DB > 0:
+        f, t, Z = stft(x, fs=sr, nperseg=NR_FFT, noverlap=NR_FFT * 3 // 4)
+        # the noise print went through no high-pass: apply the same high-pass to it
+        hp = 1.0 / (1.0 + (fc / np.maximum(f, 1.0)) ** 8)
+        N = (npsd * hp)[:, None]
+        P = np.abs(Z) ** 2
+        g = np.maximum(1.0 - NR_OVER * N / np.maximum(P, 1e-20), 0.0)
+        gmin = 10 ** (-NR_DB / 20)
+        g = np.maximum(np.sqrt(g), gmin)
+        g = uniform_filter1d(g, 3, axis=0)                        # across frequency
+        # across time: open fast, close slowly (no pumping, no 'musical noise')
+        gs = np.empty_like(g); gs[:, 0] = g[:, 0]
+        for j in range(1, g.shape[1]):
+            gs[:, j] = np.where(g[:, j] > gs[:, j - 1], g[:, j], 0.7 * gs[:, j - 1] + 0.3 * g[:, j])
+        _, xr = istft(Z * gs, fs=sr, nperseg=NR_FFT, noverlap=NR_FFT * 3 // 4)
+        x = xr[:len(x)] if len(xr) >= len(x) else np.r_[xr, np.zeros(len(x) - len(xr))]
+    return x.astype(np.float32)
+
+
+def soft_tail(y, sr, release):
+    """end the pipe where the release tail has reached the remaining noise, with a long soft fade"""
+    db = env_db(y)
+    if len(db) < 20: return y
+    floor = float(np.percentile(db[min(len(db) - 1, release // HOP):], 10)) if release // HOP < len(db) - 10 else float(np.min(db))
+    r = release // HOP
+    above = np.where(db[r:] > floor + 6)[0]
+    end_f = r + (int(above[-1]) if len(above) else 0)
+    end = min(len(y), end_f * HOP + int(0.25 * sr))
+    end = max(end, min(len(y), release + int(0.2 * sr)))
+    y = y[:end].copy()
+    fo = min(int(TAIL_FADE * sr), max(1, (end - release) // 2) if end > release else len(y) // 4)
+    if fo > 1: y[-fo:] *= (0.5 + 0.5 * np.cos(np.linspace(0, np.pi, fo)))
+    return y
+
+
 def process_stop(sid, cfg, raw, out, report):
     cands = {}
     for fname, t0, t1 in cfg['sources']:
         x, sr = sf.read(os.path.join(raw, fname), dtype='float32', always_2d=True)
         a0 = int(t0 * sr); a1 = len(x) if t1 is None else int(t1 * sr)
-        x = x[a0:a1]; mono = x.mean(1); db = env_db(mono)
+        x = x[a0:a1]
+        regions = []
+        if MONO:                                   # step 1: mono, then all timing on the mono track
+            m, regions = mono_track(x, sr)
+            x = m[:, None]
+        mono = x.mean(1); db = env_db(mono)
         floor, segs = find_notes(db, sr)
+        npsd = noise_print(mono, db, floor, sr) if CLEAN else None
         f0s = []
         info = []
         for idx, (s, e) in enumerate(segs):
@@ -270,7 +418,8 @@ def process_stop(sid, cfg, raw, out, report):
         assign, direction = viterbi(f0s, cfg)
         for n, f0, (k, cost) in zip(info, f0s, assign):
             key = PHYS_KEYS[k]
-            n.update(src=fname, src_offset=a0, f0=f0, key=key, fit=cost, x=x, sr=sr, floor=floor,
+            reg = next((r[2] for r in regions if r[0] <= n['onset'] < r[1]), None)
+            n.update(src=fname, src_offset=a0, f0=f0, key=key, fit=cost, x=x, sr=sr, floor=floor, mono=reg, npsd=npsd,
                      t=round((a0 + n['onset']) / sr, 2), sus_len=(n['release'] - n['attack_end']) / sr)
             if cost >= 2.5:
                 report['junk'].append(dict(stop=sid, src=fname, t=n['t'], f0=f0)); continue
@@ -296,8 +445,17 @@ def process_stop(sid, cfg, raw, out, report):
         y[-fo:] *= (0.5 + 0.5 * np.cos(np.linspace(0, np.pi, fo)))[:, None]
         fi = int(0.002 * sr); y[:fi] *= np.linspace(0, 1, fi)[:, None]
         fname = f"{key:03d}_{helmholtz(key).replace(chr(39), 'p')}.wav"
-        sf.write(os.path.join(out, sid, fname), y, sr, subtype='PCM_16')
         rel = lambda p: int(p - n['a'])
+        mono_info = n.get('mono')
+        lr_corr = mono_info.get('lr_correlation') if mono_info else \
+            (round(float(np.corrcoef(y[:, 0], y[:, 1])[0, 1]), 3) if y.shape[1] > 1 else None)
+        if y.shape[1] == 1: y = y[:, 0]
+        if CLEAN and y.ndim == 1:
+            f_low = mt_freq(key) * (cfg.get('mult', 1) if 'compound' not in cfg else 1)
+            y = clean_pipe(y, sr, f_low, n.get('npsd'))
+            y = soft_tail(y, sr, rel(n['release']))
+            fi = int(0.002 * sr); y[:fi] *= np.linspace(0, 1, fi)
+        sf.write(os.path.join(out, sid, fname), y, sr, subtype='PCM_16')
         nominal = mt_freq(key) * cfg.get('mult', 1)
         meas = n['f0']
         cents = None if 'compound' in cfg or not meas else round(1200 * math.log2(meas / nominal), 1)
@@ -308,7 +466,7 @@ def process_stop(sid, cfg, raw, out, report):
         if not n['loop'] or n['loop'][2] < 0.9: flags.append('weak loop')
         if n['steadiness'] > STEADY_DB and n['sus_len'] >= 1.0: flags.append(f"unsteady ({n['steadiness']:.1f} dB)")
         if octave_shift: flags.append(f'sounds {octave_shift:+d} oct vs nominal')
-        L, R = y[:, 0], y[:, 1] if y.shape[1] > 1 else y[:, 0]
+        if mono_info and mono_info['method'] != 'aligned_sum': flags.append(f"mono: {mono_info['method']} mic only")
         pipes.append(dict(
             key=key, name=helmholtz(key), phys_index=PHYS_KEYS.index(key), file=f"{sid}/{fname}",
             length=len(y), onset=rel(n['onset']), attack_end=rel(n['attack_end']), release=rel(n['release']),
@@ -316,7 +474,7 @@ def process_stop(sid, cfg, raw, out, report):
             loop_ncc=round(n['loop'][2], 4) if n['loop'] else None,
             level_db=round(n['plateau_db'], 2), nominal_hz=round(nominal, 3),
             measured_hz=round(meas, 3) if meas else None, cents_vs_nominal=cents,
-            lr_correlation=round(float(np.corrcoef(L, R)[0, 1]), 3),
+            lr_correlation=lr_corr, channels=1 if y.ndim == 1 else y.shape[1], mono=mono_info,
             source=n['src'], source_time=n['t'], fit=round(n['fit'], 3), flags=flags,
             other_takes=[dict(source=t['src'], time=t['t'], sustain=round(t['sus_len'], 2)) for t in takes[1:]]))
     devs = [p['cents_vs_nominal'] - 1200 * round(p['cents_vs_nominal'] / 1200) for p in pipes if p['cents_vs_nominal'] is not None]
@@ -346,6 +504,8 @@ def detect_events(db, sr, rel_db=15, min_gap=0.3, max_len=2.5):
 
 def cut_events(fname, raw, out, sub, sr_out_list, pair=False):
     x, sr = sf.read(os.path.join(raw, fname), dtype='float32', always_2d=True)
+    if MONO and x.shape[1] > 1:
+        m, _ = to_mono(x); x = m[:, None]
     db = env_db(x.mean(1))
     floor, ons = detect_events(db, sr)
     os.makedirs(os.path.join(out, 'noise', sub), exist_ok=True)
@@ -374,6 +534,7 @@ def cut_events(fname, raw, out, sub, sr_out_list, pair=False):
         y = x[ev['a']:ev['b']].copy()
         if len(y) < int(0.03 * sr): continue
         fo = min(int(0.02 * sr), len(y) // 4); y[-fo:] *= np.linspace(1, 0, fo)[:, None]
+        if y.shape[1] == 1: y = y[:, 0]
         kind = ev.get('kind', 'pull')
         counters[kind] = counters.get(kind, 0) + 1
         fn = f"{kind}_{counters[kind]:02d}.wav"
@@ -390,6 +551,8 @@ def wind_loops(raw, out, files, target=6.0):
     res = []
     for fname in files:
         x, sr = sf.read(os.path.join(raw, fname), dtype='float32', always_2d=True)
+        if MONO and x.shape[1] > 1:
+            x = (x.mean(1) * math.sqrt(2))[:, None]
         db = env_db(x.mean(1)); floor, segs = find_notes(db, sr)
         quiet = db < floor + 3
         for s, e in segs:                                   # exclude notes + 0.5 s tail
@@ -408,6 +571,7 @@ def wind_loops(raw, out, files, target=6.0):
         if y is None or len(y) < sr: continue
         y_loop = y[xf:].copy(); y_loop[-xf:] = y_loop[-xf:] * w[::-1] + y[:xf] * w   # seamless loop
         fn = f"wind_{os.path.splitext(fname)[0]}.wav"
+        if y_loop.shape[1] == 1: y_loop = y_loop[:, 0]
         sf.write(os.path.join(out, 'noise', 'wind', fn), y_loop, sr, subtype='PCM_16')
         res.append(dict(file=f"noise/wind/{fn}", length=len(y_loop), loop=True,
                         level_db=round(float(10 * np.log10(np.mean(y_loop ** 2) + 1e-14)), 1),
@@ -439,11 +603,18 @@ def plot_report(stops, path):
 
 
 def main():
+    global MONO, CLEAN, NR_DB
     ap = argparse.ArgumentParser()
     ap.add_argument('--raw', default='raw_unprocessed_files')
     ap.add_argument('--out', default='samples')
     ap.add_argument('--stops', nargs='*', default=list(STOPS))
+    ap.add_argument('--stereo', action='store_true', help='keep both microphone channels instead of mono')
+    ap.add_argument('--no-clean', action='store_true', help='no high-pass / noise reduction / soft tails')
+    ap.add_argument('--nr-db', type=float, default=15.0, help='maximum noise reduction in dB (default 15)')
     args = ap.parse_args()
+    MONO = not args.stereo
+    CLEAN = not args.no_clean
+    NR_DB = args.nr_db
     os.makedirs(args.out, exist_ok=True)
     report = dict(files=[], missing=[], junk=[])
     stops = []
@@ -460,7 +631,7 @@ def main():
     print(f"   {len(noise['clicks'])} clicks, {len(noise['stop_pulls'])} stop pulls, {len(noise['wind'])} wind loops")
     meta = dict(instrument='Rysum, um 1457', temperament='1/4-comma meantone', a4_hz=A4,
                 keys=[dict(midi=k, name=helmholtz(k), phys_index=i) for i, k in enumerate(PHYS_KEYS)],
-                sample_rate=48000, stops=stops, noise=noise)
+                sample_rate=48000, channels=1 if MONO else 2, stops=stops, noise=noise)
     json.dump(meta, open(os.path.join(args.out, 'rysum_samples.json'), 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
     json.dump(report, open(os.path.join(args.out, 'preprocess_report.json'), 'w'), indent=1)
     plot_report(stops, os.path.join(args.out, 'preprocess_overview.png'))

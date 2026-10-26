@@ -86,6 +86,27 @@ public:
             proc->loadIr (irFile);
         }
 
+        // typed values
+        {
+            auto P = [&] (const char* id) { return proc->apvts.getParameter (id); };
+            struct T { const char* id; const char* txt; float expect; };
+            const T tests[] { { "click", "50", 0.5f }, { "click", "35 %", 0.35f }, { "lfo1Rate", "1,5", 1.5f }, { "env1Attack", "2 s", 2.0f },
+                              { "rate0", "-2.5", -2.5f }, { "degRate", "22", 22000.0f }, { "mod1Amt", "-40", -0.4f }, { "master", "-6", -6.0f } };
+            bool ok = true;
+            for (auto& t : tests)
+            {
+                const float v = rysum::ui::parseValueText (*P (t.id), t.txt);
+                if (std::abs (v - t.expect) > 1e-3f * std::max (1.0f, std::abs (t.expect))) { ok = false; std::cout << "  parse " << t.id << " '" << t.txt << "' -> " << v << std::endl; }
+            }
+            // ms when the parameter shows ms
+            P ("env1Attack")->setValueNotifyingHost (P ("env1Attack")->convertTo0to1 (0.3f));
+            ok = ok && std::abs (rysum::ui::parseValueText (*P ("env1Attack"), "500") - 0.5f) < 1e-4f;
+            P ("env1Attack")->setValueNotifyingHost (P ("env1Attack")->getDefaultValue());
+            const float cents = rysum::ui::parseValueText (*P ("pitch"), "440");
+            ok = ok && std::abs (cents - 1200.0f * std::log2 (440.0f / (float) rysum::kA4)) < 0.1f;
+            std::cout << "typed values: " << (ok ? "ok" : "FAIL") << std::endl;
+        }
+
         // patches
         {
             auto files = RysumProcessor::getPatchFiles();

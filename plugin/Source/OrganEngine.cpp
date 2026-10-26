@@ -94,7 +94,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     for (const auto& r : p.mod.routes)
         if (r.src >= 0 && r.target >= 0 && r.target < kNumPipeTargets && r.amount != 0.0f)
         {
-            pm[(size_t) r.target] += r.amount * voiceSource (v, r.src, p);
+            pm[(size_t) r.target] += r.amount * shapeSource (r.src, voiceSource (v, r.src, p), r.uni);
             anyMod = true;
         }
 
@@ -287,7 +287,7 @@ void OrganEngine::releaseStopKey (int stop, int key)
             releaseVoice (v);
 }
 
-void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send)
+void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone)
 {
     if (pool.empty() || gain <= 0.0001f) return;
     int idx = (int) (rng.uni() * (float) pool.size());
@@ -305,6 +305,8 @@ void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, c
     nv->rate = s->sampleRate / sr * (0.97 + 0.06 * rng.uni());     // tiny variation per click
     nv->gain = gain * (0.85f + 0.3f * rng.uni());
     nv->send = send;
+    nv->lp = 0.0f;
+    nv->lpA = juce::jlimit (0.02f, 1.0f, tone);
     std::copy (gains, gains + kMaxAmbiChannels, nv->g.begin());
 }
 
@@ -332,8 +334,13 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p)
         g[(size_t) c] = n > 0 ? (1.0f - p.clickBlend) * console[(size_t) c] + p.clickBlend * pipes[(size_t) c] / (float) n
                               : console[(size_t) c];
     if (library != nullptr)
+    {
+        // velocity: a light touch gives a quieter and duller click
+        const float v = juce::jlimit (0.0f, 1.0f, velocity);
+        keyVelocity[(size_t) key] = v;
         playNoise (library->clicksDown.empty() ? library->clicksOther : library->clicksDown,
-                   p.clickLevel * (0.55f + 0.45f * velocity) * 1.6f, g.data(), lastDown, 0.5f);
+                   p.clickLevel * clickCurve (v) * 1.6f, g.data(), lastDown, 0.5f, clickTone (v));
+    }
 
     for (int s = 0; s < kNumStops; ++s)
         if (p.stopOn[(size_t) s])
@@ -350,8 +357,11 @@ void OrganEngine::keyUp (int key, const EngineParams& p)
     std::array<float, kMaxAmbiChannels> console {};
     gainsFor ({ p.consoleAz, p.consoleEl }, console.data());
     if (library != nullptr)
+    {
+        const float v = keyVelocity[(size_t) key];      // the key comes up about as hard as it went down
         playNoise (library->clicksUp.empty() ? library->clicksOther : library->clicksUp,
-                   p.releaseClick * 1.6f, console.data(), lastUp, 0.5f);
+                   p.releaseClick * clickCurve (v) * 1.6f, console.data(), lastUp, 0.5f, clickTone (v));
+    }
     for (auto& v : voices)
         if (v.active && v.held && v.key == key && v.previewRemain < 0)
         {
@@ -575,7 +585,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         for (int i = 0; i < n; ++i)
         {
             if (nv.pos >= nv.length - 2) { nv.active = false; break; }
-            const float x = readSample (nv.data, nv.length, nv.pos) * nv.gain;
+            nv.lp += nv.lpA * (readSample (nv.data, nv.length, nv.pos) - nv.lp);
+            const float x = nv.lp * nv.gain;
             nv.pos += nv.rate;
             for (int c = 0; c < usedChannels; ++c)
                 if (std::abs (nv.g[(size_t) c]) > 1.0e-9f) out.getWritePointer (c)[start + i] += x * nv.g[(size_t) c];
@@ -676,7 +687,7 @@ Pos OrganEngine::displayPosition (int stop, int key, const EngineParams& p) cons
                 v = p.mod.env[(size_t) (r.src - srcEnv1)].perPipe ? 0.0f : sourceOut[(size_t) r.src].load();
             else if (r.src == srcKey)      v = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
             else if (r.src == srcModWheel) v = sourceOut[srcModWheel].load();
-            pm[(size_t) r.target] += r.amount * v;
+            pm[(size_t) r.target] += r.amount * shapeSource (r.src, v, r.uni);
             any = true;
         }
         if (! any) return pos;

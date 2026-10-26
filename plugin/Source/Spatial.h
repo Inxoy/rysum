@@ -214,6 +214,7 @@ inline LayoutSettings defaultLayout (int stopIndex)
     s.elevation = 4.0f + 7.0f * (float) stopIndex;
     s.spread = 10.0f;
     s.distance = 5.0f + 0.5f * (float) stopIndex;
+    if (stopIndex == kPraestant16) { s.width = 150.0f; s.elevation = 0.0f; s.distance = 7.0f; }   // big pipes: low and wide
     return s;
 }
 } // namespace rysum

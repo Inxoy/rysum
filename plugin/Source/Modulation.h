@@ -82,7 +82,16 @@ struct EnvParams
     float delay = 0.0f, attack = 0.3f, decay = 1.0f, sustain = 0.6f, release = 1.5f;   // seconds / level
 };
 
-struct ModRoute { int src = -1, target = -1; float amount = 0.0f; };
+struct ModRoute { int src = -1, target = -1; float amount = 0.0f; bool uni = false; };
+
+/** LFOs, key position and the per-note random swing -1..1; envelopes and the mod wheel are 0..1 */
+inline bool isBipolarSource (int s) noexcept { return (s >= srcLfo1 && s < srcLfo1 + kNumLfos) || s == srcKey || s == srcRandom; }
+
+/** unipolar routing: a bipolar source is mapped to 0..1 (only pushes the target one way) */
+inline float shapeSource (int s, float v, bool uni) noexcept { return uni && isBipolarSource (s) ? 0.5f * (v + 1.0f) : v; }
+
+/** range of a routing's source after shaping (for drawing the modulation range) */
+inline float sourceMin (int s, bool uni) noexcept { return isBipolarSource (s) && ! uni ? -1.0f : 0.0f; }
 
 struct ModParams
 {
