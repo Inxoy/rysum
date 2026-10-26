@@ -41,6 +41,16 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
         juce::Graphics g (grainLayer);
         drawGrain (g, { 0, 0, kW, kH }, 1.0f);
     }
+    // darkened edges, like an old print
+    vignette = juce::Image (juce::Image::ARGB, kW, kH, true);
+    {
+        juce::Graphics g (vignette);
+        juce::ColourGradient grad (juce::Colours::transparentBlack, kW * 0.5f, kH * 0.48f,
+                                   juce::Colours::black.withAlpha (0.22f), 0.0f, 0.0f, true);
+        grad.addColour (0.7, juce::Colours::transparentBlack);
+        g.setGradientFill (grad);
+        g.fillRect (0, 0, kW, kH);
+    }
     setSize (kW, kH);
 }
 
@@ -163,12 +173,21 @@ void RysumContent::paint (juce::Graphics& g)
     auto& A = Assets::get();
     g.fillAll (col::bg);
     auto head = juce::Rectangle<int> (0, 0, kW, kHeader).reduced (28, 0);
+    g.setColour (col::border);
+    g.fillRect (0, kHeader - 4, kW, 1);
     g.setColour (col::line);
     g.fillRect (0, kHeader - 1, kW, 1);
 
-    g.setColour (col::ink);
-    g.setFont (A.boldFont (20.0f).withExtraKerningFactor (0.42f));
-    g.drawText ("RYSUM", head.withWidth (130), juce::Justification::centredLeft);
+    {
+        // "Rysum" in blackletter, the R rubricated
+        const auto f = A.frakturFont (34.0f);
+        const int rw = juce::roundToInt (juce::GlyphArrangement::getStringWidth (f, "R"));
+        g.setFont (f);
+        g.setColour (col::rubric.brighter (0.2f));
+        g.drawText ("R", head.withWidth (rw + 4).translated (0, 2), juce::Justification::centredLeft);
+        g.setColour (col::ink);
+        g.drawText ("ysum", head.withTrimmedLeft (rw).withWidth (110).translated (0, 2), juce::Justification::centredLeft);
+    }
     g.setFont (A.monoFont (11.0f));
 
     const int out = (int) proc.apvts.getRawParameterValue ("output")->load();
@@ -222,6 +241,7 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
 
 void RysumContent::paintOverChildren (juce::Graphics& g)
 {
+    g.drawImageAt (vignette, 0, 0);
     g.setOpacity (0.22f);
     g.drawImageAt (grainLayer, 0, 0);
 }

@@ -7,6 +7,7 @@
 
 namespace rysum::ui
 {
+// black and white, like the photos – plus one rubric red for initials
 namespace col
 {
     const juce::Colour bg     { 0xff0d0d0c };
@@ -16,15 +17,37 @@ namespace col
     const juce::Colour mute   { 0xff8a8883 };
     const juce::Colour faint  { 0xff6f6d69 };
     const juce::Colour line   { 0xff2a2a28 };
-    const juce::Colour border { 0xff3a3a37 };
+    const juce::Colour border { 0xff3f3f3c };
     const juce::Colour track  { 0xff34342f };
     const juce::Colour panel  { 0xff141413 };
+    const juce::Colour rubric { 0xffa8442e };   // the red of rubricated initials
+}
+
+/** sepia-tones a photo (like an old print), in place */
+inline juce::Image toneImage (juce::Image img, float amount = 0.55f)
+{
+    if (! img.isValid()) return img;
+    img = img.convertedToFormat (juce::Image::ARGB);
+    juce::Image::BitmapData bd (img, juce::Image::BitmapData::readWrite);
+    for (int y = 0; y < bd.height; ++y)
+        for (int x = 0; x < bd.width; ++x)
+        {
+            const auto c = bd.getPixelColour (x, y);
+            const float l = c.getPerceivedBrightness();
+            // dark umber -> parchment
+            const float r = juce::jlimit (0.0f, 1.0f, 0.08f + l * 0.95f), gg = juce::jlimit (0.0f, 1.0f, 0.06f + l * 0.84f),
+                        b = juce::jlimit (0.0f, 1.0f, 0.04f + l * 0.66f);
+            const float o = 1.0f - amount;
+            bd.setPixelColour (x, y, juce::Colour::fromFloatRGBA (c.getFloatRed() * o + r * amount, c.getFloatGreen() * o + gg * amount,
+                                                                  c.getFloatBlue() * o + b * amount, c.getFloatAlpha()));
+        }
+    return img;
 }
 
 /** fonts and images from BinaryData, created once */
 struct Assets
 {
-    juce::Typeface::Ptr sans, sansBold, mono, fraktur;
+    juce::Typeface::Ptr sans, sansBold, mono, fraktur, fell, fellItalic;
     juce::Image grainTile, wall, keys, knobBare;
     std::array<juce::Image, kNumStops> knobs;
 
@@ -36,9 +59,12 @@ struct Assets
     }
     static Assets*& instance() { static Assets* p = nullptr; return p; }
 
-    juce::Font sansFont (float h) const    { return juce::Font (juce::FontOptions (sans).withHeight (h)); }
-    juce::Font boldFont (float h) const    { return juce::Font (juce::FontOptions (sansBold).withHeight (h)); }
-    juce::Font monoFont (float h) const    { return juce::Font (juce::FontOptions (mono).withHeight (h)); }
+    // IM Fell (as "Rysum Fell") everywhere: roman for labels, italic for values and small notes.
+    // Fell has a small x-height, so sizes are scaled up a little.
+    juce::Font sansFont (float h) const    { return juce::Font (juce::FontOptions (fell).withHeight (h * 1.16f)); }
+    juce::Font boldFont (float h) const    { return juce::Font (juce::FontOptions (fell).withHeight (h * 1.16f)); }
+    juce::Font monoFont (float h) const    { return juce::Font (juce::FontOptions (fellItalic).withHeight (h * 1.2f)); }
+    juce::Font romanFont (float h) const   { return juce::Font (juce::FontOptions (fell).withHeight (h * 1.16f)); }
     juce::Font frakturFont (float h) const { return juce::Font (juce::FontOptions (fraktur).withHeight (h)); }
 
     ~Assets() { instance() = nullptr; }
@@ -51,8 +77,10 @@ struct Assets
         sansBold = juce::Typeface::createSystemTypefaceFor (IBMPlexSansCondensedSemiBold_ttf, IBMPlexSansCondensedSemiBold_ttfSize);
         mono     = juce::Typeface::createSystemTypefaceFor (IBMPlexMonoRegular_ttf, IBMPlexMonoRegular_ttfSize);
         fraktur  = juce::Typeface::createSystemTypefaceFor (UnifrakturMaguntiaBook_ttf, UnifrakturMaguntiaBook_ttfSize);
+        fell       = juce::Typeface::createSystemTypefaceFor (RysumFellRoman_ttf, RysumFellRoman_ttfSize);
+        fellItalic = juce::Typeface::createSystemTypefaceFor (RysumFellItalic_ttf, RysumFellItalic_ttfSize);
         auto img = [] (const void* d, int n) { return juce::ImageCache::getFromMemory (d, n); };
-        grainTile = img (grain_png, grain_pngSize);
+        grainTile = juce::ImageCache::getFromMemory (grain_png, grain_pngSize);
         wall      = img (wall_jpg, wall_jpgSize);
         keys      = img (keys_jpg, keys_jpgSize);
         knobBare  = img (knob_bare_jpg, knob_bare_jpgSize);
@@ -119,29 +147,73 @@ public:
         setColour (juce::CaretComponent::caretColourId, col::ink);
         setColour (juce::ScrollBar::thumbColourId, col::faint);
         setColour (juce::ScrollBar::trackColourId, juce::Colours::transparentBlack);
-        setDefaultSansSerifTypeface (Assets::get().sans);
+        setColour (juce::ScrollBar::thumbColourId, col::faint);
+        setDefaultSansSerifTypeface (Assets::get().fell);
     }
 
 
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down) override
     {
+        // a double rule, like a ruled frame in an old book; pulled = parchment
         auto r = b.getLocalBounds().toFloat().reduced (0.5f);
         if (b.getToggleState())
         {
             g.setColour (col::ink);
             g.fillRect (r);
+            g.setColour (col::bg.withAlpha (0.35f));
+            g.drawRect (r.reduced (2.0f), 0.6f);
         }
         else
         {
-            g.setColour (over || down ? col::faint : col::border);
+            g.setColour (over || down ? col::dim : col::border);
             g.drawRect (r, 1.0f);
+            g.setColour ((over || down ? col::dim : col::border).withAlpha (0.45f));
+            g.drawRect (r.reduced (2.5f), 0.6f);
         }
     }
 
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return Assets::get().monoFont (12.0f); }
-    juce::Font getPopupMenuFont() override { return Assets::get().monoFont (13.0f); }
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return Assets::get().romanFont (13.0f); }
+    juce::Font getPopupMenuFont() override { return Assets::get().romanFont (14.0f); }
+    juce::Font getTextButtonFont (juce::TextButton&, int h) override { return Assets::get().romanFont (juce::jmin (13.0f, (float) h * 0.55f)); }
 
-    juce::Font getTextButtonFont (juce::TextButton&, int h) override { return Assets::get().monoFont (juce::jmin (12.0f, (float) h * 0.55f)); }
+    void drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box) override
+    {
+        auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (0.5f);
+        g.setColour (col::bg.withAlpha (0.6f));
+        g.fillRect (r);
+        g.setColour (box.isMouseOver (true) ? col::dim : col::border);
+        g.drawRect (r, 1.0f);
+        g.setColour (col::border.withAlpha (0.45f));
+        g.drawRect (r.reduced (2.5f), 0.6f);
+        // a small lozenge as the arrow
+        const float cx = (float) w - 13.0f, cy = (float) h * 0.5f;
+        juce::Path p;
+        p.startNewSubPath (cx - 4.0f, cy - 2.0f); p.lineTo (cx, cy + 2.5f); p.lineTo (cx + 4.0f, cy - 2.0f);
+        g.setColour (box.isEnabled() ? col::dim : col::faint);
+        g.strokePath (p, juce::PathStrokeType (1.2f));
+    }
+
+    void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override
+    {
+        label.setBounds (6, 1, box.getWidth() - 26, box.getHeight() - 2);
+        label.setFont (getComboBoxFont (box));
+    }
+
+    void drawPopupMenuBackground (juce::Graphics& g, int w, int h) override
+    {
+        g.fillAll (col::panel);
+        g.setColour (col::border);
+        g.drawRect (0, 0, w, h, 1);
+    }
+
+    void drawScrollbar (juce::Graphics& g, juce::ScrollBar&, int x, int y, int w, int h, bool vertical, int thumbPos, int thumbSize, bool over, bool) override
+    {
+        g.setColour (col::line);
+        if (vertical) g.fillRect ((float) x + (float) w * 0.5f - 0.5f, (float) y, 1.0f, (float) h);
+        g.setColour (over ? col::dim : col::faint);
+        if (vertical) g.fillRect ((float) x + 1.0f, (float) thumbPos, (float) w - 2.0f, (float) thumbSize);
+        else          g.fillRect ((float) thumbPos, (float) y + 1.0f, (float) thumbSize, (float) h - 2.0f);
+    }
 
     void drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool) override
     {
@@ -153,19 +225,32 @@ public:
     void drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float, float,
                            juce::Slider::SliderStyle style, juce::Slider& s) override
     {
+        // lozenge thumbs on a ruled line
+        auto lozenge = [&g] (float cx, float cy, float rw, float rh, juce::Colour c)
+        {
+            juce::Path p;
+            p.startNewSubPath (cx, cy - rh); p.lineTo (cx + rw, cy); p.lineTo (cx, cy + rh); p.lineTo (cx - rw, cy); p.closeSubPath();
+            g.setColour (c);
+            g.fillPath (p);
+            g.setColour (col::bg);
+            g.strokePath (p, juce::PathStrokeType (1.0f));
+        };
+        const auto thumbCol = s.isMouseOverOrDragging() ? col::white : col::ink;
         if (style == juce::Slider::LinearVertical)
         {
             const float cx = (float) x + (float) w * 0.5f;
             g.setColour (col::track);
-            g.fillRect (cx - 1.0f, (float) y, 2.0f, (float) h);
-            g.setColour (s.isMouseOverOrDragging() ? col::white : col::ink);
-            g.fillRect ((float) x, pos - 2.0f, (float) w, 4.0f);
+            g.fillRect (cx - 0.5f, (float) y, 1.0f, (float) h);
+            g.setColour (col::border);
+            g.fillRect (cx - 3.5f, (float) y, 1.0f, (float) h);
+            g.fillRect (cx + 2.5f, (float) y, 1.0f, (float) h);
+            lozenge (cx, pos, (float) w * 0.5f, 6.0f, thumbCol);
             return;
         }
         const float cy = (float) y + (float) h * 0.5f;
         g.setColour (col::track);
-        g.fillRect ((float) x, cy - 1.0f, (float) w, 2.0f);
-        g.setColour (col::ink);
+        g.fillRect ((float) x, cy - 0.5f, (float) w, 1.0f);
+        g.setColour (col::ink.withAlpha (0.85f));
         if (s.getProperties().contains ("bipolar"))
         {
             const float mid = (float) x + (float) w * 0.5f;
@@ -174,11 +259,14 @@ public:
             g.fillRect (mid - 0.5f, cy - 4.0f, 1.0f, 8.0f);
         }
         else g.fillRect ((float) x, cy - 1.0f, pos - (float) x, 2.0f);
-        g.setColour (s.isMouseOverOrDragging() ? col::white : col::ink);
-        g.fillRect (pos - 1.5f, cy - 7.0f, 3.0f, 14.0f);
+        // tick marks at the ends, like a scale on an old instrument
+        g.setColour (col::faint);
+        g.fillRect ((float) x, cy - 3.0f, 1.0f, 6.0f);
+        g.fillRect ((float) (x + w) - 1.0f, cy - 3.0f, 1.0f, 6.0f);
+        lozenge (pos, cy, 4.5f, 7.0f, thumbCol);
     }
 
-    int getSliderThumbRadius (juce::Slider&) override { return 2; }
+    int getSliderThumbRadius (juce::Slider&) override { return 5; }
 };
 
 /** implemented by the editor content: right-click modulation menu + live modulation values for the sliders */
@@ -296,17 +384,48 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 };
 
+/** a small printer's lozenge ornament */
+inline void drawLozenge (juce::Graphics& g, juce::Point<float> c, float rw, float rh)
+{
+    juce::Path p;
+    p.startNewSubPath (c.x, c.y - rh); p.lineTo (c.x + rw, c.y); p.lineTo (c.x, c.y + rh); p.lineTo (c.x - rw, c.y); p.closeSubPath();
+    g.fillPath (p);
+}
+
+/** section head: thick-thin double rule with a lozenge, the title in spaced capitals with a red initial */
 inline void drawSectionTitle (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title, const juce::String& right = {})
 {
-    g.setColour (col::ink);
-    g.fillRect (r.getX(), r.getY(), r.getWidth(), 1);
-    g.setFont (Assets::get().boldFont (15.0f).withExtraKerningFactor (0.16f));
-    g.drawText (title.toUpperCase(), r.withTrimmedTop (8).withHeight (20), juce::Justification::centredLeft);
+    auto& A = Assets::get();
+    const float x0 = (float) r.getX(), x1 = (float) r.getRight(), y = (float) r.getY();
+    g.setColour (col::ink.withAlpha (0.9f));
+    g.fillRect (x0, y, x1 - x0, 1.5f);
+    g.setColour (col::ink.withAlpha (0.45f));
+    g.fillRect (x0, y + 3.5f, x1 - x0, 0.6f);
+    g.setColour (col::rubric);
+    drawLozenge (g, { x1 - 2.0f, y + 2.0f }, 3.0f, 4.5f);
+
+    auto line = r.withTrimmedTop (8).withHeight (22);
+    // umlauts explicitly: toUpperCase depends on the C locale for non-ASCII letters
+    const auto upper = title.toUpperCase().replace (juce::String::fromUTF8 ("\xc3\xa4"), juce::String::fromUTF8 ("\xc3\x84"))
+                                          .replace (juce::String::fromUTF8 ("\xc3\xb6"), juce::String::fromUTF8 ("\xc3\x96"))
+                                          .replace (juce::String::fromUTF8 ("\xc3\xbc"), juce::String::fromUTF8 ("\xc3\x9c"));
+    if (upper.isNotEmpty())
+    {
+        const auto initial = upper.substring (0, 1), rest = upper.substring (1);
+        const auto big = A.romanFont (19.0f), small = A.romanFont (14.5f).withExtraKerningFactor (0.14f);
+        g.setColour (col::rubric.brighter (0.25f));
+        g.setFont (big);
+        const int iw = juce::roundToInt (juce::GlyphArrangement::getStringWidth (big, initial)) + 2;
+        g.drawText (initial, line.withWidth (iw + 4), juce::Justification::centredLeft);
+        g.setColour (col::ink);
+        g.setFont (small);
+        g.drawText (rest, line.withTrimmedLeft (iw).translated (0, 1), juce::Justification::centredLeft);
+    }
     if (right.isNotEmpty())
     {
         g.setColour (col::mute);
-        g.setFont (Assets::get().monoFont (11.0f));
-        g.drawText (right, r.withTrimmedTop (8).withHeight (20), juce::Justification::centredRight);
+        g.setFont (A.monoFont (11.0f));
+        g.drawText (right, line, juce::Justification::centredRight);
     }
 }
 

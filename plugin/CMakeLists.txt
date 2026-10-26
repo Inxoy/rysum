@@ -63,6 +63,8 @@ juce_add_binary_data(RysumData
         Resources/IBMPlexSansCondensed-SemiBold.ttf
         Resources/IBMPlexMono-Regular.ttf
         Resources/UnifrakturMaguntia-Book.ttf
+        Resources/RysumFell-Roman.ttf
+        Resources/RysumFell-Italic.ttf
         Resources/k_praestant.jpg
         Resources/k_gedackt.jpg
         Resources/k_mixtur.jpg

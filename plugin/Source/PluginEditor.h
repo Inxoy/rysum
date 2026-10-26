@@ -37,7 +37,7 @@ private:
     int shownPatchVersion = -1;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputAttachment;
     int current = 0;
-    juce::Image grainLayer;
+    juce::Image grainLayer, vignette;
 };
 
 class RysumEditor : public juce::AudioProcessorEditor,

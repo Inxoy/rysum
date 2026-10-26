@@ -204,5 +204,7 @@ Optional tests (not needed for normal use):
 `cmake -B build -DRYSUM_BUILD_TESTS=ON` builds `RysumRenderTest` (renders MIDI scenes
 to WAV and checks the encoder maths) and `RysumUiSnapshot`.
 
-Fonts: IBM Plex Sans Condensed / IBM Plex Mono and UnifrakturMaguntia, SIL Open Font
-License (see `Resources/OFL_*.txt`).
+Fonts: "Rysum Fell" = IM FELL DW Pica by Igino Marini with a few symbols (arrows, primes, ♯ …)
+added from DejaVu Serif and renamed as the OFL requires (built by `tools/make_fell.py`);
+UnifrakturMaguntia for the title; IBM Plex (no longer used in the interface). All SIL Open
+Font License (see `Resources/OFL_*.txt`).
