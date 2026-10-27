@@ -68,6 +68,31 @@ public:
     juce::String getModAmountId (int r) const { return "mod" + juce::String (r + 1) + "Amt"; }
     std::atomic<int> routeVersion { 0 };
 
+    // ---- MIDI learn: knobs / faders / buttons of a controller -> any parameter (message thread writes, audio thread reads)
+    static constexpr int kNumMidiMaps = 32;
+    struct MidiMap
+    {
+        int cc = -1;             // controller number, -1 = not assigned (yet)
+        int channel = 0;         // 1..16, 0 = any channel
+        int param = -1;          // index into the parameter table
+        float lo = 0.0f, hi = 1.0f;   // range (normalised): the controller's 0..127 sweeps lo..hi
+        bool toggle = false;     // buttons: every press switches between lo and hi
+        bool used() const noexcept { return param >= 0 || cc >= 0; }
+    };
+    MidiMap getMidiMap (int slot) const;
+    void setMidiMap (int slot, const MidiMap& m);
+    void clearMidiMap (int slot);
+    /** waits for the next controller that moves and gives it to this slot (-1 = stop waiting) */
+    void learnMidi (int slot);
+    int getLearningSlot() const { return mmLearn.load(); }
+    /** new mapping for a parameter, waiting for a controller; returns the slot (-1 = all slots used) */
+    int learnMidiFor (int paramIndex);
+    /** slots that drive this parameter */
+    juce::Array<int> midiMapsFor (int paramIndex) const;
+    /** the last controller that came in: cc | channel << 8 | value << 16, -1 = none yet */
+    int getLastController() const { return lastCc.load(); }
+    std::atomic<int> midiMapVersion { 0 };
+
     // ---- patches (message thread)
     static juce::File getPatchFolder();
     static juce::Array<juce::File> getPatchFiles();
@@ -148,7 +173,7 @@ private:
         int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
             freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
             releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
-            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0;
+            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0;
         std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
         std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
         std::array<int, rysum::kNumRoutes> modAmt {};
@@ -198,6 +223,18 @@ private:
     std::unique_ptr<std::atomic<float>[]> modNorm;
     bool haveModVals = false;
     std::vector<juce::RangedAudioParameter*> ccTargets;
+    // MIDI learn
+    std::array<std::atomic<int>, kNumMidiMaps> mmCc {}, mmChan {}, mmParam {};
+    std::array<std::atomic<float>, kNumMidiMaps> mmLo {}, mmHi {}, mmPending {};
+    std::array<std::atomic<bool>, kNumMidiMaps> mmToggle {};
+    std::array<bool, kNumMidiMaps> mmPressed {};                       // audio thread (toggle buttons)
+    std::atomic<int> mmLearn { -1 }, lastCc { -1 };
+    int savedMapVersion = 0;
+    juce::ValueTree midiMapState() const;
+    void applyMidiMapState (const juce::ValueTree&);
+    static juce::File midiMapFile();
+    void saveMidiMapDefault();
+    bool handleLearnedCc (int cc, int channel, int value);            // audio thread; true = this controller is mapped
     std::array<std::atomic<float>, 3 + 2 * rysum::kNumStops> ccPending {};
     std::map<std::string, std::atomic<float>*> extraParams;
     void startAutoLoad();
@@ -238,7 +275,7 @@ private:
     std::shared_ptr<rysum::BinauralDecoder> pendingBin;          // handed over (atomic_store / exchange)
     std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin;   // message thread keeps them alive
     juce::AudioBuffer<float> binBuf;                              // Ambisonics render buffer in binaural mode
-    juce::String binStatus { juce::String::fromUTF8 ("aus â Ausgabe oben auf â" "Binauralâ stellen") };
+    juce::String binStatus { juce::String::fromUTF8 ("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e" "Binaural\xe2\x80\x9c stellen") };
     juce::String builtBinKey, pendingBinKey;
     int binKeyTicks = 0;
     std::atomic<float> *binOrderParam = nullptr, *binYawParam = nullptr, *binDfParam = nullptr;

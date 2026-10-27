@@ -111,6 +111,26 @@ ModView::ModView (RysumProcessor& p) : proc (p)
     matrixView.setSingleStepSizes (kRowH, kRowH);
     addAndMakeVisible (matrixView);
     syncRoutes();
+
+    tabMod.setTooltip (juce::String::fromUTF8 ("Modulationsquellen (LFOs, H\xc3\xbcllkurven, \xe2\x80\xa6) auf Ziele"));
+    tabMidi.setTooltip (juce::String::fromUTF8 ("Drehregler, Fader und Taster deines MIDI-Keyboards auf beliebige Regler legen (MIDI lernen)"));
+    tabMod.onClick = [this] { showMidiTab (false); };
+    tabMidi.onClick = [this] { showMidiTab (true); };
+    addAndMakeVisible (tabMod);
+    addAndMakeVisible (tabMidi);
+    addChildComponent (midiPanel);
+    showMidiTab (false);
+}
+
+void ModView::showMidiTab (bool midi, int revealSlot)
+{
+    midiTab = midi;
+    tabMod.setToggleState (! midi, juce::dontSendNotification);
+    tabMidi.setToggleState (midi, juce::dontSendNotification);
+    matrixView.setVisible (! midi);
+    midiPanel.setVisible (midi);
+    if (midi) midiPanel.reveal (revealSlot);
+    repaint (matrixBox);
 }
 
 ModView::~ModView() = default;
@@ -194,6 +214,9 @@ void ModView::resized()
             row->setBounds (b.removeFromTop (31));
     }
     matrixBox = { r.getX() + 2 * (cw + gap), y2, 2 * cw + gap, botH };
+    tabMidi.setBounds (matrixBox.getRight() - 96, matrixBox.getY() + 9, 96, 21);
+    tabMod.setBounds (tabMidi.getX() - 4 - 96, matrixBox.getY() + 9, 96, 21);
+    midiPanel.setBounds (matrixBox.withTrimmedTop (38));
     auto m = matrixBox.withTrimmedTop (38 + 16);
     matrixView.setBounds (m);
     list.setSize (m.getWidth() - 10, kRowH * kNumRoutes);
@@ -228,7 +251,8 @@ void ModView::refresh()
         repaint (L.scope);
     }
     for (auto& E : envs) repaint (E.scope.withRight (E.box.getRight()));
-    list.repaint();
+    if (midiTab) midiPanel.refresh();
+    else list.repaint();
 }
 
 void ModView::paint (juce::Graphics& g)
@@ -324,7 +348,15 @@ void ModView::paint (juce::Graphics& g)
     }
 
     // ---- matrix
-    drawSectionTitle (g, matrixBox, "Zuordnungen", "Rechtsklick auf einen Regler: schnell zuweisen");
+    drawSectionTitle (g, matrixBox, "Zuordnungen");
+    {
+        g.setColour (col::mute);
+        g.setFont (Assets::get().monoFont (11.0f));
+        const auto hint = midiTab ? juce::String ("Rechtsklick auf Regler: MIDI lernen") : juce::String ("Rechtsklick auf Regler: zuweisen");
+        g.drawText (hint, juce::Rectangle<int> (matrixBox.getX() + 150, tabMod.getY(), tabMod.getX() - 10 - (matrixBox.getX() + 150), tabMod.getHeight()),
+                    juce::Justification::centredRight);
+    }
+    if (! midiTab)
     {
         auto h = matrixBox.withTrimmedTop (38).withHeight (14);
         g.setFont (A.monoFont (10.0f));

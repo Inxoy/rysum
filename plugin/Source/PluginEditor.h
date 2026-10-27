@@ -32,6 +32,18 @@ public:
     bool routeUni (int r) override { return proc.getRouteUni (r); }
     juce::RangedAudioParameter* routeAmountParam (int r) override { return proc.apvts.getParameter (proc.getModAmountId (r)); }
     juce::String routeLabel (int r) override { const int s = proc.getRouteSrc (r); return s >= 0 ? rysum::modSourceNames()[s] : juce::String(); }
+    void openMidiMap() override { mod.showMidiTab (true); showView (5); }
+    int midiControllerFor (int paramIndex) override
+    {
+        const int learning = proc.getLearningSlot();
+        int cc = -1;
+        for (int slot : proc.midiMapsFor (paramIndex))
+        {
+            if (slot == learning) return -2;
+            if (cc < 0) cc = proc.getMidiMap (slot).cc;
+        }
+        return cc;
+    }
     explicit RysumContent (RysumProcessor&);
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;

@@ -234,6 +234,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                    StringArray { "bis 1. Ordnung", "bis 2. Ordnung", "bis 3. Ordnung" }, 1));
     F ("simEr",      ("Saal fr" + ue + "he Reflexionen"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), 0.0f, dbOff);
     F ("simTail",    "Saal Nachhall",               NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), 0.0f, dbOff);
+
+    // ---- wind model of the stops (page "Klang"); classic by default, so older patches sound the same
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "windModel", 1 }, "Windmodell", StringArray { "klassisch", "instabil" }, 0));
     return l;
 }
 
@@ -291,6 +294,12 @@ RysumProcessor::RysumProcessor()
     ccTargets.push_back (apvts.getParameter ("freeze"));
     ccTargets.push_back (apvts.getParameter ("tremDepth"));
     for (auto& c : ccPending) c = std::numeric_limits<float>::quiet_NaN();
+    for (int i = 0; i < kNumMidiMaps; ++i)
+    {
+        mmCc[(size_t) i] = -1; mmChan[(size_t) i] = 0; mmParam[(size_t) i] = -1;
+        mmLo[(size_t) i] = 0.0f; mmHi[(size_t) i] = 1.0f; mmToggle[(size_t) i] = false;
+        mmPending[(size_t) i] = std::numeric_limits<float>::quiet_NaN();
+    }
 
     // ---- parameter table (modulation works on indices into it)
     for (auto* prm : getParameters())
@@ -322,7 +331,7 @@ RysumProcessor::RysumProcessor()
     ix.releaseClick = I ("releaseClick"); ix.stopPull = I ("stopPull"); ix.wind = I ("wind");
     ix.degAmount = I ("degAmount"); ix.degGrain = I ("degGrain"); ix.degBits = I ("degBits"); ix.degRate = I ("degRate");
     ix.degWobble = I ("degWobble"); ix.degDropouts = I ("degDropouts"); ix.degMode = I ("degMode");
-    ix.irDry = I ("irDry"); ix.irWet = I ("irWet"); ix.binYaw = I ("binYaw");
+    ix.irDry = I ("irDry"); ix.irWet = I ("irWet"); ix.binYaw = I ("binYaw"); ix.windModel = I ("windModel");
     for (int i = 0; i < kNumLfos; ++i)
     {
         const juce::String id = "lfo" + juce::String (i + 1);
@@ -339,6 +348,12 @@ RysumProcessor::RysumProcessor()
     for (int k = 0; k < kNumFx; ++k) ix.fx[(size_t) k] = I (kFxIds[k]);
     for (int k = 0; k < kNumSim; ++k) ix.sim[(size_t) k] = I (kSimIds[k]);
     engine.setModHook (this);
+
+    // MIDI controller assignments: every new instance starts with the ones saved last (Documents/Rysum/MIDI-Regler.xml);
+    // a saved project / session brings its own
+    if (auto xml = juce::XmlDocument::parse (midiMapFile()))
+        applyMidiMapState (juce::ValueTree::fromXml (*xml));
+    savedMapVersion = midiMapVersion.load();
 
     startTimer (250);   // first tick: find + load the samples (after a possible setStateInformation)
 }
@@ -416,6 +431,7 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     p.deg.wobble = V (ix.degWobble);
     p.deg.dropouts = V (ix.degDropouts);
     p.deg.perPipe = V (ix.degMode) < 0.5f;
+    p.windModel = juce::roundToInt (V (ix.windModel));
 
     for (int i = 0; i < kNumLfos; ++i)
     {
@@ -581,15 +597,18 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     keyboardState.processNextMidiBuffer (midi, 0, buffer.getNumSamples(), true);
     applyLatch (midi, buffer.getNumSamples());
 
-    // MIDI controllers -> parameters (applied right away, the parameter follows on the message thread)
-    if (extraParams.at ("midiCC")->load() > 0.5f)
+    // MIDI controllers -> parameters: own assignments (MIDI learn) first, then the fixed map
+    // (the fixed map is applied right away, the parameters follow on the message thread)
     {
+        const bool fixedMap = extraParams.at ("midiCC")->load() > 0.5f;
         bool any = false;
         for (const auto meta : midi)
         {
             const auto m = meta.getMessage();
             if (! m.isController()) continue;
             const int cc = m.getControllerNumber(), v = m.getControllerValue();
+            if (handleLearnedCc (cc, m.getChannel(), v)) { any = true; continue; }
+            if (! fixedMap) continue;
             int target = -1; float value = 0.0f;
             const int ns = kNumStops;
             if (cc == 11)                  { target = 0; value = v / 127.0f; }                            // expression -> global wind
@@ -722,8 +741,56 @@ void RysumProcessor::applyCcOverrides (EngineParams& p) const
     if (! std::isnan (v = get (2 + 2 * kNumStops))) p.tremDepth = v;
 }
 
+bool RysumProcessor::handleLearnedCc (int cc, int channel, int value)
+{
+    if (cc >= 120) return false;                                       // channel mode messages
+    lastCc = cc | (channel << 8) | (value << 16);
+    int learning = mmLearn.load();
+    if (learning >= 0 && learning < kNumMidiMaps && mmLearn.compare_exchange_strong (learning, -1))
+    {
+        mmCc[(size_t) learning] = cc;
+        mmChan[(size_t) learning] = channel;
+        mmPressed[(size_t) learning] = value >= 64;
+        ++midiMapVersion;
+    }
+    bool mapped = false;
+    for (int i = 0; i < kNumMidiMaps; ++i)
+    {
+        const int pi = mmParam[(size_t) i].load();
+        if (mmCc[(size_t) i].load() != cc || pi < 0) continue;
+        const int ch = mmChan[(size_t) i].load();
+        if (ch != 0 && ch != channel) continue;
+        mapped = true;
+        const float lo = mmLo[(size_t) i].load(), hi = mmHi[(size_t) i].load();
+        if (mmToggle[(size_t) i].load())
+        {
+            // a button: each press switches to the other end of the range (from where the parameter is now)
+            const bool down = value >= 64, wasDown = mmPressed[(size_t) i];
+            mmPressed[(size_t) i] = down;
+            if (! down || wasDown) continue;
+            const float cur = prmList[(size_t) pi]->convertTo0to1 (rawList[(size_t) pi]->load());
+            const bool atHi = std::abs (cur - hi) < std::abs (cur - lo);
+            mmPending[(size_t) i] = atHi ? lo : hi;
+        }
+        else mmPending[(size_t) i] = juce::jlimit (0.0f, 1.0f, lo + (hi - lo) * (float) value / 127.0f);
+    }
+    return mapped;
+}
+
 void RysumProcessor::handleAsyncUpdate()
 {
+    for (int i = 0; i < kNumMidiMaps; ++i)
+    {
+        const float n = mmPending[(size_t) i].exchange (std::numeric_limits<float>::quiet_NaN());
+        if (std::isnan (n)) continue;
+        if (auto* prm = getParamAt (mmParam[(size_t) i].load()))
+            if (std::abs (prm->getValue() - n) > 1.0e-6f)
+            {
+                prm->beginChangeGesture();
+                prm->setValueNotifyingHost (n);
+                prm->endChangeGesture();
+            }
+    }
     for (size_t i = 0; i < ccTargets.size(); ++i)
     {
         const float v = ccPending[i].exchange (std::numeric_limits<float>::quiet_NaN());
@@ -1003,6 +1070,12 @@ void RysumProcessor::timerCallback()
         if (irFile.existsAsFile()) loadIr (irFile);
     }
     if (retireCountdown > 0 && --retireCountdown == 0) { retiredLibrary.reset(); retiredIr.reset(); retiredBin.reset(); }
+    // MIDI controller assignments changed (edited, learned, or a project brought its own): the next new instance starts with them
+    if (midiMapVersion.load() != savedMapVersion && mmLearn.load() < 0)
+    {
+        savedMapVersion = midiMapVersion.load();
+        saveMidiMapDefault();
+    }
     // simulated room: (re)build the late reverb whenever the room as heard has changed (also while it is
     // modulated: then about four times a second, each new response crossfaded in by the engine)
     if (autoLoadDone && engine.roomOn.load())
@@ -1122,6 +1195,7 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
         }
         extra.appendChild (mod, nullptr);
     }
+    if (! forPatch) extra.appendChild (midiMapState(), nullptr);       // controller assignments belong to the setup, not to the sound
     state.removeChild (state.getChildWithName ("EXTRA"), nullptr);
     state.appendChild (extra, nullptr);
     return state;
@@ -1230,6 +1304,8 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         else if (irf == juce::File() && irFile != juce::File() && autoLoadDone && ! forPatch) clearIr();   // patches without IR keep the room
         if (! forPatch)
         {
+            const auto mm = extra.getChildWithName ("MIDIMAP");
+            if (mm.isValid()) applyMidiMapState (mm);
             const juce::File sf (extra["sofaFile"].toString());
             if (sf != sofaFile) setSofaFile (sf.existsAsFile() ? sf : juce::File());
         }
@@ -1241,6 +1317,123 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         }
     }
     ++changeCounter;
+}
+
+// ---------------------------------------------------------------------------
+// MIDI learn
+// ---------------------------------------------------------------------------
+RysumProcessor::MidiMap RysumProcessor::getMidiMap (int i) const
+{
+    MidiMap m;
+    if (i < 0 || i >= kNumMidiMaps) return m;
+    m.cc = mmCc[(size_t) i].load(); m.channel = mmChan[(size_t) i].load(); m.param = mmParam[(size_t) i].load();
+    m.lo = mmLo[(size_t) i].load(); m.hi = mmHi[(size_t) i].load(); m.toggle = mmToggle[(size_t) i].load();
+    return m;
+}
+
+void RysumProcessor::setMidiMap (int i, const MidiMap& m)
+{
+    if (i < 0 || i >= kNumMidiMaps) return;
+    mmParam[(size_t) i] = -1;                 // the audio thread skips the slot while it changes
+    mmCc[(size_t) i] = juce::jlimit (-1, 119, m.cc);
+    mmChan[(size_t) i] = juce::jlimit (0, 16, m.channel);
+    mmLo[(size_t) i] = juce::jlimit (0.0f, 1.0f, m.lo);
+    mmHi[(size_t) i] = juce::jlimit (0.0f, 1.0f, m.hi);
+    mmToggle[(size_t) i] = m.toggle;
+    mmParam[(size_t) i] = m.param >= 0 && m.param < getNumParams() ? m.param : -1;
+    ++midiMapVersion;
+}
+
+void RysumProcessor::clearMidiMap (int i)
+{
+    if (i < 0 || i >= kNumMidiMaps) return;
+    int l = i;
+    mmLearn.compare_exchange_strong (l, -1);
+    setMidiMap (i, MidiMap {});
+}
+
+void RysumProcessor::learnMidi (int slot)
+{
+    mmLearn = slot >= 0 && slot < kNumMidiMaps ? slot : -1;
+    ++midiMapVersion;
+}
+
+int RysumProcessor::learnMidiFor (int paramIndex)
+{
+    if (getParamAt (paramIndex) == nullptr) return -1;
+    for (int i = 0; i < kNumMidiMaps; ++i)
+        if (! getMidiMap (i).used())
+        {
+            MidiMap m;
+            m.param = paramIndex;
+            // switches: a button press flips them
+            m.toggle = dynamic_cast<juce::AudioParameterBool*> (getParamAt (paramIndex)) != nullptr;
+            setMidiMap (i, m);
+            learnMidi (i);
+            return i;
+        }
+    return -1;
+}
+
+juce::Array<int> RysumProcessor::midiMapsFor (int paramIndex) const
+{
+    juce::Array<int> r;
+    for (int i = 0; i < kNumMidiMaps; ++i) if (mmParam[(size_t) i].load() == paramIndex && paramIndex >= 0) r.add (i);
+    return r;
+}
+
+juce::ValueTree RysumProcessor::midiMapState() const
+{
+    juce::ValueTree t ("MIDIMAP");
+    for (int i = 0; i < kNumMidiMaps; ++i)
+    {
+        const auto m = getMidiMap (i);
+        if (! m.used()) continue;
+        juce::ValueTree e ("MAP");
+        e.setProperty ("slot", i, nullptr);
+        e.setProperty ("cc", m.cc, nullptr);
+        e.setProperty ("channel", m.channel, nullptr);
+        e.setProperty ("param", m.param >= 0 ? prmList[(size_t) m.param]->getParameterID() : juce::String(), nullptr);
+        e.setProperty ("lo", m.lo, nullptr);
+        e.setProperty ("hi", m.hi, nullptr);
+        e.setProperty ("toggle", m.toggle, nullptr);
+        t.appendChild (e, nullptr);
+    }
+    return t;
+}
+
+void RysumProcessor::applyMidiMapState (const juce::ValueTree& t)
+{
+    if (! t.hasType ("MIDIMAP")) return;
+    for (int i = 0; i < kNumMidiMaps; ++i) setMidiMap (i, MidiMap {});
+    for (auto e : t)
+    {
+        const int slot = (int) e.getProperty ("slot", -1);
+        if (slot < 0 || slot >= kNumMidiMaps) continue;
+        MidiMap m;
+        m.cc = (int) e.getProperty ("cc", -1);
+        m.channel = (int) e.getProperty ("channel", 0);
+        m.param = getParamIndex (e["param"].toString());
+        m.lo = (float) e.getProperty ("lo", 0.0f);
+        m.hi = (float) e.getProperty ("hi", 1.0f);
+        m.toggle = (bool) e.getProperty ("toggle", false);
+        if (m.used()) setMidiMap (slot, m);
+    }
+    mmLearn = -1;
+}
+
+juce::File RysumProcessor::midiMapFile()
+{
+    return getPatchFolder().getParentDirectory().getChildFile ("MIDI-Regler.xml");
+}
+
+void RysumProcessor::saveMidiMapDefault()
+{
+    if (auto xml = midiMapState().createXml())
+    {
+        midiMapFile().getParentDirectory().createDirectory();
+        xml->writeTo (midiMapFile());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1296,7 +1489,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 6;
+    constexpr int kFactoryVersion = 7;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -1554,6 +1747,21 @@ void RysumProcessor::writeFactoryPatches()
           { { "stop2", 1 }, { "stop4", 1 }, { "motion2", 1 }, { "motion4", 1 }, { "rate2", 0.2f }, { "rate4", -0.13f },
             { "simOn", 1 }, { "simW", 16.0f }, { "simL", 22.0f }, { "simH", 9.0f }, { "simAbs", 0.0f }, { "simAbsFloor", 0.9f },
             { "simHigh", 0.05f }, { "simScatter", 0.03f }, { "master", -20.0f } }, {});
+
+    // ---- set 7: wind model "instabil" (starving pipes whistle and stutter)
+    currentSet = 7;
+    make ("56 Sterbender Wind",
+          { { "windModel", 1 }, { "stop0", 1 }, { "stop2", 1 }, { "swind0", 0.6f }, { "swind2", 0.5f },
+            { "lfo1Rate", 0.035f }, { "lfo2Shape", (float) shSmooth }, { "lfo2Rate", 0.09f } },
+          { { srcLfo1, "swind0", 0.45f }, { srcLfo2, "swind2", 0.4f } });
+    make (u8 ("57 Pfeifende Gedackte"),
+          { { "windModel", 1 }, { "stop1", 1 }, { "swind1", 0.13f }, { "master", -6.0f },
+            { "lfo4Shape", (float) shSmooth }, { "lfo4Rate", 0.2f } },
+          { { srcLfo4, "swind1", 0.06f } });
+    make (u8 ("58 Erlahmendes Gebl\xc3\xa4se"),
+          { { "windModel", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 },
+            { "env1Mode", 1 }, { "env1Delay", 1.0f }, { "env1Attack", 6.0f }, { "env1Decay", 1.0f }, { "env1Sustain", 1.0f }, { "env1Release", 1.5f } },
+          { { srcEnv1, "swind0", -0.88f }, { srcEnv1, "swind1", -0.85f }, { srcEnv1, "swind2", -0.9f }, { srcEnv1, "swind3", -0.8f } });
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

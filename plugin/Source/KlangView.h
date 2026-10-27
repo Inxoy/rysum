@@ -5,7 +5,7 @@
 
 namespace rysum::ui
 {
-/** third page: tuning, tremulant, freeze, distance/Doppler, MIDI + tempo */
+/** Klang page: tuning, tremulant + wind model, freeze, distance/Doppler, MIDI + tempo, headphones */
 class KlangView : public juce::Component
 {
 public:
@@ -37,5 +37,10 @@ private:
              *doppler = nullptr, *distAmount = nullptr, *air = nullptr;
     juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr;
     juce::Rectangle<int> tuneBox, tremBox, freezeBox, distBox, midiBox, binBox;
+    // wind model of the stops
+    juce::TextButton windClassic { "klassisch" }, windUnstable { "instabil" };
+    std::unique_ptr<juce::ParameterAttachment> windAtt;
+    juce::Rectangle<int> windBox, windText;
+    juce::TextButton midiMapButton { juce::String::fromUTF8 ("Eigene Zuordnungen \xe2\x80\xa6") };
 };
 } // namespace rysum::ui

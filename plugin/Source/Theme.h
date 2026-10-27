@@ -284,6 +284,10 @@ struct ModUiAccess
     virtual bool routeUni (int r) = 0;
     virtual juce::RangedAudioParameter* routeAmountParam (int r) = 0;
     virtual juce::String routeLabel (int r) = 0;
+    /** opens the MIDI controller assignments on the modulation page */
+    virtual void openMidiMap() {}
+    /** MIDI learn state of a parameter: -2 = waiting for a controller, -1 = none, else the controller number */
+    virtual int midiControllerFor (int) { return -1; }
 };
 
 /** parses what someone typed into a value field, in the units the parameter shows
@@ -424,6 +428,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        if (findAccess()) midiCc = access->midiControllerFor (index);
         auto r = headerArea();
         g.setColour (compact ? col::mute : col::ink);
         g.setFont (compact ? Assets::get().monoFont (10.0f) : Assets::get().sansFont (14.0f));
@@ -435,10 +440,26 @@ public:
             g.setColour (col::rubric.brighter (0.4f));
             g.drawText (access->routeLabel (dragRoute) + ": " + (a != nullptr ? a->getCurrentValueAsText() : juce::String()), r, juce::Justification::centredRight);
         }
+        else if (midiCc == -2)
+        {
+            g.setColour (col::rubric.brighter (0.5f));
+            g.drawText (juce::String::fromUTF8 ("MIDI: Regler bewegen \xe2\x80\xa6"), r, juce::Justification::centredRight);
+        }
         else
         {
             g.setColour (valueHover ? col::white : col::dim);
             g.drawText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r, juce::Justification::centredRight);
+            if (midiCc >= 0)
+            {
+                // a small tag: this one follows a controller
+                const auto tag = "CC " + juce::String (midiCc);
+                g.setFont (Assets::get().monoFont (compact ? 8.5f : 9.5f));
+                g.setColour (col::faint);
+                const int tw = juce::roundToInt (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), tag)) + 4;
+                const int vw = juce::roundToInt (juce::GlyphArrangement::getStringWidth (Assets::get().monoFont (compact ? 10.0f : 12.0f),
+                                                                                       param != nullptr ? param->getCurrentValueAsText() : juce::String()));
+                g.drawText (tag, r.withTrimmedRight (vw + 6).removeFromRight (tw), juce::Justification::centredRight);
+            }
         }
     }
 
@@ -561,6 +582,8 @@ private:
         const int nr = access->routesFor (index, rr.data(), 3);
         const bool was = ! std::isnan (modNorm), is = ! std::isnan (n);
         if (was != is || (is && std::abs (n - modNorm) > 0.0005f) || nr != nHandles) { modNorm = n; repaint(); }
+        const int cc = access->midiControllerFor (index);
+        if (cc != midiCc) { midiCc = cc; repaint (headerArea()); }
     }
 
     juce::String title;
@@ -576,6 +599,7 @@ private:
     std::array<int, 3> handleRoute {};
     std::array<float, 3> handleX {}, handleY {};
     int nHandles = 0, dragRoute = -1;
+    int midiCc = -1;
 };
 
 /** a small printer's lozenge ornament */

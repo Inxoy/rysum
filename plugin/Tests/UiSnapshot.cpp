@@ -319,12 +319,73 @@ public:
             std::cout << "not modulated -> NaN: " << (std::isnan (proc->getModulatedNorm (proc->getParamIndex ("air"))) ? "ok" : "FAIL") << std::endl;
         }
 
+        // MIDI learn: a knob, a range, a button, and a learned CC wins over the fixed map
+        {
+            for (int i = 0; i < RysumProcessor::kNumMidiMaps; ++i) proc->clearMidiMap (i);
+            auto P = [&] (const char* id) { return proc->apvts.getParameter (id); };
+            juce::AudioBuffer<float> st (2, 512);
+            auto cc = [&] (int ch, int num, int val)
+            {
+                juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (ch, num, val), 10);
+                proc->processBlock (st, mb);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
+            };
+            const int knob = proc->learnMidiFor (proc->getParamIndex ("swind0"));
+            const bool waiting = proc->getLearningSlot() == knob;
+            cc (2, 21, 64);
+            const auto m = proc->getMidiMap (knob);
+            const bool learned = m.cc == 21 && m.channel == 2 && proc->getLearningSlot() < 0;
+            const bool follows = std::abs (P ("swind0")->getValue() - 64.0f / 127.0f) < 0.002f;
+            auto r = m; r.lo = 0.2f; r.hi = 0.8f; proc->setMidiMap (knob, r);
+            cc (2, 21, 127); const float top = P ("swind0")->getValue();
+            cc (2, 21, 0);   const float bottom = P ("swind0")->getValue();
+            cc (3, 21, 127); const bool otherChannel = std::abs (P ("swind0")->getValue() - bottom) < 1e-4f;
+            std::cout << "MIDI learn knob: waiting " << waiting << ", learned CC 21 ch 2 " << learned << ", follows " << follows
+                      << ", range " << bottom << ".." << top << ", other channel ignored " << otherChannel
+                      << ((waiting && learned && follows && std::abs (top - 0.8f) < 0.002f && std::abs (bottom - 0.2f) < 0.002f && otherChannel) ? "  ok" : "  FAIL") << std::endl;
+
+            P ("tremOn")->setValueNotifyingHost (0.0f);
+            const int button = proc->learnMidiFor (proc->getParamIndex ("tremOn"));
+            cc (1, 80, 127);                     // the learning press itself does not switch
+            const bool learnNoFlip = P ("tremOn")->getValue() < 0.5f && proc->getMidiMap (button).toggle;
+            cc (1, 80, 0);
+            cc (1, 80, 127); const bool on = P ("tremOn")->getValue() > 0.5f;
+            cc (1, 80, 0);   const bool stays = P ("tremOn")->getValue() > 0.5f;
+            cc (1, 80, 127); const bool off = P ("tremOn")->getValue() < 0.5f;
+            cc (1, 80, 0);
+            std::cout << "MIDI learn button: " << learnNoFlip << on << stays << off << ((learnNoFlip && on && stays && off) ? "  ok" : "  FAIL") << std::endl;
+
+            P ("wind")->setValueNotifyingHost (0.0f);
+            const int over = proc->learnMidiFor (proc->getParamIndex ("click"));
+            cc (1, 11, 100);
+            cc (1, 11, 127);
+            const bool clickMoved = std::abs (P ("click")->getValue() - 1.0f) < 0.002f, windStill = P ("wind")->getValue() < 0.001f;
+            std::cout << "learned CC 11 replaces the fixed map: " << ((clickMoved && windStill) ? "ok" : "FAIL") << std::endl;
+            proc->clearMidiMap (over);
+            P ("click")->setValueNotifyingHost (P ("click")->getDefaultValue());
+            P ("tremOn")->setValueNotifyingHost (0.0f);
+
+            juce::MemoryBlock mbm; proc->getStateInformation (mbm);
+            const auto xml = proc->getXmlFromBinary (mbm.getData(), (int) mbm.getSize())->toString();
+            for (int i = 0; i < 8; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100);      // saved as the default for new instances
+            const auto saved = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rysum/MIDI-Regler.xml").loadFileAsString();
+            std::cout << "MIDI assignments in the state " << xml.contains ("swind0") << ", saved for new instances " << saved.contains ("tremOn")
+                      << ((xml.contains ("swind0") && saved.contains ("tremOn")) ? "  ok" : "  FAIL") << std::endl;
+            {
+                RysumProcessor fresh;
+                const bool inherits = fresh.getMidiMap (knob).cc == 21 && fresh.getMidiMap (button).param == fresh.getParamIndex ("tremOn");
+                std::cout << "a new instance starts with them: " << (inherits ? "ok" : "FAIL") << std::endl;
+            }
+            proc->learnMidiFor (proc->getParamIndex ("simTail"));      // shows "bewegen ..." in the snapshot
+        }
+
         editor.reset (dynamic_cast<RysumEditor*> (proc->createEditor()));
         editor->setSize (1120, 720);
         auto* content = editor->getChildComponent (0);
         auto shoot = [&] (int view, const juce::String& name)
         {
             if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (view); c->tick(); }
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (120);     // slider timers (modulation, MIDI tags)
             auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
             juce::PNGImageFormat png;
             auto f = outDir.getChildFile (name);
@@ -337,6 +398,15 @@ public:
         shoot (1, "ui_raum.png");
         shoot (3, "ui_klang.png");
         shoot (5, "ui_mod.png");
+        {
+            proc->apvts.getParameter ("windModel")->setValueNotifyingHost (1.0f);
+            shoot (3, "ui_klang_wind2.png");
+            proc->apvts.getParameter ("windModel")->setValueNotifyingHost (0.0f);
+            if (auto* c = dynamic_cast<RysumContent*> (content)) c->openMidiMap();
+            shoot (5, "ui_midi.png");
+            for (int i = 0; i < RysumProcessor::kNumMidiMaps; ++i) proc->clearMidiMap (i);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+        }
         {
             // right-click menus are top-level windows without a parent: they must get the plugin's look by default
             auto& lf = juce::LookAndFeel::getDefaultLookAndFeel();

@@ -217,13 +217,26 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
   *Verstimmung* gives every pipe its own fixed random detune (0–60 ct).
 - *Tremulant*: on/off, speed, depth – pitch + level wave shared by all pipes, plus a bit
   of wind noise.
+- *Registerwind* – the wind model of the stops, i.e. what the *Wind* slider of each stop
+  (Spieltisch) does when it is turned down:
+  - *klassisch* (default, as before): a half-drawn stop gets quieter, flatter, duller and unsteady.
+  - *instabil*: the same, and below roughly half wind the starving pipes also misbehave the way
+    real ones do. The slow jet no longer holds the fundamental, so its noise makes the pipe's own
+    upper resonances sound for a moment: thin whistles near the 2nd … 8th partial (a stopped
+    Gedackt only has the odd ones), now and then a high squeak. They jump, slide to a neighbouring
+    resonance and die away. The speech stutters, because the fundamental drops out for a few
+    milliseconds and the resonances ring up in the gaps. The mouth hisses. The Trompete chatters
+    instead of whistling. Strongest at about 10 % wind, gone again when the stop is closed. At
+    full wind nothing changes, so patches sound the same in both models. Try an LFO or an envelope
+    on a stop's wind, or a MIDI fader (see section 4). Patches 56–58 show it.
 - *Freeze*: while on, released notes do not stop but turn into a grain cloud from the
   pipe's sustain. *Verwischen* = longer, more detuned grains. Switching it off lets the
   frozen notes fade over *Ausklang*.
 - *Entfernung · Doppler*: *Doppler* (pitch shift when a pipe's distance changes – with
   Ellipse or Drift; Sprünge never glide), *Entfernung → Lautstärke* (far pipes quieter),
   *Luft* (far pipes duller). Far pipes also send more into the Hall.
-- *MIDI*: *MIDI-CC an* switches the CC mapping below; *Bewegung im Tempo* locks all
+- *MIDI*: *MIDI-CC an* switches the fixed CC mapping (section 4); *Eigene Zuordnungen …*
+  opens your own controller assignments (MIDI learn); *Bewegung im Tempo* locks all
   motion to the host tempo and song position (speeds count as written at 120 BPM; for
   free speed glissandi switch it off).
 - *Kopfhörer (binaural)*: *Binaural an* switches the output to binaural (and back to
@@ -285,6 +298,8 @@ follow the pipes. Everything is off in older patches.
   modulation (silent pipes show the LFO part; sounding ones also their envelopes).
 - Everything is updated every 64 samples (≈1.3 ms), so even fast LFOs stay smooth. Amounts
   are automatable parameters; sources and targets of the slots are saved with the project.
+- **MIDI-Regler** (the second tab of *Zuordnungen*): knobs, faders and buttons of your MIDI
+  keyboard on any control of the plugin – see section 4.
 
 Pipes the preprocessing flagged as unusable (Gedackt f and f♯ in the current
 samples) are replaced by the neighbouring pipe, pitch-shifted to the exact
@@ -326,6 +341,38 @@ With *MIDI-CC an* (Klang page):
 All stops and settings are plugin parameters, so they can be automated or
 MIDI-learned in Reaper.
 
+### Your own knobs and faders (MIDI learn)
+
+The knobs, faders and pads of a MIDI keyboard send *control change* messages (CC): a
+controller number (0–119) and a value 0–127, on a MIDI channel. A host like Ableton maps
+them to plugin parameters itself (MIDI Map mode). Rysum can also do this on its own, and that
+works the same way in Ableton, Reaper and the standalone app:
+
+- **Right-click any slider → *MIDI lernen***, then move the knob. The slider shows
+  *MIDI: Regler bewegen …* while it waits, and afterwards a small *CC 21* tag next to its value.
+  The same menu removes the assignment.
+- **Modulation page → Zuordnungen → *MIDI-Regler*** shows all 32 assignments:
+  - *lernen*: click it, move a controller (click again to cancel). It shows the CC number and
+    channel (*K2*) it learned. Only that channel counts.
+  - *Ziel*: any parameter, including switches like stops, Freeze and Tremulant.
+    Picking a target in an empty row starts learning right away.
+  - Range (the bar with two lozenges): the controller sweeps from the left lozenge (knob down)
+    to the right one (knob up). Swap them to reverse the direction. Double-click = full range,
+    Shift = 5 % steps. The values are shown at both ends.
+  - *Taster*: for buttons and pads. Every press switches between the two ends of the range.
+    It is on by default for switches.
+  - ×: remove.
+  - Top right shows the last controller that came in (number, channel, value). Use it to find
+    out what a knob sends.
+- A learned CC takes precedence over the fixed mapping above. For example, if you learn CC 11
+  onto something else, it no longer moves the global wind. The fixed mapping can be switched off
+  completely (*MIDI-CC an*). Learned assignments always work.
+- The assignments belong to your setup, not to the sound. They are saved in the project / session
+  and in `Documents\Rysum\MIDI-Regler.xml`, and every new instance starts with the last ones
+  used. Patches do not change them.
+- The parameter moves exactly as if you turned it with the mouse. When Ableton or Reaper record
+  automation, the knob movement is recorded too.
+
 ## 5. Files
 
 ```
@@ -343,7 +390,9 @@ plugin/
     Modulation.h        LFOs, envelopes, routing definitions
     RoomSim.h           simulated room: image sources, Eyring, ray tracer
     RoomTail.*          late reverb of the simulated room: synthesised responses, partitioned convolution
-    PluginEditor.*, ConsoleView.*, SpaceView.*, SaalView.*, KlangView.*, EffectsView.*, ModView.*, Theme.h   interface
+    WindChaos.h         wind model "instabil": resonances, intermittent speech, hiss of starving pipes
+    PluginEditor.*, ConsoleView.*, SpaceView.*, SaalView.*, KlangView.*, EffectsView.*, ModView.*,
+    MidiMapView.*, Theme.h   interface
   Resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
   ThirdParty/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
   tools/make_fabian.py  rebuilds Resources/fabian_hrir.bin from the FABIAN SOFA file

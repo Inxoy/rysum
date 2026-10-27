@@ -73,7 +73,30 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     dfEq = &toggle ("binDfEq", "Diffusfeld-Entzerrung");
     dfEq->setTooltip (u8 ("Gleicht die mittlere Klangf\xc3\xa4rbung der HRTF aus (f\xc3\xbcr diffusfeld-abgestimmte Kopfh\xc3\xb6rer). Aus: Kunstkopf-Klang wie gemessen."));
 
+    // wind model of the stops (what a half-drawn stop does)
+    if (auto* wm = proc.apvts.getParameter ("windModel"))
+    {
+        windAtt = std::make_unique<juce::ParameterAttachment> (*wm, [this] (float v)
+        {
+            windClassic.setToggleState (v < 0.5f, juce::dontSendNotification);
+            windUnstable.setToggleState (v >= 0.5f, juce::dontSendNotification);
+            repaint (windBox);
+        });
+        windAtt->sendInitialUpdate();
+    }
+    windClassic.onClick = [this] { if (windAtt) windAtt->setValueAsCompleteGesture (0.0f); };
+    windUnstable.onClick = [this] { if (windAtt) windAtt->setValueAsCompleteGesture (1.0f); };
+    windClassic.setTooltip (u8 ("Ein halb gezogenes Register (Wind-Regler je Register) wird leiser, tiefer, dumpfer und unruhig."));
+    windUnstable.setTooltip (u8 ("Wie klassisch, und bei wenig Wind dazu: Resonanzen der Pfeife pfeifen auf, springen und gleiten, "
+                                 "die Ansprache setzt kurz aus, die M\xc3\xbcndung zischt. Bei vollem Wind klingt alles wie gewohnt."));
+    addAndMakeVisible (windClassic);
+    addAndMakeVisible (windUnstable);
+
     midiOn = &toggle ("midiCC", "MIDI-CC an");
+    midiOn->setTooltip (u8 ("Schaltet die feste CC-Belegung (Liste unten). Eigene Zuordnungen (MIDI lernen) gelten immer."));
+    midiMapButton.setTooltip (u8 ("Drehregler, Fader und Taster deines Keyboards auf beliebige Regler legen (Seite Modulation)"));
+    midiMapButton.onClick = [this] { if (auto* a = findParentComponentOfClass<ModUiAccess>()) a->openMidiMap(); };
+    addAndMakeVisible (midiMapButton);
     syncOn = &toggle ("motionSync", "Bewegung im Tempo");
     syncOn->setTooltip (u8 ("Geschwindigkeiten gelten bei 120 BPM, laufen mit dem Projekttempo und rasten auf die Taktposition ein."));
 }
@@ -102,6 +125,14 @@ void KlangView::resized()
         b.removeFromTop (12);
         tremRate->setBounds (b.removeFromTop (38));
         tremDepth->setBounds (b.removeFromTop (38));
+        windBox = tremBox.withTrimmedTop (178);
+        auto w = body (windBox);
+        auto t = w.removeFromTop (26);
+        windClassic.setBounds (t.removeFromLeft (110));
+        t.removeFromLeft (6);
+        windUnstable.setBounds (t.removeFromLeft (110));
+        w.removeFromTop (8);
+        windText = w;
     }
     {
         auto b = body (freezeBox);
@@ -140,6 +171,8 @@ void KlangView::resized()
         midiOn->setBounds (t.removeFromLeft (130));
         t.removeFromLeft (8);
         syncOn->setBounds (t.removeFromLeft (170));
+        b.removeFromTop (8);
+        midiMapButton.setBounds (b.removeFromTop (26).withWidth (200));
     }
 }
 
@@ -171,7 +204,17 @@ void KlangView::paint (juce::Graphics& g)
 
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::dim);
-    auto midiText = midiBox.withTrimmedTop (84);
+    {
+        drawSectionTitle (g, windBox, "Registerwind", "Windmodell");
+        const bool unstable = windUnstable.getToggleState();
+        g.setFont (A.sansFont (11.5f));
+        g.setColour (col::mute);
+        g.drawFittedText (unstable ? u8 ("Bei wenig Wind pfeifen Resonanzen der Pfeifen auf, springen und gleiten; "
+                                         "die Ansprache stockt, die M\xc3\xbcndung zischt. Voller Wind: unver\xc3\xa4ndert.")
+                                   : u8 ("Ein halb gezogenes Register wird leiser, tiefer, dumpfer und unruhig."),
+                          windText, juce::Justification::topLeft, 4);
+    }
+    auto midiText = midiBox.withTrimmedTop (118);
     const char* lines[] {
         "CC 11       Wind (global) / Schweller",
         "CC 20-26    Register an/aus (Praestant ... Trompete)",

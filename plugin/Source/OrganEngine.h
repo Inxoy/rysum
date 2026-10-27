@@ -7,6 +7,7 @@
 #include "Modulation.h"
 #include "RoomSim.h"
 #include "RoomTail.h"
+#include "WindChaos.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 #include <memory>
@@ -43,6 +44,7 @@ struct EngineParams
     std::array<bool, kNumStops> stopOn {};
     std::array<float, kNumStops> stopGain = ones();   // linear
     std::array<float, kNumStops> stopWind = ones();   // 0 = stop closed (silent) .. 1 = fully pulled
+    int   windModel = 0;                               // 0 = classic, 1 = unstable (whistles, intermittent speech at low stop wind)
     static std::array<float, kNumStops> ones() { std::array<float, kNumStops> a {}; a.fill (1.0f); return a; }
     float masterGain = 1.0f;
     int   outputMode = 0;              // 0 = stereo, 1..5 = AmbiX order
@@ -198,6 +200,8 @@ private:
         float windSm = -1.0f;            // smoothed stop wind (-1 = take target directly)
         float lp = 0.0f, lpA = 1.0f;     // tone filter for under-winded pipes
         float lpAir = 0.0f, airA = 1.0f; // air absorption by distance
+        WindChaos chaos;                 // wind model 2: resonances, intermittent jet, hiss
+        float chAir = 0.0f;              // its own air filter
         float prevDist = -1.0f, dop = 1.0f, dopTarget = 1.0f;
         float detuneRnd = 0.0f;          // -1..1, fixed per pipe
         // modulation

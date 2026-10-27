@@ -310,24 +310,31 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
     if (prm == nullptr) return;
     juce::PopupMenu m;
     m.addSectionHeader (prm->getName (64));
-    if (! proc.isModTarget (idx))
-    {
-        m.addItem (-1, u8 ("Schalter/Auswahl \xe2\x80\x93 nicht modulierbar"), false);
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
-        return;
-    }
-    bool free = false;
-    for (int r = 0; r < kNumRoutes; ++r) free = free || (proc.getRouteSrc (r) < 0 && proc.getRouteTgt (r) < 0);
-    juce::PopupMenu with;
     const auto names = modSourceNames();
-    for (int s = 0; s < kNumSources; ++s) with.addItem (1 + s, names[s]);
-    m.addSubMenu (free ? juce::String ("Modulieren mit") : u8 ("Modulieren mit (alle ") + juce::String (kNumRoutes) + u8 (" Pl\xc3\xa4tze belegt)"), with, free);
-    for (int r = 0; r < kNumRoutes; ++r)
-        if (proc.getRouteTgt (r) == kGlobalTargetBase + idx && proc.getRouteSrc (r) >= 0)
-        {
-            auto* a = proc.apvts.getParameter (proc.getModAmountId (r));
-            m.addItem (100 + r, "Entfernen: " + names[proc.getRouteSrc (r)] + " (" + (a != nullptr ? a->getCurrentValueAsText() : juce::String()) + ")");
-        }
+    if (! proc.isModTarget (idx))
+        m.addItem (-1, u8 ("Schalter/Auswahl \xe2\x80\x93 nicht modulierbar"), false);
+    else
+    {
+        bool free = false;
+        for (int r = 0; r < kNumRoutes; ++r) free = free || (proc.getRouteSrc (r) < 0 && proc.getRouteTgt (r) < 0);
+        juce::PopupMenu with;
+        for (int s = 0; s < kNumSources; ++s) with.addItem (1 + s, names[s]);
+        m.addSubMenu (free ? juce::String ("Modulieren mit") : u8 ("Modulieren mit (alle ") + juce::String (kNumRoutes) + u8 (" Pl\xc3\xa4tze belegt)"), with, free);
+        for (int r = 0; r < kNumRoutes; ++r)
+            if (proc.getRouteTgt (r) == kGlobalTargetBase + idx && proc.getRouteSrc (r) >= 0)
+            {
+                auto* a = proc.apvts.getParameter (proc.getModAmountId (r));
+                m.addItem (100 + r, "Entfernen: " + names[proc.getRouteSrc (r)] + " (" + (a != nullptr ? a->getCurrentValueAsText() : juce::String()) + ")");
+            }
+    }
+    // MIDI learn
+    m.addSeparator();
+    m.addItem (400, u8 ("MIDI lernen (Regler am Keyboard bewegen)"));
+    for (int slot : proc.midiMapsFor (idx))
+    {
+        const auto mm = proc.getMidiMap (slot);
+        m.addItem (500 + slot, u8 ("MIDI-Zuordnung entfernen: ") + (mm.cc >= 0 ? "CC " + juce::String (mm.cc) : u8 ("noch nicht gelernt")));
+    }
     m.addSeparator();
     m.addItem (300, "Modulationsseite " + juce::String (u8 ("\xc3\xb6")) + "ffnen");
     juce::Component::SafePointer<RysumContent> safe (this);
@@ -337,7 +344,16 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
         auto& self = *safe;
         if (res >= 1 && res <= kNumSources) self.proc.addRoute (res - 1, kGlobalTargetBase + idx, 0.25f);
         else if (res >= 100 && res < 100 + kNumRoutes) self.proc.clearRoute (res - 100);
-        else if (res == 300) self.showView (5);
+        else if (res == 300) { self.mod.showMidiTab (false); self.showView (5); }
+        else if (res == 400)
+        {
+            const int slot = self.proc.learnMidiFor (idx);
+            if (slot < 0)
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "MIDI lernen",
+                                                        u8 ("Alle ") + juce::String (RysumProcessor::kNumMidiMaps) + u8 (" MIDI-Zuordnungen sind belegt."));
+            else self.mod.showMidiTab (true, slot);        // the page switches only when the user opens it; the row waits there
+        }
+        else if (res >= 500 && res < 500 + RysumProcessor::kNumMidiMaps) self.proc.clearMidiMap (res - 500);
     });
 }
 

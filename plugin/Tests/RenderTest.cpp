@@ -549,10 +549,14 @@ static juce::AudioBuffer<float> render (OrganEngine& e, Scene& sc, double sr, in
 
 int main (int argc, char** argv)
 {
-    testEncoder();
-    testConvolver();
-    testMotion();
-    testBinaural (argc > 3 ? juce::File (argv[3]) : juce::File());          // optional 3rd argument: a SOFA file to test with
+    const bool onlyWind = std::getenv ("RYSUM_ONLY_WIND") != nullptr;       // quick run: just the wind model tests
+    if (! onlyWind)
+    {
+        testEncoder();
+        testConvolver();
+        testMotion();
+        testBinaural (argc > 3 ? juce::File (argv[3]) : juce::File());      // optional 3rd argument: a SOFA file to test with
+    }
     if (argc < 3) { std::cout << "usage: RysumRenderTest <samples> <outdir> [hrtf.sofa]" << std::endl; return failures; }
 
     juce::File folder (juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]));
@@ -714,6 +718,7 @@ int main (int argc, char** argv)
         scenes.push_back (s);
     }
 
+    if (onlyWind) scenes.clear();
     for (auto& sc : scenes)
     {
         OrganEngine e;
@@ -744,6 +749,7 @@ int main (int argc, char** argv)
     }
     // pitch check at a different host sample rate: Praestant a' must stay at its recorded pitch,
     // the substituted Gedackt f must land on meantone f
+    if (! onlyWind)
     for (double hostSr : { 44100.0, 48000.0, 96000.0 })
     for (auto [stop, midi] : { std::pair<int, int> { 0, 69 }, std::pair<int, int> { 1, 53 }, std::pair<int, int> { kPraestant16, 69 } })
     {
@@ -840,6 +846,79 @@ int main (int argc, char** argv)
         e.process (b, mb, p);
         const double expect = 0.25 * (8.0 + 512.0 / 48000.0 * 90.0 / 60.0) * 0.5;
         check (std::abs (e.motionPhase[2].load() - expect) < 1.0e-9, "tempo sync: phase follows the host position");
+    }
+
+    // ---------------- wind model 2: a starving pipe whistles, stutters and hisses ----------------
+    {
+        const double wsr = 48000.0;
+        auto renderWind = [&] (int stop, int model, std::vector<int> midis, std::function<float (double)> windAt, double secs)
+        {
+            OrganEngine e; e.prepare (wsr, 256); e.setLibrary (lib);
+            EngineParams p; p.stopOn = {}; p.stopOn[(size_t) stop] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+            p.windModel = model;
+            juce::AudioBuffer<float> b (2, 256), all (2, (int) (wsr * secs));
+            auto t0 = std::chrono::high_resolution_clock::now();
+            for (int pos = 0; pos < all.getNumSamples(); pos += 256)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) for (int m : midis) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
+                p.stopWind[(size_t) stop] = windAt (pos / wsr);
+                e.process (b, mb, p);
+                for (int c = 0; c < 2; ++c) all.copyFrom (c, pos, b, c, 0, juce::jmin (256, all.getNumSamples() - pos));
+            }
+            const double took = std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+            return std::make_pair (all, secs / took);
+        };
+        auto highpassed = [&] (const juce::AudioBuffer<float>& b)
+        {
+            std::vector<float> y ((size_t) b.getNumSamples());
+            juce::IIRFilter f1, f2;
+            f1.setCoefficients (juce::IIRCoefficients::makeHighPass (wsr, 2500.0)); f2.setCoefficients (juce::IIRCoefficients::makeHighPass (wsr, 2500.0));
+            for (int i = 0; i < b.getNumSamples(); ++i) y[(size_t) i] = f2.processSingleSampleRaw (f1.processSingleSampleRaw (b.getSample (0, i)));
+            return y;
+        };
+        auto rmsDb = [&] (const float* x, int n) { double s = 0; for (int i = 0; i < n; ++i) s += (double) x[i] * x[i]; return 10.0 * std::log10 (s / juce::jmax (1, n) + 1e-30); };
+        auto starve = [] (double t) { return t < 2.0 ? 1.0f : 0.12f; };
+        for (int stop : { 0, 1, 6 })
+        {
+            const std::vector<int> chord { 53, 60, 65 };
+            auto [m0, rt0] = renderWind (stop, 0, chord, starve, 8.0);
+            auto [m1, rt1] = renderWind (stop, 1, chord, starve, 8.0);
+            const juce::String id = kStops[(size_t) stop].id;
+            writeWav (outDir.getChildFile ("46_wind2_" + id + ".wav"), m1, wsr);
+            // full wind: the new model changes nothing
+            float maxDiff = 0.0f;
+            for (int i = 0; i < (int) (1.9 * wsr); ++i) maxDiff = std::max (maxDiff, std::abs (m0.getSample (0, i) - m1.getSample (0, i)));
+            check (maxDiff == 0.0f, "wind model 2 at full wind is identical to the classic model (" + id + ")");
+            bool finite = true;
+            for (int i = 0; i < m1.getNumSamples(); ++i) finite = finite && std::isfinite (m1.getSample (0, i));
+            check (finite, "wind model 2 finite (" + id + ")");
+            const auto h0 = highpassed (m0), h1 = highpassed (m1);
+            const int a = (int) (3.0 * wsr), n = (int) (5.0 * wsr);
+            const double full = rmsDb (m0.getReadPointer (0) + (int) (0.8 * wsr), (int) wsr);
+            const double low0 = rmsDb (m0.getReadPointer (0) + a, n), low1 = rmsDb (m1.getReadPointer (0) + a, n);
+            const double hf0 = rmsDb (h0.data() + a, n), hf1 = rmsDb (h1.data() + a, n);
+            // how irregular the high part is: spread of 40 ms frame levels
+            std::vector<double> fr;
+            for (int i = a; i + 1920 <= a + n; i += 1920) fr.push_back (rmsDb (h1.data() + i, 1920));
+            double mean = 0; for (double v : fr) mean += v; mean /= (double) fr.size();
+            double sd = 0; for (double v : fr) sd += (v - mean) * (v - mean); sd = std::sqrt (sd / (double) fr.size());
+            std::cout << "wind model 2 " << id << ": full wind " << full << " dB; at 12 % wind classic " << low0 << " dB, new " << low1
+                      << " dB; above 2.5 kHz classic " << hf0 << " dB, new " << hf1 << " dB; frame spread " << sd << " dB; "
+                      << rt1 << "x realtime" << std::endl;
+            check (hf1 > hf0 + 6.0, "wind model 2 adds high resonances at low wind (" + id + ")");
+            check (low1 < full - 6.0, "a starving pipe stays quieter than at full wind (" + id + ")");
+            check (sd > 2.0, "the resonances come and go (" + id + ")");
+        }
+        {
+            // 18 pipes starving at once
+            std::vector<int> many; for (int k = 0; k < 18; ++k) many.push_back (kPhysKeys[(size_t) (k * 2)]);
+            auto [b, rt] = renderWind (0, 1, many, [] (double t) { return (float) juce::jlimit (0.0, 1.0, 1.0 - t / 4.0) * 0.9f + 0.05f; }, 6.0);
+            writeWav (outDir.getChildFile ("46_wind2_sweep_18_pipes.wav"), b, wsr);
+            std::cout << "wind model 2, 18 pipes sweeping down: " << rt << "x realtime, peak " << juce::Decibels::gainToDecibels (b.getMagnitude (0, b.getNumSamples())) << " dBFS" << std::endl;
+            check (rt > 1.0, "wind model 2 with 18 pipes faster than realtime");
+        }
+        if (onlyWind) { std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     }
 
     // ---------------- modulation ----------------

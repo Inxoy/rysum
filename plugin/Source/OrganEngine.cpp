@@ -3,6 +3,7 @@
 namespace rysum
 {
 static constexpr float kSpeedOfSound = 343.0f;
+static constexpr float kChaosLevel = 0.009f;     // wind model 2: level of the whistles / hiss against the pipe samples
 
 OrganEngine::OrganEngine()
 {
@@ -418,6 +419,8 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples)
     v->env = 0.0f; v->held1 = 0.0f;
     v->windSm = -1.0f; v->lp = 0.0f; v->lpA = 1.0f;
     v->lpAir = 0.0f; v->airA = 1.0f;
+    v->chaos.reset ((uint32_t) (stop * 7919 + key * 104729) ^ (ageCounter * 2654435761u));
+    v->chAir = 0.0f;
     v->prevDist = -1.0f; v->dop = 1.0f; v->dopTarget = 1.0f;
     XorShift dr ((uint32_t) (stop * 7919 + key * 104729 + 3));
     dr.next();
@@ -660,6 +663,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         const float crkDecay = std::exp (-1.0f / juce::jmax (1.0f, p.fx.crackLen * 0.001f * (float) sr));
         const float crkMean = (float) sr / juce::jmax (0.05f, p.fx.crackRate);
         const float crkGain = 0.25f * p.fx.crackLevel * v.crkEnv;
+        const bool chaosModel = p.windModel == 1;
         for (int i = 0; i < n; ++i)
         {
             if ((i & 15) == 0)       // control rate: every 16 samples
@@ -701,6 +705,14 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 v.dop += 0.08f * (v.dopTarget - v.dop);
                 cents += v.modCents0 + (v.modCents1 - v.modCents0) * (float) (start + i) * inv;
                 rate = v.baseRate * std::exp2 (cents / 1200.0f) * v.dop;
+                if (chaosModel)
+                {
+                    // wind model 2: the starving pipe whistles on its upper resonances and stutters
+                    const double hz = pipe.measuredHz > 0.0 ? pipe.measuredHz : pipe.nominalHz;
+                    v.chaos.control (WindChaos::instabilityForWind (w), (float) (hz * rate / v.baseRate),
+                                     v.stop == 1, v.stop == 6, v.held || v.frozen, (float) sr);
+                    a *= v.chaos.toneGain();
+                }
                 amp = a;
             }
 
@@ -749,6 +761,11 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             v.lp += v.lpA * (x - v.lp);
             v.lpAir += v.airA * (v.lp - v.lpAir);
             x = v.lpAir * amp;
+            if (chaosModel && ! v.chaos.idle)
+            {
+                v.chAir += v.airA * (kChaosLevel * v.chaos.sample() - v.chAir);
+                x += v.chAir * (v.killing ? juce::jmax (0.0f, v.killGain) : 1.0f);
+            }
 
             if (perPipeDeg)
             {

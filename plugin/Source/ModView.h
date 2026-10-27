@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "Theme.h"
+#include "MidiMapView.h"
 
 namespace rysum::ui
 {
@@ -19,7 +20,7 @@ private:
     InlineValueEditor editor;
 };
 
-/** fourth page: 4 LFOs, 2 envelopes, 24 routings (scrollable) */
+/** modulation page: 4 LFOs, 2 envelopes, 24 routings (scrollable) / MIDI controller assignments */
 class ModView : public juce::Component
 {
 public:
@@ -28,6 +29,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void refresh();
+
+    /** the list at the bottom right: modulation routings or MIDI controller assignments */
+    void showMidiTab (bool midi, int revealSlot = -1);
 
     /** fills a combo with all modulation targets (pipe targets + parameters, grouped in sub-menus) */
     static void fillTargetMenu (juce::PopupMenu& menu, RysumProcessor& proc, int idOffset);
@@ -78,5 +82,8 @@ private:
     static constexpr int kRowH = 24;
     int lastRouteVersion = -1;
     bool updating = false;
+    juce::TextButton tabMod { "Modulation" }, tabMidi { "MIDI-Regler" };
+    MidiMapPanel midiPanel { proc };
+    bool midiTab = false;
 };
 } // namespace rysum::ui
