@@ -24,7 +24,8 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("temperament")))
         temperament.addItemList (choice->choices, 1);
     temperamentAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "temperament", temperament);
-    temperament.setTooltip (u8 ("Die Aufnahmen sind \xc2\xbc-Komma mittelt\xc3\xb6nig; jede andere Stimmung verschiebt die Pfeifen, a\xe2\x80\xb2 bleibt."));
+    temperament.setTooltip (u8 ("Die Aufnahmen sind \xc2\xbc-Komma mittelt\xc3\xb6nig; jede andere Stimmung verschiebt die Pfeifen, a\xe2\x80\xb2 bleibt. "
+                               "Bei den Stufen-Stimmungen (jede Taste ein Schritt) spielt jede Taste die Pfeife, die ihrer Tonh\xc3\xb6he am n\xc3\xa4" "chsten liegt."));
     addAndMakeVisible (temperament);
     pitch  = &row ("pitch", "Stimmton");
     detune = &row ("detune", u8 ("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
@@ -42,6 +43,36 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     distAmount = &row ("distAmount", u8 ("Entfernung \xe2\x86\x92 Lautst\xc3\xa4rke"));
     air        = &row ("air", u8 ("Luft (H\xc3\xb6hen in der Ferne)"));
 
+    // headphones
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("binOrder")))
+        binOrder.addItemList (choice->choices, 1);
+    binOrderAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "binOrder", binOrder);
+    binOrder.setTooltip (u8 ("Ambisonics-Ordnung vor dem Kopfh\xc3\xb6rer-Decoder: h\xc3\xb6her = sch\xc3\xa4rfer geortet, braucht mehr Rechenzeit"));
+    addAndMakeVisible (binOrder);
+    binOn.setClickingTogglesState (false);
+    binOn.setTooltip (u8 ("Schaltet die Ausgabe auf Binaural (Kopfh\xc3\xb6rer) bzw. zur\xc3\xbc" "ck auf Stereo"));
+    binOn.onClick = [this]
+    {
+        if (auto* o = proc.apvts.getParameter ("output"))
+            o->setValueNotifyingHost (o->convertTo0to1 (proc.isBinaural() ? 0.0f : (float) RysumProcessor::kBinauralOutput));
+    };
+    addAndMakeVisible (binOn);
+    sofaLoad.setTooltip (u8 ("Eigene HRTF im SOFA-Format (SimpleFreeFieldHRIR), z. B. eine individuell gemessene"));
+    sofaLoad.onClick = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> ("HRTF im SOFA-Format", proc.getSofaFile(), "*.sofa");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) proc.setSofaFile (fc.getResult()); });
+    };
+    sofaReset.setTooltip (u8 ("Eingebaute HRTF: FABIAN-Kunstkopf der TU Berlin (Brinkmann et al. 2017, CC BY 4.0)"));
+    sofaReset.onClick = [this] { proc.setSofaFile ({}); };
+    addAndMakeVisible (sofaLoad);
+    addAndMakeVisible (sofaReset);
+    yaw = &row ("binYaw", "Kopfdrehung");
+    yaw->slider.setTooltip (u8 ("Dreht die ganze Szene um den H\xc3\xb6rer, als ob du den Kopf drehst (modulierbar)"));
+    dfEq = &toggle ("binDfEq", "Diffusfeld-Entzerrung");
+    dfEq->setTooltip (u8 ("Gleicht die mittlere Klangf\xc3\xa4rbung der HRTF aus (f\xc3\xbcr diffusfeld-abgestimmte Kopfh\xc3\xb6rer). Aus: Kunstkopf-Klang wie gemessen."));
+
     midiOn = &toggle ("midiCC", "MIDI-CC an");
     syncOn = &toggle ("motionSync", "Bewegung im Tempo");
     syncOn->setTooltip (u8 ("Geschwindigkeiten gelten bei 120 BPM, laufen mit dem Projekttempo und rasten auf die Taktposition ein."));
@@ -55,7 +86,7 @@ void KlangView::resized()
     const int rh = (r.getHeight() - gap) / 2;
     auto cell = [&] (int c, int rr) { return juce::Rectangle<int> (r.getX() + c * (cw + gap), r.getY() + rr * (rh + gap), cw, rh); };
     tuneBox = cell (0, 0); tremBox = cell (1, 0); freezeBox = cell (2, 0);
-    distBox = cell (0, 1); midiBox = cell (1, 1); noteBox = cell (2, 1);
+    distBox = cell (0, 1); midiBox = cell (1, 1); binBox = cell (2, 1);
 
     auto body = [] (juce::Rectangle<int> b) { return b.withTrimmedTop (40); };
     {
@@ -86,6 +117,24 @@ void KlangView::resized()
         air->setBounds (b.removeFromTop (38));
     }
     {
+        auto b = body (binBox);
+        auto t = b.removeFromTop (28);
+        binOn.setBounds (t.removeFromLeft (124));
+        t.removeFromLeft (8);
+        binOrder.setBounds (t);
+        b.removeFromTop (8);
+        t = b.removeFromTop (26);
+        sofaLoad.setBounds (t.removeFromLeft (124));
+        t.removeFromLeft (8);
+        sofaReset.setBounds (t.removeFromLeft (80));
+        b.removeFromTop (6);
+        yaw->setBounds (b.removeFromTop (38));
+        b.removeFromTop (2);
+        dfEq->setBounds (b.removeFromTop (26).withWidth (190));
+        b.removeFromTop (6);
+        binStatusArea = b;
+    }
+    {
         auto b = body (midiBox);
         auto t = b.removeFromTop (28);
         midiOn->setBounds (t.removeFromLeft (130));
@@ -98,6 +147,10 @@ void KlangView::refresh()
 {
     for (auto& r : rows) r->repaint();
     repaint (freezeBox);
+    const bool on = proc.isBinaural();
+    if (binOn.getToggleState() != on) { binOn.setToggleState (on, juce::dontSendNotification); repaint (binBox); }
+    const auto st = proc.getBinauralStatus() + "|" + proc.getSofaFile().getFullPathName();
+    if (st != shownBinStatus) { shownBinStatus = st; repaint (binBox); }
 }
 
 void KlangView::paint (juce::Graphics& g)
@@ -114,7 +167,7 @@ void KlangView::paint (juce::Graphics& g)
     drawSectionTitle (g, freezeBox, "Freeze", fz > 0 ? juce::String (fz) + " eingefroren" : juce::String ("CC 66"));
     drawSectionTitle (g, distBox, u8 ("Entfernung \xc2\xb7 Doppler"));
     drawSectionTitle (g, midiBox, "MIDI");
-    drawSectionTitle (g, noteBox, "Hinweise");
+    drawSectionTitle (g, binBox, u8 ("Kopfh\xc3\xb6rer (binaural)"), proc.isBinaural() ? juce::String ("aktiv") : juce::String ("aus"));
 
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::dim);
@@ -129,14 +182,16 @@ void KlangView::paint (juce::Graphics& g)
     };
     for (auto* l : lines) g.drawText (u8 (l), midiText.removeFromTop (18), juce::Justification::centredLeft);
 
-    auto note = noteBox.withTrimmedTop (44);
-    g.setFont (A.sansFont (13.0f));
-    g.setColour (col::mute);
-    g.drawFittedText (u8 ("Abstand und Ellipse jedes Registers stellst du auf der Seite Raum ein "
-                          "(Anordnung \xe2\x86\x92 Abstand, Bewegung \xe2\x86\x92 Ellipse).\n\n"
-                          "Doppler entsteht, wenn sich der Abstand \xc3\xa4ndert: mit Ellipse > 0 bei jeder Bewegung "
-                          "(z. B. Rotation), bei Drift auch ohne. Spr\xc3\xbcnge haben keinen Doppler.\n\n"
-                          "Weit entfernte Pfeifen schicken mehr in den Hall (Seite Raum)."),
-                      note, juce::Justification::topLeft, 12);
+    {
+        auto r = binStatusArea;
+        g.setFont (A.monoFont (11.0f));
+        g.setColour (proc.isBinaural() ? col::dim : col::mute);
+        const auto hrtf = proc.getSofaFile() == juce::File() ? juce::String ("HRTF: FABIAN (TU Berlin)") : "HRTF: " + proc.getSofaFile().getFileName();
+        g.drawFittedText (hrtf + "\n" + proc.getBinauralStatus(), r.removeFromTop (34), juce::Justification::topLeft, 3);
+        g.setFont (A.sansFont (11.5f));
+        g.setColour (col::faint);
+        g.drawFittedText (u8 ("Wie der IEM BinauralDecoder: MagLS-Decoder aus der HRTF berechnet. "
+                              "FABIAN: Brinkmann et al., TU Berlin, CC BY 4.0."), r, juce::Justification::bottomLeft, 3);
+    }
 }
 } // namespace rysum::ui

@@ -67,7 +67,7 @@ struct EngineParams
     float distAmount = 0.7f;           // 0 = distance does not change the level, 1 = 1/r
 
     // tuning
-    std::array<float, 12> tuneCents {};  // per pitch class, from the recorded meantone
+    KeyTuning tuning = makeKeyTuning (0); // per key: shift (cents) from the recorded pipe that is played, and which pipe
     float pitchCents = 0.0f;             // whole organ
     float detune = 0.0f;                 // max random detune per pipe (cents)
 
@@ -261,6 +261,7 @@ private:
         return fc >= 19999.0f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / (float) sr);
     }
     std::array<float, kNumKeys> keyVelocity {};
+    std::array<int, kNumKeys> keySource {};             // which recorded pipe a key plays (step tunings), from the last params
     void gainsFor (Pos pos, float* out) const noexcept;
     void renderRange (juce::AudioBuffer<float>& out, int start, int end, int blockLen, const EngineParams& p);
     void updateVoiceSpatial (Voice& v, const EngineParams& p, double blockSeconds) noexcept;

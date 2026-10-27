@@ -69,9 +69,44 @@ Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.
    (speakers) – the format is the same as the IEM suite (ACN order, SN3D).
 
 The plugin's output bus is declared as 5th-order Ambisonics (36 ch). In stereo
-mode only channels 1/2 carry sound.
+and binaural mode only channels 1/2 carry sound.
+
+### Binaural (headphones) – also in Ableton and the standalone app
+Output "Binaural (Kopfhörer)". The plugin renders Ambisonics internally and decodes it to
+two ears with head-related transfer functions, so a normal stereo track is enough (Ableton,
+Reaper stereo track, the standalone app – which starts in this mode). Settings are on the
+**Klang** page (*Kopfhörer*):
+- *Ordnung* 1–5 (default 3): higher = sharper directions, more CPU.
+- *SOFA laden …*: your own HRTF set in the SOFA format (convention SimpleFreeFieldHRIR, e.g.
+  an individually measured one or one from the SOFA databases); *FABIAN* goes back to the
+  built-in set. The file path is saved with the project (not in patches).
+- *Kopfdrehung*: turns the whole scene as if you turned your head (also a modulation target –
+  an LFO on it is a quick way to check what is where).
+- *Diffusfeld-Entzerrung* (on): removes the average colouration of the HRTF set, for
+  diffuse-field-tuned headphones. Off = the dummy head as measured.
+
+How it works – the same approach as the IEM *BinauralDecoder*: from the HRTF set the plugin
+computes a magnitude-least-squares (MagLS) decoder for the chosen order (Schörkhuber,
+Zaunschirm & Höldrich 2018): below ~620 Hz × order the HRTFs are fitted exactly (correct
+interaural time differences), above only their magnitude (no dull treble at low orders), then
+the diffuse-field energy is matched. This takes about half a second in the background whenever
+the order, the HRTF or the sample rate changes. The built-in HRTF is the **FABIAN** head and
+torso simulator of the TU Berlin (2000 of the 11 950 measured directions). Latency of the
+binaural decoder: 128 samples.
 
 ## 3. The five pages
+
+**Top bar, next to the patches:**
+- *Tastatur*: play with the computer keyboard. `A W S E D F T G Z H U J K O L P` = C up to
+  d♯ of the next octave (German layout: Z is the black key between G and H), `Y` / `X` = octave
+  down / up (the button shows the octave), `C` / `V` = softer / harder touch (key clicks). In a
+  host click into the plugin window first; in Ableton switch off Live's own computer MIDI keyboard
+  (the keyboard button at the top right of Live) so the keys reach the plugin.
+- *Halten*: strike a key twice quickly and the note stays down, as if you kept holding it – the
+  pipes sound normally (no Freeze), so you can pull stops, change the wind and modulate with free
+  hands. Strike it once more to let it go; switching *Halten* off lets all held notes go. The
+  button shows how many notes are held. Works with MIDI, the computer keyboard and the keyboard
+  on the Spieltisch page.
 
 **Every slider:** click its value to type a number (in the units shown: `50` on a % slider
 = 50 %, `300 ms` or `1.5 s`, `440` on the Stimmton = a′ in Hz, `22` on Abtastrate = 22 kHz),
@@ -126,7 +161,15 @@ outside the circle = below the horizon). Select a stop on the right, then
     rebuilds the room in the background (~½ s).
 
 **Klang**
-- *Stimmung*: temperament (¼-comma meantone = the original recording, ⅙-comma,
+- *Stimmung*: besides the historical temperaments below there are exotic tunings. Twelve notes
+  per octave: just intonation (5-limit on C, septimal 7-limit), the harmonic series on C
+  (partials 16–30: the 7th, 11th and 13th partials sound very foreign), 12 of 31-EDO, 12 of 19-EDO,
+  12 of 53-EDO (almost just), Maqam Rast (E and B a quarter tone low). Step tunings – every MIDI
+  note is one step, so the keyboard becomes microtonal: 31-EDO (38.7 ct), 19-EDO (63.2 ct),
+  quarter tones (50 ct), Bohlen–Pierce (13 steps per twelfth, 146.3 ct, no octaves at all) and
+  Wendy Carlos's Alpha (78 ct). For those every key takes the recorded pipe closest to its new
+  pitch, so the pipes hardly need to be shifted (31-EDO: at most 40 ct). a′ stays where it is.
+- Historical temperaments (¼-comma meantone = the original recording, ⅙-comma,
   Werckmeister III, Kirnberger III, Vallotti, Pythagorean, equal). a′ stays put, the other
   pitch classes are shifted. *Stimmton* moves everything (±200 ct, shown as a′ in Hz).
   *Verstimmung* gives every pipe its own fixed random detune (0–60 ct).
@@ -141,6 +184,8 @@ outside the circle = below the horizon). Select a stop on the right, then
 - *MIDI*: *MIDI-CC an* switches the CC mapping below; *Bewegung im Tempo* locks all
   motion to the host tempo and song position (speeds count as written at 120 BPM; for
   free speed glissandi switch it off).
+- *Kopfhörer (binaural)*: *Binaural an* switches the output to binaural (and back to
+  stereo), order, own SOFA file, head rotation, diffuse-field EQ – see section 2.
 
 **Effekte** – sounds that are easy to locate (short, bright, full of transients) and that
 follow the pipes. Everything is off in older patches.
@@ -251,9 +296,13 @@ plugin/
     Degrade.h           "Verfall"
     PluginProcessor.*   parameters, state, sample loading
     Convolver.*         impulse-response reverb (stereo / AmbiX)
+    Binaural.*          HRTF sets (built-in FABIAN, SOFA via libmysofa), MagLS design, binaural decoder
+    SofaGunzip.cpp      zlib inflate for libmysofa (JUCE's zlib)
     Modulation.h        LFOs, envelopes, routing definitions
     PluginEditor.*, ConsoleView.*, SpaceView.*, KlangView.*, EffectsView.*, ModView.*, Theme.h   interface
-  Resources/            photos, fonts (OFL), grain texture
+  Resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
+  ThirdParty/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
+  tools/make_fabian.py  rebuilds Resources/fabian_hrir.bin from the FABIAN SOFA file
   Tests/                offline render test + UI snapshot tool (optional)
 ```
 
@@ -265,3 +314,9 @@ Fonts: "Rysum Fell" = IM FELL DW Pica by Igino Marini with a few symbols (arrows
 added from DejaVu Serif and renamed as the OFL requires (built by `tools/make_fell.py`);
 UnifrakturMaguntia for the title; IBM Plex (no longer used in the interface). All SIL Open
 Font License (see `Resources/OFL_*.txt`).
+
+HRTF: FABIAN head-related transfer function database, Audio Communication Group, TU Berlin –
+F. Brinkmann et al., "A High Resolution and Full-Spherical Head-Related Transfer Function
+Database for Different Head-Above-Torso Orientations", JAES 65(10), 2017, data DOI
+10.14279/depositonce-5718, licence CC BY 4.0 (see `Resources/FABIAN_LICENSE.txt`).
+SOFA files are read with libmysofa by Christian Hoene / Symonics (BSD 3-clause).

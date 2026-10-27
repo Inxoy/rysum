@@ -4,7 +4,7 @@ using namespace rysum;
 using namespace rysum::ui;
 
 static constexpr int kW = 1120, kH = 720, kHeader = 56;
-static constexpr int kOutX = 876, kOutW = 150;      // output format combo in the header
+static constexpr int kOutX = 914, kOutW = 122;      // output format combo in the header
 
 RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p), fx (p)
 {
@@ -31,10 +31,30 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
     patchNext.setTooltip (u8 ("N\xc3\xa4" "chster Patch"));
     for (auto* b : { &patchPrev, &patchName, &patchNext, &patchSave }) addAndMakeVisible (b);
 
+    // playing helpers: computer keyboard, "Halten"
+    keyNoteDown.fill (-1);
+    setWantsKeyboardFocus (true);
+    keysButton.setTooltip (juce::String::fromUTF8 ("Mit der Computertastatur spielen: A W S E D F T G Z H U J K O L P = C bis D\xe2\x80\xb2\xe2\x80\xb2, "
+                                                   "Y / X = Oktave tiefer / h\xc3\xb6her, C / V = leiser / lauter anschlagen. "
+                                                   "Im Host vorher ins Plugin-Fenster klicken."));
+    keysButton.onClick = [this]
+    {
+        proc.computerKeys = ! proc.computerKeys;
+        if (proc.computerKeys) grabKeyboardFocus(); else releaseComputerKeys();
+        updatePlayButtons();
+    };
+    latchButton.setTooltip (juce::String::fromUTF8 ("Halten: eine Taste zweimal schnell anschlagen \xe2\x80\x93 der Ton bleibt liegen, als ob du sie h\xc3\xa4ltst "
+                                                    "(H\xc3\xa4nde frei f\xc3\xbcr Register und Modulation). Nochmal anschlagen = loslassen. "
+                                                    "Ausschalten l\xc3\xa4sst alle gehaltenen T\xc3\xb6ne los."));
+    latchButton.onClick = [this] { proc.latchOn = ! proc.latchOn.load(); updatePlayButtons(); };
+    addAndMakeVisible (keysButton);
+    addAndMakeVisible (latchButton);
+    updatePlayButtons();
+
     if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("output")))
         outputChoice.addItemList (choice->choices, 1);
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "output", outputChoice);
-    outputChoice.setTooltip ("Ausgabeformat: Stereo oder AmbiX (ACN/SN3D)");
+    outputChoice.setTooltip (juce::String::fromUTF8 ("Ausgabeformat: Stereo, AmbiX (ACN/SN3D) oder Binaural f\xc3\xbcr Kopfh\xc3\xb6rer (Einstellungen: Seite Klang)"));
     addAndMakeVisible (outputChoice);
 
     // grain over the whole interface, rendered once
@@ -65,6 +85,7 @@ void RysumContent::showView (int v)
     fx.setVisible (v == 3);
     mod.setVisible (v == 4);
     for (int i = 0; i < 5; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
+    if (proc.computerKeys) grabKeyboardFocus();
 }
 
 void RysumContent::resized()
@@ -75,18 +96,88 @@ void RysumContent::resized()
     klang.setBounds (body);
     mod.setBounds (body);
     fx.setBounds (body);
-    patchPrev.setBounds (150, 14, 24, 28);
-    patchName.setBounds (178, 14, 160, 28);
-    patchNext.setBounds (342, 14, 24, 28);
-    patchSave.setBounds (372, 14, 72, 28);
-    const int tw[] { 98, 58, 62, 74, 98 };
-    int x = 454;
+    patchPrev.setBounds (150, 14, 20, 28);
+    patchName.setBounds (173, 14, 112, 28);
+    patchNext.setBounds (288, 14, 20, 28);
+    patchSave.setBounds (312, 14, 64, 28);
+    keysButton.setBounds (386, 14, 82, 28);
+    latchButton.setBounds (472, 14, 62, 28);
+    const int tw[] { 88, 50, 54, 68, 88 };
+    int x = 544;
     for (int i = 0; i < 5; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
     outputChoice.setBounds (kOutX, 14, kOutW, 28);
 }
 
+void RysumContent::updatePlayButtons()
+{
+    keysButton.setToggleState (proc.computerKeys, juce::dontSendNotification);
+    keysButton.setButtonText (proc.computerKeys ? "Tastatur C" + juce::String (proc.keysOctave) : juce::String ("Tastatur"));
+    const int n = proc.latchedCount.load();
+    latchButton.setToggleState (proc.latchOn.load(), juce::dontSendNotification);
+    latchButton.setButtonText (proc.latchOn.load() && n > 0 ? "Halten " + juce::String (n) : juce::String ("Halten"));
+}
+
+// computer keyboard: two rows like a piano (German layout: Z is the black key between G and H)
+static const char kPianoKeys[] = "awsedftgzhujkolp";
+
+void RysumContent::releaseComputerKeys()
+{
+    for (auto& n : keyNoteDown)
+        if (n >= 0) { proc.keyboardState.noteOff (1, n, 0.0f); n = -1; }
+}
+
+bool RysumContent::keyPressed (const juce::KeyPress& k)
+{
+    if (! proc.computerKeys || k.getModifiers().isCommandDown() || k.getModifiers().isCtrlDown() || k.getModifiers().isAltDown()) return false;
+    if (dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) != nullptr) return false;   // typing a value
+    const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
+    if (c == 'y' || c == 'x')
+    {
+        releaseComputerKeys();
+        proc.keysOctave = juce::jlimit (2, 5, proc.keysOctave + (c == 'x' ? 1 : -1));
+        updatePlayButtons();
+        return true;
+    }
+    if (c == 'c' || c == 'v') { keysVelocity = juce::jlimit (10, 127, keysVelocity + (c == 'v' ? 20 : -20)); return true; }
+    for (const char* p = kPianoKeys; *p != 0; ++p) if (c == (juce::juce_wchar) *p) return true;    // played in keyStateChanged
+    return false;
+}
+
+bool RysumContent::keyStateChanged (bool)
+{
+    if (! proc.computerKeys) return false;
+    if (dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) != nullptr) return false;
+    bool used = false;
+    for (int i = 0; kPianoKeys[i] != 0; ++i)
+    {
+        const bool down = juce::KeyPress::isKeyCurrentlyDown (kPianoKeys[i]);
+        auto& note = keyNoteDown[(size_t) i];
+        if (down && note < 0)
+        {
+            note = 12 * (proc.keysOctave + 1) + i;
+            proc.keyboardState.noteOn (1, note, (float) keysVelocity / 127.0f);
+            used = true;
+        }
+        else if (! down && note >= 0)
+        {
+            proc.keyboardState.noteOff (1, note, 0.0f);
+            note = -1;
+            used = true;
+        }
+    }
+    return used;
+}
+
 void RysumContent::tick()
 {
+    updatePlayButtons();
+    // the window lost the keyboard: let the computer keys go (they would hang otherwise)
+    if (proc.computerKeys && ! hasKeyboardFocus (true))
+    {
+        auto* peer = getPeer();
+        if (peer != nullptr && peer->isFocused() && juce::Component::getCurrentlyFocusedComponent() == nullptr) grabKeyboardFocus();
+        else releaseComputerKeys();
+    }
     if (console.isVisible()) console.refresh();
     if (space.isVisible()) space.refresh();
     if (klang.isVisible()) klang.refresh();
@@ -196,9 +287,10 @@ void RysumContent::paint (juce::Graphics& g)
     g.setFont (A.monoFont (11.0f));
 
     const int out = (int) proc.apvts.getRawParameterValue ("output")->load();
-    const int needed = out == 0 ? 2 : (out + 1) * (out + 1);
+    const bool bin = out == RysumProcessor::kBinauralOutput;
+    const int needed = out == 0 || bin ? 2 : (out + 1) * (out + 1);
     const int have = proc.getTotalNumOutputChannels();
-    juce::String o = juce::String (needed) + " ch";
+    juce::String o = bin ? (proc.binauralReady() ? juce::String ("2 ch HRTF") : juce::String::fromUTF8 ("HRTF \xe2\x80\xa6")) : juce::String (needed) + " ch";
     if (have < needed) o = u8 ("nur ") + juce::String (have) + " ch!";
     g.setColour (have < needed ? col::white : col::faint);
     const juce::Rectangle<int> info (kOutX + kOutW + 6, 0, kW - 28 - (kOutX + kOutW + 6), kHeader);
@@ -255,8 +347,9 @@ void RysumContent::paintOverChildren (juce::Graphics& g)
 // ---------------------------------------------------------------------------
 RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), proc (p), content (p)
 {
-    setLookAndFeel (&lnf);
-    content.setLookAndFeel (&lnf);
+    setLookAndFeel (&lnf.get());
+    content.setLookAndFeel (&lnf.get());
+    juce::LookAndFeel::setDefaultLookAndFeel (&lnf.get());     // right-click menus and dialogs have no parent: they use the default
     addAndMakeVisible (content);
     setResizable (true, true);
     setResizeLimits (kW / 2, kH / 2, kW * 2, kH * 2);
@@ -267,8 +360,11 @@ RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), proc (p
 
 RysumEditor::~RysumEditor()
 {
+    content.releaseComputerKeys();
     content.setLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
+    if (lnf.getReferenceCount() <= 1 && &juce::LookAndFeel::getDefaultLookAndFeel() == &lnf.get())
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
 void RysumEditor::resized()

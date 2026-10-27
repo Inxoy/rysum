@@ -12,6 +12,11 @@
 class RysumContent : public juce::Component, public rysum::ui::ModUiAccess
 {
 public:
+    bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
+    void releaseComputerKeys();
+
+public:
     void showModMenu (juce::Component& target, const juce::String& paramId) override;
     int paramIndexFor (const juce::String& paramId) override { return proc.getParamIndex (paramId); }
     float modulatedNorm (int index) override { return proc.getModulatedNorm (index); }
@@ -44,6 +49,10 @@ private:
     rysum::ui::ModView mod;
     rysum::ui::EffectsView fx;
     std::array<juce::TextButton, 5> tabs;
+    juce::TextButton keysButton { "Tastatur" }, latchButton { "Halten" };
+    std::array<int, 18> keyNoteDown {};                 // MIDI note each computer key is playing (-1 = up)
+    int keysVelocity = 100;
+    void updatePlayButtons();
     juce::ComboBox outputChoice;
     juce::TextButton patchPrev { juce::String::fromUTF8 ("\xe2\x97\x80") }, patchNext { juce::String::fromUTF8 ("\xe2\x96\xb6") },
                      patchName, patchSave { "Speichern" };
@@ -66,7 +75,7 @@ private:
     void timerCallback() override;
     RysumProcessor& proc;
     juce::SharedResourcePointer<rysum::ui::Assets> assets;     // fonts + images, alive while an editor exists
-    rysum::ui::LookAndFeel lnf;
+    juce::SharedResourcePointer<rysum::ui::LookAndFeel> lnf;   // also the default look (context menus, dialogs)
     RysumContent content;
     juce::TooltipWindow tooltips { this, 600 };
 };

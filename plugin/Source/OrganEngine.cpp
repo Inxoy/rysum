@@ -8,6 +8,7 @@ OrganEngine::OrganEngine()
 {
     voices.resize ((size_t) kMaxVoices);
     noise.resize ((size_t) kMaxNoiseVoices);
+    for (int k = 0; k < kNumKeys; ++k) keySource[(size_t) k] = k;
     for (int s = 0; s < kNumStops; ++s)
     {
         std::array<Pos, kNumKeys> pos {};
@@ -360,7 +361,8 @@ float OrganEngine::grainSample (Voice& v, double rate, float smear) noexcept
 void OrganEngine::startVoice (int stop, int key, int previewSamples)
 {
     if (library == nullptr) return;
-    const Pipe& pipe = library->pipes[(size_t) stop][(size_t) key];
+    const int src = juce::jlimit (0, kNumKeys - 1, keySource[(size_t) key]);
+    const Pipe& pipe = library->pipes[(size_t) stop][(size_t) src];
     if (! pipe.valid || pipe.sample == nullptr) return;
     if (previewSamples < 0 && muted[(size_t) stop][(size_t) key].load()) return;
 
@@ -628,8 +630,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         float* buf = scratch.data();
         bool finished = false;
         const float windTarget = juce::jlimit (0.0f, 1.0f, p.stopWind[(size_t) v.stop]);
-        const int pc = pipe.midi % 12;
-        const float tuneCents = p.tuneCents[(size_t) pc] + p.pitchCents + p.detune * v.detuneRnd;
+        const float tuneCents = p.tuning.cents[(size_t) v.key] + p.pitchCents + p.detune * v.detuneRnd;
 
         double rate = v.baseRate;
         float amp = 1.0f;
@@ -1184,6 +1185,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     order = juce::jlimit (0, kMaxOrder, p.outputMode);
     usedChannels = juce::jmin (out.getNumChannels(), order == 0 ? 2 : (order + 1) * (order + 1));
     distAmountNow = p.distAmount;
+    keySource = p.tuning.source;
     roomFollowNow = p.roomFollow;
     roomBaseAzNow = p.roomBaseAz;
     chunkSeconds = (float) blockSeconds;

@@ -1,0 +1,13 @@
+fabian_hrir.bin: 2000 of the 11950 directions of the FABIAN head-related impulse responses
+(measured, head-above-torso orientation 0 degrees, 48 kHz), shortened to 256 samples and stored
+as 16-bit integers.
+
+FABIAN head-related transfer function database, Audio Communication Group, TU Berlin.
+F. Brinkmann, A. Lindau, S. Weinzierl, G. Geissler, S. van de Par, M. Mueller-Trapet, R. Opdam,
+M. Vorlaender: "A High Resolution and Full-Spherical Head-Related Transfer Function Database for
+Different Head-Above-Torso Orientations", J. Audio Eng. Soc. 65(10), 841-848 (2017),
+DOI 10.17743/jaes.2017.0033. Data: DOI 10.14279/depositonce-5718.
+
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0),
+https://creativecommons.org/licenses/by/4.0/
+Changes: subset of directions, shortened, quantised (see tools/make_fabian.py).

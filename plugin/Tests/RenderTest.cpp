@@ -3,8 +3,10 @@
 //   RysumRenderTest <samples folder> <output folder>
 #include "OrganEngine.h"
 #include "Convolver.h"
+#include "Binaural.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
+#include <complex>
 #include <iostream>
 
 using namespace rysum;
@@ -59,6 +61,257 @@ static void testEncoder()
 }
 
 static void writeWav (const juce::File& f, const juce::AudioBuffer<float>& b, double sr);
+
+// ---------------------------------------------------------------------------
+// binaural: HRIR sets, MagLS filters, real-time decoder
+// ---------------------------------------------------------------------------
+static double bandDb (const std::vector<float>& x, double fs, double f0, double f1)
+{
+    const int n = 4096;
+    juce::dsp::FFT fft (12);
+    std::vector<float> b ((size_t) (2 * n), 0.0f);
+    for (int i = 0; i < juce::jmin ((int) x.size(), n); ++i) b[(size_t) i] = x[(size_t) i];
+    fft.performFrequencyOnlyForwardTransform (b.data(), true);
+    double e = 0; int cnt = 0;
+    for (int k = 1; k < n / 2; ++k) { const double f = k * fs / n; if (f >= f0 && f < f1) { e += (double) b[(size_t) k] * b[(size_t) k]; ++cnt; } }
+    return 10.0 * std::log10 (juce::jmax (1e-30, e / juce::jmax (1, cnt)));
+}
+
+static double itdMs (const std::vector<float>& l, const std::vector<float>& r, double fs)
+{
+    // interaural phase delay, averaged over 200..500 Hz (no phase ambiguity for |ITD| < 1 ms)
+    double sum = 0; int cnt = 0;
+    for (double f = 200; f <= 500; f += 25)
+    {
+        std::complex<double> L, R;
+        for (size_t i = 0; i < l.size(); ++i) L += (double) l[i] * std::polar (1.0, -2.0 * juce::MathConstants<double>::pi * f * (double) i / fs);
+        for (size_t i = 0; i < r.size(); ++i) R += (double) r[i] * std::polar (1.0, -2.0 * juce::MathConstants<double>::pi * f * (double) i / fs);
+        sum += std::arg (R / L) / (2.0 * juce::MathConstants<double>::pi * f);
+        ++cnt;
+    }
+    return 1000.0 * sum / cnt;
+}
+
+[[maybe_unused]] static double itdXcorrMs (const std::vector<float>& l, const std::vector<float>& r, double fs)
+{
+    // cross-correlation of the low-passed ears (< 700 Hz: no ambiguity within +-1 ms); positive = left ear first
+    auto lp = [&] (std::vector<float> x) { juce::IIRFilter f; f.setCoefficients (juce::IIRCoefficients::makeLowPass (fs, 700.0)); f.processSamples (x.data(), (int) x.size()); return x; };
+    const auto a = lp (l), b = lp (r);
+    const int maxLag = (int) (0.0012 * fs);
+    int best = 0; double bv = -1e30;
+    for (int lag = -maxLag; lag <= maxLag; ++lag)
+    {
+        double s = 0;
+        for (int i = 0; i < (int) a.size(); ++i) { const int j = i + lag; if (j >= 0 && j < (int) b.size()) s += (double) a[(size_t) i] * b[(size_t) j]; }
+        if (s > bv) { bv = s; best = lag; }
+    }
+    return 1000.0 * best / fs;
+}
+
+static void testBinaural (const juce::File& sofa)
+{
+    juce::String err;
+    auto fab = HrirSet::fabian (err);
+    check (fab != nullptr && fab->numDirections() > 1900, "FABIAN set built in (" + juce::String (fab != nullptr ? fab->numDirections() : 0) + " directions) " + err);
+    if (fab == nullptr) return;
+
+    std::unique_ptr<HrirSet> full;
+    if (sofa.existsAsFile())
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        full = HrirSet::fromSofa (sofa, err);
+        const double secs = std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+        check (full != nullptr && full->numDirections() == 11950 && full->length == 279, "SOFA read with libmysofa (" + juce::String (secs, 2) + " s) " + err);
+        if (full != nullptr)
+        {
+            // the same direction in both: identical data (up to the 16-bit storage)
+            int a = 0; double bestA = 1e9;
+            for (int q = 0; q < fab->numDirections(); ++q)
+            {
+                const double dd = std::abs (fab->az[(size_t) q] - 90.0f) + std::abs (fab->el[(size_t) q]);
+                if (dd < bestA) { bestA = dd; a = q; }
+            }
+            std::cout << "comparing direction " << fab->az[(size_t) a] << " / " << fab->el[(size_t) a] << std::endl;
+            int b = -1; for (int q = 0; q < full->numDirections(); ++q) if (std::abs (full->az[(size_t) q] - fab->az[(size_t) a]) < 0.01f && std::abs (full->el[(size_t) q] - fab->el[(size_t) a]) < 0.01f) b = q;
+            double d = 0, e = 0;
+            if (b >= 0) for (int i = 0; i < 240; ++i) { const double x = full->get (b, 0)[i], y = fab->get (a, 0)[i]; d += (x - y) * (x - y); e += x * x; }
+            check (b >= 0 && d / e < 1e-6, "built-in FABIAN = SOFA file");
+            // left source: left ear louder (coordinate convention of the SOFA reader)
+            double el = 0, er = 0; for (int i = 0; i < full->length; ++i) { el += full->get (b, 0)[i] * full->get (b, 0)[i]; er += full->get (b, 1)[i] * full->get (b, 1)[i]; }
+            check (b >= 0 && el > 4 * er, "SOFA: +90 deg is on the left");
+        }
+    }
+    {   // broken file
+        auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_bad.sofa");
+        tmp.replaceWithText ("not a sofa file");
+        auto bad = HrirSet::fromSofa (tmp, err);
+        check (bad == nullptr && err.isNotEmpty(), "broken SOFA rejected: " + err);
+        tmp.deleteFile();
+    }
+
+    const auto& ref = full != nullptr ? *full : *fab;
+    auto nearest = [&] (float az, float el)
+    {
+        int best = 0; double bd = 1e9;
+        for (int q = 0; q < ref.numDirections(); ++q)
+        {
+            const double d = std::abs (wrapAz (ref.az[(size_t) q] - az)) * std::cos (juce::degreesToRadians ((double) el)) + std::abs (ref.el[(size_t) q] - el);
+            if (d < bd) { bd = d; best = q; }
+        }
+        return best;
+    };
+    auto render = [] (const BinauralFilters& f, float az, float el, int ear)
+    {
+        float g[kMaxAmbiChannels] {};
+        encodeAmbiX (az, el, f.order, g);
+        std::vector<float> y ((size_t) f.length, 0.0f);
+        for (int c = 0; c < f.numChannels; ++c)
+            for (int i = 0; i < f.length; ++i) y[(size_t) i] += g[c] * f.get (ear, c)[i];
+        return y;
+    };
+    const float dirsTest[][2] { { 0, 0 }, { 30, 0 }, { 90, 0 }, { 135, 0 }, { -60, 0 }, { 180, 0 }, { 45, 40 }, { -120, -30 }, { 0, 70 } };
+    const double bands[] { 250, 500, 1000, 2000, 4000, 8000, 16000 };
+
+    for (int order : { 1, 3, 5 })
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        auto f = BinauralFilters::design (*fab, order, 48000.0, false);
+        const double secs = std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+        check (f != nullptr, "MagLS design order " + juce::String (order) + " (" + juce::String (secs, 2) + " s)");
+        if (f == nullptr) continue;
+        // compare with the measured HRIRs: band levels (after removing the overall gain) and ITD
+        std::vector<double> diffs;
+        double worstItd = 0, worstIld = 0;
+        for (auto& d : dirsTest)
+        {
+            const int q = nearest (d[0], d[1]);
+            std::vector<float> hl (ref.get (q, 0), ref.get (q, 0) + ref.length), hr (ref.get (q, 1), ref.get (q, 1) + ref.length);
+            const auto yl = render (*f, ref.az[(size_t) q], ref.el[(size_t) q], 0), yr = render (*f, ref.az[(size_t) q], ref.el[(size_t) q], 1);
+            for (int b = 0; b + 1 < 7; ++b)
+            {
+                diffs.push_back (bandDb (yl, 48000, bands[b], bands[b + 1]) - bandDb (hl, 48000, bands[b], bands[b + 1]));
+                diffs.push_back (bandDb (yr, 48000, bands[b], bands[b + 1]) - bandDb (hr, 48000, bands[b], bands[b + 1]));
+            }
+            worstItd = juce::jmax (worstItd, std::abs (itdMs (yl, yr, 48000) - itdMs (hl, hr, 48000)));
+            const double ildH = bandDb (hl, 48000, 2000, 12000) - bandDb (hr, 48000, 2000, 12000);
+            const double ildY = bandDb (yl, 48000, 2000, 12000) - bandDb (yr, 48000, 2000, 12000);
+            worstIld = juce::jmax (worstIld, std::abs (ildH - ildY));
+        }
+        double mean = 0; for (auto x : diffs) mean += x; mean /= (double) diffs.size();
+        double rms = 0; for (auto x : diffs) rms += (x - mean) * (x - mean); rms = std::sqrt (rms / (double) diffs.size());
+        std::cout << "binaural order " << order << ": band error " << rms << " dB rms (gain " << mean << " dB), worst ITD error "
+                  << worstItd * 1000.0 << " us, worst ILD error " << worstIld << " dB" << std::endl;
+        if (order == 5) check (rms < 1.5 && worstItd < 0.03 && worstIld < 5.0, "order 5 matches the measured HRTFs");
+        if (order == 3) check (rms < 1.5 && worstItd < 0.04, "order 3 close to the measured HRTFs");
+        if (order == 1) check (rms < 3.5 && worstItd < 0.1, "order 1: ITDs right");
+    }
+
+    // real-time decoder = direct convolution, 128 samples later; head rotation
+    {
+        auto f = BinauralFilters::design (*fab, 3, 48000.0, true);
+        check (f != nullptr, "design with diffuse-field EQ");
+        BinauralDecoder dec (*f);
+        const int n = 4096, K = f->numChannels;
+        std::vector<std::vector<float>> in ((size_t) K, std::vector<float> ((size_t) n, 0.0f));
+        float g[kMaxAmbiChannels] {};
+        encodeAmbiX (60.0f, 10.0f, 3, g);
+        juce::Random rnd (3);
+        std::vector<float> src ((size_t) n);
+        for (auto& x : src) x = rnd.nextFloat() * 2.0f - 1.0f;
+        for (int c = 0; c < K; ++c) for (int i = 0; i < n; ++i) in[(size_t) c][(size_t) i] = src[(size_t) i] * g[c];
+        std::vector<float> L ((size_t) n), R ((size_t) n);
+        std::vector<float*> ptr; for (auto& v : in) ptr.push_back (v.data());
+        for (int start = 0; start < n; start += 100)       // odd block size
+        {
+            const int m = juce::jmin (100, n - start);
+            std::vector<float*> p2; for (auto* q : ptr) p2.push_back (q + start);
+            dec.process (p2.data(), m, L.data() + start, R.data() + start, 0.0f);
+        }
+        double err = 0, en = 0;
+        for (int i = 1000; i < n; ++i)
+        {
+            double y = 0;
+            for (int c = 0; c < K; ++c)
+                for (int j = 0; j < f->length; ++j) { const int s = i - BinauralDecoder::kBlock - j; if (s >= 0) y += (double) f->get (0, c)[j] * src[(size_t) s] * g[c]; }
+            err += (y - L[(size_t) i]) * (y - L[(size_t) i]); en += y * y;
+        }
+        std::cout << "binaural decoder vs direct convolution: " << 10 * std::log10 (err / en) << " dB" << std::endl;
+        check (err / en < 1e-8, "decoder = convolution with the filters (128 samples latency)");
+
+        // a source in front, head turned 90 deg to the left: it is now on the right
+        auto turned = [&] (float yaw)
+        {
+            BinauralDecoder d2 (*f);
+            std::vector<std::vector<float>> x ((size_t) K, std::vector<float> ((size_t) n, 0.0f));
+            float gg[kMaxAmbiChannels] {};
+            encodeAmbiX (0.0f, 0.0f, 3, gg);
+            for (int c = 0; c < K; ++c) for (int i = 0; i < n; ++i) x[(size_t) c][(size_t) i] = src[(size_t) i] * gg[c];
+            std::vector<float*> p; for (auto& v : x) p.push_back (v.data());
+            std::vector<float> l ((size_t) n), r ((size_t) n);
+            for (int start = 0; start < n; start += 256)
+            {
+                std::vector<float*> p2; for (auto* q : p) p2.push_back (q + start);
+                d2.process (p2.data(), 256, l.data() + start, r.data() + start, yaw);
+            }
+            double el = 0, er = 0; for (int i = 1024; i < n; ++i) { el += l[(size_t) i] * l[(size_t) i]; er += r[(size_t) i] * r[(size_t) i]; }
+            return 10.0 * std::log10 (el / er);
+        };
+        const double ild0 = turned (0.0f), ild90 = turned (90.0f);
+        std::cout << "head rotation: front L/R " << ild0 << " dB, head turned left 90 deg: " << ild90 << " dB" << std::endl;
+        check (std::abs (ild0) < 2.0 && ild90 < -6.0, "head rotation turns the scene");
+
+        // level: diffuse noise (random directions) about as loud per ear as an equal-power stereo pan
+        double eOut = 0, eIn = 0;
+        BinauralDecoder d3 (*f);
+        std::vector<std::vector<float>> x ((size_t) K, std::vector<float> ((size_t) n, 0.0f));
+        for (int s = 0; s < 64; ++s)
+        {
+            float gg[kMaxAmbiChannels] {};
+            encodeAmbiX (360.0f * rnd.nextFloat() - 180.0f, juce::radiansToDegrees (std::asin (2.0f * rnd.nextFloat() - 1.0f)), 3, gg);
+            for (int i = 0; i < n; ++i) { const float v = (rnd.nextFloat() * 2.0f - 1.0f) * 0.125f; eIn += v * v; for (int c = 0; c < K; ++c) x[(size_t) c][(size_t) i] += v * gg[c]; }
+        }
+        std::vector<float*> p; for (auto& v : x) p.push_back (v.data());
+        d3.process (p.data(), n, L.data(), R.data(), 0.0f);
+        for (int i = 1024; i < n; ++i) eOut += 0.5 * ((double) L[(size_t) i] * L[(size_t) i] + (double) R[(size_t) i] * R[(size_t) i]);
+        const double lvl = 10.0 * std::log10 (eOut / (eIn * (n - 1024) / n));
+        std::cout << "binaural level of a diffuse field per ear: " << lvl << " dB (stereo pan: -3 dB)" << std::endl;
+        check (std::abs (lvl + 3.0) < 2.5, "binaural level like stereo");
+    }
+
+    // other host rates: same sound
+    {
+        auto a = BinauralFilters::design (*fab, 3, 48000.0, false), b = BinauralFilters::design (*fab, 3, 44100.0, false), c = BinauralFilters::design (*fab, 3, 96000.0, false);
+        check (a && b && c, "design at 44.1 / 96 kHz");
+        if (a && b && c)
+        {
+            const auto ya = render (*a, 30, 0, 0), yb = render (*b, 30, 0, 0), yc = render (*c, 30, 0, 0);
+            double worst = 0;
+            for (double fr : { 300.0, 1000.0, 3000.0, 8000.0 })
+            {
+                const double la = bandDb (ya, 48000, fr, fr * 1.5), lb = bandDb (yb, 44100, fr, fr * 1.5), lc = bandDb (yc, 96000, fr, fr * 1.5);
+                worst = juce::jmax (worst, std::abs (lb - la), std::abs (lc - la));
+            }
+            std::cout << "binaural 44.1 / 96 kHz vs 48 kHz: worst band difference " << worst << " dB" << std::endl;
+            check (worst < 1.0, "resampled filters sound the same");
+        }
+    }
+
+    // CPU: 5th order, 36 channels
+    {
+        auto f = BinauralFilters::design (*fab, 5, 48000.0, true);
+        BinauralDecoder dec (*f);
+        const int n = 512;
+        std::vector<std::vector<float>> x (36, std::vector<float> ((size_t) n, 0.1f));
+        std::vector<float*> p; for (auto& v : x) p.push_back (v.data());
+        std::vector<float> l ((size_t) n), r ((size_t) n);
+        auto t0 = std::chrono::high_resolution_clock::now();
+        const int blocks = 48000 * 10 / n;
+        for (int i = 0; i < blocks; ++i) dec.process (p.data(), n, l.data(), r.data(), 20.0f * (float) (i % 7));
+        const double rt = 10.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+        std::cout << "binaural decoder 5th order: " << rt << " x real time" << std::endl;
+        check (rt > 8.0, "binaural decoder is cheap");
+    }
+}
 
 static void testConvolver()
 {
@@ -297,7 +550,8 @@ int main (int argc, char** argv)
     testEncoder();
     testConvolver();
     testMotion();
-    if (argc < 3) { std::cout << "usage: RysumRenderTest <samples> <outdir>" << std::endl; return failures; }
+    testBinaural (argc > 3 ? juce::File (argv[3]) : juce::File());          // optional 3rd argument: a SOFA file to test with
+    if (argc < 3) { std::cout << "usage: RysumRenderTest <samples> <outdir> [hrtf.sofa]" << std::endl; return failures; }
 
     juce::File folder (juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]));
     juce::File outDir (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
@@ -524,27 +778,52 @@ int main (int argc, char** argv)
     }
 
     {
-        auto measure = [&] (int temperament, double pitchCents)
+        auto measure = [&] (int temperament, double pitchCents, int midi = 60, double expectHz = 0.0)
         {
             OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
             EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0;
-            p.tuneCents = temperamentShift (temperament); p.pitchCents = (float) pitchCents;
+            p.tuning = makeKeyTuning (temperament); p.pitchCents = (float) pitchCents;
             juce::AudioBuffer<float> b (2, 512), all (1, 96000);
             for (int pos = 0; pos < all.getNumSamples(); pos += 512)
             {
                 juce::MidiBuffer mb;
-                if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, midi, (juce::uint8) 100), 0);
                 e.process (b, mb, p);
                 all.copyFrom (0, pos, b, 0, 0, juce::jmin (512, all.getNumSamples() - pos));
             }
             const float* x = all.getReadPointer (0) + 24000;
             const int N = 48000;
-            auto ac = [&] (int lag) { double s = 0; for (int i = 0; i < N - lag; ++i) s += (double) x[i] * x[i + lag]; return s; };
+            if (expectHz <= 0.0) expectHz = 265.0;
+            auto ac = [&] (int lag) { double s2 = 0; for (int i = 0; i < N - lag; ++i) s2 += (double) x[i] * x[i + lag]; return s2; };
             int best = 0; double bv = -1e9;
-            for (int lag = 150; lag <= 220; ++lag) { const double v = ac (lag); if (v > bv) { bv = v; best = lag; } }
+            for (int lag = (int) (48000.0 / (expectHz * 1.15)); lag <= (int) (48000.0 / (expectHz / 1.15)); ++lag) { const double v = ac (lag); if (v > bv) { bv = v; best = lag; } }
             const double y0 = ac (best - 1), y1 = ac (best), y2 = ac (best + 1);
             return 48000.0 / (best + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2));
         };
+        {
+            // exotic tunings: a' is the reference (444.5 Hz as recorded)
+            const double a1 = measure (0, 0, 69, 444.5);
+            struct Case { int t, midi; double cents; const char* what; };
+            const Case cases[] { { 14, 70, 1200.0 / 31.0, "31-EDO step: b-flat' one 31st above a'" },
+                                 { 14, 66, -3 * 1200.0 / 31.0, "31-EDO step: 3 steps below a'" },
+                                 { 7, 64, 1200.0 * std::log2 ((5.0 / 4.0) / (5.0 / 3.0)), "just intonation: e' = 5/4 over c, a' = 5/3" },
+                                 { 9, 70, 1200.0 * std::log2 (28.0 / 27.0), "harmonic series: b-flat' = 7th partial" },
+                                 { 13, 64, 350.0 - 900.0, "Maqam Rast: e' a quarter tone low" },
+                                 { 17, 60, -9 * 1200.0 * std::log2 (3.0) / 13.0, "Bohlen-Pierce: 9 steps below a'" } };
+            for (auto& c : cases)
+            {
+                const double want = a1 * std::pow (2.0, c.cents / 1200.0);
+                const double got = measure (c.t, 0, c.midi, want);
+                const double err = 1200.0 * std::log2 (got / want);
+                std::cout << "tuning " << c.what << ": " << got << " Hz (want " << want << ", " << err << " ct)" << std::endl;
+                check (std::abs (err) < 3.0, juce::String ("tuning: ") + c.what);
+            }
+            // step tunings use the nearest recorded pipe: inside the organ's range no pipe moves more than ~70 ct
+            const auto q = makeKeyTuning (14);
+            float worst = 0; for (int k = 0; k < kNumKeys; ++k) worst = std::max (worst, std::abs (q.cents[(size_t) k]));
+            std::cout << "31-EDO step: largest shift of a pipe " << worst << " ct" << std::endl;
+            check (worst < 80.0f, "31-EDO step tuning picks the nearest pipes");
+        }
         const double mt = measure (0, 0), eq = measure (6, 0), up = measure (0, 100);
         const double dEq = 1200 * std::log2 (eq / mt), dUp = 1200 * std::log2 (up / mt);
         std::cout << "tuning c': meantone " << mt << " Hz, equal " << eq << " Hz (" << dEq << " ct), +100 ct " << dUp << " ct" << std::endl;

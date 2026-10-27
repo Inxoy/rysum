@@ -23,12 +23,19 @@ private:
     std::vector<std::unique_ptr<ParamRow>> rows;
     std::vector<std::unique_ptr<juce::TextButton>> toggles;
     std::vector<std::unique_ptr<ButtonAtt>> toggleAtts;
-    juce::ComboBox temperament;
+    juce::ComboBox temperament, binOrder;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> binOrderAtt;
+    juce::TextButton sofaLoad { juce::String::fromUTF8 ("SOFA laden \xe2\x80\xa6") }, sofaReset { "FABIAN" }, binOn { "Binaural an" };
+    std::unique_ptr<juce::FileChooser> chooser;
+    ParamRow* yaw = nullptr;
+    juce::TextButton* dfEq = nullptr;
+    juce::Rectangle<int> binStatusArea;
+    juce::String shownBinStatus;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> temperamentAtt;
 
     ParamRow *pitch = nullptr, *detune = nullptr, *tremRate = nullptr, *tremDepth = nullptr, *smear = nullptr, *release = nullptr,
              *doppler = nullptr, *distAmount = nullptr, *air = nullptr;
     juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr;
-    juce::Rectangle<int> tuneBox, tremBox, freezeBox, distBox, midiBox, noteBox;
+    juce::Rectangle<int> tuneBox, tremBox, freezeBox, distBox, midiBox, binBox;
 };
 } // namespace rysum::ui

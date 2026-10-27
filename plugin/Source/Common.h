@@ -55,8 +55,31 @@ inline double meantoneHz (int midi) noexcept
 // --------------------------------------------------------------------------
 inline juce::StringArray temperamentNames()
 {
+    // new entries only at the end: projects and patches store the index
     return { juce::String::fromUTF8 ("\xc2\xbc-Komma mittelt\xc3\xb6nig (Original)"), juce::String::fromUTF8 ("\xe2\x85\x99-Komma mittelt\xc3\xb6nig"),
-             "Werckmeister III", "Kirnberger III", "Vallotti", "Pythagoreisch", "Gleichstufig" };
+             "Werckmeister III", "Kirnberger III", "Vallotti", "Pythagoreisch", "Gleichstufig",
+             "Rein (5-Limit, C-Dur)", "Rein septimal (7-Limit)", juce::String::fromUTF8 ("Naturtonreihe auf C (16.\xe2\x80\x93" "30. Teilton)"),
+             "31-EDO (12 aus 31)", "19-EDO (12 aus 19)", "53-EDO (12 aus 53, fast rein)",
+             juce::String::fromUTF8 ("Maqam Rast (E und H \xc2\xbc-Ton tiefer)"),
+             juce::String::fromUTF8 ("31-EDO \xc2\xb7 jede Taste ein Schritt (38,7 ct)"),
+             juce::String::fromUTF8 ("19-EDO \xc2\xb7 jede Taste ein Schritt (63,2 ct)"),
+             juce::String::fromUTF8 ("24-EDO \xc2\xb7 Viertelt\xc3\xb6ne (50 ct)"),
+             juce::String::fromUTF8 ("Bohlen-Pierce \xc2\xb7 13 Stufen pro Duodezime (146,3 ct)"),
+             juce::String::fromUTF8 ("Carlos Alpha \xc2\xb7 jede Taste 78 ct") };
+}
+
+/** tunings from index 14 on: every MIDI note is one step of this size (cents), a' stays put */
+inline double tuningStepCents (int t) noexcept
+{
+    switch (t)
+    {
+        case 14: return 1200.0 / 31.0;
+        case 15: return 1200.0 / 19.0;
+        case 16: return 50.0;
+        case 17: return 1200.0 * std::log2 (3.0) / 13.0;
+        case 18: return 77.965;
+        default: return 0.0;
+    }
 }
 
 inline std::array<double, 12> temperamentCents (int t)
@@ -74,6 +97,30 @@ inline std::array<double, 12> temperamentCents (int t)
         case 4: return { 0, 94.135, 196.090, 298.045, 392.180, 501.955, 592.180, 698.045, 796.090, 894.135, 1000.000, 1090.225 };
         case 5: return { 0, 113.685, 203.910, 294.135, 407.820, 498.045, 611.730, 701.955, 815.640, 905.865, 996.090, 1109.775 };
         case 6: return { 0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100 };
+        case 7: case 8: case 9:
+        {
+            // just intonation on C: ratios per pitch class
+            static const double r5[12] { 1.0, 16.0 / 15, 9.0 / 8, 6.0 / 5, 5.0 / 4, 4.0 / 3, 45.0 / 32, 3.0 / 2, 8.0 / 5, 5.0 / 3, 9.0 / 5, 15.0 / 8 };
+            static const double r7[12] { 1.0, 15.0 / 14, 8.0 / 7, 6.0 / 5, 5.0 / 4, 4.0 / 3, 7.0 / 5, 3.0 / 2, 8.0 / 5, 5.0 / 3, 7.0 / 4, 15.0 / 8 };
+            static const double rh[12] { 16.0 / 16, 17.0 / 16, 18.0 / 16, 19.0 / 16, 20.0 / 16, 21.0 / 16, 22.0 / 16, 24.0 / 16, 26.0 / 16, 27.0 / 16, 28.0 / 16, 30.0 / 16 };
+            const double* r = t == 7 ? r5 : (t == 8 ? r7 : rh);
+            std::array<double, 12> c {};
+            for (int i = 0; i < 12; ++i) c[(size_t) i] = 1200.0 * std::log2 (r[i]);
+            return c;
+        }
+        case 10: case 11: case 12:
+        {
+            // 12 of n equal steps (the chromatic notes where meantone / just intonation puts them)
+            static const int s31[12] { 0, 2, 5, 8, 10, 13, 15, 18, 20, 23, 26, 28 };
+            static const int s19[12] { 0, 1, 3, 5, 6, 8, 9, 11, 12, 14, 16, 17 };
+            static const int s53[12] { 0, 5, 9, 14, 17, 22, 26, 31, 36, 39, 45, 48 };
+            const int n = t == 10 ? 31 : (t == 11 ? 19 : 53);
+            const int* s = t == 10 ? s31 : (t == 11 ? s19 : s53);
+            std::array<double, 12> c {};
+            for (int i = 0; i < 12; ++i) c[(size_t) i] = 1200.0 * s[i] / n;
+            return c;
+        }
+        case 13: return { 0, 100, 200, 300, 350, 500, 600, 700, 800, 900, 1000, 1050 };
         default: return { kMeantoneCents[0], kMeantoneCents[1], kMeantoneCents[2], kMeantoneCents[3], kMeantoneCents[4], kMeantoneCents[5],
                           kMeantoneCents[6], kMeantoneCents[7], kMeantoneCents[8], kMeantoneCents[9], kMeantoneCents[10], kMeantoneCents[11] };
     }
@@ -87,6 +134,42 @@ inline std::array<float, 12> temperamentShift (int t)
     for (int i = 0; i < 12; ++i)
         s[(size_t) i] = (float) ((c[(size_t) i] - c[9]) - (kMeantoneCents[i] - kMeantoneCents[9]));
     return s;
+}
+
+/** Tuning of every key: shift in cents from the recorded pipe that is played (source[k]) to the
+    pitch key k should have. Twelve-note tunings keep every key's own pipe; the step tunings
+    (every MIDI note one step) take the recorded pipe nearest to the wanted pitch, so no pipe is
+    shifted far (except outside the organ's range). */
+struct KeyTuning
+{
+    std::array<float, kNumKeys> cents {};
+    std::array<int, kNumKeys> source {};
+};
+
+inline KeyTuning makeKeyTuning (int t)
+{
+    KeyTuning kt;
+    auto recorded = [] (int midi) { return 1200.0 * std::log2 (meantoneHz (midi) / meantoneHz (69)); };   // cents from a'
+    const double step = tuningStepCents (t);
+    if (step <= 0.0)
+    {
+        const auto sh = temperamentShift (t);
+        for (int k = 0; k < kNumKeys; ++k) { kt.source[(size_t) k] = k; kt.cents[(size_t) k] = sh[(size_t) (kPhysKeys[(size_t) k] % 12)]; }
+        return kt;
+    }
+    for (int k = 0; k < kNumKeys; ++k)
+    {
+        const double target = (kPhysKeys[(size_t) k] - 69) * step;
+        int best = k; double bd = 1e9;
+        for (int s = 0; s < kNumKeys; ++s)
+        {
+            const double d = std::abs (recorded (kPhysKeys[(size_t) s]) - target);
+            if (d < bd) { bd = d; best = s; }
+        }
+        kt.source[(size_t) k] = best;
+        kt.cents[(size_t) k] = (float) (target - recorded (kPhysKeys[(size_t) best]));
+    }
+    return kt;
 }
 
 inline juce::String helmholtzName (int midi)

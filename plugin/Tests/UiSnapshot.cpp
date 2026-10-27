@@ -107,6 +107,110 @@ public:
             std::cout << "typed values: " << (ok ? "ok" : "FAIL") << std::endl;
         }
 
+        // binaural: output on "Binaural", decoder designed in the background, 2-channel host buffer
+        {
+            auto P = [&] (const char* id) { return proc->apvts.getParameter (id); };
+            const float outBefore = P ("output")->getValue();
+            P ("output")->setValueNotifyingHost (P ("output")->convertTo0to1 ((float) RysumProcessor::kBinauralOutput));
+            auto pump = [&] (std::function<bool()> done) { for (int i = 0; i < 100 && ! done(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100); };
+            pump ([&] { return proc->binauralReady(); });
+            std::cout << "binaural: " << proc->getBinauralStatus() << (proc->binauralReady() ? "  ok" : "  FAIL") << std::endl;
+            for (auto* id : { "stop1", "stop2", "stop6" }) P (id)->setValueNotifyingHost (0.0f);
+            const float irWetBefore = P ("irWet")->getValue();
+            P ("irWet")->setValueNotifyingHost (0.0f);
+            auto play = [&] (int ch)
+            {
+                juce::AudioBuffer<float> st (ch, 512);
+                double l = 0, r = 0, rest = 0;
+                for (int b = 0; b < 260; ++b)
+                {
+                    juce::MidiBuffer mb;
+                    if (b == 0) for (int m : { 57, 60, 64, 69 }) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);   // earlier tests left keys down
+                    if (b == 150) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
+                    if (b == 250) mb.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
+                    proc->processBlock (st, mb);
+                    if (b > 170 && b < 250)
+                        for (int i = 0; i < 512; ++i)
+                        {
+                            l += (double) st.getSample (0, i) * st.getSample (0, i);
+                            if (ch > 1) r += (double) st.getSample (1, i) * st.getSample (1, i);
+                            for (int c = 2; c < ch; ++c) rest += (double) st.getSample (c, i) * st.getSample (c, i);
+                        }
+                }
+                return std::array<double, 3> { l, r, rest };
+            };
+            const auto e2 = play (2), e36 = play (36);
+            const double pipeAz = proc->engine.currentPosition (0, rysum::keyIndexForMidi (69), proc->readParams()).az;
+            std::cout << "binaural Praestant a' (az " << pipeAz << "): L/R " << 10 * std::log10 (e2[0] / e2[1]) << " dB, 36-ch bus: L/R "
+                      << 10 * std::log10 (e36[0] / e36[1]) << " dB, other channels " << e36[2]
+                      << ((e2[0] > 1e-6 && (pipeAz < 0 ? e2[1] > 1.5 * e2[0] : e2[0] > 1.5 * e2[1]) && e36[2] == 0.0) ? "  ok" : "  FAIL") << std::endl;
+
+            // an own SOFA file (the full FABIAN set)
+            const juce::File sofa (juce::SystemStats::getEnvironmentVariable ("RYSUM_TEST_SOFA", {}));          // optional
+            if (sofa.existsAsFile())
+            {
+                proc->setSofaFile (sofa);
+                pump ([&] { return proc->getBinauralStatus().contains ("11950"); });
+                std::cout << "own SOFA: " << proc->getBinauralStatus() << (proc->getBinauralStatus().contains ("11950") ? "  ok" : "  FAIL") << std::endl;
+                juce::MemoryBlock mb; proc->getStateInformation (mb);
+                std::cout << "SOFA path in state: " << (proc->getXmlFromBinary (mb.getData(), (int) mb.getSize())->toString().contains ("HATO_0_48k.sofa") ? "ok" : "FAIL") << std::endl;
+                P ("binOrder")->setValueNotifyingHost (P ("binOrder")->convertTo0to1 (4.0f));
+                pump ([&] { return proc->getBinauralStatus().contains ("5. Ordnung"); });
+                std::cout << "5th order: " << proc->getBinauralStatus() << (proc->getBinauralStatus().contains ("5. Ordnung") ? "  ok" : "  FAIL") << std::endl;
+                const auto e5 = play (2);
+                std::cout << "5th order own SOFA: L/R " << 10 * std::log10 (e5[0] / e5[1]) << " dB" << std::endl;
+                proc->setSofaFile ({});
+                P ("binOrder")->setValueNotifyingHost (P ("binOrder")->getDefaultValue());
+                pump ([&] { return proc->getBinauralStatus().startsWith ("FABIAN") && proc->getBinauralStatus().contains ("3. Ordnung"); });
+            }
+            for (auto* id : { "stop1", "stop2", "stop6" }) P (id)->setValueNotifyingHost (1.0f);
+            P ("irWet")->setValueNotifyingHost (irWetBefore);
+            P ("output")->setValueNotifyingHost (outBefore);
+        }
+
+        // "Halten": two quick strikes keep the note down, a third strike lets it go; computer keyboard notes
+        {
+            juce::AudioBuffer<float> st (2, 512);
+            auto block = [&] (std::initializer_list<juce::MidiMessage> msgs)
+            {
+                juce::MidiBuffer mb; int pos = 0;
+                for (auto& m : msgs) mb.addEvent (m, pos += 40);
+                proc->processBlock (st, mb);
+            };
+            const int k62 = rysum::keyIndexForMidi (62);
+            auto held = [&] { return (proc->engine.heldMask.load() >> k62) & 1u; };
+            proc->latchOn = true;
+            block ({ juce::MidiMessage::noteOn (1, 62, (juce::uint8) 90), juce::MidiMessage::noteOff (1, 62), juce::MidiMessage::noteOn (1, 62, (juce::uint8) 90) });
+            for (int i = 0; i < 5; ++i) block ({});
+            block ({ juce::MidiMessage::noteOff (1, 62) });
+            for (int i = 0; i < 50; ++i) block ({});
+            const bool latchedOk = held() != 0 && proc->latchedCount.load() == 1;
+            block ({ juce::MidiMessage::noteOn (1, 62, (juce::uint8) 90) });
+            const bool stillDown = held() != 0;
+            block ({ juce::MidiMessage::noteOff (1, 62) });
+            const bool released = held() == 0 && proc->latchedCount.load() == 0;
+            // single strike: normal
+            block ({ juce::MidiMessage::noteOn (1, 64, (juce::uint8) 90) });
+            for (int i = 0; i < 40; ++i) block ({});
+            block ({ juce::MidiMessage::noteOff (1, 64) });
+            const bool normal = ((proc->engine.heldMask.load() >> rysum::keyIndexForMidi (64)) & 1u) == 0;
+            // switching it off lets everything go
+            block ({ juce::MidiMessage::noteOn (1, 62, (juce::uint8) 90), juce::MidiMessage::noteOff (1, 62), juce::MidiMessage::noteOn (1, 62, (juce::uint8) 90), juce::MidiMessage::noteOff (1, 62) });
+            const bool again = held() != 0;
+            proc->latchOn = false;
+            block ({});
+            const bool offReleases = held() == 0;
+            std::cout << "Halten: latched " << latchedOk << ", third strike keeps it until key up " << stillDown << ", released " << released
+                      << ", single strike normal " << normal << ", switching off releases " << (again && offReleases)
+                      << ((latchedOk && stillDown && released && normal && again && offReleases) ? "  ok" : "  FAIL") << std::endl;
+            proc->keyboardState.noteOn (1, 60, 0.8f);
+            block ({});
+            const bool kbOn = ((proc->engine.heldMask.load() >> rysum::keyIndexForMidi (60)) & 1u) != 0;
+            proc->keyboardState.noteOff (1, 60, 0.0f);
+            block ({});
+            std::cout << "on-screen / computer keyboard notes reach the engine: " << (kbOn ? "ok" : "FAIL") << std::endl;
+        }
+
         // patches
         {
             auto files = RysumProcessor::getPatchFiles();
@@ -233,6 +337,27 @@ public:
         shoot (1, "ui_raum.png");
         shoot (2, "ui_klang.png");
         shoot (4, "ui_mod.png");
+        {
+            // right-click menus are top-level windows without a parent: they must get the plugin's look by default
+            auto& lf = juce::LookAndFeel::getDefaultLookAndFeel();
+            const bool ours = &lf == &editor->getLookAndFeel();
+            std::cout << "default look = plugin look (menus, dialogs): " << (ours ? "ok" : "FAIL") << std::endl;
+            // paint a menu the way JUCE does, to look at it
+            juce::Image img (juce::Image::ARGB, 260, 150, true);
+            {
+                juce::Graphics g (img);
+                lf.drawPopupMenuBackground (g, 260, 150);
+                const char* items[] { "Verstimmung", "Modulieren mit", "Entfernen: LFO 1 (+25 %)", "Modulationsseite \xc3\xb6" "ffnen" };
+                for (int i = 0; i < 4; ++i)
+                    lf.drawPopupMenuItem (g, { 4, 6 + i * 34, 252, 30 }, false, true, i == 2, false, i == 1, juce::String::fromUTF8 (items[i]), {}, nullptr, nullptr);
+            }
+            juce::PNGImageFormat png;
+            auto f = outDir.getChildFile ("ui_menu.png");
+            f.deleteFile();
+            juce::FileOutputStream os (f);
+            png.writeImageToStream (img, os);
+            std::cout << "wrote " << f.getFullPathName() << std::endl;
+        }
         {
             // effects page with some effects switched on (so the diagrams show something)
             for (auto [id, v] : { std::pair<const char*, float> { "fxEchoLevel", 0.5f }, { "fxPartSpread", 70.0f }, { "fxEchoTilt", 10.0f } })

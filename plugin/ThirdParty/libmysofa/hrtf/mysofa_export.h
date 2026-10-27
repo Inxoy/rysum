@@ -1,0 +1,1 @@
+#define MYSOFA_EXPORT

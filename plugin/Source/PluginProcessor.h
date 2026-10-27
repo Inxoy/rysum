@@ -2,6 +2,7 @@
 
 #include "OrganEngine.h"
 #include "Convolver.h"
+#include "Binaural.h"
 #include <map>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -94,6 +95,24 @@ public:
     juce::File getIrFile() const { return irFile; }
     juce::String getIrStatus() const { const juce::ScopedLock sl (statusLock); return irStatus; }
 
+    // playing helpers
+    /** "Halten": a note struck twice quickly keeps sounding as if held, until it is struck again */
+    std::atomic<bool> latchOn { false };
+    std::atomic<int> latchedCount { 0 };
+    std::atomic<bool> releaseLatched { false };       // UI: let all held notes go
+    /** computer keyboard as MIDI keyboard (UI state; kept while the editor is closed) */
+    bool computerKeys = false;
+    int keysOctave = 4;                                // the A key plays C of this octave (C4 = MIDI 60)
+
+    // binaural / headphones (message thread)
+    static constexpr int kBinauralOutput = 6;                 // index of "Binaural" in the output choice
+    bool isBinaural() const { return juce::roundToInt (output->load()) == kBinauralOutput; }
+    /** own HRTF set (SOFA); an empty File = the built-in FABIAN */
+    void setSofaFile (const juce::File& f);
+    juce::File getSofaFile() const { return sofaFile; }
+    juce::String getBinauralStatus() const { const juce::ScopedLock sl (statusLock); return binStatus; }
+    bool binauralReady() const { return binUi != nullptr; }
+
     // layouts (message thread)
     std::array<rysum::LayoutSettings, rysum::kNumStops> layouts;
     void applyLayout (int stop);
@@ -127,7 +146,7 @@ private:
         int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
             freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
             releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
-            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0;
+            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0;
         std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
         std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
         std::array<int, rysum::kNumRoutes> modAmt {};
@@ -186,6 +205,31 @@ private:
     float drySmoothed = 1.0f, wetSmoothed = 0.0f;
     std::atomic<float> *irDry = nullptr, *irWet = nullptr, *irFumaParam = nullptr, *irN3DParam = nullptr,
                        *irFollowParam = nullptr, *irEnvelopParam = nullptr, *irDirectParam = nullptr;
+    void applyLatch (juce::MidiBuffer& midi, int numSamples);
+    std::array<bool, 128> latched {};
+    std::array<int64_t, 128> lastOnAt {};
+    int64_t sampleClock = 0;
+    bool latchWasOn = false;
+    juce::MidiBuffer latchMidi;
+
+    std::vector<rysum::KeyTuning> tunings;                      // every entry of the tuning list, computed once
+
+    // binaural
+    juce::File sofaFile;
+    std::shared_ptr<const rysum::HrirSet> hrirSet;               // message thread: the loaded set (FABIAN or SOFA)
+    juce::File hrirSetFile;                                       // which file hrirSet came from (empty = FABIAN)
+    std::shared_ptr<rysum::BinauralDecoder> binActive;           // audio thread
+    std::shared_ptr<rysum::BinauralDecoder> pendingBin;          // handed over (atomic_store / exchange)
+    std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin;   // message thread keeps them alive
+    juce::AudioBuffer<float> binBuf;                              // Ambisonics render buffer in binaural mode
+    juce::String binStatus { juce::String::fromUTF8 ("aus â Ausgabe oben auf â" "Binauralâ stellen") };
+    juce::String builtBinKey, pendingBinKey;
+    int binKeyTicks = 0;
+    std::atomic<float> *binOrderParam = nullptr, *binYawParam = nullptr, *binDfParam = nullptr;
+    juce::String binauralKey() const;
+    void rebuildBinaural();
+    void setBinStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); binStatus = s; }
+
     std::shared_ptr<std::atomic<bool>> aliveFlag = std::make_shared<std::atomic<bool>> (true);
 
     class Loader;

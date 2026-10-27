@@ -51,7 +51,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "master", 1 }, u8 ("Lautst\xc3\xa4rke"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f), -12.0f,
                                                   AudioParameterFloatAttributes().withLabel ("dB")));
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "output", 1 }, "Ausgabe",
-                                                   StringArray { "Stereo", "AmbiX 1. Ordnung", "AmbiX 2. Ordnung", "AmbiX 3. Ordnung", "AmbiX 4. Ordnung", "AmbiX 5. Ordnung" }, 0));
+                                                   StringArray { "Stereo", "AmbiX 1. Ordnung", "AmbiX 2. Ordnung", "AmbiX 3. Ordnung", "AmbiX 4. Ordnung", "AmbiX 5. Ordnung",
+                                                                 "Binaural" }, 0));
+    // binaural: Ambisonics of this order, decoded with HRTFs (FABIAN or an own SOFA file)
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "binOrder", 1 }, "Binaural-Ordnung",
+                                                   StringArray { "1. Ordnung", "2. Ordnung", "3. Ordnung", "4. Ordnung", "5. Ordnung" }, 2));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "binYaw", 1 }, "Kopfdrehung", NormalisableRange<float> (-180.0f, 180.0f, 0.1f), 0.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+                                                  { return std::abs (v) < 0.05f ? String ("geradeaus") : String (roundToInt (std::abs (v))) + juce::String::fromUTF8 ("\xc2\xb0 ") + (v > 0 ? "links" : "rechts"); })));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "binDfEq", 1 }, "Diffusfeld-Entzerrung", true));
 
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "click", 1 },        "Tastenklick",        NormalisableRange<float> (0, 1), 0.2f, pct));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "clickBlend", 1 },   "Klick ins Anschlagen", NormalisableRange<float> (0, 1), 0.45f, pct));
@@ -247,6 +255,13 @@ RysumProcessor::RysumProcessor()
     irFollowParam = apvts.getRawParameterValue ("irFollow");
     irEnvelopParam = apvts.getRawParameterValue ("irEnvelop");
     irDirectParam = apvts.getRawParameterValue ("irDirect");
+    for (int t = 0; t < temperamentNames().size(); ++t) tunings.push_back (makeKeyTuning (t));
+    binOrderParam = apvts.getRawParameterValue ("binOrder");
+    binYawParam = apvts.getRawParameterValue ("binYaw");
+    binDfParam = apvts.getRawParameterValue ("binDfEq");
+    // the standalone app is mostly used with headphones: start in binaural mode
+    if (juce::PluginHostType::getPluginLoadedAs() == wrapperType_Standalone)
+        if (auto* o = apvts.getParameter ("output")) o->setValueNotifyingHost (o->convertTo0to1 ((float) kBinauralOutput));
     for (auto* id : { "doppler", "air", "distAmount", "temperament", "pitch", "detune", "tremOn", "tremRate", "tremDepth",
                       "freeze", "freezeSmear", "freezeRelease", "motionSync", "midiCC" })
         extraParams[id] = apvts.getRawParameterValue (id);
@@ -289,7 +304,7 @@ RysumProcessor::RysumProcessor()
     ix.releaseClick = I ("releaseClick"); ix.stopPull = I ("stopPull"); ix.wind = I ("wind");
     ix.degAmount = I ("degAmount"); ix.degGrain = I ("degGrain"); ix.degBits = I ("degBits"); ix.degRate = I ("degRate");
     ix.degWobble = I ("degWobble"); ix.degDropouts = I ("degDropouts"); ix.degMode = I ("degMode");
-    ix.irDry = I ("irDry"); ix.irWet = I ("irWet");
+    ix.irDry = I ("irDry"); ix.irWet = I ("irWet"); ix.binYaw = I ("binYaw");
     for (int i = 0; i < kNumLfos; ++i)
     {
         const juce::String id = "lfo" + juce::String (i + 1);
@@ -329,9 +344,13 @@ void RysumProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine.prepare (sampleRate, samplesPerBlock);
     keyboardState.reset();
     for (auto& b : irInputs) b.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
+    latchMidi.ensureSize (8192);
+    lastOnAt.fill (std::numeric_limits<int64_t>::min() / 2);
     const bool rateChanged = std::abs (sampleRate - hostRate.load()) > 0.5;
     hostRate = sampleRate;
     if (irActive != nullptr) irActive->reset();
+    binBuf.setSize (kMaxAmbiChannels, juce::jmax (512, samplesPerBlock), false, true, false);   // reserved once (see processBlock)
+    if (binActive != nullptr) binActive->reset();
     if (rateChanged && irFile.existsAsFile())
         juce::MessageManager::callAsync ([this, alive = aliveFlag] { if (alive->load()) loadIr (irFile); });   // resample IR
 }
@@ -353,7 +372,7 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     p.doppler = V (ix.doppler);
     p.air = V (ix.air);
     p.distAmount = V (ix.distAmount);
-    p.tuneCents = temperamentShift ((int) V (ix.temperament));
+    p.tuning = tunings[(size_t) juce::jlimit (0, (int) tunings.size() - 1, juce::roundToInt (V (ix.temperament)))];   // precomputed (UI + audio thread)
     p.pitchCents = V (ix.pitch);
     p.detune = V (ix.detune);
     p.tremOn = V (ix.tremOn) > 0.5f;
@@ -364,7 +383,8 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     p.freezeRelease = V (ix.freezeRelease);
     p.sync = V (ix.motionSync) > 0.5f;
     p.masterGain = dbToGain (V (ix.master));
-    p.outputMode = (int) V (ix.output);
+    p.outputMode = juce::roundToInt (V (ix.output));
+    if (p.outputMode == kBinauralOutput) p.outputMode = 1 + juce::roundToInt (binOrderParam->load());   // processBlock uses the decoder's order
     p.clickLevel = V (ix.click);
     p.clickBlend = V (ix.clickBlend);
     p.releaseClick = V (ix.releaseClick);
@@ -451,6 +471,7 @@ void RysumProcessor::modulate (EngineParams& p, const float* src)
     applyCcOverrides (q);
     q.bpm = p.bpm; q.ppq = p.ppq; q.playing = p.playing;
     q.roomHarmonics = p.roomHarmonics; q.roomFollow = p.roomFollow; q.roomBaseAz = p.roomBaseAz;
+    q.outputMode = p.outputMode;
     p = q;
 }
 
@@ -529,6 +550,7 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         engine.setLibrary (std::move (pending));      // the old one is still referenced by retiredLibrary
 
     keyboardState.processNextMidiBuffer (midi, 0, buffer.getNumSamples(), true);
+    applyLatch (midi, buffer.getNumSamples());
 
     // MIDI controllers -> parameters (applied right away, the parameter follows on the message thread)
     if (extraParams.at ("midiCC")->load() > 0.5f)
@@ -576,14 +598,25 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         params.roomBaseAz = irActive->getInfo().baseAzDeg;
     }
 
-    engine.process (buffer, midi, params);
+    // binaural: the engine renders Ambisonics into an own buffer (the host usually has only 2 channels),
+    // the decoder turns it into left / right at the end. Until the first decoder is ready: stereo.
+    if (auto pending = std::atomic_exchange (&pendingBin, std::shared_ptr<rysum::BinauralDecoder>()))
+        binActive = std::move (pending);                 // the old one is still referenced by retiredBin
+    const int n = buffer.getNumSamples();
+    const bool binaural = juce::roundToInt (output->load()) == kBinauralOutput && binActive != nullptr && buffer.getNumChannels() > 0;
+    if (juce::roundToInt (output->load()) == kBinauralOutput)
+        params.outputMode = binaural ? binActive->getOrder() : 0;
+    // (setSize with avoidReallocating: no allocation as long as the block fits what prepareToPlay reserved)
+    if (binaural) binBuf.setSize (binActive->getNumChannels(), n, false, false, true);
+    juce::AudioBuffer<float>& work = binaural ? binBuf : buffer;
+
+    engine.process (work, midi, params);
     midi.clear();
 
     // ---- room: dry level + convolution with the loaded impulse response
 
-    const int n = buffer.getNumSamples();
     const bool stereo = params.outputMode == 0;
-    const int used = juce::jmin (buffer.getNumChannels(), stereo ? 2 : (params.outputMode + 1) * (params.outputMode + 1));
+    const int used = juce::jmin (work.getNumChannels(), stereo ? 2 : (params.outputMode + 1) * (params.outputMode + 1));
     const float dryDb = haveModVals ? modVals[(size_t) ix.irDry] : irDry->load();
     const float wetDb = haveModVals ? modVals[(size_t) ix.irWet] : irWet->load();
     const float dryTarget = dryDb <= -59.9f ? 0.0f : dbToGain (dryDb);
@@ -609,18 +642,36 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             // apply the dry level to this chunk before the wet signal is added
             const float d0 = drySmoothed + (dryTarget - drySmoothed) * (float) start / (float) n;
             const float d1 = drySmoothed + (dryTarget - drySmoothed) * (float) (start + m) / (float) n;
-            for (int c = 0; c < used; ++c) buffer.applyGainRamp (c, start, m, d0, d1);
+            for (int c = 0; c < used; ++c) work.applyGainRamp (c, start, m, d0, d1);
             float* outs[rysum::kMaxOutChannels] {};
-            for (int c = 0; c < used; ++c) outs[c] = buffer.getWritePointer (c, start);
+            for (int c = 0; c < used; ++c) outs[c] = work.getWritePointer (c, start);
             irActive->process (ins, m, outs, used, 1.0f);
         }
     }
     else if (std::abs (dryTarget - 1.0f) > 1.0e-6f || std::abs (drySmoothed - 1.0f) > 1.0e-6f)
     {
-        for (int c = 0; c < used; ++c) buffer.applyGainRamp (c, 0, n, drySmoothed, dryTarget);
+        for (int c = 0; c < used; ++c) work.applyGainRamp (c, 0, n, drySmoothed, dryTarget);
     }
     drySmoothed = dryTarget;
     wetSmoothed = wetTarget;
+
+    // ---- binaural decoding (head rotation + HRTF filters)
+    if (binaural)
+    {
+        const float yaw = haveModVals ? modVals[(size_t) ix.binYaw] : binYawParam->load();
+        float* l = buffer.getWritePointer (0);
+        if (buffer.getNumChannels() > 1)
+            binActive->process (binBuf.getArrayOfWritePointers(), n, l, buffer.getWritePointer (1), yaw);
+        else
+        {
+            // mono host: decode in place pairwise (rare); the right ear goes through the last Ambisonics channel's
+            // already consumed samples, see BinauralDecoder::process (reads a sample before writing it)
+            float* r = binBuf.getWritePointer (binBuf.getNumChannels() - 1);
+            binActive->process (binBuf.getArrayOfWritePointers(), n, l, r, yaw);
+            for (int i = 0; i < n; ++i) l[i] = 0.5f * (l[i] + r[i]);
+        }
+        for (int c = 2; c < buffer.getNumChannels(); ++c) buffer.clear (c, 0, n);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +723,105 @@ void RysumProcessor::loadIr (const juce::File& file)
             std::atomic_store (&pendingIr, cv);
             const auto& in = cv->getInfo();
             setIrStatus (in.fileName + u8 (" \xc2\xb7 ") + in.description);
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// "Halten": strike a note twice quickly -> it stays down until it is struck again
+// ---------------------------------------------------------------------------
+void RysumProcessor::applyLatch (juce::MidiBuffer& midi, int numSamples)
+{
+    const bool on = latchOn.load();
+    const bool letGo = releaseLatched.exchange (false) || (latchWasOn && ! on);
+    latchWasOn = on;
+    if (! on && ! letGo) { sampleClock += numSamples; return; }
+
+    latchMidi.clear();
+    if (letGo)
+        for (int n = 0; n < 128; ++n)
+            if (latched[(size_t) n]) { latched[(size_t) n] = false; latchMidi.addEvent (juce::MidiMessage::noteOff (1, n), 0); }
+    const int64_t window = (int64_t) (0.4 * (getSampleRate() > 0 ? getSampleRate() : 48000.0));
+    for (const auto meta : midi)
+    {
+        const auto m = meta.getMessage();
+        if (on && m.isNoteOn())
+        {
+            const int n = m.getNoteNumber();
+            const int64_t t = sampleClock + meta.samplePosition;
+            if (latched[(size_t) n])
+            {
+                // struck again: no new attack, the note ends when this key comes up
+                latched[(size_t) n] = false;
+                lastOnAt[(size_t) n] = std::numeric_limits<int64_t>::min() / 2;
+                continue;
+            }
+            if (t - lastOnAt[(size_t) n] < window) latched[(size_t) n] = true;
+            lastOnAt[(size_t) n] = t;
+        }
+        else if (on && m.isNoteOff() && latched[(size_t) m.getNoteNumber()])
+            continue;                                   // held: the key coming up is ignored
+        latchMidi.addEvent (m, meta.samplePosition);
+    }
+    midi.swapWith (latchMidi);
+    int count = 0;
+    for (auto b : latched) count += b ? 1 : 0;
+    latchedCount = count;
+    sampleClock += numSamples;
+}
+
+// ---------------------------------------------------------------------------
+// binaural
+// ---------------------------------------------------------------------------
+juce::String RysumProcessor::binauralKey() const
+{
+    return sofaFile.getFullPathName() + "|" + juce::String (1 + juce::roundToInt (binOrderParam->load())) + "|"
+         + juce::String ((int) (binDfParam->load() > 0.5f)) + "|" + juce::String (hostRate.load() > 0 ? hostRate.load() : 48000.0, 0);
+}
+
+void RysumProcessor::setSofaFile (const juce::File& f)
+{
+    sofaFile = f;
+    builtBinKey.clear();           // the timer designs it (only while binaural is selected)
+    if (! isBinaural()) setBinStatus (juce::String::fromUTF8 ("gew\xc3\xa4hlt: ") + (f == juce::File() ? juce::String ("FABIAN") : f.getFileName())
+                                      + juce::String::fromUTF8 (" \xe2\x80\x93 aktiv, sobald die Ausgabe auf Binaural steht"));
+}
+
+void RysumProcessor::rebuildBinaural()
+{
+    const auto key = binauralKey();
+    builtBinKey = key;
+    const int order = 1 + juce::roundToInt (binOrderParam->load());
+    const bool df = binDfParam->load() > 0.5f;
+    const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    const auto file = sofaFile;
+    auto set = (hrirSet != nullptr && hrirSetFile == file) ? hrirSet : std::shared_ptr<const rysum::HrirSet>();
+    setBinStatus (juce::String::fromUTF8 ("berechne Filter \xe2\x80\xa6"));
+    irPool.addJob ([this, key, order, df, rate, file, set, alive = aliveFlag]
+    {
+        juce::String err;
+        auto useSet = set;
+        if (useSet == nullptr)
+        {
+            std::unique_ptr<rysum::HrirSet> loaded (file == juce::File() ? rysum::HrirSet::fabian (err) : rysum::HrirSet::fromSofa (file, err));
+            useSet.reset (loaded.release());
+        }
+        std::shared_ptr<rysum::BinauralDecoder> dec;
+        if (useSet != nullptr)
+            if (auto f = rysum::BinauralFilters::design (*useSet, order, rate, df, [alive] { return ! alive->load(); }))
+                dec = std::make_shared<rysum::BinauralDecoder> (*f);
+        if (useSet != nullptr && dec == nullptr && err.isEmpty()) err = "zu wenige Richtungen in der HRTF";
+        juce::MessageManager::callAsync ([this, key, file, useSet, dec, err, alive]
+        {
+            if (! alive->load()) return;
+            if (useSet != nullptr) { hrirSet = useSet; hrirSetFile = file; }
+            if (key != builtBinKey) return;                               // settings changed meanwhile
+            if (dec == nullptr) { setBinStatus ((file == juce::File() ? juce::String ("FABIAN") : file.getFileName()) + ": " + err); return; }
+            retiredBin = binUi;
+            retireCountdown = 20;
+            binUi = dec;
+            std::atomic_store (&pendingBin, dec);
+            setBinStatus (dec->getDescription() + juce::String::fromUTF8 (" \xc2\xb7 ") + useSet->info);
         });
     });
 }
@@ -772,7 +922,18 @@ void RysumProcessor::timerCallback()
         startAutoLoad();
         if (irFile.existsAsFile()) loadIr (irFile);
     }
-    if (retireCountdown > 0 && --retireCountdown == 0) { retiredLibrary.reset(); retiredIr.reset(); }
+    if (retireCountdown > 0 && --retireCountdown == 0) { retiredLibrary.reset(); retiredIr.reset(); retiredBin.reset(); }
+    // binaural: (re)design the decoder when the mode is on and its settings changed (~0.5 s debounce)
+    if (autoLoadDone && isBinaural())
+    {
+        const auto key = binauralKey();
+        if (key != builtBinKey)
+        {
+            if (binUi == nullptr && builtBinKey.isEmpty()) rebuildBinaural();         // first time: right away
+            else if (key != pendingBinKey) { pendingBinKey = key; binKeyTicks = 0; }
+            else if (++binKeyTicks >= 2) { rebuildBinaural(); pendingBinKey.clear(); }
+        }
+    }
     // IR settings / output format changed: rebuild the room once the values have settled (~0.5 s)
     if (irFile.existsAsFile() && autoLoadDone)
     {
@@ -832,6 +993,7 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
     juce::ValueTree extra ("EXTRA");
     if (! forPatch) extra.setProperty ("samplesFolder", samplesFolder.getFullPathName(), nullptr);
     extra.setProperty ("irFile", irFile.getFullPathName(), nullptr);
+    if (! forPatch) extra.setProperty ("sofaFile", sofaFile.getFullPathName(), nullptr);
     extra.setProperty ("patch", patchName, nullptr);
     for (int s = 0; s < kNumStops; ++s)
     {
@@ -890,6 +1052,7 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
     if (! state.hasType (apvts.state.getType())) return;
     auto extra = state.getChildWithName ("EXTRA");
     const float keepOutput = output->load();
+    const float keepBin[] { binOrderParam->load(), binYawParam->load(), binDfParam->load() };
     if (forPatch)
     {
         // a patch sets every parameter: ones missing in the file (older patches) go to their defaults
@@ -908,6 +1071,10 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
     {
         // the output format belongs to the track, not to the sound
         if (auto* o = apvts.getParameter ("output")) o->setValueNotifyingHost (o->convertTo0to1 (keepOutput));
+        // so do the headphone settings
+        int bi = 0;
+        for (auto* id : { "binOrder", "binYaw", "binDfEq" })
+            if (auto* o = apvts.getParameter (id)) o->setValueNotifyingHost (o->convertTo0to1 (keepBin[bi++]));
         // stops the patch does not describe get their default layout
         for (int s = 0; s < kNumStops; ++s)
         {
@@ -969,6 +1136,11 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             if (autoLoadDone) loadIr (irf);           // otherwise the first timer tick loads it
         }
         else if (irf == juce::File() && irFile != juce::File() && autoLoadDone && ! forPatch) clearIr();   // patches without IR keep the room
+        if (! forPatch)
+        {
+            const juce::File sf (extra["sofaFile"].toString());
+            if (sf != sofaFile) setSofaFile (sf.existsAsFile() ? sf : juce::File());
+        }
         const juce::File f (forPatch ? juce::File() : juce::File (extra["samplesFolder"].toString()));
         if (f != juce::File() && f != samplesFolder && SampleLibrary::looksLikeSampleFolder (f))
         {

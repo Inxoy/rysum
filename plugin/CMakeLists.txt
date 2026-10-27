@@ -75,12 +75,34 @@ juce_add_binary_data(RysumData
         Resources/knob_bare.jpg
         Resources/keys.jpg
         Resources/wall.jpg
-        Resources/grain.png)
+        Resources/grain.png
+        Resources/fabian_hrir.bin)
+
+# libmysofa (BSD-3): reads SOFA files (HRTFs) for the binaural mode. Its one zlib call goes to JUCE's zlib
+# (hdf/gunzip_rysum.c -> Source/SofaGunzip.cpp), so nothing else is needed.
+set(MYSOFA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/libmysofa)
+add_library(rysum_mysofa STATIC
+    ${MYSOFA_DIR}/hrtf/reader.c ${MYSOFA_DIR}/hdf/superblock.c ${MYSOFA_DIR}/hdf/dataobject.c
+    ${MYSOFA_DIR}/hdf/btree.c ${MYSOFA_DIR}/hdf/fractalhead.c ${MYSOFA_DIR}/hdf/gcol.c ${MYSOFA_DIR}/hdf/gunzip_rysum.c
+    ${MYSOFA_DIR}/hrtf/check.c ${MYSOFA_DIR}/hrtf/spherical.c ${MYSOFA_DIR}/hrtf/lookup.c ${MYSOFA_DIR}/hrtf/tools.c
+    ${MYSOFA_DIR}/hrtf/kdtree.c ${MYSOFA_DIR}/hrtf/neighbors.c ${MYSOFA_DIR}/hrtf/interpolate.c
+    ${MYSOFA_DIR}/hrtf/resample.c ${MYSOFA_DIR}/hrtf/loudness.c ${MYSOFA_DIR}/hrtf/minphase.c
+    ${MYSOFA_DIR}/hrtf/easy.c ${MYSOFA_DIR}/hrtf/cache.c ${MYSOFA_DIR}/resampler/speex_resampler.c)
+set_target_properties(rysum_mysofa PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+target_include_directories(rysum_mysofa PUBLIC ${MYSOFA_DIR}/hrtf PRIVATE ${MYSOFA_DIR} ${MYSOFA_DIR}/hdf)
+if(MSVC)
+    target_compile_definitions(rysum_mysofa PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(rysum_mysofa PRIVATE /W0)
+else()
+    target_compile_options(rysum_mysofa PRIVATE -w)
+endif()
 
 target_sources(Rysum PRIVATE
     Source/SampleLibrary.cpp
     Source/OrganEngine.cpp
     Source/Convolver.cpp
+    Source/Binaural.cpp
+    Source/SofaGunzip.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/ConsoleView.cpp
@@ -100,6 +122,7 @@ target_compile_definitions(Rysum PUBLIC
 target_link_libraries(Rysum
     PRIVATE
         RysumData
+        rysum_mysofa
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_audio_formats
@@ -123,23 +146,25 @@ if(RYSUM_BUILD_TESTS)
         Tests/RenderTest.cpp
         Source/SampleLibrary.cpp
         Source/OrganEngine.cpp
-        Source/Convolver.cpp)
+        Source/Convolver.cpp
+        Source/Binaural.cpp
+        Source/SofaGunzip.cpp)
     target_include_directories(RysumRenderTest PRIVATE Source)
     target_compile_definitions(RysumRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-    target_link_libraries(RysumRenderTest PRIVATE
+    target_link_libraries(RysumRenderTest PRIVATE RysumData rysum_mysofa
         juce::juce_audio_basics juce::juce_audio_formats juce::juce_core juce::juce_events juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
-        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
+        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
         Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
-    target_link_libraries(RysumUiSnapshot PRIVATE RysumData
+    target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa
         juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 endif()
