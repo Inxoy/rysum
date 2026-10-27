@@ -335,8 +335,8 @@ public:
         };
         shoot (0, "ui_spieltisch.png");
         shoot (1, "ui_raum.png");
-        shoot (2, "ui_klang.png");
-        shoot (4, "ui_mod.png");
+        shoot (3, "ui_klang.png");
+        shoot (5, "ui_mod.png");
         {
             // right-click menus are top-level windows without a parent: they must get the plugin's look by default
             auto& lf = juce::LookAndFeel::getDefaultLookAndFeel();
@@ -362,9 +362,30 @@ public:
             // effects page with some effects switched on (so the diagrams show something)
             for (auto [id, v] : { std::pair<const char*, float> { "fxEchoLevel", 0.5f }, { "fxPartSpread", 70.0f }, { "fxEchoTilt", 10.0f } })
                 if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v));
-            shoot (3, "ui_effekte.png");
+            shoot (4, "ui_effekte.png");
             for (auto* id : { "fxEchoLevel", "fxPartSpread", "fxEchoTilt" })
                 if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
+        }
+        {
+            // the simulated room: on, a note played, ray tracing done in the background
+            auto* P = proc->apvts.getParameter ("simOn");
+            P->setValueNotifyingHost (1.0f);
+            juce::AudioBuffer<float> st (16, 512);
+            for (int b = 0; b < 60; ++b)
+            {
+                juce::MidiBuffer mb;
+                if (b == 2) mb.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100), 0);
+                proc->processBlock (st, mb);
+            }
+            for (int i = 0; i < 40 && ! proc->getRoomStatus().contains ("Strahlen"); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+            for (int b = 0; b < 20; ++b) { juce::MidiBuffer mb; proc->processBlock (st, mb); }        // the engine takes the response
+            std::cout << "Saal: " << proc->getRoomStatus() << (proc->getRoomStatus().contains ("Strahlen") ? "  ok" : "  FAIL") << std::endl;
+            std::cout << "Saal: engine RT " << proc->engine.roomRtLow.load() << " s, tail in use " << proc->engine.tailSerialInUse.load() << ", "
+                      << proc->engine.erActive.load() << " sounds with reflections"
+                      << (proc->engine.erActive.load() > 0 && proc->engine.tailSerialInUse.load() != 0xffffffffu ? "  ok" : "  FAIL") << std::endl;
+            shoot (2, "ui_saal.png");
+            { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 64), 0); proc->processBlock (st, mb); }
+            P->setValueNotifyingHost (0.0f);
         }
 
         // state round trip

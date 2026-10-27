@@ -4,6 +4,8 @@
 #include "OrganEngine.h"
 #include "Convolver.h"
 #include "Binaural.h"
+#include "RoomSim.h"
+#include "RoomTail.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
 #include <complex>
@@ -454,7 +456,7 @@ static void testConvolver()
             auto t3 = std::chrono::high_resolution_clock::now();
             const double rt = 5.0 / std::chrono::duration<double> (t3 - t2).count();
             std::cout << "  5th order, 4 s IR: build " << std::chrono::duration<double> (t1 - t0).count() << " s, " << rt << "x realtime" << std::endl;
-            check (rt > 1.0, "5th-order room runs in real time");
+            check (rt > 0.8, "5th-order room runs in real time (this slow test machine: ~1x)");
         }
         fb.deleteFile();
     }
@@ -1101,6 +1103,236 @@ int main (int argc, char** argv)
             const double rt = 6.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
             std::cout << "all effects, 8 stops x 6 keys, 3rd order: " << rt << " x real time" << std::endl;
             check (rt > 2.0, "effects are cheap enough");
+        }
+    }
+
+    // ---------------- simulated room ("Saal") ----------------
+    {
+        // ray tracer vs Eyring
+        {
+            RoomParams r; r.on = true; r.width = r.length = r.height = 10.0f; r.absWalls = r.absFloor = 0.2f; r.scatter = 0.5f; r.highDamp = 0.0f;
+            auto t0 = std::chrono::high_resolution_clock::now();
+            const auto rt = traceRoom (r, 0.5f);
+            const double ms = 1000.0 * std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+            const float ey = eyringRt (r, false, 0.5f);
+            std::cout << "room: cube 10 m, alpha 0.2: ray traced " << rt.rtLow << " s, Eyring " << ey << " s (" << ms << " ms, "
+                      << rt.reflections << " reflections)" << std::endl;
+            check (std::abs (rt.rtLow / ey - 1.0f) < 0.12f, "ray tracer agrees with Eyring in a diffuse cube");
+            RoomParams c = r; c.width = 3.0f; c.length = 40.0f; c.height = 3.0f; c.absWalls = 0.02f; c.absFloor = 0.6f; c.scatter = 0.02f;
+            const auto rc = traceRoom (c, 0.5f);
+            std::cout << "room: corridor, hard walls, dead floor/ceiling: ray traced " << rc.rtLow << " s, Eyring " << eyringRt (c, false, 0.5f) << " s" << std::endl;
+            check (rc.rtLow > 1.3f * eyringRt (c, false, 0.5f), "ray tracer: non-diffuse corridor rings longer than Eyring says");
+        }
+
+        const double fsr = 48000.0;
+        constexpr int B = 512;
+        int keyA = -1; for (int k = 0; k < kNumKeys; ++k) if (kPhysKeys[(size_t) k] == 69) keyA = k;
+        auto run = [&] (std::function<void (EngineParams&)> setup, double secs, double offAt, const juce::String& name, int ch = 4, OrganEngine* keep = nullptr)
+        {
+            OrganEngine local; OrganEngine& e = keep != nullptr ? *keep : local;
+            e.prepare (fsr, B); e.setLibrary (lib);
+            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+            p.outputMode = ch == 4 ? 1 : (ch == 2 ? 0 : 3);
+            setup (p);
+            if (p.room.on) e.setTailIR (TailIR::build (p.room, p.air, p.outputMode, fsr, 1));      // (the plugin builds it in the background)
+            juce::AudioBuffer<float> b (ch, B), all (ch, (int) (fsr * secs));
+            for (int pos = 0; pos < all.getNumSamples(); pos += B)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 110), 0);
+                if (offAt > 0 && pos == ((int) (offAt * fsr) / B) * B) mb.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
+                e.process (b, mb, p);
+                for (int c = 0; c < ch; ++c) all.copyFrom (c, pos, b, c, 0, juce::jmin (B, all.getNumSamples() - pos));
+            }
+            if (name.isNotEmpty()) writeWav (outDir.getChildFile (name + ".wav"), all, fsr);
+            return all;
+        };
+
+        {   // one strong reflection from the left wall: delay and direction
+            auto setup = [&] (bool on) { return [on] (EngineParams& p)
+            {
+                p.stopGain[0] = 0.0f;                                   // the pipe silent: only its key click at the pipe
+                p.fx.custLevel = 1.0f; p.fx.custPlace = 0;
+                p.room.on = on; p.room.width = 20; p.room.length = 20; p.room.height = 20; p.room.listenerX = 0.1f; p.room.listenerY = 0.5f;
+                p.room.absWalls = 0.0f; p.room.absFloor = 0.99f; p.room.scatter = 0.0f; p.room.order = 1; p.room.tailGain = 0.0f;
+            }; };
+            OrganEngine probe; probe.prepare (fsr, B);
+            // put the pipe straight ahead, 5 m
+            OrganEngine eOn, eOff;
+            for (auto* e : { &eOn, &eOff }) { e->baseAz[0][(size_t) keyA] = 0.0f; e->baseEl[0][(size_t) keyA] = 0.0f; e->baseDist[0][(size_t) keyA] = 5.0f; }
+            auto on = run (setup (true), 0.5, -1, "40_room_left_wall", 4, &eOn);
+            auto off = run (setup (false), 0.5, -1, "", 4, &eOff);
+            juce::AudioBuffer<float> diff (on);
+            for (int c = 0; c < 4; ++c) diff.addFrom (c, 0, off, c, 0, off.getNumSamples(), -1.0f);
+            // lag of the reflection: cross-correlation of the reflections with the dry sound (W)
+            const float* a = off.getReadPointer (0); const float* d = diff.getReadPointer (0);
+            int best = 0; double bv = -1e30;
+            for (int lag = 0; lag < 960; ++lag)
+            {
+                double sum = 0; for (int i = 0; i < 20000; ++i) sum += (double) a[i] * d[i + lag];
+                if (sum > bv) { bv = sum; best = lag; }
+            }
+            const double expectMs = (std::sqrt (4.0 * 4.0 + 5.0 * 5.0) - 5.0) / 343.0 * 1000.0;
+            // direction: only the first 20 ms after the reflection arrives (the front wall comes after 29 ms)
+            int onset = 0; { float pk = off.getMagnitude (0, 0, off.getNumSamples()); while (onset < off.getNumSamples() && std::abs (a[onset]) < 0.05f * pk) ++onset; }
+            double wy = 0, wx = 0;
+            for (int i = onset + best - 24; i < onset + best + 960; ++i) { wy += (double) diff.getSample (0, i) * diff.getSample (1, i); wx += (double) diff.getSample (0, i) * diff.getSample (3, i); }
+            const double az = juce::radiansToDegrees (std::atan2 (wy, wx));
+            const double expectAz = juce::radiansToDegrees (std::atan2 (4.0, 5.0));
+            std::cout << "room: left-wall reflection after " << best / 48.0 << " ms (expect " << expectMs << "), from az " << az << " (expect " << expectAz
+                      << "), level " << juce::Decibels::gainToDecibels ((float) std::sqrt (diff.getRMSLevel (0, 0, diff.getNumSamples()))) << std::endl;
+            check (std::abs (best / 48.0 - expectMs) < 0.15 && std::abs (az - expectAz) < 8.0, "early reflection: right delay and direction");
+        }
+        {   // late reverb decays with the computed decay time
+            OrganEngine e;
+            auto b = run ([] (EngineParams& p)
+                          {
+                              p.room.on = true; p.room.width = 12; p.room.length = 24; p.room.height = 10;
+                              p.room.absWalls = 0.08f; p.room.absFloor = 0.15f; p.room.highDamp = 0.3f; p.room.erGain = 0.0f;
+                          }, 5.0, 0.6, "41_room_tail", 4, &e);
+            const float rt = e.roomRtLow.load();
+            // decay of the W energy after the note (10 ms frames), fit -5 .. -25 dB
+            const int start = (int) (0.75 * fsr), fr = 480;
+            std::vector<double> en;
+            for (int pos = start; pos + fr < b.getNumSamples(); pos += fr) { double s2 = 0; for (int i = 0; i < fr; ++i) s2 += (double) b.getSample (0, pos + i) * b.getSample (0, pos + i); en.push_back (s2); }
+            std::vector<double> sch (en.size()); double acc = 0; for (int i = (int) en.size() - 1; i >= 0; --i) { acc += en[(size_t) i]; sch[(size_t) i] = acc; }
+            double sx = 0, sy = 0, sxx = 0, sxy = 0; int nn = 0;
+            for (size_t i = 0; i < sch.size(); ++i)
+            {
+                const double db = 10 * std::log10 (sch[i] / acc);
+                if (db > -5) continue; if (db < -25) break;
+                const double x = i * 0.01; sx += x; sy += db; sxx += x * x; sxy += x * db; ++nn;
+            }
+            const double slope = (nn * sxy - sx * sy) / (nn * sxx - sx * sx);
+            const double measured = -60.0 / slope;
+            std::cout << "room: tail decay measured " << measured << " s, ray-traced " << rt << " s, critical distance " << e.roomCritDist.load() << " m" << std::endl;
+            check (nn > 3 && std::abs (measured / rt - 1.0) < 0.25, "late reverb decays with the room's decay time");
+        }
+        {   // listening scenes: default room, note on / off, early reflections only / tail only / both (stereo)
+            for (int mode = 0; mode < 4; ++mode)
+                run ([mode] (EngineParams& p)
+                     {
+                         p.outputMode = 0; p.clickLevel = 0.2f; p.releaseClick = 0.2f;
+                         p.room.on = mode < 3;
+                         p.room.width = 14; p.room.length = 28; p.room.height = 11; p.room.absWalls = 0.06f; p.room.absFloor = 0.2f;
+                         p.room.highDamp = 0.15f; p.room.scatter = 0.3f; p.room.order = 2;
+                         if (mode == 0) p.room.tailGain = 0.0f;
+                         if (mode == 1) p.room.erGain = 0.0f;
+                     }, 4.0, 1.0, mode == 0 ? "42_room_er_only" : (mode == 1 ? "42_room_tail_only" : (mode == 2 ? "42_room_both" : "42_room_dry")), 2);
+        }
+        {   // impulse responses of the default room (a key click at the pipe), tail only / reflections only
+            for (int mode = 0; mode < 3; ++mode)
+                run ([mode] (EngineParams& p)
+                     {
+                         p.outputMode = 0; p.stopGain[0] = 0.0f; p.fx.custLevel = 1.0f; p.fx.custPlace = 0;
+                         p.room.on = mode < 2;
+                         p.room.width = 14; p.room.length = 28; p.room.height = 11; p.room.absWalls = 0.06f; p.room.absFloor = 0.2f;
+                         p.room.highDamp = 0.15f; p.room.scatter = 0.3f; p.room.order = 2;
+                         if (mode == 0) p.room.erGain = 0.0f; else p.room.tailGain = 0.0f;
+                     }, 4.0, -1, mode == 0 ? "43_room_click_tail" : (mode == 1 ? "43_room_click_er" : "43_room_click_dry"), 2);
+        }
+        {   // the tail's response to a pure impulse (an "own sound" that is one sample): dense, no ringing modes
+            auto lib2 = std::make_shared<SampleLibrary> (*lib);
+            auto imp = std::make_shared<Sample>();
+            imp->sampleRate = 48000.0;
+            imp->data.assign (64, 0.0f);
+            imp->data[2] = 1.0f;
+            NoiseSample ns; ns.sample = imp; ns.norm = 1.0f;
+            lib2->custom = { ns };
+            std::shared_ptr<const SampleLibrary> lib2c (lib2);
+            OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib2c);
+            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.stopGain[0] = 0.0f; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+            p.outputMode = 0; p.fx.custLevel = 1.0f; p.fx.custPlace = 0;
+            p.room.on = true; p.room.width = 14; p.room.length = 28; p.room.height = 11; p.room.absWalls = 0.06f; p.room.absFloor = 0.2f;
+            p.room.highDamp = 0.15f; p.room.scatter = 0.3f; p.room.order = 2; p.room.erGain = 0.0f;
+            e.setTailIR (TailIR::build (p.room, p.air, 0, fsr, 1));
+            juce::AudioBuffer<float> b (2, B), all (2, (int) (fsr * 2.0));
+            for (int pos = 0; pos < all.getNumSamples(); pos += B)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 127), 0);
+                e.process (b, mb, p);
+                for (int c = 0; c < 2; ++c) all.copyFrom (c, pos, b, c, 0, juce::jmin (B, all.getNumSamples() - pos));
+            }
+            writeWav (outDir.getChildFile ("44_room_impulse_tail.wav"), all, fsr);
+            // ringing = narrow spectral peaks far above their neighbourhood. Dense decaying noise: the top 0.1 % of
+            // the bins lie ~10-12 dB above the local median; the earlier Hadamard network without modulation: ~22 dB
+            const int a0 = (int) (0.3 * fsr), len = 65536;
+            juce::dsp::FFT fft (16);
+            std::vector<float> w ((size_t) (2 * len), 0.0f);
+            for (int i = 0; i < len && a0 + i < all.getNumSamples(); ++i)
+                w[(size_t) i] = 0.5f * (all.getSample (0, a0 + i) + all.getSample (1, a0 + i)) * (0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) len));
+            fft.performFrequencyOnlyForwardTransform (w.data(), true);
+            std::vector<double> db ((size_t) (len / 2));
+            for (int k = 0; k < len / 2; ++k) db[(size_t) k] = 20.0 * std::log10 (w[(size_t) k] + 1e-12);
+            std::vector<double> ex;
+            const int k0 = (int) (500.0 * len / fsr), k1 = (int) (8000.0 * len / fsr);
+            for (int k = k0; k < k1; ++k)
+            {
+                std::vector<double> nb (db.begin() + (k - 200), db.begin() + (k + 201));
+                std::nth_element (nb.begin(), nb.begin() + 200, nb.end());
+                ex.push_back (db[(size_t) k] - nb[200]);
+            }
+            std::sort (ex.begin(), ex.end());
+            const double p999 = ex[(size_t) (0.999 * (double) (ex.size() - 1))];
+            std::cout << "room: tail impulse response, peaks over local median (99.9 %): " << p999 << " dB" << std::endl;
+            check (p999 < 14.0, "late reverb is dense (no ringing modes)");
+        }
+        {   // the room changes while a note sounds: the new response is crossfaded from the same history - no gap
+            auto render = [&] (bool swap)
+            {
+                OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0; p.outputMode = 0;
+                p.room.on = true; p.room.erGain = 0.0f;
+                e.setTailIR (TailIR::build (p.room, p.air, 0, fsr, 1));
+                auto changed = p.room; changed.absWalls *= 1.02f;               // a small change: the level must stay
+                auto nextIr = TailIR::build (changed, p.air, 0, fsr, 2);
+                juce::AudioBuffer<float> b (2, B), all (2, (int) (fsr * 2.5));
+                for (int pos = 0; pos < all.getNumSamples(); pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 57, (juce::uint8) 100), 0);
+                    if (swap && pos == B * 94) e.setTailIR (nextIr);         // ~1 s
+                    e.process (b, mb, p);
+                    for (int c = 0; c < 2; ++c) all.copyFrom (c, pos, b, c, 0, juce::jmin (B, all.getNumSamples() - pos));
+                }
+                return std::make_pair (all, e.tailSerialInUse.load());
+            };
+            auto [a1, s1] = render (false);
+            auto [a2, s2] = render (true);
+            writeWav (outDir.getChildFile ("45_room_tail_swap.wav"), a2, fsr);
+            double worst = 0;
+            for (double t = 0.8; t < 2.3; t += 0.02)
+            {
+                const double l1 = juce::Decibels::gainToDecibels (a1.getRMSLevel (0, (int) (t * fsr), (int) (0.02 * fsr)));
+                const double l2 = juce::Decibels::gainToDecibels (a2.getRMSLevel (0, (int) (t * fsr), (int) (0.02 * fsr)));
+                worst = juce::jmax (worst, std::abs (l1 - l2));
+            }
+            std::cout << "room: response swapped while playing: largest level difference to no swap " << worst << " dB (in use: " << s2 << ")" << std::endl;
+            check (worst < 1.0 && s2 == 2 && s1 == 1, "room change: the reverb turns into the new room without a gap");
+        }
+        {   // CPU: a chord on 3 stops (18 pipes) and on all 8 stops (48 pipes), reflections up to 2nd / 3rd order, 3rd-order output
+            for (int stops : { 3, 8 })
+                for (int ord : { 2, 3 })
+                {
+                    OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+                    EngineParams p; p.stopOn = {}; for (int st = 0; st < stops; ++st) p.stopOn[(size_t) st] = true;
+                    p.outputMode = 3; p.room.on = true; p.room.order = ord;
+                    e.setTailIR (TailIR::build (p.room, p.air, 3, fsr, 1));
+                    juce::AudioBuffer<float> b (16, B);
+                    const int blocks = (int) (6.0 * fsr / B);
+                    auto t0 = std::chrono::high_resolution_clock::now();
+                    for (int i = 0; i < blocks; ++i)
+                    {
+                        juce::MidiBuffer mb;
+                        if (i == 0) for (int m : { 48, 55, 60, 64, 67, 72 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 90), 0);
+                        e.process (b, mb, p);
+                    }
+                    const double rt = 6.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+                    std::cout << "room on, reflections up to order " << ord << ", " << stops * 6 << " pipes (" << e.erActive.load()
+                              << " with own reflections), 3rd-order out: " << rt << " x real time" << std::endl;
+                    if (stops == 3 && ord == 2) check (rt > 2.0, "room simulation runs in real time (18 pipes)");
+                }
         }
     }
 

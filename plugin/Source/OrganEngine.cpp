@@ -48,6 +48,13 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     echoBuf.assign ((size_t) (16.5 * sr) + (size_t) maxBlock, 0.0f);
     echoWrite = 0; echoDelay = -1.0; echoLp.fill (0.0f);
     fxScratch.assign ((size_t) maxBlock * 12, 0.0f);
+    // simulated room (all memory here, nothing is allocated while playing)
+    erSlots.assign ((size_t) kErSlots, ErSlot {});
+    erRing.assign ((size_t) kErSlots * (size_t) kErRing, 0.0f);
+    for (auto& v : voices) v.erSlot = -1;
+    for (auto& n : noise) n.erSlot = -1;
+    tail.prepare (sr);
+    tailGain = 0.0f; tailWasOn = false;
     numScheduled = 0;
     {
         XorShift r (77);
@@ -68,8 +75,8 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
 
 void OrganEngine::setLibrary (std::shared_ptr<const SampleLibrary> lib)
 {
-    for (auto& v : voices) v.active = false;
-    for (auto& n : noise) n.active = false;
+    for (auto& v : voices) { v.active = false; releaseSlot (v.erSlot); }
+    for (auto& n : noise) { n.active = false; releaseSlot (n.erSlot); }
     library = std::move (lib);
     windPos = 0.0;
     numScheduled = 0;          // (audio thread: no allocation here)
@@ -108,7 +115,9 @@ void OrganEngine::spawnSound (const Sample& s, float gain, float tone, double ra
     NoiseVoice* nv = nullptr;
     for (auto& n : noise) if (! n.active) { nv = &n; break; }
     if (nv == nullptr) nv = &noise[(size_t) (rng.next() % noise.size())];
+    if (nv->active) releaseSlot (nv->erSlot);
     nv->active = true;
+    nv->erSlot = roomOnNow ? allocSlot (-1, (int) (nv - noise.data())) : -1;
     nv->data = s.data.data();
     nv->length = s.size();
     nv->pos = 0.0;
@@ -282,6 +291,8 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     else v.gh1 = v.g1;
     v.crkEnv = v.held ? 1.0f : v.crkEnv * (float) std::exp (-blockSeconds / 0.15);
     v.send1 = sg * lvl * distanceGain (pos.dist, p.distAmount * 0.35f);       // the room fades much less with distance
+    v.erBase = sg * lvl;
+    v.erPos = pos;
     v.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
     if (anyMod && pm[tgtSend] != 0.0f) v.send1 *= dbToGain (juce::jlimit (-100.0f, 24.0f, 24.0f * pm[tgtSend]));
 
@@ -380,7 +391,10 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples)
         v = oldest;
     }
 
+    if (v->active) releaseSlot (v->erSlot);
     v->active = true;
+    v->erSlot = roomOnNow ? allocSlot ((int) (v - voices.data()), -1) : -1;
+    if (previewSamples < 0) { lastStruckStop = stop; lastStruckKey = key; }
     v->stop = stop; v->key = key;
     v->pipe = &pipe;
     v->data = pipe.sample->data.data();
@@ -468,7 +482,10 @@ void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, c
     NoiseVoice* nv = nullptr;
     for (auto& n : noise) if (! n.active) { nv = &n; break; }
     if (nv == nullptr) nv = &noise[(size_t) (rng.next() % noise.size())];
+    if (nv->active) releaseSlot (nv->erSlot);
     nv->active = true;
+    nv->where = { consoleAzNow, consoleElNow, 2.0f };      // reflections: from the console
+    nv->erSlot = roomOnNow ? allocSlot (-1, (int) (nv - noise.data())) : -1;
     nv->data = s->data.data();
     nv->length = s->size();
     nv->pos = 0.0;
@@ -825,7 +842,13 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 if (std::abs (sd) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, bufRamp, sd, n);
             }
         }
-        if (finished) v.active = false;
+        if (v.erSlot >= 0)
+        {
+            float* ring = erRing.data() + (size_t) v.erSlot * (size_t) kErRing;
+            const uint32_t base = erClock + (uint32_t) start;
+            for (int i = 0; i < n; ++i) ring[(base + (uint32_t) i) & (kErRing - 1)] += buf[i];
+        }
+        if (finished) { v.active = false; releaseSlot (v.erSlot); }
     }
 
     // noise one-shots
@@ -834,10 +857,11 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         if (! nv.active) continue;
         for (int i = 0; i < n; ++i)
         {
-            if (nv.pos >= nv.length - 2) { nv.active = false; break; }
+            if (nv.pos >= nv.length - 2) { nv.active = false; releaseSlot (nv.erSlot); break; }
             nv.lp += nv.lpA * (readSample (nv.data, nv.length, nv.pos) - nv.lp);
             const float x = nv.lp * nv.gain;
             nv.pos += nv.rate;
+            if (nv.erSlot >= 0) erRing[(size_t) nv.erSlot * (size_t) kErRing + ((erClock + (uint32_t) (start + i)) & (kErRing - 1))] += x;
             for (int c = 0; c < usedChannels; ++c)
                 if (std::abs (nv.g[(size_t) c]) > 1.0e-9f) out.getWritePointer (c)[start + i] += x * nv.g[(size_t) c];
             for (int k = 0; k < roomSends; ++k)
@@ -892,6 +916,168 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// simulated room ("Saal"): early reflections (image sources, per sound) and the late tail (FDN)
+// ---------------------------------------------------------------------------
+int OrganEngine::allocSlot (int voice, int noiseVoice) noexcept
+{
+    int best = -1, bestDrain = std::numeric_limits<int>::max();
+    for (int i = 0; i < (int) erSlots.size(); ++i)
+    {
+        auto& s = erSlots[(size_t) i];
+        if (! s.active) { best = i; break; }
+        if (s.voice < 0 && s.noiseVoice < 0 && s.drain < bestDrain) { bestDrain = s.drain; best = i; }   // ringing out: the oldest may go
+    }
+    if (best < 0) return -1;                   // all busy: this sound gets no own reflections (the tail still has it)
+    auto& s = erSlots[(size_t) best];
+    s.active = true; s.fresh = true;
+    s.voice = voice; s.noiseVoice = noiseVoice;
+    s.drain = 0; s.numTaps = 0;
+    for (auto& t : s.taps) t.lp = 0.0f;
+    std::fill_n (erRing.data() + (size_t) best * (size_t) kErRing, kErRing, 0.0f);
+    return best;
+}
+
+void OrganEngine::releaseSlot (int& slot) noexcept
+{
+    if (slot < 0 || slot >= (int) erSlots.size()) { slot = -1; return; }
+    auto& s = erSlots[(size_t) slot];
+    s.voice = -1; s.noiseVoice = -1;
+    float maxD = 0.0f;
+    for (int t = 0; t < s.numTaps; ++t) maxD = juce::jmax (maxD, s.taps[(size_t) t].d1);
+    s.drain = (int) maxD + 512;
+    slot = -1;
+}
+
+void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p) noexcept
+{
+    const auto& r = p.room;
+    const Vec3f L = listenerPos (r), S = roomPoint (r, srcPos);
+    const float rd = seenFrom (L, S).dist;
+    std::array<ImageSource, kMaxTaps> ims;
+    const int n = imageSources (r, S, r.order, ims.data(), kMaxTaps);
+    const auto ab = BandAbsorption::from (r);
+    const float Rw = std::sqrt (1.0f - ab.wallLow), Rf = std::sqrt (1.0f - ab.floorLow);
+    const float shW = std::sqrt ((1.0f - ab.wallHigh) / juce::jmax (1e-4f, 1.0f - ab.wallLow));
+    const float shF = std::sqrt ((1.0f - ab.floorHigh) / juce::jmax (1e-4f, 1.0f - ab.floorLow));
+    const float spec = std::sqrt (juce::jlimit (0.0f, 1.0f, 1.0f - r.scatter));     // the scattered part goes to the tail
+    const float airDiff = 0.5f * (airHigh (p.air) - airLow());
+    const int encOrder = order == 0 ? 0 : juce::jmin (order, 3);
+    const float maxDelay = (float) (kErRing - 4 * kSubBlock);
+    float tmp[kMaxAmbiChannels];
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& im = ims[(size_t) i];
+        const Pos seen = seenFrom (L, im.pos);
+        float delay = (seen.dist - rd) / kSpeedOfSoundRoom * (float) sr;
+        float gain = base * distanceGain (seen.dist, distAmountNow) * r.erGain
+                   * std::pow (Rw * spec, (float) im.hitsWalls) * std::pow (Rf * spec, (float) im.hitsFloor);
+        if (delay > maxDelay) { delay = maxDelay; gain = 0.0f; }       // longer than the buffer: left to the tail
+        auto& t = s.taps[(size_t) i];
+        t.d1 = juce::jmax (0.0f, delay);
+        t.g1 = gain;
+        t.r1 = std::pow (shW, (float) im.hitsWalls) * std::pow (shF, (float) im.hitsFloor) * std::exp (-airDiff * seen.dist);
+        std::fill (tmp, tmp + kMaxAmbiChannels, 0.0f);
+        // first reflections sharp (up to 3rd order), the later ones at first order: they are many, quieter and
+        // more diffuse anyway, and this keeps the cost down
+        const int o = (im.hitsWalls + im.hitsFloor == 1) ? encOrder : juce::jmin (encOrder, 1);
+        if (encOrder == 0) { encodeStereo (seen.az, tmp); t.ch = 2; }
+        else { encodeAmbiX (seen.az, seen.el, o, tmp); t.ch = (o + 1) * (o + 1); }
+        std::copy (tmp, tmp + kErCh, t.enc.begin());
+        if (s.fresh || i >= s.numTaps) { t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1; t.lp = 0.0f; }
+    }
+    for (int i = n; i < s.numTaps; ++i) s.taps[(size_t) i].g1 = 0.0f;      // order lowered: fade the extra taps out
+    s.numTaps = juce::jmax (n, s.fresh ? n : s.numTaps);
+    s.fresh = false;
+}
+
+void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const EngineParams& p)
+{
+    const auto& r = p.room;
+    roomW = r.W(); roomL = r.L(); roomH = r.H(); roomLx = r.listenerX; roomLy = r.listenerY;
+    roomAbsW = r.absWalls; roomAbsF = r.absFloor; roomHighD = r.highDamp; roomScat = r.scatter; roomAir = p.air;
+    roomOutOrder = order; roomOn = roomOnNow;
+    if (! roomOnNow || n <= 0)
+    {
+        erClock += (uint32_t) juce::jmax (0, n);
+        tailGain = 0.0f; tailWasOn = false;
+        erActive = 0;
+        tailSerialInUse = tail.oldestSerialInUse();
+        return;
+    }
+    const int K = juce::jmin (usedChannels, order == 0 ? 2 : (juce::jmin (order, 3) + 1) * (juce::jmin (order, 3) + 1));
+    const float inv = 1.0f / (float) n;
+    float* y = fxScratch.data();
+
+    // ---- early reflections
+    const float shelfA = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 2500.0f / (float) sr);
+    int activeCount = 0;
+    for (size_t si = 0; si < erSlots.size(); ++si)
+    {
+        auto& s = erSlots[si];
+        if (! s.active) continue;
+        ++activeCount;
+        if (s.voice >= 0)
+        {
+            const auto& v = voices[(size_t) s.voice];
+            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p);
+            else { s.voice = -1; s.drain = kErRing; }
+        }
+        else if (s.noiseVoice >= 0)
+        {
+            const auto& nv = noise[(size_t) s.noiseVoice];
+            if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p);
+            else { s.noiseVoice = -1; s.drain = kErRing; }
+        }
+        else if ((s.drain -= n) <= 0) { s.active = false; continue; }
+
+        const float* ring = erRing.data() + si * (size_t) kErRing;
+        for (int ti = 0; ti < s.numTaps; ++ti)
+        {
+            auto& t = s.taps[(size_t) ti];
+            if (t.g0 < 3.0e-5f && t.g1 < 3.0e-5f) { t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1; continue; }     // below -90 dB
+            for (int i = 0; i < n; ++i)
+            {
+                const float f = (float) (i + 1) * inv;
+                const float d = t.d0 + (t.d1 - t.d0) * f;
+                const float rp = (float) (erClock + (uint32_t) i) - d + (float) kErRing;     // positive, wraps below
+                const int i0 = (int) rp;
+                const float fr = rp - (float) i0;
+                const float a = ring[(uint32_t) i0 & (kErRing - 1)], b = ring[(uint32_t) (i0 + 1) & (kErRing - 1)];
+                const float x = a + fr * (b - a);
+                t.lp += shelfA * (x - t.lp);
+                const float rr = t.r0 + (t.r1 - t.r0) * f;
+                y[i] = (t.lp + rr * (x - t.lp)) * (t.g0 + (t.g1 - t.g0) * f);
+            }
+            const int kc = juce::jmin (K, t.ch);
+            for (int c = 0; c < kc; ++c)
+                if (std::abs (t.enc[(size_t) c]) > 1.0e-6f) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), y, t.enc[(size_t) c], n);
+            t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1;
+        }
+    }
+    erActive = activeCount;
+
+    // ---- late reverb: convolution with the ray-traced, synthesised response (built by the processor)
+    if (! tailWasOn) { tail.reset(); tailWasOn = true; }
+    const TailIR* ir = tail.current();
+    const float rtL = ir != nullptr ? ir->rtLow : eyringRt (r, false, p.air);
+    const float rtH = ir != nullptr ? ir->rtHigh : eyringRt (r, true, p.air);
+    const float V = roomVolume (r);
+    const float rc = juce::jmax (0.2f, 0.057f * std::sqrt (V / rtL));          // critical distance
+    roomRtLow = rtL; roomRtHigh = rtH; roomCritDist = rc;
+    // the response has unit energy (W); reverberant level from the critical distance, softly capped at +4 dB so
+    // very long, hard rooms do not drown everything
+    const float gTarget = juce::jmin (1.6f, distanceGain (rc, distAmountNow)) * r.tailGain;
+    const float g0 = tailGain, g1 = g0 + (gTarget - g0) * (1.0f - std::exp (-(float) n / (0.05f * (float) sr)));
+    tailGain = g1;
+    std::array<float*, kMaxAmbiChannels> o {};
+    const int tailCh = juce::jmin (usedChannels, kMaxAmbiChannels);
+    for (int c = 0; c < tailCh; ++c) o[(size_t) c] = out.getWritePointer (c);
+    tail.process (roomSend[0].data() + roomOffset, o.data(), tailCh, n, g0, g1);
+    tailSerialInUse = tail.oldestSerialInUse();
+    erClock += (uint32_t) n;
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,6 +1371,23 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     order = juce::jlimit (0, kMaxOrder, p.outputMode);
     usedChannels = juce::jmin (out.getNumChannels(), order == 0 ? 2 : (order + 1) * (order + 1));
     distAmountNow = p.distAmount;
+    consoleAzNow = p.consoleAz; consoleElNow = p.consoleEl;
+    if (roomOnNow && ! p.room.on)
+    {
+        // room switched off: reflections stop
+        for (auto& v : voices) v.erSlot = -1;
+        for (auto& nv : noise) nv.erSlot = -1;
+        for (auto& s : erSlots) s.active = false;
+    }
+    roomOnNow = p.room.on && ! erSlots.empty();
+    if (roomOnNow)
+        for (size_t si = 0; si < erSlots.size(); ++si)
+            if (erSlots[si].active)
+            {
+                // this chunk's part of the ring is rewritten by the owner (or stays silent while ringing out)
+                float* ring = erRing.data() + si * (size_t) kErRing;
+                for (int i = 0; i < numSamples; ++i) ring[(erClock + (uint32_t) i) & (kErRing - 1)] = 0.0f;
+            }
     keySource = p.tuning.source;
     roomFollowNow = p.roomFollow;
     roomBaseAzNow = p.roomBaseAz;
@@ -1320,6 +1523,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     }
 
     renderEchoes (out, numSamples, p);
+    renderRoom (out, numSamples, p);
 
     // ---- master gain (smoothed) + meters
     const float step = (p.masterGain - masterSmoothed) / (float) numSamples;

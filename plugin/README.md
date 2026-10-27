@@ -94,7 +94,7 @@ the order, the HRTF or the sample rate changes. The built-in HRTF is the **FABIA
 torso simulator of the TU Berlin (2000 of the 11 950 measured directions). Latency of the
 binaural decoder: 128 samples.
 
-## 3. The five pages
+## 3. The six pages
 
 **Top bar, next to the patches:**
 - *Tastatur*: play with the computer keyboard. `A W S E D F T G Z H U J K O L P` = C up to
@@ -159,6 +159,48 @@ outside the circle = below the horizon). Select a stop on the right, then
   - *Direkt* and *Hall* set the dry and room levels, *x* removes the IR. The IR is resampled to
     the project rate and normalised automatically; changing these settings or the output format
     rebuilds the room in the background (~½ s).
+
+**Saal** – a simulated room instead of the impulse response, made to be played. *Saal an*
+switches it on (the IR on the Raum page pauses meanwhile and comes back when it is off).
+- How it works:
+  - *Early reflections*, per sound: every sounding pipe (and every click / own sound) gets its own
+    mirror-image sources in the shoebox room, up to the 1st, 2nd or 3rd order (6, 24 or 62
+    reflections), each from its own direction, with its own delay, wall and air damping. Pipes
+    that move get their reflections moving with them, with their own Doppler shift. The first
+    reflections are encoded at up to 3rd order, the later ones at 1st order (cheaper, and they
+    are diffuse anyway).
+  - *Late reverb*: the way room-acoustics software (e.g. RAVEN) does it. **Ray tracing**
+    (4000 rays with specular and diffuse reflections and air absorption) gives the room's decay
+    in two bands; from it a dense noise response is synthesised – one independent noise per
+    Ambisonics channel with the energy of a diffuse field (up to 2nd order; stereo: two) – and
+    convolved with the organ. A noise response has no modes, so nothing rings (an earlier
+    version used a feedback delay network, whose modes rang audibly). Ray tracing matters when
+    the absorption is uneven or the room is not diffuse: a corridor with hard walls rings far
+    longer than Eyring's formula says. The tail's level follows the room's critical distance
+    (big, damped rooms are drier, small hard ones wetter).
+  - When the room changes – also while it is modulated – a new response is built in the
+    background (about four times a second while it keeps changing) and crossfaded in. The
+    convolution keeps the input history apart from the response, so the reverb that is already
+    sounding simply turns into the new room's, without a gap; the noise is the same for every
+    rebuild, so held tones do not jump. The tail follows the room ~¼–½ s late, the early
+    reflections immediately. Responses are at most 6 s long.
+- The plan shows the room from above, the pipes of the pulled stops inside it (pipes outside
+  the walls are pushed in), the listener (drag it), the four mirrored rooms and, in red, the
+  reflections of the last pipe you played: its mirror images and the paths over the walls.
+- *Maße*: width, length, height and *Größe* (scales all three – the easiest knob to modulate).
+  Room buttons: Kapelle, Dorfkirche, Kathedrale, Flur (flutter echo), Würfel (a small, almost
+  lossless box that rings like an instrument), Halle.
+- *Oberflächen*: absorption of the walls and of floor/ceiling, extra damping of the highs,
+  *Streuung* (how much is reflected diffusely: less in the reflections, more in the tail).
+  Material buttons set them: Stein, Putz, Holz, Glas, Vorhang, Spiegel (nothing is absorbed –
+  an impossible room).
+- *Hörer · Pegel*: where you stand (also by dragging in the plan), level of the early
+  reflections and of the tail.
+- Everything is a modulation target ("Saal" in the list): an LFO on *Größe* makes the room
+  breathe, envelopes can shrink it while a chord is held, LFOs on the listener let you walk
+  through it. Patches 49–55 show some of this.
+- CPU: reflections up to 2nd order are the sensible default; 3rd order with many pipes is heavy.
+  Up to 48 sounds get their own reflections at a time (all of them still reach the tail).
 
 **Klang**
 - *Stimmung*: besides the historical temperaments below there are exotic tunings. Twelve notes
@@ -299,7 +341,9 @@ plugin/
     Binaural.*          HRTF sets (built-in FABIAN, SOFA via libmysofa), MagLS design, binaural decoder
     SofaGunzip.cpp      zlib inflate for libmysofa (JUCE's zlib)
     Modulation.h        LFOs, envelopes, routing definitions
-    PluginEditor.*, ConsoleView.*, SpaceView.*, KlangView.*, EffectsView.*, ModView.*, Theme.h   interface
+    RoomSim.h           simulated room: image sources, Eyring, ray tracer
+    RoomTail.*          late reverb of the simulated room: synthesised responses, partitioned convolution
+    PluginEditor.*, ConsoleView.*, SpaceView.*, SaalView.*, KlangView.*, EffectsView.*, ModView.*, Theme.h   interface
   Resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
   ThirdParty/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
   tools/make_fabian.py  rebuilds Resources/fabian_hrir.bin from the FABIAN SOFA file

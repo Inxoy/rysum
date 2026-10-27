@@ -5,6 +5,8 @@
 #include "Spatial.h"
 #include "Degrade.h"
 #include "Modulation.h"
+#include "RoomSim.h"
+#include "RoomTail.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 #include <memory>
@@ -84,6 +86,9 @@ struct EngineParams
 
     FxParams fx;
 
+    // simulated room ("Saal"): early reflections per pipe + late reverb
+    RoomParams room;
+
     // room sends: circular harmonics of every pipe's direction (see Convolver)
     int   roomHarmonics = 0;          // 0 = only the plain sum
     bool  roomFollow = true;          // the room's early reflections turn with each pipe
@@ -124,6 +129,17 @@ public:
     std::atomic<uint64_t> heldMask { 0 };          // bit k = physical key k held
     std::atomic<int>      activeVoices { 0 }, frozenVoices { 0 };
     std::atomic<float>    meterL { 0.0f }, meterR { 0.0f };
+    // simulated room as heard right now (with modulation), for the Saal page
+    std::atomic<float> roomW { 14.0f }, roomL { 28.0f }, roomH { 11.0f }, roomLx { 0.5f }, roomLy { 0.4f },
+                       roomRtLow { 0.0f }, roomRtHigh { 0.0f }, roomCritDist { 0.0f };
+    std::atomic<int>   lastStruckStop { -1 }, lastStruckKey { -1 }, erActive { 0 };
+    // ...and the rest of it, for building the late reverb (processor, message thread)
+    std::atomic<float> roomAbsW { 0.0f }, roomAbsF { 0.0f }, roomHighD { 0.0f }, roomScat { 0.0f }, roomAir { 0.5f };
+    std::atomic<int>   roomOutOrder { 0 };
+    std::atomic<bool>  roomOn { false };
+    std::atomic<uint32_t> tailSerialInUse { 0xffffffffu };
+    /** audio thread: the late reverb for the current room (built in the background) */
+    void setTailIR (std::shared_ptr<const TailIR> ir) noexcept { tail.setIR (std::move (ir)); }
     std::array<std::atomic<uint64_t>, kNumStops> soundingMask {};   // bit k = pipe k of that stop sounds
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
@@ -194,6 +210,10 @@ private:
         // upper partials elsewhere
         float partLp = 0.0f, partSide = 1.0f;
         std::array<float, kMaxAmbiChannels> gh0 {}, gh1 {};
+        // simulated room
+        int erSlot = -1;
+        float erBase = 0.0f;
+        Pos erPos;
         // freeze
         bool frozen = false;
         float freezeMix = 0.0f;
@@ -215,6 +235,22 @@ private:
         Pos where;                            // direction / distance
         float azVel = 0.0f;                   // deg per second, 0 = still
         std::array<float, kMaxRoomSends> sendW {};   // room-send weights (direction harmonics)
+        int erSlot = -1;                      // simulated room: early reflections
+    };
+
+    // ---- simulated room ----
+    static constexpr int kErSlots = 48;                  // sounds with their own early reflections at once
+    static constexpr int kErRingBits = 16, kErRing = 1 << kErRingBits;
+    static constexpr int kMaxTaps = 62;                  // image sources up to 3rd order
+    static constexpr int kErCh = 16;                     // reflections are encoded up to 3rd order
+    struct ErTap { float d0 = 0, d1 = 0, g0 = 0, g1 = 0, r0 = 1, r1 = 1, lp = 0; int ch = 4; std::array<float, kErCh> enc {}; };
+    struct ErSlot
+    {
+        bool active = false, fresh = true;
+        int voice = -1, noiseVoice = -1;      // owner (or both -1: the owner is gone, the reflections ring out)
+        int drain = 0;
+        int numTaps = 0;
+        std::array<ErTap, kMaxTaps> taps {};
     };
 
     struct Scheduled
@@ -252,6 +288,10 @@ private:
     void trackerPath (int key, float velocity, const EngineParams& p);
     void placedGains (NoiseVoice& nv) noexcept;
     void renderLeaks (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
+    void renderRoom (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
+    int  allocSlot (int voice, int noiseVoice) noexcept;
+    void releaseSlot (int& slot) noexcept;
+    void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p) noexcept;
     void renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
     const std::vector<NoiseSample>& customPool() const noexcept;
     static float clickCurve (float v) noexcept { return 0.04f + 0.96f * v * std::sqrt (v); }          // velocity -> level
@@ -316,6 +356,16 @@ private:
     float roomBaseAzNow = 0.0f;
     const std::vector<NoiseSample> noSounds;
     int lastCustom = -1;
+
+    // simulated room
+    TailConvolver tail;                              // late reverb (ray-traced, synthesised, convolved)
+    float tailGain = 0.0f;
+    bool tailWasOn = false;
+    std::vector<ErSlot> erSlots;
+    std::vector<float> erRing;                       // [slot][kErRing]
+    uint32_t erClock = 0;
+    bool roomOnNow = false;
+    float consoleAzNow = 0.0f, consoleElNow = -10.0f;
 
     // wind + tremulant (shared by all pipes: one wind chest)
     double windPos = 0.0;

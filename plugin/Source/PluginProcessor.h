@@ -4,6 +4,7 @@
 #include "Convolver.h"
 #include "Binaural.h"
 #include <map>
+#include <deque>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -110,6 +111,7 @@ public:
     /** own HRTF set (SOFA); an empty File = the built-in FABIAN */
     void setSofaFile (const juce::File& f);
     juce::File getSofaFile() const { return sofaFile; }
+    juce::String getRoomStatus() const { const juce::ScopedLock sl (statusLock); return roomStatus; }
     juce::String getBinauralStatus() const { const juce::ScopedLock sl (statusLock); return binStatus; }
     bool binauralReady() const { return binUi != nullptr; }
 
@@ -151,7 +153,21 @@ private:
         std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
         std::array<int, rysum::kNumRoutes> modAmt {};
         std::array<int, 32> fx {};
+        std::array<int, 16> sim {};
     } ix;
+    enum SimIndex { simOn, simW, simL, simH, simSize, simLx, simLy, simAbs, simAbsFloor, simHigh, simScatter, simOrder, simEr, simTail, kNumSim };
+    static constexpr const char* kSimIds[kNumSim] { "simOn", "simW", "simL", "simH", "simSize", "simLx", "simLy", "simAbs", "simAbsFloor",
+                                                    "simHigh", "simScatter", "simOrder", "simEr", "simTail" };
+    // late reverb of the simulated room: built in the background from the room as heard
+    juce::String builtTailKey, roomStatus;
+    bool tailBuilding = false;
+    uint32_t tailSerial = 0;
+    std::deque<std::shared_ptr<const rysum::TailIR>> tailKeepAlive;     // message thread owns the last references
+    std::shared_ptr<const rysum::TailIR> pendingTail;                  // handed to the audio thread
+    rysum::RoomParams heardRoom() const;
+    juce::String roomKey() const;
+    void buildTailNow (const juce::String& key);
+    void setRoomStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); roomStatus = s; }
     enum FxIndex
     {
         fxCustLevel, fxCustDown, fxCustUp, fxCustPlace, fxCustPitch, fxCustScatter, fxCustWander,

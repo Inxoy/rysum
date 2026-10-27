@@ -51,8 +51,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "master", 1 }, u8 ("Lautst\xc3\xa4rke"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f), -12.0f,
                                                   AudioParameterFloatAttributes().withLabel ("dB")));
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "output", 1 }, "Ausgabe",
-                                                   StringArray { "Stereo", "AmbiX 1. Ordnung", "AmbiX 2. Ordnung", "AmbiX 3. Ordnung", "AmbiX 4. Ordnung", "AmbiX 5. Ordnung",
-                                                                 "Binaural" }, 0));
+                                                   StringArray { "Stereo", "AmbiX 1", "AmbiX 2", "AmbiX 3", "AmbiX 4", "AmbiX 5", "Binaural" }, 0));
     // binaural: Ambisonics of this order, decoded with HRTFs (FABIAN or an own SOFA file)
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "binOrder", 1 }, "Binaural-Ordnung",
                                                    StringArray { "1. Ordnung", "2. Ordnung", "3. Ordnung", "4. Ordnung", "5. Ordnung" }, 2));
@@ -216,6 +215,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     F ("fxEchoTurn",    "Echo Drehung",                        NormalisableRange<float> (-180, 180, 0.1f), 90.0f, sdeg);
     F ("fxEchoTilt",    "Echo Neigung",                        NormalisableRange<float> (-45, 45, 0.1f), 0.0f, sdeg);
     F ("fxEchoDamp",    "Echo D" + ae + "mpfung",              NormalisableRange<float> (0, 1), 0.3f, pct);
+
+    // ---- simulated room ("Saal"): off by default
+    auto metres = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, v < 10.0f ? 1 : 0) + " m"; });
+    auto dbOff = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= -59.9f ? String ("aus") : (v > 0 ? "+" : "") + String (v, 1) + " dB"; });
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "simOn", 1 }, "Saal-Simulation", false));
+    F ("simW",       "Saal Breite",                 NormalisableRange<float> (2.0f, 40.0f, 0.01f, 0.6f), 14.0f, metres);
+    F ("simL",       ("Saal L" + ae + "nge"),        NormalisableRange<float> (2.0f, 100.0f, 0.01f, 0.5f), 28.0f, metres);
+    F ("simH",       ("Saal H" + oe + "he"),         NormalisableRange<float> (2.0f, 40.0f, 0.01f, 0.6f), 11.0f, metres);
+    F ("simSize",    ("Saal Gr" + oe + String::fromUTF8 ("\xc3\x9f") + "e"), NormalisableRange<float> (0.25f, 3.0f, 0.001f, 0.5f), 1.0f, times);
+    F ("simLx",      ("Saal H" + oe + "rer quer"),   NormalisableRange<float> (0, 1), 0.5f, pct);
+    F ("simLy",      ("Saal H" + oe + "rer l" + ae + "ngs"), NormalisableRange<float> (0, 1), 0.4f, pct);
+    F ("simAbs",     ("Saal Absorption W" + ae + "nde"), NormalisableRange<float> (0, 1, 0.001f, 0.5f), 0.06f, pct);
+    F ("simAbsFloor", "Saal Absorption Boden/Decke", NormalisableRange<float> (0, 1, 0.001f, 0.5f), 0.2f, pct);
+    F ("simHigh",    ("Saal H" + oe + "hend" + ae + "mpfung"), NormalisableRange<float> (0, 1), 0.15f, pct);
+    F ("simScatter", "Saal Streuung",               NormalisableRange<float> (0, 1), 0.3f, pct);
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "simOrder", 1 }, "Saal Reflexionen",
+                                                   StringArray { "bis 1. Ordnung", "bis 2. Ordnung", "bis 3. Ordnung" }, 1));
+    F ("simEr",      ("Saal fr" + ue + "he Reflexionen"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), 0.0f, dbOff);
+    F ("simTail",    "Saal Nachhall",               NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), 0.0f, dbOff);
     return l;
 }
 
@@ -319,6 +337,7 @@ RysumProcessor::RysumProcessor()
     }
     for (int r = 0; r < kNumRoutes; ++r) { ix.modAmt[(size_t) r] = I ("mod" + juce::String (r + 1) + "Amt"); routeSrc[(size_t) r] = -1; routeTgt[(size_t) r] = -1; }
     for (int k = 0; k < kNumFx; ++k) ix.fx[(size_t) k] = I (kFxIds[k]);
+    for (int k = 0; k < kNumSim; ++k) ix.sim[(size_t) k] = I (kSimIds[k]);
     engine.setModHook (this);
 
     startTimer (250);   // first tick: find + load the samples (after a possible setStateInformation)
@@ -434,6 +453,16 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     f.echoLevel = X (fxEchoLevel); f.echoTime = X (fxEchoTime); f.echoSync = X (fxEchoSync) > 0.5f;
     f.echoDiv = juce::roundToInt (X (fxEchoDiv)); f.echoRepeats = juce::roundToInt (X (fxEchoRepeats));
     f.echoFeedback = X (fxEchoFeedback); f.echoTurn = X (fxEchoTurn); f.echoTilt = X (fxEchoTilt); f.echoDamp = X (fxEchoDamp);
+
+    auto S = [&] (int k) { return V (ix.sim[(size_t) k]); };
+    auto& r = p.room;
+    r.on = S (simOn) > 0.5f;
+    r.width = S (simW); r.length = S (simL); r.height = S (simH); r.size = S (simSize);
+    r.listenerX = S (simLx); r.listenerY = S (simLy);
+    r.absWalls = S (simAbs); r.absFloor = S (simAbsFloor); r.highDamp = S (simHigh); r.scatter = S (simScatter);
+    r.order = 1 + juce::roundToInt (S (simOrder));
+    r.erGain = S (simEr) <= -59.9f ? 0.0f : dbToGain (S (simEr));
+    r.tailGain = S (simTail) <= -59.9f ? 0.0f : dbToGain (S (simTail));
     return p;
 }
 
@@ -589,9 +618,11 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
     // room: take a new impulse response before the engine runs (the sends depend on it)
     if (irClearRequest.exchange (false)) irActive.reset();          // still referenced by retiredIr
+    if (auto t = std::atomic_exchange (&pendingTail, std::shared_ptr<const rysum::TailIR>()))
+        engine.setTailIR (std::move (t));                         // still referenced by tailKeepAlive
     if (auto pending = std::atomic_exchange (&pendingIr, std::shared_ptr<rysum::Convolver>()))
         irActive = std::move (pending);
-    if (irActive != nullptr)
+    if (irActive != nullptr && ! params.room.on)
     {
         params.roomHarmonics = irActive->getInfo().harmonics;
         params.roomFollow = irFollowParam->load() > 0.5f;
@@ -622,7 +653,7 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     const float dryTarget = dryDb <= -59.9f ? 0.0f : dbToGain (dryDb);
     const float wetTarget = wetDb <= -59.9f ? 0.0f : dbToGain (wetDb);
 
-    if (irActive != nullptr && used > 0)
+    if (irActive != nullptr && used > 0 && ! params.room.on)       // a simulated room replaces the impulse response
     {
         // sends to the room (sum + direction harmonics, far pipes relatively louder); wet level ramped here
         const int numIn = irActive->getInfo().numInputs;
@@ -768,6 +799,55 @@ void RysumProcessor::applyLatch (juce::MidiBuffer& midi, int numSamples)
     for (auto b : latched) count += b ? 1 : 0;
     latchedCount = count;
     sampleClock += numSamples;
+}
+
+// ---------------------------------------------------------------------------
+// simulated room: ray tracing (message thread starts it, the pool thread runs it)
+// ---------------------------------------------------------------------------
+rysum::RoomParams RysumProcessor::heardRoom() const
+{
+    rysum::RoomParams r;
+    r.on = engine.roomOn.load();
+    r.width = engine.roomW.load(); r.length = engine.roomL.load(); r.height = engine.roomH.load(); r.size = 1.0f;
+    r.absWalls = engine.roomAbsW.load(); r.absFloor = engine.roomAbsF.load(); r.highDamp = engine.roomHighD.load(); r.scatter = engine.roomScat.load();
+    return r;
+}
+
+juce::String RysumProcessor::roomKey() const
+{
+    // rounded so that tiny modulation steps do not rebuild all the time (1.5 % in size, 0.004 in absorption)
+    const auto r = heardRoom();
+    auto q = [] (float v, float step) { return juce::String (juce::roundToInt (v / step)); };
+    auto ql = [] (float v) { return juce::String (juce::roundToInt (std::log (juce::jmax (0.1f, v)) / 0.015f)); };
+    return ql (r.W()) + "|" + ql (r.L()) + "|" + ql (r.H()) + "|" + q (r.absWalls, 0.004f) + "|" + q (r.absFloor, 0.004f) + "|"
+         + q (r.highDamp, 0.01f) + "|" + q (r.scatter, 0.02f) + "|" + q (engine.roomAir.load(), 0.02f) + "|"
+         + juce::String (juce::jmin (2, engine.roomOutOrder.load())) + "|" + juce::String (hostRate.load(), 0);
+}
+
+void RysumProcessor::buildTailNow (const juce::String& key)
+{
+    builtTailKey = key;
+    tailBuilding = true;
+    const auto r = heardRoom();
+    const float air = engine.roomAir.load();
+    const int ord = engine.roomOutOrder.load();
+    const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    const uint32_t serial = ++tailSerial;
+    irPool.addJob ([this, r, air, ord, rate, serial, alive = aliveFlag]
+    {
+        auto ir = rysum::TailIR::build (r, air, ord, rate, serial);
+        juce::MessageManager::callAsync ([this, ir, alive]
+        {
+            if (! alive->load()) return;
+            tailBuilding = false;
+            tailKeepAlive.push_back (ir);                 // the engine's copies are never the last ones
+            std::atomic_store (&pendingTail, ir);
+            setRoomStatus ("Nachhall: " + juce::String (ir->rays) + juce::String::fromUTF8 (" Strahlen \xc2\xb7 T30 ")
+                           + juce::String (ir->rtLow, 2) + " s tief / " + juce::String (ir->rtHigh, 2) + juce::String::fromUTF8 (" s hoch \xc2\xb7 Antwort ")
+                           + juce::String ((double) ir->length / ir->sampleRate, 1) + " s, " + (ir->order == 0 ? juce::String ("Stereo") : juce::String (ir->order) + ". Ordnung")
+                           + ", " + juce::String (ir->channels) + " dekorrelierte Kan\xc3\xa4le");
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -923,6 +1003,18 @@ void RysumProcessor::timerCallback()
         if (irFile.existsAsFile()) loadIr (irFile);
     }
     if (retireCountdown > 0 && --retireCountdown == 0) { retiredLibrary.reset(); retiredIr.reset(); retiredBin.reset(); }
+    // simulated room: (re)build the late reverb whenever the room as heard has changed (also while it is
+    // modulated: then about four times a second, each new response crossfaded in by the engine)
+    if (autoLoadDone && engine.roomOn.load())
+    {
+        const auto key = roomKey();
+        if (key != builtTailKey && ! tailBuilding) buildTailNow (key);
+    }
+    {
+        // responses the engine no longer uses are freed here, not on the audio thread
+        const uint32_t inUse = engine.tailSerialInUse.load();
+        while (tailKeepAlive.size() > 1 && tailKeepAlive.front()->serial < inUse) tailKeepAlive.pop_front();
+    }
     // binaural: (re)design the decoder when the mode is on and its settings changed (~0.5 s debounce)
     if (autoLoadDone && isBinaural())
     {
@@ -1204,7 +1296,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 4;
+    constexpr int kFactoryVersion = 6;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -1434,6 +1526,34 @@ void RysumProcessor::writeFactoryPatches()
           { { "stop3", 1 }, { "motionSync", 1 }, { "fxPathLevel", 0.8f }, { "fxPathTicks", 16 }, { "fxPathSpread", 90.0f }, { "fxPathTime", 0.5f },
             { "fxCustLevel", 0.6f }, { "fxCustPlace", 2 }, { "fxCustPitch", 1.0f }, { "fxCustUp", 1.0f },
             { "fxEchoLevel", 0.6f }, { "fxEchoSync", 1 }, { "fxEchoDiv", 6 }, { "fxEchoTurn", 30.0f }, { "fxEchoRepeats", 8 }, { "fxEchoFeedback", 0.9f } }, {});
+
+    // ---- the simulated, playable room ("Saal"); set 6 = the same patches with levels for the convolution tail
+    currentSet = 6;
+    make ("49 Atmender Saal",
+          { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "simOn", 1 }, { "simW", 12.0f }, { "simL", 28.0f }, { "simH", 11.0f },
+            { "lfo1Rate", 0.06f } },
+          { { srcLfo1, "simSize", 0.3f } });
+    make (u8 ("50 Wandernder H\xc3\xb6rer"),
+          { { "stop1", 1 }, { "stop3", 1 }, { "simOn", 1 }, { "simW", 20.0f }, { "simL", 40.0f }, { "simH", 12.0f }, { "simAbs", 0.04f },
+            { "lfo2Rate", 0.05f }, { "lfo3Rate", 0.031f }, { "lfo3Shape", (float) shTriangle } },
+          { { srcLfo2, "simLx", 0.45f }, { srcLfo3, "simLy", 0.45f } });
+    make ("51 Spiegelkabinett",
+          { { "stop3", 1 }, { "stop5", 1 }, { "simOn", 1 }, { "simW", 6.0f }, { "simL", 6.0f }, { "simH", 6.0f }, { "simAbs", 0.0f },
+            { "simAbsFloor", 0.0f }, { "simHigh", 0.0f }, { "simScatter", 0.05f }, { "simOrder", 2 }, { "simTail", -8.0f }, { "simEr", -6.0f }, { "click", 0.5f }, { "master", -20.0f } }, {});
+    make ("52 Kathedrale",
+          { { "stop7", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop6", 1 }, { "simOn", 1 }, { "simW", 30.0f }, { "simL", 90.0f }, { "simH", 32.0f },
+            { "simAbs", 0.04f }, { "simAbsFloor", 0.1f }, { "simHigh", 0.25f }, { "simScatter", 0.5f }, { "simLy", 0.3f } }, {});
+    make ("53 Flatterflur",
+          { { "stop6", 1 }, { "click", 0.6f }, { "releaseClick", 0.5f }, { "simOn", 1 }, { "simW", 2.5f }, { "simL", 60.0f }, { "simH", 3.0f },
+            { "simAbs", 0.02f }, { "simAbsFloor", 0.08f }, { "simScatter", 0.02f }, { "simLy", 0.2f }, { "simEr", -3.0f }, { "master", -19.0f } }, {});
+    make ("54 Schrumpfender Raum",
+          { { "stop0", 1 }, { "stop1", 1 }, { "simOn", 1 }, { "simSize", 2.5f }, { "simAbs", 0.03f }, { "master", -18.0f },
+            { "env1Mode", 1 }, { "env1Attack", 8.0f }, { "env1Decay", 1.0f }, { "env1Sustain", 1.0f }, { "env1Release", 4.0f } },
+          { { srcEnv1, "simSize", -0.75f } });
+    make (u8 ("55 Glasw\xc3\xa4nde, Samtboden"),
+          { { "stop2", 1 }, { "stop4", 1 }, { "motion2", 1 }, { "motion4", 1 }, { "rate2", 0.2f }, { "rate4", -0.13f },
+            { "simOn", 1 }, { "simW", 16.0f }, { "simL", 22.0f }, { "simH", 9.0f }, { "simAbs", 0.0f }, { "simAbsFloor", 0.9f },
+            { "simHigh", 0.05f }, { "simScatter", 0.03f }, { "master", -20.0f } }, {});
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

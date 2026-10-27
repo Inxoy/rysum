@@ -4,17 +4,18 @@ using namespace rysum;
 using namespace rysum::ui;
 
 static constexpr int kW = 1120, kH = 720, kHeader = 56;
-static constexpr int kOutX = 914, kOutW = 122;      // output format combo in the header
+static constexpr int kOutX = 942, kOutW = 108;      // output format combo in the header
 
-RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p), fx (p)
+RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p), fx (p), saal (p)
 {
     addAndMakeVisible (console);
     addChildComponent (space);
     addChildComponent (klang);
     addChildComponent (mod);
     addChildComponent (fx);
-    const char* names[] { "Spieltisch", "Raum", "Klang", "Effekte", "Modulation" };
-    for (int i = 0; i < 5; ++i)
+    addChildComponent (saal);
+    const char* names[] { "Spieltisch", "Raum", "Saal", "Klang", "Effekte", "Modulation" };
+    for (int i = 0; i < 6; ++i)
     {
         tabs[(size_t) i].setButtonText (juce::String (names[i]).toUpperCase());
         tabs[(size_t) i].onClick = [this, i] { showView (i); };
@@ -81,10 +82,11 @@ void RysumContent::showView (int v)
     current = v;
     console.setVisible (v == 0);
     space.setVisible (v == 1);
-    klang.setVisible (v == 2);
-    fx.setVisible (v == 3);
-    mod.setVisible (v == 4);
-    for (int i = 0; i < 5; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
+    saal.setVisible (v == 2);
+    klang.setVisible (v == 3);
+    fx.setVisible (v == 4);
+    mod.setVisible (v == 5);
+    for (int i = 0; i < 6; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
     if (proc.computerKeys) grabKeyboardFocus();
 }
 
@@ -96,15 +98,16 @@ void RysumContent::resized()
     klang.setBounds (body);
     mod.setBounds (body);
     fx.setBounds (body);
+    saal.setBounds (body);
     patchPrev.setBounds (150, 14, 20, 28);
     patchName.setBounds (173, 14, 112, 28);
     patchNext.setBounds (288, 14, 20, 28);
     patchSave.setBounds (312, 14, 64, 28);
-    keysButton.setBounds (386, 14, 82, 28);
-    latchButton.setBounds (472, 14, 62, 28);
-    const int tw[] { 88, 50, 54, 68, 88 };
-    int x = 544;
-    for (int i = 0; i < 5; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
+    keysButton.setBounds (384, 14, 76, 28);
+    latchButton.setBounds (464, 14, 58, 28);
+    const int tw[] { 84, 48, 48, 52, 66, 86 };
+    int x = 530;
+    for (int i = 0; i < 6; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
     outputChoice.setBounds (kOutX, 14, kOutW, 28);
 }
 
@@ -183,6 +186,7 @@ void RysumContent::tick()
     if (klang.isVisible()) klang.refresh();
     if (mod.isVisible()) mod.refresh();
     if (fx.isVisible()) fx.refresh();
+    if (saal.isVisible()) saal.refresh();
     if (proc.patchVersion != shownPatchVersion)
     {
         shownPatchVersion = proc.patchVersion;
@@ -333,7 +337,7 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
         auto& self = *safe;
         if (res >= 1 && res <= kNumSources) self.proc.addRoute (res - 1, kGlobalTargetBase + idx, 0.25f);
         else if (res >= 100 && res < 100 + kNumRoutes) self.proc.clearRoute (res - 100);
-        else if (res == 300) self.showView (4);
+        else if (res == 300) self.showView (5);
     });
 }
 

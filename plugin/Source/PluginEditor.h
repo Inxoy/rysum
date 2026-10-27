@@ -7,6 +7,7 @@
 #include "KlangView.h"
 #include "ModView.h"
 #include "EffectsView.h"
+#include "SaalView.h"
 
 /** fixed 1120 x 720 design, scaled as a whole when the window is resized */
 class RysumContent : public juce::Component, public rysum::ui::ModUiAccess
@@ -48,7 +49,8 @@ private:
     rysum::ui::KlangView klang;
     rysum::ui::ModView mod;
     rysum::ui::EffectsView fx;
-    std::array<juce::TextButton, 5> tabs;
+    rysum::ui::SaalView saal;
+    std::array<juce::TextButton, 6> tabs;
     juce::TextButton keysButton { "Tastatur" }, latchButton { "Halten" };
     std::array<int, 18> keyNoteDown {};                 // MIDI note each computer key is playing (-1 = up)
     int keysVelocity = 100;

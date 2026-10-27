@@ -389,6 +389,7 @@ void SpaceView::paint (juce::Graphics& g)
     }
 
     drawSectionTitle (g, motionBox, "Bewegung", u8 ("Tempo negativ = Gegenrichtung"));
-    drawSectionTitle (g, hallBox, u8 ("Hall"), proc.getIrStatus());
+    drawSectionTitle (g, hallBox, u8 ("Hall"), proc.readParams().room.on ? juce::String::fromUTF8 ("pausiert \xe2\x80\x93 der Saal (simuliert) ist an")
+                                                                       : proc.getIrStatus());
 }
 } // namespace rysum::ui
