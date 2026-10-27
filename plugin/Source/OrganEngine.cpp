@@ -37,7 +37,7 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     maxBlock = juce::jmax (1, maxBlockSize);
     scratch.assign ((size_t) maxBlock, 0.0f);
     scratchRamp.assign ((size_t) maxBlock, 0.0f);
-    roomSend.assign ((size_t) maxBlock, 0.0f);
+    for (auto& r : roomSend) r.assign ((size_t) maxBlock, 0.0f);
     gust.assign ((size_t) (maxBlock / 16 + 4), 0.0f);
     trem.assign ((size_t) (maxBlock / 16 + 4), 0.0f);
     chunkMidi.ensureSize (8192);
@@ -117,6 +117,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     const float g = sg * lvl * distanceGain (pos.dist, p.distAmount);
     for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] *= g;
     v.send1 = sg * lvl * distanceGain (pos.dist, p.distAmount * 0.35f);       // the room fades much less with distance
+    v.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
     if (anyMod && pm[tgtSend] != 0.0f) v.send1 *= dbToGain (juce::jlimit (-100.0f, 24.0f, 24.0f * pm[tgtSend]));
 
     // jumps: a ~4 ms glide so the teleport is sudden but does not click
@@ -435,7 +436,6 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
     gustPhase += n * dt * (0.5 + 6.0 * turb);
     tremPhase = std::fmod (tremPhase + n * dt * p.tremRate, 1.0);
 
-    float* send = roomSend.data() + roomOffset + start;
     const float inv = 1.0f / (float) blockLen;
 
     for (auto& v : voices)
@@ -570,10 +570,31 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufRamp, dg, n);
         }
         {
-            const float sa = v.send0 + (v.send1 - v.send0) * (float) start * inv;
-            const float sd = (v.send1 - v.send0) * inv;
-            juce::FloatVectorOperations::addWithMultiply (send, buf, sa, n);
-            if (std::abs (sd) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (send, bufRamp, sd, n);
+            // room sends: plain sum + circular harmonics of the pipe direction (start / end of the slice)
+            const double a0 = juce::degreesToRadians ((double) v.sendAz0), a1 = juce::degreesToRadians ((double) v.sendAz1);
+            const double c0 = std::cos (a0), s0 = std::sin (a0), c1 = std::cos (a1), s1 = std::sin (a1);
+            double cm0 = 1.0, sm0 = 0.0, cm1 = 1.0, sm1 = 0.0;          // cos / sin (m * angle), m = 0
+            for (int k = 0; k < roomSends; ++k)
+            {
+                float w0 = 1.0f, w1 = 1.0f;
+                if (k > 0)
+                {
+                    if (k % 2 == 1)
+                    {
+                        // next m: rotate (cos, sin) by the angle
+                        const double t0 = cm0 * c0 - sm0 * s0; sm0 = sm0 * c0 + cm0 * s0; cm0 = t0;
+                        const double t1 = cm1 * c1 - sm1 * s1; sm1 = sm1 * c1 + cm1 * s1; cm1 = t1;
+                        w0 = (float) cm0; w1 = (float) cm1;
+                    }
+                    else { w0 = (float) sm0; w1 = (float) sm1; }
+                }
+                const float g0 = v.send0 * w0, g1 = v.send1 * w1;
+                const float sa = g0 + (g1 - g0) * (float) start * inv;
+                const float sd = (g1 - g0) * inv;
+                float* dst = roomSend[(size_t) k].data() + roomOffset + start;
+                if (std::abs (sa) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, buf, sa, n);
+                if (std::abs (sd) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, bufRamp, sd, n);
+            }
         }
         if (finished) v.active = false;
     }
@@ -590,7 +611,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             nv.pos += nv.rate;
             for (int c = 0; c < usedChannels; ++c)
                 if (std::abs (nv.g[(size_t) c]) > 1.0e-9f) out.getWritePointer (c)[start + i] += x * nv.g[(size_t) c];
-            send[i] += x * nv.send;
+            for (int k = 0; k < roomSends; ++k)
+                roomSend[(size_t) k][(size_t) (roomOffset + start + i)] += x * nv.send * noiseRoomW[(size_t) k];
         }
     }
 
@@ -728,7 +750,7 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
     juce::ScopedNoDenormals noDenormals;
     const int n = out.getNumSamples();
     if (n <= 0) return;
-    if ((int) roomSend.size() < n) roomSend.assign ((size_t) n, 0.0f);     // safety (prepare() sizes it)
+    for (auto& r : roomSend) if ((int) r.size() < n) r.assign ((size_t) n, 0.0f);     // safety (prepare() sizes them)
 
     // render in short slices: every slice gets fresh positions, so even 10 Hz motion stays smooth
     for (int start = 0; start < n; start += kSubBlock)
@@ -765,7 +787,19 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     {
         scratch.assign ((size_t) numSamples, 0.0f); scratchRamp.assign ((size_t) numSamples, 0.0f);
     }
-    std::fill (roomSend.begin() + roomOffset, roomSend.begin() + roomOffset + numSamples, 0.0f);
+    roomSends = 2 * juce::jlimit (0, kMaxOrder, p.roomHarmonics) + 1;
+    for (int k = 0; k < roomSends; ++k)
+        std::fill (roomSend[(size_t) k].begin() + roomOffset, roomSend[(size_t) k].begin() + roomOffset + numSamples, 0.0f);
+    {
+        // clicks and stop pulls come from the console (or the common direction when not following)
+        const double a = juce::degreesToRadians ((double) (p.roomFollow ? p.consoleAz : p.roomBaseAz));
+        noiseRoomW[0] = 1.0f;
+        for (int m = 1; 2 * m < roomSends; ++m)
+        {
+            noiseRoomW[(size_t) (2 * m - 1)] = (float) std::cos (m * a);
+            noiseRoomW[(size_t) (2 * m)] = (float) std::sin (m * a);
+        }
+    }
     const double blockSeconds = numSamples / sr;
 
     order = juce::jlimit (0, kMaxOrder, p.outputMode);
@@ -827,9 +861,9 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     for (auto& v : voices)
     {
         if (! v.active) continue;
-        if (! v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.modCents0 = v.modCents1; }
+        if (! v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; }
         updateVoiceSpatial (v, p, blockSeconds);
-        if (v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.modCents0 = v.modCents1; v.fresh = false; }
+        if (v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false; }
     }
     auto initFresh = [&] ()
     {
@@ -837,7 +871,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             if (v.active && v.fresh)
             {
                 updateVoiceSpatial (v, p, blockSeconds);
-                v.g0 = v.g1; v.send0 = v.send1; v.modCents0 = v.modCents1; v.fresh = false;
+                v.g0 = v.g1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false;
                 v.dop = v.dopTarget;
             }
     };
@@ -878,8 +912,11 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
         for (int i = 0; i < numSamples; ++i) { g += step; o[i] *= g; }
     }
     {
-        float g = masterSmoothed;
-        for (int i = 0; i < numSamples; ++i) { g += step; roomSend[(size_t) (roomOffset + i)] *= g; }
+        for (int k = 0; k < roomSends; ++k)
+        {
+            float gk = masterSmoothed;
+            for (int i = 0; i < numSamples; ++i) { gk += step; roomSend[(size_t) k][(size_t) (roomOffset + i)] *= gk; }
+        }
     }
     masterSmoothed = p.masterGain;
 

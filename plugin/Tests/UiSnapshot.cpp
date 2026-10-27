@@ -129,6 +129,48 @@ public:
             w->setValueNotifyingHost (0.0f);
         }
 
+        // every factory patch: play a chord through it (with the test room loaded), report the level
+        {
+            std::cout << "factory warnings: " << (proc->factoryWarnings.isEmpty() ? juce::String ("none") : proc->factoryWarnings.joinIntoString ("; ")) << std::endl;
+            proc->loadIr (irFile);
+            for (int w = 0; w < 100 && ! proc->getIrStatus().contains ("AmbiX"); ++w) juce::Thread::sleep (20);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            bool allOk = true;
+            for (auto& f : RysumProcessor::getPatchFiles())
+            {
+                proc->loadPatch (f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+                float peak = 0.0f; double e = 0.0; bool finite = true; long cnt = 0;
+                for (int b = 0; b < 600; ++b)          // 6.4 s
+                {
+                    juce::MidiBuffer mb;
+                    if (b == 5)   for (int m : { 41, 53, 57, 60, 65, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) (b % 2 ? 60 : 110)), 0);
+                    if (b == 420) for (int m : { 41, 53, 57, 60, 65, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                    proc->processBlock (buf, mb);
+                    for (int c = 0; c < 4; ++c)
+                        for (int i = 0; i < 512; ++i)
+                        {
+                            const float v = buf.getSample (c, i);
+                            if (! std::isfinite (v)) finite = false;
+                            peak = std::max (peak, std::abs (v));
+                            if (c == 0) { e += (double) v * v; ++cnt; }
+                        }
+                }
+                juce::MidiBuffer off;
+                for (int m = 36; m < 82; ++m) off.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                proc->processBlock (buf, off);
+                for (int b = 0; b < 300; ++b) { juce::MidiBuffer none; proc->processBlock (buf, none); }   // let tails / freeze die
+                const float rmsDb = juce::Decibels::gainToDecibels ((float) std::sqrt (e / juce::jmax (1L, cnt)));
+                const bool ok = finite && peak > 1.0e-4f;
+                allOk = allOk && ok;
+                std::cout << "  " << f.getFileNameWithoutExtension() << ": peak " << juce::Decibels::gainToDecibels (peak) << " dB, rms W "
+                          << rmsDb << " dB" << (ok ? "" : "  FAIL") << std::endl;
+            }
+            std::cout << "all factory patches play: " << (allOk ? "ok" : "FAIL") << std::endl;
+            // back to a plain state for the rest of the test
+            proc->setRoute (0, -1, -1);
+        }
+
         // modulation: LFO 1 -> global wind (a parameter), LFO 2 -> pipe direction with spread, envelope -> distance
         {
             using namespace rysum;

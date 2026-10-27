@@ -57,6 +57,11 @@ struct EngineParams
 
     // modulation (LFOs, envelopes, routings)
     ModParams mod;
+
+    // room sends: circular harmonics of every pipe's direction (see Convolver)
+    int   roomHarmonics = 0;          // 0 = only the plain sum
+    bool  roomFollow = true;          // the room's early reflections turn with each pipe
+    float roomBaseAz = 0.0f;          // direction used for all pipes when not following
 };
 
 /** called by the engine before every 64-sample slice: lets the processor modulate any parameter.
@@ -81,8 +86,10 @@ public:
     /** renders one block. 'out' is cleared first. MIDI events are handled sample-accurately. */
     void process (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& p);
 
-    /** mono send to the room (impulse response) of the last block: pipes weighted by distance */
-    const float* getRoomSend() const noexcept { return roomSend.data(); }
+    /** sends to the room of the last block: [0] all pipes (weighted by distance), [2m-1] / [2m] the same
+        weighted by cos / sin (m * pipe azimuth) */
+    static constexpr int kMaxRoomSends = 2 * kMaxOrder + 1;
+    const float* getRoomSend (int k = 0) const noexcept { return roomSend[(size_t) k].data(); }
 
     // ---------------- shared with the UI (any thread) ----------------
     std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> baseAz, baseEl, baseDist;
@@ -140,6 +147,7 @@ private:
         uint32_t age = 0;
         std::array<float, kMaxAmbiChannels> g0 {}, g1 {};
         float send0 = 0.0f, send1 = 0.0f;
+        float sendAz0 = 0.0f, sendAz1 = 0.0f;   // direction used for the room sends
         bool fresh = true;
         // degradation
         DegradeState deg;
@@ -223,7 +231,10 @@ private:
     uint32_t ageCounter = 0;
     XorShift rng { 4711 };
     int lastDown = -1, lastUp = -1, lastPull = -1;
-    std::vector<float> scratch, scratchRamp, roomSend;
+    std::vector<float> scratch, scratchRamp;
+    std::array<std::vector<float>, kMaxRoomSends> roomSend;
+    int roomSends = 1;                                  // used this block: 2 * roomHarmonics + 1
+    std::array<float, kMaxRoomSends> noiseRoomW {};     // room weights of the click / pull sounds
 
     // wind + tremulant (shared by all pipes: one wind chest)
     double windPos = 0.0;

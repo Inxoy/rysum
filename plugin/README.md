@@ -107,11 +107,23 @@ outside the circle = below the horizon). Select a stop on the right, then
   from −10 to +10 Hz: negative = the other direction. Changing the speed never resets the
   position, so you can do smooth speed glissandi (also by automation). *Ellipse* squashes
   the path so pipes come closer in front and move away behind (gives Doppler, see Klang).
-- *Hall*: load an impulse response (WAV/AIFF/FLAC, up to 10 s). 4/9/16/25/36 channels are
-  read as AmbiX (ACN/SN3D); for a first-order B-format recording in FuMa order (W X Y Z,
-  e.g. from some older tools) switch on *FuMa*. 2 channels = stereo, 1 = mono. The omni part
-  of the organ is fed into the IR; *Direkt* and *Hall* set the dry and room levels, *x*
-  removes the IR. The IR is resampled to the project rate and normalised automatically.
+- *Hall*: load an impulse response (*IR laden …*: WAV/AIFF/FLAC, up to 10 s). 4/9/16/25/36
+  channels are read as AmbiX (ACN/SN3D); switch on *N3D* for N3D-normalised files, *FuMa* for
+  first-order B-format in FuMa order (W X Y Z). 2 channels = stereo, 1 = mono. Files with other
+  channel counts (e.g. 32 raw Eigenmike capsules) have to be encoded to Ambisonics first.
+  - *folgt Pfeifen*: the IR is turned so that its direct sound and early reflections (first
+    ~80 ms) come from each pipe's own direction – every pipe gets "its" room. Off = the room
+    exactly as measured (early reflections from where the measurement loudspeaker stood).
+  - *Umhüllung*: blends the late tail with an even, decorrelated field from all sides
+    (energy per order like a real diffuse field). This also turns mono / stereo / first-order
+    IRs into an enveloping room up to the *Ord.* chosen.
+  - *Direktschall der IR*: how much of the IR's own direct sound is kept (the dry pipes already
+    are the direct sound; default 20 %).
+  - *Ord.*: highest Ambisonics order of the room (default 3; the pipes stay at full order).
+    Higher orders cost more CPU: a 5th-order room with a long IR is heavy.
+  - *Direkt* and *Hall* set the dry and room levels, *x* removes the IR. The IR is resampled to
+    the project rate and normalised automatically; changing these settings or the output format
+    rebuilds the room in the background (~½ s).
 
 **Klang**
 - *Stimmung*: temperament (¼-comma meantone = the original recording, ⅙-comma,

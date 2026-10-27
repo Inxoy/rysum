@@ -73,6 +73,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "irDry", 1 }, "Direkt", NormalisableRange<float> (-60.0f, 6.0f, 0.1f, 2.0f), 0.0f, dbAttr));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "irWet", 1 }, "Hall",   NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), -6.0f, dbAttr));
     l.add (std::make_unique<AudioParameterBool> (ParameterID { "irFuma", 1 }, "IR FuMa", false));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "irN3D", 1 }, "IR N3D", false));
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "irOrder", 1 }, "Hall-Ordnung",
+                                                   StringArray { "1. Ordnung", "2. Ordnung", "3. Ordnung", "4. Ordnung", "5. Ordnung" }, 2));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "irFollow", 1 }, u8 ("Hall folgt den Pfeifen"), true));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "irEnvelop", 1 }, u8 ("Umh\xc3\xbcllung"), NormalisableRange<float> (0, 1), 0.6f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "irDirect", 1 }, "Direktschall der IR", NormalisableRange<float> (0, 1), 0.2f, pct));
 
     // distance
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "doppler", 1 }, "Doppler", NormalisableRange<float> (0.0f, 4.0f, 0.01f), 1.0f,
@@ -185,6 +191,10 @@ RysumProcessor::RysumProcessor()
     irDry = apvts.getRawParameterValue ("irDry");
     irWet = apvts.getRawParameterValue ("irWet");
     irFumaParam = apvts.getRawParameterValue ("irFuma");
+    irN3DParam = apvts.getRawParameterValue ("irN3D");
+    irFollowParam = apvts.getRawParameterValue ("irFollow");
+    irEnvelopParam = apvts.getRawParameterValue ("irEnvelop");
+    irDirectParam = apvts.getRawParameterValue ("irDirect");
     for (auto* id : { "doppler", "air", "distAmount", "temperament", "pitch", "detune", "tremOn", "tremRate", "tremDepth",
                       "freeze", "freezeSmear", "freezeRelease", "motionSync", "midiCC" })
         extraParams[id] = apvts.getRawParameterValue (id);
@@ -265,7 +275,7 @@ void RysumProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
     keyboardState.reset();
-    irInput.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
+    for (auto& b : irInputs) b.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
     const bool rateChanged = std::abs (sampleRate - hostRate.load()) > 0.5;
     hostRate = sampleRate;
     if (irActive != nullptr) irActive->reset();
@@ -373,6 +383,7 @@ void RysumProcessor::modulate (EngineParams& p, const float* src)
     EngineParams q = readParams (modVals.data());
     applyCcOverrides (q);
     q.bpm = p.bpm; q.ppq = p.ppq; q.playing = p.playing;
+    q.roomHarmonics = p.roomHarmonics; q.roomFollow = p.roomFollow; q.roomBaseAz = p.roomBaseAz;
     p = q;
 }
 
@@ -487,13 +498,21 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             params.playing = pos->getIsPlaying() && pos->getPpqPosition().hasValue();
         }
 
+    // room: take a new impulse response before the engine runs (the sends depend on it)
+    if (irClearRequest.exchange (false)) irActive.reset();          // still referenced by retiredIr
+    if (auto pending = std::atomic_exchange (&pendingIr, std::shared_ptr<rysum::Convolver>()))
+        irActive = std::move (pending);
+    if (irActive != nullptr)
+    {
+        params.roomHarmonics = irActive->getInfo().harmonics;
+        params.roomFollow = irFollowParam->load() > 0.5f;
+        params.roomBaseAz = irActive->getInfo().baseAzDeg;
+    }
+
     engine.process (buffer, midi, params);
     midi.clear();
 
     // ---- room: dry level + convolution with the loaded impulse response
-    if (irClearRequest.exchange (false)) irActive.reset();          // still referenced by retiredIr
-    if (auto pending = std::atomic_exchange (&pendingIr, std::shared_ptr<rysum::Convolver>()))
-        irActive = std::move (pending);
 
     const int n = buffer.getNumSamples();
     const bool stereo = params.outputMode == 0;
@@ -505,16 +524,20 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
     if (irActive != nullptr && used > 0)
     {
-        // mono feed for the room: all pipes, far pipes relatively louder (engine room send); wet level ramped here
-        const float* sendAll = engine.getRoomSend();
-        for (int start = 0; start < n; start += (int) irInput.size())
+        // sends to the room (sum + direction harmonics, far pipes relatively louder); wet level ramped here
+        const int numIn = irActive->getInfo().numInputs;
+        const int chunk = (int) irInputs[0].size();
+        for (int start = 0; start < n; start += chunk)
         {
-            const int m = juce::jmin ((int) irInput.size(), n - start);
-            const float* a = sendAll + start;
-            for (int i = 0; i < m; ++i)
+            const int m = juce::jmin (chunk, n - start);
+            const float* ins[rysum::OrganEngine::kMaxRoomSends] {};
+            for (int k = 0; k < numIn; ++k)
             {
-                const float g = wetSmoothed + (wetTarget - wetSmoothed) * (float) (start + i) / (float) n;
-                irInput[(size_t) i] = a[i] * g;
+                const float* a = engine.getRoomSend (k) + start;
+                float* dst = irInputs[(size_t) k].data();
+                for (int i = 0; i < m; ++i)
+                    dst[i] = a[i] * (wetSmoothed + (wetTarget - wetSmoothed) * (float) (start + i) / (float) n);
+                ins[k] = dst;
             }
             // apply the dry level to this chunk before the wet signal is added
             const float d0 = drySmoothed + (dryTarget - drySmoothed) * (float) start / (float) n;
@@ -522,7 +545,7 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             for (int c = 0; c < used; ++c) buffer.applyGainRamp (c, start, m, d0, d1);
             float* outs[rysum::kMaxOutChannels] {};
             for (int c = 0; c < used; ++c) outs[c] = buffer.getWritePointer (c, start);
-            irActive->process (irInput.data(), m, outs, used, stereo, 1.0f);
+            irActive->process (ins, m, outs, used, 1.0f);
         }
     }
     else if (std::abs (dryTarget - 1.0f) > 1.0e-6f || std::abs (drySmoothed - 1.0f) > 1.0e-6f)
@@ -565,15 +588,13 @@ void RysumProcessor::handleAsyncUpdate()
 void RysumProcessor::loadIr (const juce::File& file)
 {
     irFile = file;
-    const bool fuma = irFumaParam->load() > 0.5f;
-    lastFuma = fuma;
-    const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    const auto settings = currentIrSettings();
+    builtIrKey = irSettingsKey (settings);
     setIrStatus (u8 ("lade ") + file.getFileName() + u8 (" \xe2\x80\xa6"));
-    irPool.addJob ([this, file, fuma, rate, alive = aliveFlag]
+    irPool.addJob ([this, file, settings, alive = aliveFlag]
     {
         juce::String err;
-        std::shared_ptr<rysum::Convolver> cv (rysum::Convolver::create (file, rate, fuma ? rysum::Convolver::Format::FuMa
-                                                                                        : rysum::Convolver::Format::AmbiX, err).release());
+        std::shared_ptr<rysum::Convolver> cv (rysum::Convolver::create (file, settings, err).release());
         juce::MessageManager::callAsync ([this, cv, err, file, alive]
         {
             if (! alive->load() || file != irFile) return;
@@ -656,9 +677,36 @@ void RysumProcessor::timerCallback()
         if (irFile.existsAsFile()) loadIr (irFile);
     }
     if (retireCountdown > 0 && --retireCountdown == 0) { retiredLibrary.reset(); retiredIr.reset(); }
-    const bool fuma = irFumaParam->load() > 0.5f;
-    if (fuma != lastFuma && irFile.existsAsFile()) loadIr (irFile);        // FuMa switched: re-read the IR
-    lastFuma = fuma;
+    // IR settings / output format changed: rebuild the room once the values have settled (~0.5 s)
+    if (irFile.existsAsFile() && autoLoadDone)
+    {
+        const auto key = irSettingsKey (currentIrSettings());
+        if (key != builtIrKey)
+        {
+            if (key != pendingIrKey) { pendingIrKey = key; irKeyTicks = 0; }
+            else if (++irKeyTicks >= 2) { loadIr (irFile); pendingIrKey.clear(); }
+        }
+    }
+}
+
+rysum::Convolver::Settings RysumProcessor::currentIrSettings() const
+{
+    rysum::Convolver::Settings s;
+    s.format = irFumaParam->load() > 0.5f ? rysum::Convolver::Format::FuMa
+             : (irN3DParam->load() > 0.5f ? rysum::Convolver::Format::N3D : rysum::Convolver::Format::AmbiX);
+    const int out = (int) output->load();
+    s.stereoOut = out == 0;
+    s.outOrder = juce::jlimit (1, kMaxOrder, out == 0 ? 1 : juce::jmin (out, 1 + (int) apvts.getRawParameterValue ("irOrder")->load()));
+    s.envelop = irEnvelopParam->load();
+    s.direct = irDirectParam->load();
+    s.hostRate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    return s;
+}
+
+juce::String RysumProcessor::irSettingsKey (const rysum::Convolver::Settings& s)
+{
+    return juce::String ((int) s.format) + "|" + juce::String (s.outOrder) + "|" + juce::String ((int) s.stereoOut) + "|"
+         + juce::String (s.envelop, 2) + "|" + juce::String (s.direct, 2) + "|" + juce::String (s.hostRate, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -824,7 +872,7 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             irFile = irf;
             if (autoLoadDone) loadIr (irf);           // otherwise the first timer tick loads it
         }
-        else if (irf == juce::File() && irFile != juce::File() && autoLoadDone) clearIr();
+        else if (irf == juce::File() && irFile != juce::File() && autoLoadDone && ! forPatch) clearIr();   // patches without IR keep the room
         const juce::File f (forPatch ? juce::File() : juce::File (extra["samplesFolder"].toString()));
         if (f != juce::File() && f != samplesFolder && SampleLibrary::looksLikeSampleFolder (f))
         {
@@ -886,14 +934,23 @@ void RysumProcessor::writeFactoryPatches()
 {
     auto folder = getPatchFolder();
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
-    constexpr int kFactoryVersion = 2;
+    // each patch belongs to a set; only sets newer than the last one written are added
+    // (deleted patches stay deleted, edited ones are not overwritten)
+    constexpr int kFactoryVersion = 3;
     const auto marker = folder.getChildFile (".factory_written");
-    if (marker.existsAsFile() && marker.loadFileAsString().trim().getIntValue() >= kFactoryVersion) return;
+    const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
+    if (written >= kFactoryVersion) return;
+    int currentSet = 1;
     if (! folder.createDirectory()) return;
 
     struct Route { int src; juce::String tgt; float amt; bool uni = false; };
     auto make = [&] (const juce::String& name, std::vector<std::pair<juce::String, double>> values, std::vector<Route> routesIn)
     {
+        for (auto& kv : values)
+            if (paramIndex.count (kv.first) == 0) factoryWarnings.add (name + ": unknown parameter " + kv.first);
+        for (auto& rt : routesIn)
+            if (targetFromId (rt.tgt) < 0) factoryWarnings.add (name + ": unknown target " + rt.tgt);
+        if (currentSet <= written) return;
         juce::ValueTree state (apvts.state.getType());
         for (auto* prm : prmList)
         {
@@ -905,8 +962,7 @@ void RysumProcessor::writeFactoryPatches()
             state.appendChild (t, nullptr);
         }
         juce::ValueTree extra ("EXTRA"), mod ("MOD");
-        extra.setProperty ("irFile", "", nullptr);
-        extra.setProperty ("patch", name, nullptr);
+        extra.setProperty ("patch", name, nullptr);           // no IR: a factory patch keeps the room you loaded
         for (int r = 0; r < kNumRoutes; ++r)
         {
             const bool used = r < (int) routesIn.size();
@@ -942,6 +998,7 @@ void RysumProcessor::writeFactoryPatches()
             { "freezeSmear", 0.8f } },
           { { srcRandom, pipe (tgtPitch), 0.01f } });
     // ---- set 2
+    currentSet = 2;
     make (u8 ("07 Praestant 16\xe2\x80\xb2 Grund"), { { "stop7", 1 }, { "stop0", 1 }, { "stop1", 1 } }, {});
     make (u8 ("08 Plenum mit 16\xe2\x80\xb2"),
           { { "stop7", 1 }, { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 }, { "stop6", 1 }, { "click", 0.35f } }, {});
@@ -969,13 +1026,95 @@ void RysumProcessor::writeFactoryPatches()
           { { srcLfo2, pipe (tgtLevel), -0.25f, true } });
     make ("16 Glockenausklang",
           { { "stop3", 1 }, { "stop4", 1 }, { "env1Attack", 0.005f }, { "env1Decay", 2.5f }, { "env1Sustain", 0.0f }, { "env1Release", 1.0f } },
-          { { srcEnv1, pipe (tgtLevel), 0.45f }, { srcEnv1, pipe (tgtBright), 0.3f } });
+          { { srcEnv1, pipe (tgtLevel), 0.3f }, { srcEnv1, pipe (tgtBright), 0.3f } });
     make ("17 Atem im Tempo",
           { { "stop0", 1 }, { "stop1", 1 }, { "lfo1Sync", 1 }, { "lfo1Div", 2 }, { "lfo1Shape", (float) shTriangle } },
           { { srcLfo1, "swind0", -0.35f, true }, { srcLfo1, "swind1", -0.35f, true } });
     make ("18 Tiefe Wolke",
           { { "stop7", 1 }, { "stop1", 1 }, { "lfo3Shape", (float) shSmooth }, { "lfo3Rate", 0.3f }, { "lfo3Spread", 1.0f }, { "lfo3SpreadMode", 1 } },
           { { srcRandom, pipe (tgtDist), 0.4f }, { srcLfo3, pipe (tgtAz), 0.3f }, { srcRandom, pipe (tgtEl), 0.25f } });
+
+    // ---- set 3: the room that follows the pipes, unipolar modulation, the 16', and some madness
+    currentSet = 3;
+    // set-2 fix: the bell attack was too hot (+16 dB); rewritten once with +11 dB
+    make ("16 Glockenausklang",
+          { { "stop3", 1 }, { "stop4", 1 }, { "env1Attack", 0.005f }, { "env1Decay", 2.5f }, { "env1Sustain", 0.0f }, { "env1Release", 1.0f } },
+          { { srcEnv1, pipe (tgtLevel), 0.3f }, { srcEnv1, pipe (tgtBright), 0.3f } });
+    make ("19 Raum folgt dem Schwarm",
+          { { "stop7", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "motion7", 1 }, { "motion1", 1 }, { "motion2", 1 },
+            { "rate7", 0.06f }, { "rate1", -0.11f }, { "rate2", 0.17f }, { "ellipse7", 0.3f }, { "ellipse1", 0.3f }, { "ellipse2", 0.3f },
+            { "irFollow", 1 }, { "irEnvelop", 0.8f }, { "irDirect", 0.1f }, { "irWet", 0.0f },
+            { "lfo2Rate", 0.2f }, { "lfo2Spread", 1.0f } },
+          { { srcLfo2, pipe (tgtSend), 0.3f } });
+    make ("20 Kathedrale im Kopf",
+          { { "stop7", 1 }, { "stop1", 1 }, { "irFollow", 0 }, { "irEnvelop", 1.0f }, { "irDirect", 0.0f }, { "irWet", 6.0f }, { "irDry", -18.0f },
+            { "freeze", 1 }, { "freezeSmear", 0.9f }, { "freezeRelease", 8.0f } }, {});
+    make ("21 Zentrifuge",
+          { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop6", 1 }, { "motion0", 1 }, { "motion2", 1 }, { "motion3", 1 }, { "motion6", 1 },
+            { "rate0", 6.0f }, { "rate2", -7.5f }, { "rate3", 9.0f }, { "rate6", -10.0f },
+            { "ellipse0", 0.85f }, { "ellipse2", 0.85f }, { "ellipse3", 0.85f }, { "ellipse6", 0.85f }, { "doppler", 3.0f }, { "air", 1.0f },
+            { "lfo1Shape", (float) shTriangle }, { "lfo1Rate", 0.05f } },
+          { { srcLfo1, "rate0", 0.3f }, { srcLfo1, "rate3", -0.3f } });
+    make ("22 Zerbrochene Stimmung",
+          { { "temperament", 5 }, { "detune", 45.0f }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 },
+            { "lfo3Shape", (float) shSmooth }, { "lfo3Rate", 0.7f }, { "lfo3Spread", 1.0f }, { "lfo3SpreadMode", 1 } },
+          { { srcRandom, pipe (tgtPitch), 0.08f }, { srcLfo3, pipe (tgtPitch), 0.02f } });
+    make ("23 Taubenschwarm",
+          { { "stop3", 1 }, { "stop5", 1 }, { "motion3", 5 }, { "motion5", 5 }, { "rate3", 8.0f }, { "rate5", 10.0f },
+            { "depth3", 180.0f }, { "depth5", 180.0f }, { "doppler", 2.0f }, { "click", 0.6f },
+            { "lfo4Shape", (float) shSmooth }, { "lfo4Rate", 1.3f }, { "lfo4Spread", 1.0f }, { "lfo4SpreadMode", 1 } },
+          { { srcLfo4, pipe (tgtDist), 0.6f } });
+    make ("24 Absturz",
+          { { "stop0", 1 }, { "stop7", 1 }, { "stop6", 1 },
+            { "env1Delay", 0.4f }, { "env1Attack", 6.0f }, { "env1Decay", 1.0f }, { "env1Sustain", 1.0f }, { "env1Release", 0.5f } },
+          { { srcEnv1, pipe (tgtPitch), -1.0f }, { srcEnv1, pipe (tgtBright), -0.4f }, { srcEnv1, "degAmount", 0.6f } });
+    make ("25 Atem-Maschine",
+          { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop4", 1 }, { "motionSync", 1 },
+            { "lfo1Shape", (float) shSquare }, { "lfo1Sync", 1 }, { "lfo1Div", 5 },
+            { "lfo2Shape", (float) shSquare }, { "lfo2Sync", 1 }, { "lfo2Div", 6 } },
+          { { srcLfo1, "swind0", -1.0f, true }, { srcLfo1, "swind1", -1.0f, true },
+            { srcLfo2, "swind2", -1.0f, true }, { srcLfo2, "swind4", -1.0f, true } });
+    make (u8 ("26 16\xe2\x80\xb2 Erdbeben"),
+          { { "stop7", 1 }, { "stop6", 1 }, { "vol7", 4.0f }, { "wind", 0.95f },
+            { "lfo1Rate", 7.0f }, { "lfo1Spread", 1.0f }, { "lfo1SpreadMode", 1 } },
+          { { srcLfo1, pipe (tgtPitch), 0.004f }, { srcLfo1, pipe (tgtLevel), 0.15f } });
+    make ("27 Kirche dreht sich",
+          { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 },
+            { "motion0", 4 }, { "motion1", 4 }, { "motion2", 4 }, { "motion3", 4 },
+            { "rate0", 0.07f }, { "rate1", 0.09f }, { "rate2", 0.11f }, { "rate3", 0.13f },
+            { "irFollow", 1 }, { "irEnvelop", 0.7f }, { "lfo3Rate", 0.1f }, { "lfo3Spread", 1.0f } },
+          { { srcLfo3, pipe (tgtEl), 0.3f } });
+    make ("28 Gefrorener Sturm",
+          { { "stop1", 1 }, { "stop3", 1 }, { "stop5", 1 }, { "freeze", 1 }, { "freezeSmear", 1.0f }, { "freezeRelease", 10.0f },
+            { "wind", 1.0f }, { "motion1", 5 }, { "motion3", 5 }, { "motion5", 5 }, { "rate1", 4.0f }, { "rate3", 4.0f }, { "rate5", 4.0f },
+            { "depth1", 160.0f }, { "depth3", 160.0f }, { "depth5", 160.0f }, { "degAmount", 0.5f }, { "degDropouts", 0.4f } }, {});
+    make ("29 Bitcrush-Liturgie",
+          { { "temperament", 2 }, { "stop0", 1 }, { "stop2", 1 }, { "stop6", 1 },
+            { "degAmount", 0.9f }, { "degBits", 5.0f }, { "degRate", 3000.0f },
+            { "lfo1Shape", (float) shSteps }, { "lfo1Sync", 1 }, { "lfo1Div", 6 },
+            { "lfo2Shape", (float) shSteps }, { "lfo2Sync", 1 }, { "lfo2Div", 5 }, { "lfo2Spread", 1.0f }, { "lfo2SpreadMode", 1 } },
+          { { srcLfo1, "degRate", 0.4f, true }, { srcLfo1, "degBits", 0.3f, true }, { srcLfo2, pipe (tgtAz), 0.5f } });
+    make ("30 Pendel im Takt",
+          { { "stop1", 1 }, { "stop2", 1 }, { "motionSync", 1 }, { "motion1", 2 }, { "motion2", 2 },
+            { "rate1", 0.5f }, { "rate2", 1.0f }, { "depth1", 90.0f }, { "depth2", 90.0f },
+            { "lfo1Shape", (float) shTriangle }, { "lfo1Sync", 1 }, { "lfo1Div", 4 }, { "lfo1Spread", 1.0f } },
+          { { srcLfo1, pipe (tgtBright), 0.4f } });
+    make ("31 Mechanik pur",
+          { { "stop1", 1 }, { "vol1", -14.0f }, { "click", 1.0f }, { "releaseClick", 1.0f }, { "clickBlend", 1.0f },
+            { "stopPull", 1.0f }, { "distAmount", 1.0f } }, {});
+    make ("32 Glissando-Wolke",
+          { { "stop7", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "tremOn", 1 }, { "tremRate", 2.0f }, { "tremDepth", 0.3f },
+            { "irEnvelop", 0.9f }, { "lfo4Shape", (float) shSmooth }, { "lfo4Rate", 0.15f }, { "lfo4Spread", 1.0f }, { "lfo4SpreadMode", 1 } },
+          { { srcLfo4, pipe (tgtPitch), 0.05f }, { srcLfo4, pipe (tgtAz), 0.4f } });
+    make ("33 Ferne Prozession",
+          { { "stop0", 1 }, { "stop7", 1 }, { "stop1", 1 }, { "air", 1.0f }, { "irFollow", 1 }, { "irEnvelop", 0.8f }, { "irDirect", 0.0f },
+            { "env2Mode", 1 }, { "env2Attack", 8.0f }, { "env2Decay", 1.0f }, { "env2Sustain", 1.0f }, { "env2Release", 3.0f } },
+          { { srcEnv2, pipe (tgtDist), 0.7f }, { srcEnv2, pipe (tgtSend), 0.3f } });
+    make ("34 Doppler-Karussell",
+          { { "stop2", 1 }, { "stop3", 1 }, { "motionSync", 1 }, { "motion2", 1 }, { "motion3", 1 }, { "rate2", 2.0f }, { "rate3", -4.0f },
+            { "ellipse2", 0.9f }, { "ellipse3", 0.9f }, { "doppler", 4.0f },
+            { "lfo2Shape", (float) shSquare }, { "lfo2Sync", 1 }, { "lfo2Div", 2 } },
+          { { srcLfo2, "ellipse2", 0.5f, true } });
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

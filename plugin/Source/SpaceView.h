@@ -96,9 +96,12 @@ private:
     std::array<juce::TextButton, 6> layoutButtons;
     std::array<juce::TextButton, 6> motionButtons;
     juce::Slider width, centre, elevation, spread, distance;
-    std::unique_ptr<ParamRow> rateRow, depthRow, ellipseRow, irDry, irWet;
-    juce::TextButton irLoad { juce::String::fromUTF8 ("Impulsantwort laden \xe2\x80\xa6") }, irClear { "x" }, irFuma { "FuMa" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> irFumaAttachment;
+    std::unique_ptr<ParamRow> rateRow, depthRow, ellipseRow, irDry, irWet, irEnvelop, irDirect;
+    juce::ComboBox irOrder;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> irOrderAttachment;
+    juce::TextButton irLoad { juce::String::fromUTF8 ("IR laden \xe2\x80\xa6") }, irClear { "x" }, irFuma { "FuMa" },
+                     irN3D { "N3D" }, irFollow { juce::String::fromUTF8 ("folgt Pfeifen") };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> irFumaAttachment, irN3DAttachment, irFollowAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> left, right, stopsBox, layoutBox, motionBox, hallBox;
     bool updating = false;

@@ -183,8 +183,22 @@ SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected)
     irFuma.setTooltip (juce::String::fromUTF8 ("Nur f\xc3\xbcr 4-Kanal-IRs: B-Format in FuMa-Reihenfolge (W X Y Z) statt AmbiX"));
     irDry = std::make_unique<ParamRow> (proc.apvts, "irDry", "Direkt", true);
     irWet = std::make_unique<ParamRow> (proc.apvts, "irWet", "Hall", true);
-    addAndMakeVisible (*irDry);
-    addAndMakeVisible (*irWet);
+    irEnvelop = std::make_unique<ParamRow> (proc.apvts, "irEnvelop", juce::String::fromUTF8 ("Umh\xc3\xbcllung"), true);
+    irDirect = std::make_unique<ParamRow> (proc.apvts, "irDirect", "Direktschall der IR", true);
+    for (auto* r : { irDry.get(), irWet.get(), irEnvelop.get(), irDirect.get() }) addAndMakeVisible (*r);
+    irEnvelop->slider.setTooltip (juce::String::fromUTF8 ("Nachhall als gleichm\xc3\xa4\xc3\x9figes Feld von allen Seiten (auch f\xc3\xbcr Mono-/Stereo-IRs und bis zur 5. Ordnung)"));
+    irDirect->slider.setTooltip (juce::String::fromUTF8 ("Direktschall in der Impulsantwort \xe2\x80\x93 die Pfeifen selbst sind schon der Direktschall"));
+    for (auto* b : { &irN3D, &irFollow }) { b->setClickingTogglesState (true); addAndMakeVisible (*b); }
+    irOrder.addItemList ({ "Ord. 1", "Ord. 2", "Ord. 3", "Ord. 4", "Ord. 5" }, 1);
+    irOrderAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "irOrder", irOrder);
+    irOrder.setTooltip (juce::String::fromUTF8 ("H\xc3\xb6" "chste Ambisonics-Ordnung des Halls (die Pfeifen selbst bleiben in voller Ordnung). "
+                                               "H\xc3\xb6" "her = genauer, aber mehr Rechenlast."));
+    addAndMakeVisible (irOrder);
+    irLoad.setTooltip (juce::String::fromUTF8 ("Impulsantwort laden: WAV/AIFF/FLAC, Mono, Stereo oder AmbiX 1.\xe2\x80\x93" "5. Ordnung"));
+    irN3DAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "irN3D", irN3D);
+    irFollowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "irFollow", irFollow);
+    irN3D.setTooltip (juce::String::fromUTF8 ("Ambisonics-IR in N3D-Normierung (statt SN3D)"));
+    irFollow.setTooltip (juce::String::fromUTF8 ("Die fr\xc3\xbchen Reflexionen kommen f\xc3\xbcr jede Pfeife aus deren Richtung"));
 
     auto setup = [this] (juce::Slider& s, double lo, double hi, const juce::String& suffix)
     {
@@ -255,17 +269,17 @@ void SpaceView::resized()
     circle.setBounds (left.reduced (20, 34).withTrimmedTop (10));
 
     auto rr = right;
-    stopsBox = rr.removeFromTop (20 + kNumStops * 19);
+    stopsBox = rr.removeFromTop (20 + kNumStops * 18);
     auto sb = stopsBox.withTrimmedTop (20);
     for (int slot = 0; slot < kNumStops; ++slot)
     {
         const int s = kDisplayOrder[(size_t) slot];
-        auto row = sb.removeFromTop (19);
+        auto row = sb.removeFromTop (18);
         pullButtons[(size_t) s]->setBounds (row.removeFromLeft (16));
         row.removeFromLeft (4);
         stopButtons[(size_t) s]->setBounds (row.reduced (0, 1));
     }
-    rr.removeFromTop (8);
+    rr.removeFromTop (5);
 
     layoutBox = rr.removeFromTop (32 + 48 + 5 * 20);
     auto lb = layoutBox.withTrimmedTop (32);
@@ -276,7 +290,7 @@ void SpaceView::resized()
     for (int i = 0; i < 3; ++i) layoutButtons[(size_t) i + 3].setBounds (row2.getX() + i * (bw1 + 4), row2.getY(), bw1, 20);
     for (auto* s : { &width, &centre, &elevation, &spread, &distance })
         s->setBounds (lb.removeFromTop (20).withTrimmedLeft (100).withTrimmedRight (52));
-    rr.removeFromTop (8);
+    rr.removeFromTop (5);
 
     motionBox = rr.removeFromTop (32 + 44 + 4 + 34 + 28);
     auto mb = motionBox.withTrimmedTop (32);
@@ -292,20 +306,29 @@ void SpaceView::resized()
         if (depthRow)   depthRow->setBounds (half.getX(), half.getY(), hw, 26);
         if (ellipseRow) ellipseRow->setBounds (half.getX() + hw + 16, half.getY(), hw, 26);
     }
-    rr.removeFromTop (8);
+    rr.removeFromTop (5);
 
     hallBox = rr;
     auto hb = hallBox.withTrimmedTop (32);
     auto brow = hb.removeFromTop (22);
-    irClear.setBounds (brow.removeFromRight (26));
+    irClear.setBounds (brow.removeFromRight (22));
     brow.removeFromRight (4);
-    irFuma.setBounds (brow.removeFromRight (60));
+    irN3D.setBounds (brow.removeFromRight (40));
+    brow.removeFromRight (4);
+    irFuma.setBounds (brow.removeFromRight (46));
+    brow.removeFromRight (4);
+    irFollow.setBounds (brow.removeFromRight (92));
+    brow.removeFromRight (4);
+    irOrder.setBounds (brow.removeFromRight (78));
     brow.removeFromRight (4);
     irLoad.setBounds (brow);
     hb.removeFromTop (6);
     const int half = (hb.getWidth() - 16) / 2;
     irDry->setBounds (hb.getX(), hb.getY(), half, 26);
     irWet->setBounds (hb.getX() + half + 16, hb.getY(), half, 26);
+    hb.removeFromTop (29);
+    irEnvelop->setBounds (hb.getX(), hb.getY(), half, 26);
+    irDirect->setBounds (hb.getX() + half + 16, hb.getY(), half, 26);
 }
 
 void SpaceView::refresh()
@@ -314,6 +337,8 @@ void SpaceView::refresh()
     for (int i = 0; i < 6; ++i) motionButtons[(size_t) i].setToggleState (i == mode, juce::dontSendNotification);
     irDry->repaint();
     irWet->repaint();
+    irEnvelop->repaint();
+    irDirect->repaint();
     const auto mnames = motionNames();
     for (int s = 0; s < kNumStops; ++s)
     {

@@ -74,6 +74,7 @@ public:
     bool loadPatch (const juce::File& f);
     juce::String getPatchName() const { return patchName; }
     int patchVersion = 0;
+    juce::StringArray factoryWarnings;      // filled while writing the factory patches (tests)
 
     // samples
     void loadSamples (const juce::File& folder);
@@ -153,10 +154,14 @@ private:
     std::shared_ptr<rysum::Convolver> irUi, retiredIr;   // message thread keeps them alive
     std::atomic<bool> irClearRequest { false };
     std::atomic<double> hostRate { 0.0 };
-    std::vector<float> irInput;
+    std::array<std::vector<float>, rysum::OrganEngine::kMaxRoomSends> irInputs;
+    rysum::Convolver::Settings currentIrSettings() const;
+    static juce::String irSettingsKey (const rysum::Convolver::Settings&);
+    juce::String builtIrKey, pendingIrKey;
+    int irKeyTicks = 0;
     float drySmoothed = 1.0f, wetSmoothed = 0.0f;
-    bool lastFuma = false;
-    std::atomic<float> *irDry = nullptr, *irWet = nullptr, *irFumaParam = nullptr;
+    std::atomic<float> *irDry = nullptr, *irWet = nullptr, *irFumaParam = nullptr, *irN3DParam = nullptr,
+                       *irFollowParam = nullptr, *irEnvelopParam = nullptr, *irDirectParam = nullptr;
     std::shared_ptr<std::atomic<bool>> aliveFlag = std::make_shared<std::atomic<bool>> (true);
 
     class Loader;
