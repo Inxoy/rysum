@@ -12,6 +12,30 @@
 
 namespace rysum
 {
+/** the "Effekte" page: sounds and effects that are easy to locate in space */
+struct FxParams
+{
+    // own sounds (samples/noise/eigene), triggered by the keys
+    float custLevel = 0.0f, custDown = 1.0f, custUp = 0.0f, custPitch = 0.0f, custScatter = 0.0f, custWander = 0.0f;
+    int   custPlace = 0;                 // 0 at the pipe, 1 random, 2 console, 3 circling
+    // tracker path: ticks running from the console to the pipe
+    float pathLevel = 0.0f, pathTime = 0.12f, pathSpread = 12.0f;
+    int   pathTicks = 6;
+    bool  pathWait = false;              // pipes speak when the path arrives
+    // crackle at every sounding pipe
+    float crackLevel = 0.0f, crackRate = 6.0f, crackLen = 1.2f;   // Hz per pipe, ms
+    // wind leaks: hissing spots
+    float leakLevel = 0.0f, leakFreq = 4000.0f, leakWander = 0.0f;
+    int   leakCount = 3;
+    bool  windRound = false;             // blower noise from all sides (instead of one omni signal)
+    // upper partials placed away from the pipe
+    float partSpread = 0.0f, partSplit = 3.0f, partTurn = 0.0f;   // deg, x fundamental, Hz
+    // echoes, every repeat from another direction
+    float echoLevel = 0.0f, echoTime = 0.35f, echoFeedback = 0.6f, echoTurn = 90.0f, echoTilt = 0.0f, echoDamp = 0.3f;
+    bool  echoSync = false;
+    int   echoDiv = 4, echoRepeats = 4;
+};
+
 struct EngineParams
 {
     std::array<bool, kNumStops> stopOn {};
@@ -57,6 +81,8 @@ struct EngineParams
 
     // modulation (LFOs, envelopes, routings)
     ModParams mod;
+
+    FxParams fx;
 
     // room sends: circular harmonics of every pipe's direction (see Convolver)
     int   roomHarmonics = 0;          // 0 = only the plain sum
@@ -162,6 +188,12 @@ private:
         std::array<EnvState, kNumEnvs> menv {};
         float keyPos = 0.0f, randMod = 0.0f;
         float modCents0 = 0.0f, modCents1 = 0.0f;
+        // crackle
+        int crkCount = 0;
+        float crkAmp = 0.0f, crkEnv = 1.0f;
+        // upper partials elsewhere
+        float partLp = 0.0f, partSide = 1.0f;
+        std::array<float, kMaxAmbiChannels> gh0 {}, gh1 {};
         // freeze
         bool frozen = false;
         float freezeMix = 0.0f;
@@ -179,6 +211,31 @@ private:
         float gain = 0.0f, send = 0.0f;
         float lp = 0.0f, lpA = 1.0f;          // tone (soft clicks are duller)
         std::array<float, kMaxAmbiChannels> g {};
+        // placed / moving sounds (own sounds, tracker path)
+        Pos where;                            // direction / distance
+        float azVel = 0.0f;                   // deg per second, 0 = still
+        std::array<float, kMaxRoomSends> sendW {};   // room-send weights (direction harmonics)
+    };
+
+    struct Scheduled
+    {
+        int delay = 0;                        // samples
+        bool voice = false;                   // true: start a pipe (stop, key), false: a sound
+        int stop = 0, key = 0;
+        const Sample* sample = nullptr;
+        float gain = 0.0f, tone = 1.0f, azVel = 0.0f, send = 0.0f;
+        double rate = 1.0;
+        Pos pos;
+    };
+
+    struct Leak
+    {
+        Pos pos;
+        float freqMul = 1.0f, dir = 1.0f;
+        float s1 = 0.0f, s2 = 0.0f, amp = 0.0f, ampTarget = 0.5f;
+        int ampCount = 0;
+        XorShift rng { 1 };
+        std::array<float, kMaxAmbiChannels> g0 {}, g1 {};
     };
 
     void handleMidi (const juce::MidiMessage& m, const EngineParams& p);
@@ -189,6 +246,14 @@ private:
     void freezeVoice (Voice& v);
     void releaseStopKey (int stop, int key);
     void playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone = 1.0f);
+    void spawnSound (const Sample& s, float gain, float tone, double rate, Pos pos, float azVel, float send);
+    void schedule (const Scheduled& e);
+    void customSounds (int key, float velocity, const EngineParams& p);
+    void trackerPath (int key, float velocity, const EngineParams& p);
+    void placedGains (NoiseVoice& nv) noexcept;
+    void renderLeaks (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
+    void renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
+    const std::vector<NoiseSample>& customPool() const noexcept;
     static float clickCurve (float v) noexcept { return 0.04f + 0.96f * v * std::sqrt (v); }          // velocity -> level
     float clickTone (float v) const noexcept                                                          // velocity -> one-pole coefficient
     {
@@ -235,6 +300,21 @@ private:
     std::array<std::vector<float>, kMaxRoomSends> roomSend;
     int roomSends = 1;                                  // used this block: 2 * roomHarmonics + 1
     std::array<float, kMaxRoomSends> noiseRoomW {};     // room weights of the click / pull sounds
+
+    // effects
+    std::array<Scheduled, 512> scheduled {};
+    int numScheduled = 0;
+    std::array<Leak, 8> leaks {};
+    std::vector<float> echoBuf, fxScratch;
+    int echoWrite = 0;
+    double echoDelay = -1.0;                          // smoothed delay (samples)
+    std::array<float, 8> echoLp {};
+    double partRot = 0.0;                             // rotation of the upper partials (deg)
+    float distAmountNow = 0.7f, chunkSeconds = 0.0f;
+    bool roomFollowNow = true;
+    float roomBaseAzNow = 0.0f;
+    const std::vector<NoiseSample> noSounds;
+    int lastCustom = -1;
 
     // wind + tremulant (shared by all pipes: one wind chest)
     double windPos = 0.0;

@@ -79,6 +79,11 @@ public:
     // samples
     void loadSamples (const juce::File& folder);
     juce::File getSamplesFolder() const { return samplesFolder; }
+    /** own sounds: <samples>/noise/eigene (empty File when no samples are loaded) */
+    juce::File getCustomFolder() const;
+    int getNumCustomSounds() const;
+    /** re-reads the own sounds folder in the background, keeps everything else */
+    void reloadCustomSounds();
     std::shared_ptr<const rysum::SampleLibrary> getLibrary() const { return std::atomic_load (&uiLibrary); }
     juce::String getLoadStatus() const { const juce::ScopedLock sl (statusLock); return loadStatus; }
     bool isLoading() const { return loading.load(); }
@@ -126,7 +131,26 @@ private:
         std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
         std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
         std::array<int, rysum::kNumRoutes> modAmt {};
+        std::array<int, 32> fx {};
     } ix;
+    enum FxIndex
+    {
+        fxCustLevel, fxCustDown, fxCustUp, fxCustPlace, fxCustPitch, fxCustScatter, fxCustWander,
+        fxPathLevel, fxPathTime, fxPathTicks, fxPathSpread, fxPathWait,
+        fxCrackLevel, fxCrackRate, fxCrackLen,
+        fxLeakLevel, fxLeakCount, fxLeakFreq, fxLeakWander, fxWindRound,
+        fxPartSpread, fxPartSplit, fxPartTurn,
+        fxEchoLevel, fxEchoTime, fxEchoSync, fxEchoDiv, fxEchoRepeats, fxEchoFeedback, fxEchoTurn, fxEchoTilt, fxEchoDamp,
+        kNumFx
+    };
+    static constexpr const char* kFxIds[kNumFx] {
+        "fxCustLevel", "fxCustDown", "fxCustUp", "fxCustPlace", "fxCustPitch", "fxCustScatter", "fxCustWander",
+        "fxPathLevel", "fxPathTime", "fxPathTicks", "fxPathSpread", "fxPathWait",
+        "fxCrackLevel", "fxCrackRate", "fxCrackLen",
+        "fxLeakLevel", "fxLeakCount", "fxLeakFreq", "fxLeakWander", "fxWindRound",
+        "fxPartSpread", "fxPartSplit", "fxPartTurn",
+        "fxEchoLevel", "fxEchoTime", "fxEchoSync", "fxEchoDiv", "fxEchoRepeats", "fxEchoFeedback", "fxEchoTurn", "fxEchoTilt", "fxEchoDamp" };
+    static_assert (kNumFx <= 32);
     std::vector<juce::RangedAudioParameter*> prmList;
     std::vector<std::atomic<float>*> rawList;
     std::vector<char> isFloatParam;

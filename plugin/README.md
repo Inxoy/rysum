@@ -71,7 +71,7 @@ Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.
 The plugin's output bus is declared as 5th-order Ambisonics (36 ch). In stereo
 mode only channels 1/2 carry sound.
 
-## 3. The four pages
+## 3. The five pages
 
 **Every slider:** click its value to type a number (in the units shown: `50` on a % slider
 = 50 %, `300 ms` or `1.5 s`, `440` on the Stimmton = a′ in Hz, `22` on Abtastrate = 22 kHz),
@@ -142,6 +142,32 @@ outside the circle = below the horizon). Select a stop on the right, then
   motion to the host tempo and song position (speeds count as written at 120 BPM; for
   free speed glissandi switch it off).
 
+**Effekte** – sounds that are easy to locate (short, bright, full of transients) and that
+follow the pipes. Everything is off in older patches.
+- *Eigene Geräusche*: your own recordings, played by the keys. Put WAV/AIFF/FLAC files
+  (up to 20 s, up to 64 files) into `samples\noise\eigene` – *Ordner öffnen* creates the folder
+  and opens it, *Neu einlesen* reads it again without reloading the pipes. Each file is trimmed
+  to its first transient and set to the same peak level. With an empty folder the recorded key
+  clicks are used. *Ort*: at a pipe of a pulled stop, anywhere in the room, at the
+  console, or circling. *Beim Anschlag / Loslassen* = probability per key, *Tonhöhe folgt der
+  Taste* = pitch follows the key (100 % = semitones), *Streuung* adds delayed copies at other
+  times and places, *Wandern* lets each sound travel around you (°/s). Velocity sets level and
+  brightness, like the key clicks.
+- *Trakturweg*: small ticks travel from the console to the pipes of the pulled stops (the
+  trackers), *Laufzeit* = travel time, *Schritte* = number of ticks, *Streuung* = how far the path
+  bends. *Pfeifen warten*: the pipe only speaks when the path arrives.
+- *Knistern*: short crackles at every sounding pipe – they move with the pipe, so the ear finds
+  it. *Dichte* per pipe (Hz), *Länge* of a crackle (ms).
+- *Windlecks*: up to eight hissing leaks at fixed places (they can wander). *Gebläse ringsum*:
+  the blower noise (*Wind* on the Spieltisch) comes from all sides instead of one signal.
+- *Obertöne verteilen*: above *Trennung* (× the pipe's fundamental) each pipe's sound is moved
+  sideways (randomly left or right per pipe) – the fundamental stays at the pipe. *Kreisen*
+  turns the upper part around you.
+- *Wandernde Echos*: up to eight repeats of the whole organ, each from the next direction
+  (*Drehung*, *Neigung* per repeat), quieter by *Abnahme* and darker by *Dämpfung*. *Im Tempo*
+  uses a note value instead of *Zeit*. The little circle shows where the repeats come from
+  (top view, front up). Echoes also go into the Hall from their own direction.
+
 **Modulation**
 - *LFO 1–4*: shape (sine, triangle, saw, square, random steps, smooth random), *Tempo*
   0.01–20 Hz or *Sync* to the project tempo (note values), *Versatz je Pfeife* (spread):
@@ -175,7 +201,8 @@ outside the circle = below the horizon). Select a stop on the right, then
 
 Pipes the preprocessing flagged as unusable (Gedackt f and f♯ in the current
 samples) are replaced by the neighbouring pipe, pitch-shifted to the exact
-meantone pitch. Noise samples you delete from `samples\noise` are simply skipped.
+meantone pitch. Noise samples you delete from `samples\noise` are simply skipped. Your own sounds live in
+`samples\noise\eigene` (see Effekte); the preprocessing never touches that folder.
 
 ### Patches
 
@@ -225,7 +252,7 @@ plugin/
     PluginProcessor.*   parameters, state, sample loading
     Convolver.*         impulse-response reverb (stereo / AmbiX)
     Modulation.h        LFOs, envelopes, routing definitions
-    PluginEditor.*, ConsoleView.*, SpaceView.*, KlangView.*, ModView.*, Theme.h   interface
+    PluginEditor.*, ConsoleView.*, SpaceView.*, KlangView.*, EffectsView.*, ModView.*, Theme.h   interface
   Resources/            photos, fonts (OFL), grain texture
   Tests/                offline render test + UI snapshot tool (optional)
 ```

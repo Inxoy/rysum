@@ -156,6 +156,58 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                       NormalisableRange<float> (-1.0f, 1.0f, 0.001f), 0.0f,
                                                       AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
                                                       { return (v > 0.0005f ? "+" : "") + String (roundToInt (v * 100.0f)) + " %"; })));
+
+    // ---- effects (page "Effekte"); all off by default, so older patches sound the same
+    auto deg = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0"); });
+    auto degS = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0/s"); });
+    auto sdeg = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0.5f ? "+" : "") + String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0"); });
+    auto cnt = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)); });
+    auto ms = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, v < 1.0f ? 2 : 1) + " ms"; });
+    auto times = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 1) + String::fromUTF8 (" \xc3\x97"); });
+    auto shz = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return std::abs (v) < 0.0005f ? String ("steht") : (v > 0 ? "+" : "") + String (v, 2) + " Hz"; });
+    auto fhz = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v >= 1000 ? String (v / 1000.0f, 1) + " kHz" : String (roundToInt (v)) + " Hz"; });
+    auto F = [&] (const char* id, const String& name, NormalisableRange<float> r, float def, AudioParameterFloatAttributes a)
+    { l.add (std::make_unique<AudioParameterFloat> (ParameterID { id, 1 }, name, r, def, a)); };
+    const String ae = String::fromUTF8 ("\xc3\xa4"), oe = String::fromUTF8 ("\xc3\xb6"), ue = String::fromUTF8 ("\xc3\xbc");
+
+    F ("fxCustLevel",   "Eigene Ger" + ae + "usche",           NormalisableRange<float> (0, 1), 0.0f, pct);
+    F ("fxCustDown",    "Eigene: beim Anschlag",               NormalisableRange<float> (0, 1), 1.0f, pct);
+    F ("fxCustUp",      "Eigene: beim Loslassen",              NormalisableRange<float> (0, 1), 0.0f, pct);
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "fxCustPlace", 1 }, "Eigene: Ort",
+                                                   StringArray { "an der Pfeife", "irgendwo im Raum", "am Spieltisch", "kreisend" }, 0));
+    F ("fxCustPitch",   "Eigene: Tonh" + oe + "he folgt",      NormalisableRange<float> (0, 1), 0.0f, pct);
+    F ("fxCustScatter", "Eigene: Streuung",                    NormalisableRange<float> (0, 1), 0.0f, pct);
+    F ("fxCustWander",  "Eigene: Wandern",                     NormalisableRange<float> (0, 360, 0.1f, 0.5f), 0.0f, degS);
+
+    F ("fxPathLevel",   "Trakturweg",                          NormalisableRange<float> (0, 1), 0.0f, pct);
+    F ("fxPathTime",    "Trakturweg Laufzeit",                 NormalisableRange<float> (0.01f, 0.6f, 0.001f, 0.5f), 0.12f, secs);
+    F ("fxPathTicks",   "Trakturweg Schritte",                 NormalisableRange<float> (2, 16, 1), 6, cnt);
+    F ("fxPathSpread",  "Trakturweg Streuung",                 NormalisableRange<float> (0, 90, 0.1f), 12.0f, deg);
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "fxPathWait", 1 }, "Pfeifen warten auf die Traktur", false));
+
+    F ("fxCrackLevel",  "Knistern",                            NormalisableRange<float> (0, 1), 0.0f, pct);
+    F ("fxCrackRate",   "Knistern Dichte",                     NormalisableRange<float> (0.2f, 80.0f, 0.01f, 0.4f), 6.0f, hz);
+    F ("fxCrackLen",    "Knistern L" + ae + "nge",             NormalisableRange<float> (0.1f, 8.0f, 0.01f, 0.5f), 1.2f, ms);
+
+    F ("fxLeakLevel",   "Windlecks",                           NormalisableRange<float> (0, 1), 0.0f, pct);
+    F ("fxLeakCount",   "Windlecks Anzahl",                    NormalisableRange<float> (1, 8, 1), 3, cnt);
+    F ("fxLeakFreq",    "Windlecks Tonh" + oe + "he",          NormalisableRange<float> (800.0f, 12000.0f, 1.0f, 0.4f), 4000.0f, fhz);
+    F ("fxLeakWander",  "Windlecks Wandern",                   NormalisableRange<float> (0, 90, 0.1f, 0.6f), 0.0f, degS);
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "fxWindRound", 1 }, "Geb" + ae + "se ringsum", false));
+
+    F ("fxPartSpread",  "Obert" + oe + "ne verteilen",         NormalisableRange<float> (0, 180, 0.1f), 0.0f, deg);
+    F ("fxPartSplit",   "Obert" + oe + "ne ab",                NormalisableRange<float> (1.5f, 12.0f, 0.01f, 0.6f), 3.0f, times);
+    F ("fxPartTurn",    "Obert" + oe + "ne kreisen",           NormalisableRange<float> (-2.0f, 2.0f, 0.001f, 0.4f, true), 0.0f, shz);
+
+    F ("fxEchoLevel",   "Echos",                               NormalisableRange<float> (0, 1), 0.0f, pct);
+    F ("fxEchoTime",    "Echo Zeit",                           NormalisableRange<float> (0.03f, 2.0f, 0.001f, 0.5f), 0.35f, secs);
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "fxEchoSync", 1 }, "Echo im Tempo", false));
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "fxEchoDiv", 1 }, "Echo Notenwert", lfoDivNames(), 4));
+    F ("fxEchoRepeats", "Echo Wiederholungen",                 NormalisableRange<float> (1, 8, 1), 4, cnt);
+    F ("fxEchoFeedback","Echo Abnahme",                        NormalisableRange<float> (0.0f, 0.95f), 0.6f, pct);
+    F ("fxEchoTurn",    "Echo Drehung",                        NormalisableRange<float> (-180, 180, 0.1f), 90.0f, sdeg);
+    F ("fxEchoTilt",    "Echo Neigung",                        NormalisableRange<float> (-45, 45, 0.1f), 0.0f, sdeg);
+    F ("fxEchoDamp",    "Echo D" + ae + "mpfung",              NormalisableRange<float> (0, 1), 0.3f, pct);
     return l;
 }
 
@@ -251,6 +303,7 @@ RysumProcessor::RysumProcessor()
         ix.envDecay[(size_t) j] = I (id + "Decay"); ix.envSustain[(size_t) j] = I (id + "Sustain"); ix.envRelease[(size_t) j] = I (id + "Release");
     }
     for (int r = 0; r < kNumRoutes; ++r) { ix.modAmt[(size_t) r] = I ("mod" + juce::String (r + 1) + "Amt"); routeSrc[(size_t) r] = -1; routeTgt[(size_t) r] = -1; }
+    for (int k = 0; k < kNumFx; ++k) ix.fx[(size_t) k] = I (kFxIds[k]);
     engine.setModHook (this);
 
     startTimer (250);   // first tick: find + load the samples (after a possible setStateInformation)
@@ -347,6 +400,20 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     }
     for (int r = 0; r < kNumRoutes; ++r)
         p.mod.routes[(size_t) r] = { routeSrc[(size_t) r].load(), routeTgt[(size_t) r].load(), V (ix.modAmt[(size_t) r]), routeUni[(size_t) r].load() };
+
+    auto X = [&] (int k) { return V (ix.fx[(size_t) k]); };
+    auto& f = p.fx;
+    f.custLevel = X (fxCustLevel); f.custDown = X (fxCustDown); f.custUp = X (fxCustUp); f.custPlace = juce::roundToInt (X (fxCustPlace));
+    f.custPitch = X (fxCustPitch); f.custScatter = X (fxCustScatter); f.custWander = X (fxCustWander);
+    f.pathLevel = X (fxPathLevel); f.pathTime = X (fxPathTime); f.pathTicks = juce::roundToInt (X (fxPathTicks));
+    f.pathSpread = X (fxPathSpread); f.pathWait = X (fxPathWait) > 0.5f;
+    f.crackLevel = X (fxCrackLevel); f.crackRate = X (fxCrackRate); f.crackLen = X (fxCrackLen);
+    f.leakLevel = X (fxLeakLevel); f.leakCount = juce::roundToInt (X (fxLeakCount)); f.leakFreq = X (fxLeakFreq);
+    f.leakWander = X (fxLeakWander); f.windRound = X (fxWindRound) > 0.5f;
+    f.partSpread = X (fxPartSpread); f.partSplit = X (fxPartSplit); f.partTurn = X (fxPartTurn);
+    f.echoLevel = X (fxEchoLevel); f.echoTime = X (fxEchoTime); f.echoSync = X (fxEchoSync) > 0.5f;
+    f.echoDiv = juce::roundToInt (X (fxEchoDiv)); f.echoRepeats = juce::roundToInt (X (fxEchoRepeats));
+    f.echoFeedback = X (fxEchoFeedback); f.echoTurn = X (fxEchoTurn); f.echoTilt = X (fxEchoTilt); f.echoDamp = X (fxEchoDamp);
     return p;
 }
 
@@ -633,6 +700,34 @@ void RysumProcessor::loadSamples (const juce::File& folder)
     loader->startThread();
 }
 
+juce::File RysumProcessor::getCustomFolder() const
+{
+    return samplesFolder != juce::File() ? SampleLibrary::customFolder (samplesFolder) : juce::File();
+}
+
+int RysumProcessor::getNumCustomSounds() const
+{
+    auto lib = std::atomic_load (&uiLibrary);
+    return lib != nullptr ? (int) lib->custom.size() : 0;
+}
+
+void RysumProcessor::reloadCustomSounds()
+{
+    auto old = std::atomic_load (&uiLibrary);
+    if (old == nullptr || samplesFolder == juce::File()) return;
+    const auto folder = samplesFolder;
+    irPool.addJob ([this, old, folder, alive = aliveFlag]
+    {
+        auto lib = std::make_shared<SampleLibrary> (*old);       // pipes / clicks are shared, only the own sounds are new
+        lib->custom = SampleLibrary::loadCustom (folder);
+        std::shared_ptr<const SampleLibrary> shared (lib);
+        juce::MessageManager::callAsync ([this, shared, folder, alive]
+        {
+            if (alive->load()) onLoaded (shared, {}, folder);
+        });
+    });
+}
+
 void RysumProcessor::onLoaded (std::shared_ptr<const SampleLibrary> lib, const juce::String& err, const juce::File& folder)
 {
     loading = false;
@@ -650,6 +745,7 @@ void RysumProcessor::onLoaded (std::shared_ptr<const SampleLibrary> lib, const j
     juce::String s;
     s << lib->loadedPipes << " Pfeifen geladen";
     if (lib->substitutedPipes > 0) s << ", " << lib->substitutedPipes << " ersetzt";
+    if (! lib->custom.empty()) s << ", " << (int) lib->custom.size() << juce::String::fromUTF8 (" eigene Ger\xc3\xa4usche");
     setStatus (s);
     ++changeCounter;
 }
@@ -936,7 +1032,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 3;
+    constexpr int kFactoryVersion = 4;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -1115,6 +1211,57 @@ void RysumProcessor::writeFactoryPatches()
             { "ellipse2", 0.9f }, { "ellipse3", 0.9f }, { "doppler", 4.0f },
             { "lfo2Shape", (float) shSquare }, { "lfo2Sync", 1 }, { "lfo2Div", 2 } },
           { { srcLfo2, "ellipse2", 0.5f, true } });
+
+    // ---- set 4: the effects page (sounds that are easy to place)
+    currentSet = 4;
+    make ("35 Werkstatt der Orgelbauer",
+          { { "stop1", 1 }, { "stop2", 1 }, { "wind", 0.2f }, { "fxCustLevel", 0.6f }, { "fxCustPlace", 1 }, { "fxCustScatter", 0.6f },
+            { "fxCustUp", 0.5f }, { "fxPathLevel", 0.5f }, { "fxLeakLevel", 0.3f }, { "fxLeakCount", 4 } }, {});
+    make ("36 Abstrakten-Ballett",
+          { { "stop0", 1 }, { "stop2", 1 }, { "stop5", 1 }, { "click", 0.1f }, { "fxPathLevel", 0.9f }, { "fxPathTime", 0.45f },
+            { "fxPathTicks", 14 }, { "fxPathSpread", 60.0f }, { "fxPathWait", 1 },
+            { "motion0", 1 }, { "motion2", 1 }, { "motion5", 1 }, { "rate0", 0.05f }, { "rate2", -0.07f }, { "rate5", 0.09f } }, {});
+    make ("37 Glut im Holz",
+          { { "stop1", 1 }, { "stop7", 1 }, { "fxCrackLevel", 0.7f }, { "fxCrackRate", 25.0f }, { "fxCrackLen", 0.4f },
+            { "motion1", 3 }, { "motion7", 3 }, { "depth1", 70.0f }, { "depth7", 50.0f }, { "air", 0.8f } }, {});
+    make ("38 Altes Holz knackt",
+          { { "stop0", 1 }, { "stop1", 1 }, { "fxCrackLevel", 1.0f }, { "fxCrackRate", 1.5f }, { "fxCrackLen", 6.0f },
+            { "degAmount", 0.25f }, { "degWobble", 0.4f } }, {});
+    make ("39 Undichte Lade",
+          { { "stop0", 1 }, { "stop1", 1 }, { "swind0", 0.85f }, { "wind", 0.35f }, { "fxWindRound", 1 },
+            { "fxLeakLevel", 0.7f }, { "fxLeakCount", 6 }, { "fxLeakFreq", 5500.0f }, { "fxLeakWander", 8.0f } }, {});
+    make ("40 Schlangengrube",
+          { { "stop4", 1 }, { "stop1", 1 }, { "wind", 0.2f }, { "fxWindRound", 1 },
+            { "fxLeakLevel", 1.0f }, { "fxLeakCount", 8 }, { "fxLeakFreq", 7000.0f }, { "fxLeakWander", 60.0f },
+            { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.4f } },
+          { { srcLfo1, "fxLeakFreq", 0.35f } });
+    make ("41 Gespaltene Pfeifen",
+          { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 }, { "fxPartSpread", 120.0f }, { "fxPartSplit", 2.0f } }, {});
+    make (u8 ("42 Obertonkarussell"),
+          { { "stop1", 1 }, { "stop4", 1 }, { "fxPartSpread", 90.0f }, { "fxPartSplit", 3.0f }, { "fxPartTurn", 0.5f },
+            { "lfo3Shape", (float) shSmooth }, { "lfo3Rate", 0.08f } },
+          { { srcLfo3, "fxPartTurn", 0.6f } });
+    make ("43 Echo-Kompass",
+          { { "stop6", 1 }, { "stop2", 1 }, { "fxEchoLevel", 0.7f }, { "fxEchoTime", 0.5f }, { "fxEchoTurn", 90.0f },
+            { "fxEchoRepeats", 4 }, { "fxEchoFeedback", 0.7f } }, {});
+    make ("44 Spirale nach oben",
+          { { "stop3", 1 }, { "stop5", 1 }, { "fxEchoLevel", 0.8f }, { "fxEchoTime", 0.18f }, { "fxEchoTurn", 45.0f }, { "fxEchoTilt", 12.0f },
+            { "fxEchoRepeats", 8 }, { "fxEchoFeedback", 0.85f }, { "fxEchoDamp", 0.15f } }, {});
+    make ("45 Tempo-Echos im Kreis",
+          { { "stop6", 1 }, { "click", 0.4f }, { "motionSync", 1 }, { "fxEchoLevel", 0.75f }, { "fxEchoSync", 1 }, { "fxEchoDiv", 5 },
+            { "fxEchoRepeats", 8 }, { "fxEchoTurn", 135.0f }, { "fxEchoFeedback", 0.75f } }, {});
+    make ("46 Schrottplatz-Liturgie",
+          { { "stop7", 1 }, { "stop6", 1 }, { "fxCustLevel", 1.0f }, { "fxCustPlace", 3 }, { "fxCustWander", 240.0f }, { "fxCustScatter", 1.0f },
+            { "fxCustPitch", 1.0f }, { "fxCustUp", 1.0f }, { "fxCrackLevel", 0.5f }, { "fxCrackRate", 60.0f }, { "fxCrackLen", 0.3f },
+            { "fxEchoLevel", 0.5f }, { "fxEchoTurn", -120.0f }, { "fxEchoTime", 0.27f }, { "degAmount", 0.4f } }, {});
+    make ("47 Geisterorgel",
+          { { "stop1", 1 }, { "wind", 0.4f }, { "fxWindRound", 1 }, { "fxPathLevel", 0.4f }, { "fxPathTime", 0.6f }, { "fxPathWait", 1 },
+            { "fxLeakLevel", 0.4f }, { "fxEchoLevel", 0.6f }, { "fxEchoTilt", 30.0f }, { "fxEchoTurn", 160.0f }, { "fxEchoTime", 0.7f },
+            { "fxEchoDamp", 0.6f }, { "fxPartSpread", 180.0f }, { "fxPartTurn", -0.2f }, { "irEnvelop", 0.9f }, { "air", 1.0f } }, {});
+    make ("48 Uhrwerk",
+          { { "stop3", 1 }, { "motionSync", 1 }, { "fxPathLevel", 0.8f }, { "fxPathTicks", 16 }, { "fxPathSpread", 90.0f }, { "fxPathTime", 0.5f },
+            { "fxCustLevel", 0.6f }, { "fxCustPlace", 2 }, { "fxCustPitch", 1.0f }, { "fxCustUp", 1.0f },
+            { "fxEchoLevel", 0.6f }, { "fxEchoSync", 1 }, { "fxEchoDiv", 6 }, { "fxEchoTurn", 30.0f }, { "fxEchoRepeats", 8 }, { "fxEchoFeedback", 0.9f } }, {});
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

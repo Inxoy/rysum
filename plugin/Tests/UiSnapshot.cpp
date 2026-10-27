@@ -232,7 +232,15 @@ public:
         shoot (0, "ui_spieltisch.png");
         shoot (1, "ui_raum.png");
         shoot (2, "ui_klang.png");
-        shoot (3, "ui_mod.png");
+        shoot (4, "ui_mod.png");
+        {
+            // effects page with some effects switched on (so the diagrams show something)
+            for (auto [id, v] : { std::pair<const char*, float> { "fxEchoLevel", 0.5f }, { "fxPartSpread", 70.0f }, { "fxEchoTilt", 10.0f } })
+                if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+            shoot (3, "ui_effekte.png");
+            for (auto* id : { "fxEchoLevel", "fxPartSpread", "fxEchoTilt" })
+                if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
+        }
 
         // state round trip
         juce::MemoryBlock mbk;

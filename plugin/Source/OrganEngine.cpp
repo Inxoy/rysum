@@ -43,6 +43,23 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     chunkMidi.ensureSize (8192);
     for (auto& v : voices) v.active = false;
     for (auto& n : noise) n.active = false;
+    // effects
+    echoBuf.assign ((size_t) (16.5 * sr) + (size_t) maxBlock, 0.0f);
+    echoWrite = 0; echoDelay = -1.0; echoLp.fill (0.0f);
+    fxScratch.assign ((size_t) maxBlock * 12, 0.0f);
+    numScheduled = 0;
+    {
+        XorShift r (77);
+        for (size_t i = 0; i < leaks.size(); ++i)
+        {
+            auto& L = leaks[i];
+            L.pos = { 180.0f * r.bi(), -5.0f + 50.0f * r.uni(), 3.0f + 6.0f * r.uni() };
+            L.freqMul = 0.7f + 0.7f * r.uni();
+            L.dir = r.uni() < 0.5f ? -1.0f : 1.0f;
+            L.rng = XorShift ((uint32_t) (i * 7919 + 13));
+            L.s1 = L.s2 = L.amp = 0.0f;
+        }
+    }
     keyHeld.fill (false);
     keySustained.fill (false);
     firstBlock = true;
@@ -54,6 +71,144 @@ void OrganEngine::setLibrary (std::shared_ptr<const SampleLibrary> lib)
     for (auto& n : noise) n.active = false;
     library = std::move (lib);
     windPos = 0.0;
+    numScheduled = 0;          // (audio thread: no allocation here)
+}
+
+// ---------------------------------------------------------------------------
+// effects: placed sounds, tracker path, scheduling
+// ---------------------------------------------------------------------------
+const std::vector<NoiseSample>& OrganEngine::customPool() const noexcept
+{
+    // no own sounds: the recorded clicks (the "other" ones are the most varied)
+    if (library == nullptr) return noSounds;
+    if (! library->custom.empty()) return library->custom;
+    if (! library->clicksDown.empty()) return library->clicksDown;
+    if (! library->clicksOther.empty()) return library->clicksOther;
+    return library->stopPulls;
+}
+
+void OrganEngine::placedGains (NoiseVoice& nv) noexcept
+{
+    gainsFor (nv.where, nv.g.data());
+    const float dg = distanceGain (nv.where.dist, distAmountNow);
+    for (auto& x : nv.g) x *= dg;
+    const double a = juce::degreesToRadians ((double) (roomFollowNow ? nv.where.az : roomBaseAzNow));
+    nv.sendW[0] = 1.0f;
+    for (int m = 1; 2 * m < kMaxRoomSends; ++m)
+    {
+        nv.sendW[(size_t) (2 * m - 1)] = (float) std::cos (m * a);
+        nv.sendW[(size_t) (2 * m)] = (float) std::sin (m * a);
+    }
+}
+
+void OrganEngine::spawnSound (const Sample& s, float gain, float tone, double rate, Pos pos, float azVel, float send)
+{
+    if (gain <= 0.00001f || s.size() < 4) return;
+    NoiseVoice* nv = nullptr;
+    for (auto& n : noise) if (! n.active) { nv = &n; break; }
+    if (nv == nullptr) nv = &noise[(size_t) (rng.next() % noise.size())];
+    nv->active = true;
+    nv->data = s.data.data();
+    nv->length = s.size();
+    nv->pos = 0.0;
+    nv->where = pos;
+    nv->rate = s.sampleRate / sr * rate;
+    nv->gain = gain;
+    nv->send = send;
+    nv->lp = 0.0f;
+    nv->lpA = juce::jlimit (0.02f, 1.0f, tone);
+    nv->azVel = azVel;
+    nv->where.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist);
+    placedGains (*nv);
+}
+
+void OrganEngine::schedule (const Scheduled& e)
+{
+    if (numScheduled < (int) scheduled.size()) scheduled[(size_t) numScheduled++] = e;
+}
+
+void OrganEngine::customSounds (int key, float velocity, const EngineParams& p)
+{
+    const auto& pool = customPool();
+    const auto& fx = p.fx;
+    if (pool.empty() || fx.custLevel <= 0.0001f) return;
+    const int copies = 1 + (int) std::floor (fx.custScatter * (1.0f + 4.0f * rng.uni()));
+    std::array<int, kNumStops> pulled {};
+    int nPulled = 0;
+    for (int s = 0; s < kNumStops; ++s) if (p.stopOn[(size_t) s]) pulled[(size_t) nPulled++] = s;
+    for (int c = 0; c < copies; ++c)
+    {
+        int idx = (int) (rng.uni() * (float) pool.size());
+        if (pool.size() > 1 && idx == lastCustom) idx = (idx + 1) % (int) pool.size();
+        idx = juce::jlimit (0, (int) pool.size() - 1, idx);
+        lastCustom = idx;
+        const auto* smp = pool[(size_t) idx].sample.get();
+        if (smp == nullptr) continue;
+        const float norm = pool[(size_t) idx].norm;
+
+        Pos pos { p.consoleAz, p.consoleEl, 2.0f };
+        switch (fx.custPlace)
+        {
+            case 0:     // at the pipe of a pulled stop (or the console when none is pulled)
+                if (nPulled > 0) pos = currentPosition (pulled[(size_t) (rng.next() % (uint32_t) nPulled)], key, p);
+                pos.az = wrapAz (pos.az + 35.0f * fx.custScatter * rng.bi());
+                break;
+            case 1: pos = { 180.0f * rng.bi(), -10.0f + 70.0f * rng.uni(), 2.5f + 9.0f * rng.uni() }; break;
+            case 2: break;
+            default: pos = { 180.0f * rng.bi(), 30.0f * rng.uni(), 4.0f + 3.0f * rng.uni() }; break;
+        }
+        float azVel = fx.custWander * (rng.uni() < 0.5f ? -1.0f : 1.0f) * (0.6f + 0.8f * rng.uni());
+        if (fx.custPlace == 3 && std::abs (azVel) < 1.0f) azVel = (rng.uni() < 0.5f ? -1.0f : 1.0f) * 90.0f;
+        const double rate = std::exp2 ((double) (kPhysKeys[(size_t) key] - 60) / 12.0 * fx.custPitch) * (0.97 + 0.06 * rng.uni());
+        const float gain = fx.custLevel * norm * clickCurve (velocity) * 0.7f * (c == 0 ? 1.0f : 0.45f + 0.45f * rng.uni());
+        const int delay = c == 0 ? 0 : (int) (rng.uni() * (0.05 + 0.75 * fx.custScatter) * sr);
+        if (delay <= 0) spawnSound (*smp, gain, clickTone (velocity), rate, pos, azVel, 0.6f);
+        else
+        {
+            Scheduled e; e.delay = delay; e.sample = smp; e.gain = gain; e.tone = clickTone (velocity);
+            e.rate = rate; e.pos = pos; e.azVel = azVel; e.send = 0.6f;
+            schedule (e);
+        }
+    }
+}
+
+void OrganEngine::trackerPath (int key, float velocity, const EngineParams& p)
+{
+    const auto& fx = p.fx;
+    if (fx.pathLevel <= 0.0001f || library == nullptr) return;
+    const auto& pool = ! library->clicksDown.empty() ? library->clicksDown : library->clicksOther;
+    if (pool.empty()) return;
+    std::array<int, kNumStops> pulled {};
+    int nPulled = 0;
+    for (int s = 0; s < kNumStops; ++s) if (p.stopOn[(size_t) s]) pulled[(size_t) nPulled++] = s;
+    const int targets = juce::jmin (3, juce::jmax (1, nPulled));
+    const int ticks = juce::jlimit (2, 16, fx.pathTicks);
+    const Pos console { p.consoleAz, p.consoleEl, 2.0f };
+    for (int t = 0; t < targets; ++t)
+    {
+        const Pos dst = nPulled > 0 ? currentPosition (pulled[(size_t) ((t * nPulled) / targets)], key, p) : Pos { 0.0f, 20.0f, 6.0f };
+        const float daz = wrapAz (dst.az - console.az);
+        for (int i = 1; i <= ticks; ++i)
+        {
+            const float f = (float) i / (float) ticks;
+            const float bulge = std::sin (juce::MathConstants<float>::pi * f);
+            Pos q { wrapAz (console.az + daz * f + fx.pathSpread * bulge * rng.bi()),
+                    juce::jlimit (-90.0f, 90.0f, console.el + (dst.el - console.el) * f + 0.5f * fx.pathSpread * bulge * rng.bi()),
+                    console.dist + (dst.dist - console.dist) * f };
+            const auto& ns = pool[(size_t) (rng.next() % (uint32_t) pool.size())];
+            const auto& smp = *ns.sample;
+            const float gain = fx.pathLevel * ns.norm * clickCurve (velocity) * 0.25f * (0.45f + 0.55f * f) / std::sqrt ((float) targets);
+            const double rate = 1.7 + 1.5 * rng.uni();        // small, high ticks
+            const int delay = (int) (fx.pathTime * sr * f * (0.85f + 0.3f * rng.uni()));
+            if (delay <= 0) spawnSound (smp, gain, clickTone (velocity), rate, q, 0.0f, 0.3f);
+            else
+            {
+                Scheduled e; e.delay = delay; e.sample = &smp; e.gain = gain; e.tone = clickTone (velocity);
+                e.rate = rate; e.pos = q; e.send = 0.3f;
+                schedule (e);
+            }
+        }
+    }
 }
 
 void OrganEngine::requestPreview (int stop, int key)
@@ -116,6 +271,15 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     const float lvl = anyMod ? dbToGain (juce::jlimit (-100.0f, 12.0f, 36.0f * pm[tgtLevel])) : 1.0f;
     const float g = sg * lvl * distanceGain (pos.dist, p.distAmount);
     for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] *= g;
+    if (p.fx.partSpread > 0.5f)
+    {
+        Pos ph = pos;
+        ph.az = wrapAz (pos.az + p.fx.partSpread * v.partSide + (float) partRot);
+        gainsFor (ph, v.gh1.data());
+        for (int c = 0; c < kMaxAmbiChannels; ++c) v.gh1[(size_t) c] *= g;
+    }
+    else v.gh1 = v.g1;
+    v.crkEnv = v.held ? 1.0f : v.crkEnv * (float) std::exp (-blockSeconds / 0.15);
     v.send1 = sg * lvl * distanceGain (pos.dist, p.distAmount * 0.35f);       // the room fades much less with distance
     v.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
     if (anyMod && pm[tgtSend] != 0.0f) v.send1 *= dbToGain (juce::jlimit (-100.0f, 24.0f, 24.0f * pm[tgtSend]));
@@ -248,6 +412,9 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples)
     v->keyPos = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
     v->randMod = lastRandom;
     v->modCents0 = v->modCents1 = 0.0f;
+    v->crkAmp = 0.0f; v->crkEnv = 1.0f; v->crkCount = 1 + (int) (rng.uni() * 0.2f * (float) sr);
+    v->partLp = 0.0f;
+    v->partSide = (hash01 ((uint32_t) (stop * 977 + key * 31 + 5)) < 0.5f ? -1.0f : 1.0f) * (0.6f + 0.4f * hash01 ((uint32_t) (stop * 13 + key * 101 + 9)));
 }
 
 void OrganEngine::releaseVoice (Voice& v)
@@ -308,7 +475,9 @@ void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, c
     nv->send = send;
     nv->lp = 0.0f;
     nv->lpA = juce::jlimit (0.02f, 1.0f, tone);
+    nv->azVel = 0.0f;
     std::copy (gains, gains + kMaxAmbiChannels, nv->g.begin());
+    nv->sendW = noiseRoomW;
 }
 
 void OrganEngine::keyDown (int key, float velocity, const EngineParams& p)
@@ -343,11 +512,21 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p)
                    p.clickLevel * clickCurve (v) * 1.6f, g.data(), lastDown, 0.5f, clickTone (v));
     }
 
+    // effects: own sounds, ticks running to the pipes
+    if (p.fx.custLevel > 0.0001f && rng.uni() < p.fx.custDown) customSounds (key, velocity, p);
+    trackerPath (key, velocity, p);
+    const bool wait = p.fx.pathWait && p.fx.pathLevel > 0.0001f && p.fx.pathTime > 0.005f;
+
     for (int s = 0; s < kNumStops; ++s)
         if (p.stopOn[(size_t) s])
         {
             releaseStopKey (s, key);
-            startVoice (s, key);
+            if (wait)
+            {
+                Scheduled e; e.voice = true; e.stop = s; e.key = key; e.delay = (int) (p.fx.pathTime * sr);
+                schedule (e);
+            }
+            else startVoice (s, key);
         }
 }
 
@@ -363,6 +542,7 @@ void OrganEngine::keyUp (int key, const EngineParams& p)
         playNoise (library->clicksUp.empty() ? library->clicksOther : library->clicksUp,
                    p.releaseClick * clickCurve (v) * 1.6f, console.data(), lastUp, 0.5f, clickTone (v));
     }
+    if (p.fx.custLevel > 0.0001f && rng.uni() < p.fx.custUp) customSounds (key, 0.8f * keyVelocity[(size_t) key], p);
     for (auto& v : voices)
         if (v.active && v.held && v.key == key && v.previewRemain < 0)
         {
@@ -453,6 +633,15 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
 
         double rate = v.baseRate;
         float amp = 1.0f;
+        // effects: upper partials split off (sent elsewhere), crackle bursts at the pipe
+        const bool split = p.fx.partSpread > 0.5f;
+        float* bufH = fxScratch.data();
+        const float splitA = split ? 1.0f - std::exp (-twoPiOverSr * juce::jmin (0.45f * (float) sr,
+                                         (float) juce::jmax (20.0, pipe.nominalHz) * p.fx.partSplit)) : 1.0f;
+        const bool crackle = p.fx.crackLevel > 0.0001f && v.crkEnv > 0.001f;
+        const float crkDecay = std::exp (-1.0f / juce::jmax (1.0f, p.fx.crackLen * 0.001f * (float) sr));
+        const float crkMean = (float) sr / juce::jmax (0.05f, p.fx.crackRate);
+        const float crkGain = 0.25f * p.fx.crackLevel * v.crkEnv;
         for (int i = 0; i < n; ++i)
         {
             if ((i & 15) == 0)       // control rate: every 16 samples
@@ -549,11 +738,33 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 x = DegradeState::process (x, v.held1, v.env, f, p.deg);
             }
 
+            if (split)
+            {
+                v.partLp += splitA * (x - v.partLp);
+                bufH[i] = x - v.partLp;
+                x = v.partLp;
+            }
+            if (crackle)
+            {
+                if (--v.crkCount <= 0)
+                {
+                    const float u = juce::jmax (1.0e-4f, v.grainRng.uni());
+                    v.crkCount = 1 + (int) (-std::log (u) * crkMean);
+                    const float r = v.grainRng.uni();
+                    v.crkAmp = 0.2f + 0.8f * r * r;
+                }
+                if (v.crkAmp > 1.0e-4f)
+                {
+                    x += crkGain * v.crkAmp * v.grainRng.bi();
+                    v.crkAmp *= crkDecay;
+                }
+            }
+
             buf[i] = x;
 
             if (v.previewRemain > 0 && --v.previewRemain == 0) releaseVoice (v);
-            if (! v.frozen && v.pos >= len - 2) { finished = true; for (int j = i + 1; j < n; ++j) buf[j] = 0.0f; break; }
-            if (finished) { for (int j = i + 1; j < n; ++j) buf[j] = 0.0f; break; }
+            if (! v.frozen && v.pos >= len - 2) { finished = true; for (int j = i + 1; j < n; ++j) { buf[j] = 0.0f; bufH[j] = 0.0f; } break; }
+            if (finished) { for (int j = i + 1; j < n; ++j) { buf[j] = 0.0f; bufH[j] = 0.0f; } break; }
         }
 
         // add to the output with the gain ramp of this block:
@@ -568,6 +779,23 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             const float dg = (b - a) * inv;
             if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf, ga, n);
             if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufRamp, dg, n);
+        }
+        if (split)
+        {
+            // upper partials with their own direction; afterwards both parts go to the room together
+            float* bufHRamp = fxScratch.data() + maxBlock;
+            for (int i = 0; i < n; ++i) bufHRamp[i] = bufH[i] * (float) i;
+            for (int c = 0; c < usedChannels; ++c)
+            {
+                const float a = v.gh0[(size_t) c], b = v.gh1[(size_t) c];
+                float* o = out.getWritePointer (c) + start;
+                const float ga = a + (b - a) * (float) start * inv;
+                const float dg = (b - a) * inv;
+                if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, bufH, ga, n);
+                if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufHRamp, dg, n);
+            }
+            juce::FloatVectorOperations::add (buf, bufH, n);
+            juce::FloatVectorOperations::add (bufRamp, bufHRamp, n);
         }
         {
             // room sends: plain sum + circular harmonics of the pipe direction (start / end of the slice)
@@ -612,7 +840,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             for (int c = 0; c < usedChannels; ++c)
                 if (std::abs (nv.g[(size_t) c]) > 1.0e-9f) out.getWritePointer (c)[start + i] += x * nv.g[(size_t) c];
             for (int k = 0; k < roomSends; ++k)
-                roomSend[(size_t) k][(size_t) (roomOffset + start + i)] += x * nv.send * noiseRoomW[(size_t) k];
+                roomSend[(size_t) k][(size_t) (roomOffset + start + i)] += x * nv.send * nv.sendW[(size_t) k];
         }
     }
 
@@ -623,7 +851,31 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         const int wl = w.size();
         const float target = p.wind * 2.0f;
         const double wr = w.sampleRate / sr;
-        if (wl > 4 && (target > 0.0001f || windGain > 0.0001f))
+        if (wl > 4 && (target > 0.0001f || windGain > 0.0001f) && p.fx.windRound)
+        {
+            // four uncorrelated parts of the recording from four directions (tetrahedron): the blower is all around
+            static const float dirs[4][2] { { 45.0f, 35.0f }, { 135.0f, -35.0f }, { -135.0f, 35.0f }, { -45.0f, -35.0f } };
+            std::array<std::array<float, kMaxAmbiChannels>, 4> wg {};
+            for (int d = 0; d < 4; ++d) gainsFor ({ dirs[d][0], dirs[d][1], kRefDist }, wg[(size_t) d].data());
+            const double quarter = (double) (wl - 2) / 4.0;
+            for (int i = 0; i < n; ++i)
+            {
+                windGain += 0.0005f * (target - windGain);
+                const float gst = turb > 0.0f ? gust[(size_t) (i >> 4)] : 0.0f;
+                const float tr = p.tremOn ? 0.5f * p.tremDepth * trem[(size_t) (i >> 4)] : 0.0f;
+                const float g = 0.5f * windGain * juce::jmax (0.0f, 1.0f + 1.6f * turb * gst + 1.5f * turb + tr);
+                for (int d = 0; d < 4; ++d)
+                {
+                    double ps = windPos + quarter * d;
+                    if (ps >= wl - 2) ps -= (wl - 2);
+                    const float x = readSample (w.data.data(), wl, ps) * g;
+                    for (int c = 0; c < usedChannels; ++c) out.getWritePointer (c)[start + i] += x * wg[(size_t) d][(size_t) c];
+                }
+                windPos += wr;
+                if (windPos >= wl - 2) windPos -= (wl - 2);
+            }
+        }
+        else if (wl > 4 && (target > 0.0001f || windGain > 0.0001f))
         {
             for (int i = 0; i < n; ++i)
             {
@@ -639,6 +891,133 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// wind leaks and wandering echoes
+// ---------------------------------------------------------------------------
+void OrganEngine::renderLeaks (juce::AudioBuffer<float>& out, int n, const EngineParams& p)
+{
+    const auto& fx = p.fx;
+    const int count = juce::jlimit (1, (int) leaks.size(), fx.leakCount);
+    if (fx.leakLevel <= 0.0001f)
+    {
+        for (auto& L : leaks) { L.amp = 0.0f; L.s1 = L.s2 = 0.0f; L.g1.fill (0.0f); }
+        return;
+    }
+    const float inv = 1.0f / (float) n;
+    float* buf = fxScratch.data();
+    float* ramp = fxScratch.data() + maxBlock;
+    const float ampK = 1.0f - std::exp (-1.0f / (0.02f * (float) sr));      // 20 ms smoothing
+    for (int li = 0; li < (int) leaks.size(); ++li)
+    {
+        auto& L = leaks[(size_t) li];
+        if (li >= count) { L.amp = 0.0f; L.g1.fill (0.0f); continue; }
+        L.pos.az = wrapAz (L.pos.az + L.dir * fx.leakWander * chunkSeconds * (0.6f + 0.4f * L.freqMul));
+        L.g0 = L.g1;
+        gainsFor (L.pos, L.g1.data());
+        const float dg = distanceGain (L.pos.dist, distAmountNow);
+        for (auto& x : L.g1) x *= dg;
+
+        const float fc = juce::jmin (0.45f * (float) sr, fx.leakFreq * L.freqMul);
+        const float g = std::tan (juce::MathConstants<float>::pi * fc / (float) sr);
+        const float k = 1.0f / 3.0f;                                          // Q 3
+        const float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
+        const float lvl = 0.9f * fx.leakLevel;
+        for (int i = 0; i < n; ++i)
+        {
+            if (--L.ampCount <= 0)
+            {
+                // a leak hisses unevenly: it swells, flutters, sometimes stops for a moment
+                const float u = L.rng.uni();
+                L.ampTarget = u < 0.12f ? 0.0f : 0.25f + 0.75f * L.rng.uni();
+                L.ampCount = (int) ((0.04f + 0.7f * L.rng.uni() * L.rng.uni()) * (float) sr);
+            }
+            L.amp += ampK * (L.ampTarget - L.amp);
+            const float x = L.rng.bi();
+            const float v3 = x - L.s2;
+            const float v1 = a1 * L.s1 + a2 * v3;
+            const float v2 = L.s2 + a2 * L.s1 + a3 * v3;
+            L.s1 = 2.0f * v1 - L.s1;
+            L.s2 = 2.0f * v2 - L.s2;
+            buf[i] = v1 * k * L.amp * lvl;
+            ramp[i] = buf[i] * (float) i;
+        }
+        for (int c = 0; c < usedChannels; ++c)
+        {
+            const float a = L.g0[(size_t) c], b = L.g1[(size_t) c];
+            float* o = out.getWritePointer (c);
+            if (std::abs (a) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf, a, n);
+            if (std::abs (b - a) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, ramp, (b - a) * inv, n);
+        }
+        // a little of it into the room, from its own direction
+        const double az = juce::degreesToRadians ((double) (roomFollowNow ? L.pos.az : roomBaseAzNow));
+        for (int kk = 0; kk < roomSends; ++kk)
+        {
+            const int m = (kk + 1) / 2;
+            const float w = kk == 0 ? 1.0f : (float) (kk % 2 == 1 ? std::cos (m * az) : std::sin (m * az));
+            juce::FloatVectorOperations::addWithMultiply (roomSend[(size_t) kk].data() + roomOffset, buf, 0.3f * w, n);
+        }
+    }
+}
+
+void OrganEngine::renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p)
+{
+    const auto& fx = p.fx;
+    const int len = (int) echoBuf.size();
+    if (len < 4 * n || n <= 0) return;
+    // input: the whole dry organ (W, or the middle of the stereo pair)
+    const float* in0 = out.getReadPointer (0);
+    const float* in1 = usedChannels > 1 ? out.getReadPointer (1) : in0;
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = order == 0 ? 0.5f * (in0[i] + in1[i]) : in0[i];
+        echoBuf[(size_t) ((echoWrite + i) % len)] = x;
+    }
+    if (fx.echoLevel > 0.0001f)
+    {
+        const int repeats = juce::jlimit (1, 8, fx.echoRepeats);
+        double target = (fx.echoSync ? lfoDivQuarters (fx.echoDiv) * 60.0 / juce::jmax (20.0, p.bpm) : (double) fx.echoTime) * sr;
+        target = juce::jlimit ((double) n + 4.0, (double) (len - n - 8) / repeats, target);
+        if (echoDelay < 0.0) echoDelay = target;
+        const double d0 = echoDelay;
+        const double d1 = d0 + (target - d0) * (1.0 - std::exp (-(double) chunkSeconds / 0.12));
+        echoDelay = d1;
+        float* y = fxScratch.data();
+        std::array<float, kMaxAmbiChannels> tg {};
+        for (int r = 1; r <= repeats; ++r)
+        {
+            const float gain = fx.echoLevel * std::pow (fx.echoFeedback, (float) (r - 1));
+            if (gain < 1.0e-4f) break;
+            const Pos dir { wrapAz (fx.echoTurn * (float) r), juce::jlimit (-80.0f, 80.0f, fx.echoTilt * (float) r), kRefDist };
+            gainsFor (dir, tg.data());
+            const float fc = juce::jmax (250.0f, 18000.0f * std::pow (1.0f - 0.85f * fx.echoDamp, (float) r));
+            const float a = fc >= 17000.0f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / (float) sr);
+            float& lp = echoLp[(size_t) (r - 1)];
+            for (int i = 0; i < n; ++i)
+            {
+                const double dd = (d0 + (d1 - d0) * (double) i / (double) n) * r;
+                double rp = (double) (echoWrite + i) - dd;
+                while (rp < 0.0) rp += len;
+                const int i0 = (int) rp;
+                const float f = (float) (rp - i0);
+                const float x0 = echoBuf[(size_t) (i0 % len)], x1 = echoBuf[(size_t) ((i0 + 1) % len)];
+                lp += a * (x0 + f * (x1 - x0) - lp);
+                y[i] = lp * gain;
+            }
+            for (int c = 0; c < usedChannels; ++c)
+                if (std::abs (tg[(size_t) c]) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), y, tg[(size_t) c], n);
+            const double az = juce::degreesToRadians ((double) (roomFollowNow ? dir.az : roomBaseAzNow));
+            for (int kk = 0; kk < roomSends; ++kk)
+            {
+                const int m = (kk + 1) / 2;
+                const float w = kk == 0 ? 1.0f : (float) (kk % 2 == 1 ? std::cos (m * az) : std::sin (m * az));
+                juce::FloatVectorOperations::addWithMultiply (roomSend[(size_t) kk].data() + roomOffset, y, 0.35f * w, n);
+            }
+        }
+    }
+    else echoDelay = -1.0;
+    echoWrite = (echoWrite + n) % len;
 }
 
 // ---------------------------------------------------------------------------
@@ -804,6 +1183,10 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
 
     order = juce::jlimit (0, kMaxOrder, p.outputMode);
     usedChannels = juce::jmin (out.getNumChannels(), order == 0 ? 2 : (order + 1) * (order + 1));
+    distAmountNow = p.distAmount;
+    roomFollowNow = p.roomFollow;
+    roomBaseAzNow = p.roomBaseAz;
+    chunkSeconds = (float) blockSeconds;
 
     // ---- stops pulled / pushed
     if (firstBlock) { lastStopOn = p.stopOn; firstBlock = false; }
@@ -857,13 +1240,43 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
         motionPhase[(size_t) s] = ph;
     }
 
+    // ---- effects: due events (delayed sounds, pipes waiting for the tracker path), moving sounds
+    {
+        int w = 0;
+        for (int i = 0; i < numScheduled; ++i)
+        {
+            auto e = scheduled[(size_t) i];
+            if (e.delay >= numSamples) { e.delay -= numSamples; scheduled[(size_t) w++] = e; continue; }
+            if (! e.voice)
+            {
+                if (e.sample != nullptr && library != nullptr) spawnSound (*e.sample, e.gain, e.tone, e.rate, e.pos, e.azVel, e.send);
+            }
+            else if (library != nullptr && p.stopOn[(size_t) e.stop])
+            {
+                startVoice (e.stop, e.key);
+                // key already let go: the pallet still opened, but closes right away
+                if (! keyHeld[(size_t) e.key] && ! keySustained[(size_t) e.key])
+                    for (auto& v : voices)
+                        if (v.active && v.held && v.stop == e.stop && v.key == e.key && v.previewRemain < 0) releaseVoice (v);
+            }
+        }
+        numScheduled = w;
+    }
+    for (auto& nv : noise)
+        if (nv.active && nv.azVel != 0.0f)
+        {
+            nv.where.az = wrapAz (nv.where.az + nv.azVel * (float) blockSeconds);
+            placedGains (nv);
+        }
+    partRot = std::fmod (partRot + (double) p.fx.partTurn * 360.0 * blockSeconds, 360.0);
+
     // ---- spatial data for this block (end-of-block targets, ramped from the previous ones)
     for (auto& v : voices)
     {
         if (! v.active) continue;
-        if (! v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; }
+        if (! v.fresh) { v.g0 = v.g1; v.gh0 = v.gh1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; }
         updateVoiceSpatial (v, p, blockSeconds);
-        if (v.fresh) { v.g0 = v.g1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false; }
+        if (v.fresh) { v.g0 = v.g1; v.gh0 = v.gh1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false; }
     }
     auto initFresh = [&] ()
     {
@@ -871,7 +1284,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             if (v.active && v.fresh)
             {
                 updateVoiceSpatial (v, p, blockSeconds);
-                v.g0 = v.g1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false;
+                v.g0 = v.g1; v.gh0 = v.gh1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false;
                 v.dop = v.dopTarget;
             }
     };
@@ -888,6 +1301,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     }
     initFresh();                // voices started by stop changes / previews before any MIDI
     renderRange (out, pos, numSamples, numSamples, p);
+    renderLeaks (out, numSamples, p);
 
     // ---- degradation on the sum
     if (! p.deg.perPipe && p.deg.amount > 0.0001f)
@@ -902,6 +1316,8 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             }
         }
     }
+
+    renderEchoes (out, numSamples, p);
 
     // ---- master gain (smoothed) + meters
     const float step = (p.masterGain - masterSmoothed) / (float) numSamples;

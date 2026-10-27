@@ -12,6 +12,7 @@ namespace
         if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" || id == "wind" || id == "master")
             return juce::String::fromUTF8 ("Traktur \xc2\xb7 Ausgang");
         if (id.startsWith ("ir")) return "Hall";
+        if (id.startsWith ("fx")) return "Effekte";
         if (id.startsWith ("lfo") || id.startsWith ("env") || id.startsWith ("mod")) return "Modulation";
         return "Klang";
     }
@@ -26,7 +27,7 @@ void ModView::fillTargetMenu (juce::PopupMenu& menu, RysumProcessor& proc, int i
     menu.addSectionHeader (juce::String::fromUTF8 ("Je Pfeife (Versatz, H\xc3\xbcllkurve pro Pfeife)"));
     for (int t = 0; t < kNumPipeTargets; ++t) menu.addItem (idOffset + t + 1, pipeNames[t]);
     menu.addSeparator();
-    const juce::StringArray groups { "Register", juce::String::fromUTF8 ("Traktur \xc2\xb7 Ausgang"), "Verfall", "Klang", "Hall", "Modulation" };
+    const juce::StringArray groups { "Register", juce::String::fromUTF8 ("Traktur \xc2\xb7 Ausgang"), "Verfall", "Klang", "Hall", "Effekte", "Modulation" };
     for (auto& grp : groups)
     {
         juce::PopupMenu sub;

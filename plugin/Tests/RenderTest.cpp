@@ -648,6 +648,183 @@ int main (int argc, char** argv)
         }
     }
 
+    // ---------------- effects (page "Effekte") ----------------
+    {
+        const double fsr = 48000.0;
+        constexpr int B = 512;
+        auto run = [&] (std::function<void (EngineParams&)> setup, std::vector<int> midis, double secs, double offAt, const juce::String& name,
+                        OrganEngine* keep = nullptr)
+        {
+            OrganEngine local; OrganEngine& e = keep != nullptr ? *keep : local;
+            e.prepare (fsr, B); e.setLibrary (lib);
+            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+            p.outputMode = 1;
+            setup (p);
+            juce::AudioBuffer<float> b (4, B), all (4, (int) (fsr * secs));
+            for (int pos = 0; pos < all.getNumSamples(); pos += B)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) for (int m : midis) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
+                if (offAt > 0 && pos == ((int) (offAt * fsr) / B) * B) for (int m : midis) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                e.process (b, mb, p);
+                for (int c = 0; c < 4; ++c) all.copyFrom (c, pos, b, c, 0, juce::jmin (B, all.getNumSamples() - pos));
+            }
+            writeWav (outDir.getChildFile (name + ".wav"), all, fsr);
+            return all;
+        };
+        // direction of the energy (intensity vector) in a window, optionally above a frequency
+        struct Dir { float az, el, dirness, firstOrderRatio, db; };
+        auto direction = [&] (const juce::AudioBuffer<float>& in, double t0, double t1, float hpHz = 0.0f)
+        {
+            const int a = (int) (t0 * fsr), n = (int) ((t1 - t0) * fsr);
+            std::array<std::vector<float>, 4> x;
+            for (int c = 0; c < 4; ++c)
+            {
+                x[(size_t) c].assign (in.getReadPointer (c) + a, in.getReadPointer (c) + a + n);
+                if (hpHz > 0.0f)
+                {
+                    // 4th order: two passes of a 2nd order Butterworth high-pass
+                    for (int pass = 0; pass < 2; ++pass)
+                    {
+                        auto co = juce::IIRCoefficients::makeHighPass (fsr, hpHz);
+                        juce::IIRFilter f; f.setCoefficients (co);
+                        f.processSamples (x[(size_t) c].data(), n);
+                    }
+                }
+            }
+            double ww = 0, wy = 0, wz = 0, wx = 0, e1 = 0;
+            for (int i = 0; i < n; ++i)
+            {
+                const double w = x[0][(size_t) i];
+                ww += w * w; wy += w * x[1][(size_t) i]; wz += w * x[2][(size_t) i]; wx += w * x[3][(size_t) i];
+                e1 += (double) x[1][(size_t) i] * x[1][(size_t) i] + (double) x[2][(size_t) i] * x[2][(size_t) i] + (double) x[3][(size_t) i] * x[3][(size_t) i];
+            }
+            Dir d;
+            d.az = (float) juce::radiansToDegrees (std::atan2 (wy, wx));
+            d.el = (float) juce::radiansToDegrees (std::atan2 (wz, std::sqrt (wx * wx + wy * wy)));
+            d.dirness = (float) (std::sqrt (wx * wx + wy * wy + wz * wz) / juce::jmax (1.0e-20, ww));
+            d.firstOrderRatio = (float) (e1 / juce::jmax (1.0e-20, ww));
+            d.db = juce::Decibels::gainToDecibels ((float) std::sqrt (ww / juce::jmax (1, n)), -200.0f);
+            return d;
+        };
+        auto angleDiff = [] (float a, float b) { return std::abs (wrapAz (a - b)); };
+        OrganEngine probe; probe.prepare (fsr, B); probe.setLibrary (lib);
+        const EngineParams dflt;
+        int keyA = -1;
+        for (int k = 0; k < kNumKeys; ++k) if (kPhysKeys[(size_t) k] == 69) keyA = k;
+        const Pos posA = probe.currentPosition (0, keyA, dflt);
+        std::cout << "pipe a' (Praestant) at az " << posA.az << ", el " << posA.el << std::endl;
+
+        {   // wandering echoes: 1st repeat from +90 deg, 2nd from 180 deg
+            auto b = run ([] (EngineParams& p)
+                          {
+                              p.fx.echoLevel = 1.0f; p.fx.echoTime = 1.5f; p.fx.echoRepeats = 2; p.fx.echoFeedback = 1.0f;
+                              p.fx.echoTurn = 90.0f; p.fx.echoDamp = 0.0f;
+                          }, { 69 }, 3.8, 0.35, "30_fx_echo_ambix1");
+            const auto d0 = direction (b, 0.05, 0.3), d1 = direction (b, 1.55, 1.8), d2 = direction (b, 3.05, 3.3);
+            std::cout << "echo: dry az " << d0.az << ", 1st " << d1.az << " (" << d1.db << " dB), 2nd " << d2.az << " (" << d2.db << " dB)" << std::endl;
+            check (angleDiff (d1.az, 90.0f) < 25.0f && angleDiff (d2.az, 180.0f) < 25.0f, "echoes: every repeat from the next direction");
+            check (std::abs (d1.db - d0.db) < 6.0f, "echo level about like the dry sound at 100 %");
+        }
+        {   // upper partials 90 deg away; the fundamental stays at the pipe
+            auto b = run ([] (EngineParams& p) { p.fx.partSpread = 90.0f; p.fx.partSplit = 2.5f; }, { 69 }, 1.5, -1, "31_fx_partials_ambix1");
+            const auto lo = direction (b, 0.5, 1.4), hi = direction (b, 0.5, 1.4, (float) meantoneHz (69) * 5.0f);
+            std::cout << "partials: whole az " << lo.az << ", above 5x f0 az " << hi.az << " (pipe " << posA.az << ")" << std::endl;
+            check (angleDiff (hi.az, posA.az) > 40.0f, "upper partials placed away from the pipe");
+            auto off = run ([] (EngineParams&) {}, { 69 }, 1.5, -1, "31_fx_partials_off");
+            const float a = off.getRMSLevel (0, (int) (0.5 * fsr), (int) (0.9 * fsr)), c = b.getRMSLevel (0, (int) (0.5 * fsr), (int) (0.9 * fsr));
+            check (std::abs (juce::Decibels::gainToDecibels (c / a)) < 1.0f, "partial split keeps the level (W)");
+        }
+        {   // crackle: (on - off) is only the crackle, and it sits at the pipe
+            auto on = run ([] (EngineParams& p) { p.fx.crackLevel = 1.0f; p.fx.crackRate = 30.0f; }, { 69 }, 2.0, 1.2, "32_fx_crackle_ambix1");
+            auto off = run ([] (EngineParams&) {}, { 69 }, 2.0, 1.2, "32_fx_crackle_off");
+            juce::AudioBuffer<float> diff (on);
+            for (int c = 0; c < 4; ++c) diff.addFrom (c, 0, off, c, 0, off.getNumSamples(), -1.0f);
+            const auto d = direction (diff, 0.1, 1.1);
+            const auto late = direction (diff, 1.9, 2.0);
+            std::cout << "crackle: " << d.db << " dB at az " << d.az << ", el " << d.el << "; after release " << late.db << " dB" << std::endl;
+            check (d.db > -50.0f && angleDiff (d.az, posA.az) < 8.0f, "crackle at the pipe");
+            check (late.db < d.db - 30.0f, "crackle fades after the key is released");
+        }
+        {   // wind leaks: one leak = one direction; the diffuse blower = all around
+            auto b = run ([] (EngineParams& p) { p.stopOn = {}; p.fx.leakLevel = 1.0f; p.fx.leakCount = 1; }, {}, 2.0, -1, "33_fx_leak_ambix1");
+            const auto d = direction (b, 0.3, 2.0);
+            std::cout << "leak: " << d.db << " dB, az " << d.az << ", directedness " << d.dirness << std::endl;
+            check (d.db > -50.0f && d.db < -12.0f && d.dirness > 0.9f, "one wind leak: a point source");
+            auto w = run ([] (EngineParams& p) { p.stopOn = {}; p.wind = 0.5f; p.fx.windRound = true; }, {}, 3.0, -1, "34_fx_wind_round_ambix1");
+            const auto dw = direction (w, 1.0, 3.0);
+            std::cout << "blower all around: directedness " << dw.dirness << ", 1st order / W " << dw.firstOrderRatio << std::endl;
+            check (dw.dirness < 0.25f && dw.firstOrderRatio > 0.6f && dw.firstOrderRatio < 1.4f, "diffuse blower");
+            auto w0 = run ([] (EngineParams& p) { p.stopOn = {}; p.wind = 0.5f; }, {}, 3.0, -1, "34_fx_wind_omni");
+            const float a = w0.getRMSLevel (0, (int) fsr, (int) (2 * fsr)), c = w.getRMSLevel (0, (int) fsr, (int) (2 * fsr));
+            std::cout << "blower level: omni " << juce::Decibels::gainToDecibels (a) << " dB, all around " << juce::Decibels::gainToDecibels (c) << " dB" << std::endl;
+            check (std::abs (juce::Decibels::gainToDecibels (c / a)) < 2.0f, "diffuse blower keeps the level");
+        }
+        {   // tracker path: with "pipes wait" the pipe speaks after the path time
+            auto lowRms = [&] (const juce::AudioBuffer<float>& b, double t0, double t1)
+            {
+                std::vector<float> x (b.getReadPointer (0) + (int) (t0 * fsr), b.getReadPointer (0) + (int) (t1 * fsr));
+                juce::IIRFilter f; f.setCoefficients (juce::IIRCoefficients::makeLowPass (fsr, 1500.0));
+                f.processSamples (x.data(), (int) x.size());
+                double s = 0; for (auto v : x) s += (double) v * v;
+                return juce::Decibels::gainToDecibels ((float) std::sqrt (s / (double) x.size()), -200.0f);
+            };
+            auto wait = run ([] (EngineParams& p) { p.fx.pathLevel = 1.0f; p.fx.pathTime = 0.3f; p.fx.pathTicks = 8; p.fx.pathWait = true; },
+                             { 69 }, 1.2, -1, "35_fx_path_wait_ambix1");
+            auto noWait = run ([] (EngineParams& p) { p.fx.pathLevel = 1.0f; p.fx.pathTime = 0.3f; p.fx.pathTicks = 8; }, { 69 }, 1.2, -1, "35_fx_path_ambix1");
+            const float wEarly = lowRms (wait, 0.08, 0.25), nEarly = lowRms (noWait, 0.08, 0.25), wLate = lowRms (wait, 0.6, 1.0);
+            std::cout << "tracker path: pipe band early " << wEarly << " dB (waiting) vs " << nEarly << " dB, later " << wLate << " dB" << std::endl;
+            check (nEarly - wEarly > 15.0f && wLate > nEarly - 3.0f, "pipes wait for the tracker path");
+            auto ticks = run ([] (EngineParams& p) { p.stopGain[0] = 0.0f; p.fx.pathLevel = 1.0f; p.fx.pathTime = 0.4f; p.fx.pathTicks = 8; p.fx.pathSpread = 0.0f; },
+                              { 69 }, 0.6, -1, "35_fx_path_ticks_only");
+            const auto first = direction (ticks, 0.0, 0.07), last = direction (ticks, 0.33, 0.45);
+            std::cout << "tracker ticks: first at az " << first.az << " el " << first.el << ", last at az " << last.az << " el " << last.el << std::endl;
+            check (angleDiff (first.az, 0.0f) < 20.0f && angleDiff (last.az, posA.az) < 12.0f, "tracker ticks run from the console to the pipe");
+        }
+        {   // own sounds: at the pipe (fallback = the recorded clicks when the folder is empty)
+            auto b = run ([] (EngineParams& p) { p.stopGain[0] = 0.0f; p.fx.custLevel = 1.0f; p.fx.custPlace = 0; }, { 69 }, 0.8, -1, "36_fx_own_at_pipe");
+            const auto d = direction (b, 0.0, 0.5);
+            std::cout << "own sound at pipe: " << d.db << " dB, az " << d.az << std::endl;
+            check (d.db > -60.0f && angleDiff (d.az, posA.az) < 10.0f, "own sound at the pipe");
+            auto c = run ([] (EngineParams& p) { p.stopGain[0] = 0.0f; p.fx.custLevel = 1.0f; p.fx.custPlace = 3; p.fx.custWander = 180.0f; p.fx.custScatter = 1.0f; },
+                          { 69 }, 2.0, 0.5, "36_fx_own_circling");
+            check (c.getRMSLevel (0, 0, c.getNumSamples()) > 1.0e-5f, "own sounds circling render");
+
+            // loading: transient at the start, peak -6 dBFS
+            auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_custom_test");
+            tmp.deleteRecursively();
+            auto dir = SampleLibrary::customFolder (tmp);
+            dir.createDirectory();
+            juce::AudioBuffer<float> snd (2, 24000);
+            snd.clear();
+            for (int i = 12000; i < 24000; ++i) { const float v = 0.2f * std::exp (-(i - 12000) / 800.0f) * (float) std::sin (i * 0.9); snd.setSample (0, i, v); snd.setSample (1, i, v); }
+            writeWav (dir.getChildFile ("schraube.wav"), snd, 48000.0);
+            auto list = SampleLibrary::loadCustom (tmp);
+            float pk = 0; for (auto v : list.empty() ? std::vector<float>() : list[0].sample->data) pk = std::max (pk, std::abs (v));
+            check (list.size() == 1 && list[0].sample->size() < 12100 && std::abs (pk - 0.5f) < 0.01f, "own sounds folder: trimmed + normalised");
+            tmp.deleteRecursively();
+        }
+        {   // timing: everything on, 3rd order
+            OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+            EngineParams p; p.stopOn.fill (true); p.outputMode = 3;
+            p.fx.custLevel = 0.5f; p.fx.custScatter = 1.0f; p.fx.pathLevel = 0.5f; p.fx.crackLevel = 0.5f; p.fx.crackRate = 40.0f;
+            p.fx.leakLevel = 0.5f; p.fx.leakCount = 8; p.fx.leakWander = 30.0f; p.fx.windRound = true; p.wind = 0.3f;
+            p.fx.partSpread = 60.0f; p.fx.partTurn = 0.3f; p.fx.echoLevel = 0.5f; p.fx.echoRepeats = 8;
+            juce::AudioBuffer<float> b (16, B);
+            const int blocks = (int) (6.0 * fsr / B);
+            auto t0 = std::chrono::high_resolution_clock::now();
+            for (int i = 0; i < blocks; ++i)
+            {
+                juce::MidiBuffer mb;
+                if (i == 0) for (int m : { 48, 55, 60, 64, 67, 72 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 90), 0);
+                e.process (b, mb, p);
+            }
+            const double rt = 6.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+            std::cout << "all effects, 8 stops x 6 keys, 3rd order: " << rt << " x real time" << std::endl;
+            check (rt > 2.0, "effects are cheap enough");
+        }
+    }
+
     std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl;
     return failures;
 }

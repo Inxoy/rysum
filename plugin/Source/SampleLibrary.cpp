@@ -33,6 +33,49 @@ static std::shared_ptr<const Sample> readMono (juce::AudioFormatManager& fm, con
     return s;
 }
 
+std::vector<NoiseSample> SampleLibrary::loadCustom (const juce::File& sampleFolder, std::function<bool()> shouldExit)
+{
+    std::vector<NoiseSample> out;
+    const auto dir = customFolder (sampleFolder);
+    if (! dir.isDirectory()) return out;
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    auto files = dir.findChildFiles (juce::File::findFiles, true, "*.wav;*.aif;*.aiff;*.flac;*.ogg");
+    files.sort();
+    for (auto& f : files)
+    {
+        if ((int) out.size() >= 64 || (shouldExit && shouldExit())) break;
+        {
+            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+            if (r == nullptr || r->sampleRate <= 0 || (double) r->lengthInSamples / r->sampleRate > 20.0) continue;
+        }
+        auto src = readMono (fm, f);
+        if (src == nullptr) continue;
+        float peak = 0.0f;
+        for (auto x : src->data) peak = juce::jmax (peak, std::abs (x));
+        if (peak < 1.0e-5f) continue;
+        // start at the first transient (so a sound lands exactly when the key is played), short fade-in
+        size_t first = 0;
+        while (first < src->data.size() && std::abs (src->data[first]) < peak * 0.01f) ++first;
+        first = first > 32 ? first - 32 : 0;
+        auto s = std::make_shared<Sample>();
+        s->sampleRate = src->sampleRate;
+        s->data.assign (src->data.begin() + (std::ptrdiff_t) first, src->data.end());
+        const float g = 0.5f / peak;                  // all own sounds at the same peak (-6 dBFS)
+        for (size_t i = 0; i < s->data.size(); ++i)
+            s->data[i] *= g * (i < 32 ? (float) i / 32.0f : 1.0f);
+        const size_t fadeLen = juce::jmin ((size_t) 256, s->data.size() / 4);
+        for (size_t i = 0; i < fadeLen; ++i)
+            s->data[s->data.size() - 1 - i] *= (float) i / (float) fadeLen;
+        NoiseSample ns;
+        ns.sample = s;
+        ns.kind = f.getFileNameWithoutExtension();
+        ns.peakDb = -6.0f;
+        out.push_back (ns);
+    }
+    return out;
+}
+
 static bool isBadPipe (const Pipe& p)
 {
     if (! p.valid) return true;
@@ -211,6 +254,11 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load (const juce::File& folder, ju
                     if (ns.sample == nullptr) continue;
                     ns.kind = e["kind"].toString();
                     ns.peakDb = (float) (double) e["peak_db"];
+                    {
+                        float pk = 0.0f;
+                        for (auto v : ns.sample->data) pk = juce::jmax (pk, std::abs (v));
+                        ns.norm = juce::jlimit (0.25f, 16.0f, 0.5f / juce::jmax (1.0e-6f, pk));
+                    }
                     if (! isClicks) lib->stopPulls.push_back (ns);
                     else if (ns.kind == "down") lib->clicksDown.push_back (ns);
                     else if (ns.kind == "up") lib->clicksUp.push_back (ns);
@@ -224,6 +272,8 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load (const juce::File& folder, ju
                 if (auto s = readMono (fm, folder.getChildFile (e["file"].toString())))
                     lib->wind.push_back (s);
     }
+
+    lib->custom = loadCustom (folder, shouldExit);
 
     if (lib->loadedPipes == 0)
     {

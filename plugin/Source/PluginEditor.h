@@ -6,6 +6,7 @@
 #include "SpaceView.h"
 #include "KlangView.h"
 #include "ModView.h"
+#include "EffectsView.h"
 
 /** fixed 1120 x 720 design, scaled as a whole when the window is resized */
 class RysumContent : public juce::Component, public rysum::ui::ModUiAccess
@@ -41,7 +42,8 @@ private:
     rysum::ui::SpaceView space;
     rysum::ui::KlangView klang;
     rysum::ui::ModView mod;
-    std::array<juce::TextButton, 4> tabs;
+    rysum::ui::EffectsView fx;
+    std::array<juce::TextButton, 5> tabs;
     juce::ComboBox outputChoice;
     juce::TextButton patchPrev { juce::String::fromUTF8 ("\xe2\x97\x80") }, patchNext { juce::String::fromUTF8 ("\xe2\x96\xb6") },
                      patchName, patchSave { "Speichern" };

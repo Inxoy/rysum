@@ -4,15 +4,17 @@ using namespace rysum;
 using namespace rysum::ui;
 
 static constexpr int kW = 1120, kH = 720, kHeader = 56;
+static constexpr int kOutX = 876, kOutW = 150;      // output format combo in the header
 
-RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p)
+RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p), fx (p)
 {
     addAndMakeVisible (console);
     addChildComponent (space);
     addChildComponent (klang);
     addChildComponent (mod);
-    const char* names[] { "Spieltisch", "Raum", "Klang", "Modulation" };
-    for (int i = 0; i < 4; ++i)
+    addChildComponent (fx);
+    const char* names[] { "Spieltisch", "Raum", "Klang", "Effekte", "Modulation" };
+    for (int i = 0; i < 5; ++i)
     {
         tabs[(size_t) i].setButtonText (juce::String (names[i]).toUpperCase());
         tabs[(size_t) i].onClick = [this, i] { showView (i); };
@@ -60,8 +62,9 @@ void RysumContent::showView (int v)
     console.setVisible (v == 0);
     space.setVisible (v == 1);
     klang.setVisible (v == 2);
-    mod.setVisible (v == 3);
-    for (int i = 0; i < 4; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
+    fx.setVisible (v == 3);
+    mod.setVisible (v == 4);
+    for (int i = 0; i < 5; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
 }
 
 void RysumContent::resized()
@@ -71,14 +74,15 @@ void RysumContent::resized()
     space.setBounds (body);
     klang.setBounds (body);
     mod.setBounds (body);
+    fx.setBounds (body);
     patchPrev.setBounds (150, 14, 24, 28);
     patchName.setBounds (178, 14, 160, 28);
     patchNext.setBounds (342, 14, 24, 28);
     patchSave.setBounds (372, 14, 72, 28);
-    const int tw[] { 100, 60, 64, 100 };
-    int x = 456;
-    for (int i = 0; i < 4; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
-    outputChoice.setBounds (kW - 28 - 60 - 170, 14, 170, 28);
+    const int tw[] { 98, 58, 62, 74, 98 };
+    int x = 454;
+    for (int i = 0; i < 5; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
+    outputChoice.setBounds (kOutX, 14, kOutW, 28);
 }
 
 void RysumContent::tick()
@@ -87,6 +91,7 @@ void RysumContent::tick()
     if (space.isVisible()) space.refresh();
     if (klang.isVisible()) klang.refresh();
     if (mod.isVisible()) mod.refresh();
+    if (fx.isVisible()) fx.refresh();
     if (proc.patchVersion != shownPatchVersion)
     {
         shownPatchVersion = proc.patchVersion;
@@ -196,9 +201,10 @@ void RysumContent::paint (juce::Graphics& g)
     juce::String o = juce::String (needed) + " ch";
     if (have < needed) o = u8 ("nur ") + juce::String (have) + " ch!";
     g.setColour (have < needed ? col::white : col::faint);
-    g.drawText (o, juce::Rectangle<int> (kW - 28 - 60 - 170 - 74, 0, 66, kHeader), juce::Justification::centredRight);
+    const juce::Rectangle<int> info (kOutX + kOutW + 6, 0, kW - 28 - (kOutX + kOutW + 6), kHeader);
+    g.drawText (o, info.withTrimmedBottom (kHeader / 2).withTrimmedTop (9), juce::Justification::centredRight);
     g.setColour (col::faint);
-    g.drawText (juce::String (proc.engine.activeVoices.load()) + " St.", head.withTrimmedLeft (980), juce::Justification::centredRight);
+    g.drawText (juce::String (proc.engine.activeVoices.load()) + " St.", info.withTrimmedTop (kHeader / 2).withTrimmedBottom (9), juce::Justification::centredRight);
 }
 
 void RysumContent::showModMenu (juce::Component& target, const juce::String& paramId)
@@ -235,7 +241,7 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
         auto& self = *safe;
         if (res >= 1 && res <= kNumSources) self.proc.addRoute (res - 1, kGlobalTargetBase + idx, 0.25f);
         else if (res >= 100 && res < 100 + kNumRoutes) self.proc.clearRoute (res - 100);
-        else if (res == 300) self.showView (3);
+        else if (res == 300) self.showView (4);
     });
 }
 
