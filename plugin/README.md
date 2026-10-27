@@ -220,15 +220,19 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
 - *Registerwind* – the wind model of the stops, i.e. what the *Wind* slider of each stop
   (Spieltisch) does when it is turned down:
   - *klassisch* (default, as before): a half-drawn stop gets quieter, flatter, duller and unsteady.
-  - *instabil*: the same, and below roughly half wind the starving pipes also misbehave the way
-    real ones do. The slow jet no longer holds the fundamental, so its noise makes the pipe's own
-    upper resonances sound for a moment: thin whistles near the 2nd … 8th partial (a stopped
-    Gedackt only has the odd ones), now and then a high squeak. They jump, slide to a neighbouring
-    resonance and die away. The speech stutters, because the fundamental drops out for a few
-    milliseconds and the resonances ring up in the gaps. The mouth hisses. The Trompete chatters
-    instead of whistling. Strongest at about 10 % wind, gone again when the stop is closed. At
-    full wind nothing changes, so patches sound the same in both models. Try an LFO or an envelope
-    on a stop's wind, or a MIDI fader (see section 4). Patches 56–58 show it.
+  - *instabil*: the same, and below roughly half wind each pipe also gets an edge tone. That is
+    the slow jet oscillating at the upper lip: a thin whistle (roughly 1.5–8 kHz) next to the pipe tone.
+    Like on a real organ it is
+    - steady as long as the wind is steady;
+    - lower and quieter as the wind falls (its pitch follows the jet speed, about the square root of
+      the pressure);
+    - pulled towards the pipe's own resonances, so on some pipes it moves in small hops instead of
+      gliding (a stopped Gedackt only has the odd ones);
+    - different from pipe to pipe (where it appears, how high, some pipes have a second, weaker
+      one), but always the same for the same pipe.
+    The mouth also hisses, and at very low wind (below ~15 %) the speech sputters. The Trompete
+    chatters instead. At full wind nothing changes, so patches sound the same in both models.
+    Try a slow LFO or an envelope on a stop's wind, or a MIDI fader (see section 4). Patches 56–58 show it.
 - *Freeze*: while on, released notes do not stop but turn into a grain cloud from the
   pipe's sustain. *Verwischen* = longer, more detuned grains. Switching it off lets the
   frozen notes fade over *Ausklang*.

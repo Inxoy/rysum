@@ -8,145 +8,163 @@ namespace rysum
 {
 /** Wind model 2 ("instabil"): what a starving flue pipe does besides getting quiet, flat and dull.
 
-    When the wind pressure at the foot drops, the jet leaving the flue gets slow and loses its grip
-    on the air column. The pipe no longer locks firmly onto its fundamental:
-      - the jet's own turbulence excites the pipe's upper resonances (they lie close to, but not
-        exactly on, the harmonics; a stopped pipe only has the odd ones). Some of them catch for a
-        moment and sound as thin whistles, jump to another resonance, glide, die away again;
-      - the speech becomes intermittent: the fundamental drops out for a few milliseconds when the
-        jet fails, and in those gaps the resonances take over;
-      - there is more audible hiss from the mouth.
-    Reeds behave differently: their tongue stops beating cleanly and chatters.
+    When the wind pressure at the foot drops, the jet leaving the flue gets slow. Besides the pipe tone
+    an edge tone becomes audible: the jet oscillating on the upper lip at its own frequency, which is
+    set by the jet speed (~ square root of the pressure) and the mouth. That makes it
+      - steady as long as the wind is steady,
+      - glide downwards when the wind goes down, and get quieter as it does,
+      - lean on the pipe's own resonances (near the harmonics, a stopped pipe only the odd ones) and
+        hop from one to the next as it passes them (some pipes more, some less),
+      - different from pipe to pipe (mouth, voicing), but always the same for the same pipe.
+    Every pipe gets its own edge tone (where it starts, how far it reaches, how strongly it locks, a
+    weaker second one on some pipes), derived from stop and key only, so it is reproducible.
+    In addition: a steady hiss from the mouth, and at very low wind the speech sputters (the
+    fundamental drops out for a few milliseconds). Reeds: the tongue chatters instead of whistling.
 
-    Everything here is driven by one number, 'instability' (0 .. 1), which the engine derives from
-    the stop wind: nothing at full wind, most around 10 % wind, nothing again when the stop is closed. */
+    Everything here follows the stop wind (0 = closed .. 1 = fully drawn); at full wind nothing happens. */
 struct WindChaos
 {
-    static constexpr int kRes = 3;
+    static constexpr int kTones = 2;
 
-    struct Resonance
+    struct EdgeTone
     {
-        float f = 1000.0f, fTarget = 1000.0f, glide = 1.0f;     // Hz, control-rate glide coefficient
-        int k = 0;                                              // which resonance (partial number)
-        float env = 0.0f, envTarget = 0.0f, rise = 0.1f, fall = 0.1f;
-        float q = 100.0f;
-        int timer = 0;                                          // control ticks until the next decision
-        float wob = 0.0f, wobTarget = 0.0f;                     // slow pitch wander (cents)
-        // TPT state-variable band-pass
-        float ic1 = 0.0f, ic2 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, gain = 0.0f;
+        // per pipe (fixed)
+        float fTop = 4000.0f;          // Hz at the wind where it appears
+        float wOn = 0.5f;              // stop wind below which it appears
+        float amp = 0.0f;              // relative level (0 = this pipe has no such tone)
+        float lock = 0.5f;             // 0 = glides freely, 1 = sits on the pipe resonances and hops
+        // running
+        int k = -1;                    // resonance it leans on (partial number)
+        float f = 0.0f, a = 0.0f;      // smoothed frequency / level
+        float re = 1.0f, im = 0.0f;    // oscillator (rotating phasor)
+        float cr = 1.0f, ci = 0.0f;    // rotation per sample
+        float jit = 0.0f;              // tiny wander (cents), like any real whistle
+        // the same frequency as a narrow noise band: the breath around the whistle
+        float ic1 = 0.0f, ic2 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, nGain = 0.0f;
     };
 
-    std::array<Resonance, kRes> res {};
+    std::array<EdgeTone, kTones> tones {};
     XorShift rng { 1 };
-    float level = 0.0f;           // smoothed instability (gated by the key)
+    float hiss = 0.0f, hissLp = 0.0f;
+    float stutter = 0.0f;              // 0 .. 1: how much the speech sputters
     float jet = 1.0f, jetTarget = 1.0f;
     int jetTimer = 0;
-    float hissLp = 0.0f, air = 0.0f;
     bool idle = true;
 
-    void reset (uint32_t seed) noexcept
+    /** noiseSeed: per note; pipeSeed: per pipe (stop, key) - the pipe's character */
+    void reset (uint32_t noiseSeed, uint32_t pipeSeed, float pipeHz, float sr) noexcept
     {
-        rng = XorShift (seed);
+        rng = XorShift (noiseSeed);
         rng.next();
-        for (auto& r : res) r = Resonance {};
-        for (auto& r : res) r.timer = (int) (rng.uni() * 40.0f);
-        level = 0.0f; jet = jetTarget = 1.0f; jetTimer = 0; hissLp = 0.0f; air = 0.0f; idle = true;
+        XorShift pr (pipeSeed * 2654435761u + 0x5bd1e995u);
+        for (int i = 0; i < 6; ++i) pr.next();
+        const float fMax = juce::jmin (9000.0f, 0.4f * sr);
+        for (int t = 0; t < kTones; ++t)
+        {
+            auto& e = tones[(size_t) t];
+            e = EdgeTone {};
+            // smaller pipes have smaller mouths: their edge tones sit higher
+            const float size = std::pow (juce::jmax (30.0f, pipeHz) / 262.0f, 0.3f);
+            e.fTop = juce::jlimit (900.0f, fMax, std::exp (std::log (2200.0f) + (std::log (7000.0f) - std::log (2200.0f)) * pr.uni()) * size);
+            e.wOn = 0.3f + 0.25f * pr.uni();
+            e.lock = pr.uni() * pr.uni() < 0.35f ? 0.3f + 0.6f * pr.uni() : 0.1f * pr.uni();
+            e.amp = t == 0 ? 0.7f + 0.3f * pr.uni() : (pr.uni() < 0.45f ? 0.25f + 0.25f * pr.uni() : 0.0f);
+            if (t == 1) { e.fTop *= 1.35f + 0.5f * pr.uni(); e.fTop = juce::jmin (e.fTop, fMax); e.wOn *= 0.8f; }
+        }
+        hiss = hissLp = 0.0f; stutter = 0.0f; jet = jetTarget = 1.0f; jetTimer = 0; idle = true;
     }
 
-    /** how unstable a pipe is at this stop wind (0 = closed .. 1 = fully drawn) */
-    static float instabilityForWind (float w) noexcept
-    {
-        const float x = juce::jlimit (0.0f, 1.0f, (0.55f - w) / 0.45f);
-        return x * x * juce::jmin (1.0f, w / 0.06f);
-    }
+    /** multiplier for the pipe's own tone (the speech sputtering at very low wind) */
+    float toneGain() const noexcept { return 1.0f - 0.7f * stutter * (1.0f - jet); }
 
-    /** multiplier for the pipe's own tone (the jet dropping out) */
-    float toneGain() const noexcept { return 1.0f - 0.8f * level * (1.0f - jet); }
-
-    /** control rate (every 'ticks' samples). f0 = frequency the pipe sounds at right now. */
-    void control (float instability, float f0, bool stopped, bool reed, bool speaking, float sr, int ticks = 16) noexcept
+    /** control rate (every 'ticks' samples). w = stop wind (smoothed), f0 = frequency the pipe sounds at right now. */
+    void control (float w, float f0, bool stopped, bool reed, bool speaking, float sr, int ticks = 16) noexcept
     {
         const float dtc = (float) ticks / sr;
-        const float target = speaking ? instability : 0.0f;
-        level += (target > level ? 1.0f - std::exp (-dtc / 0.04f) : 1.0f - std::exp (-dtc / 0.06f)) * (target - level);
+        const float smooth = 1.0f - std::exp (-dtc / 0.03f);
+        const float gate = speaking ? juce::jmin (1.0f, w / 0.04f) : 0.0f;     // no wind, no sound
 
-        bool anySounding = level > 1.0e-4f;
-        for (auto& r : res) anySounding = anySounding || r.env > 1.0e-4f || r.envTarget > 0.0f;
-        idle = ! anySounding;
-        if (idle) { jet = jetTarget = 1.0f; return; }
-
-        auto ms = [sr, ticks] (float m) { return juce::jmax (1, (int) (m * 0.001f * sr / (float) ticks)); };
-
-        // ---- the jet: holds, fails for a moment, catches again
-        if (--jetTimer <= 0)
+        bool any = false;
+        const float fMax = 0.45f * sr;
+        for (auto& e : tones)
         {
-            const float pOff = (reed ? 0.75f : 0.5f) * std::pow (level, 1.2f);
-            if (jetTarget > 0.5f && rng.uni() < pOff)
+            float target = 0.0f;
+            if (e.amp > 0.0f && w < e.wOn)
             {
-                jetTarget = 0.0f;
-                jetTimer = ms (reed ? 6.0f + 30.0f * rng.uni() : 12.0f + 110.0f * rng.uni() * rng.uni());
+                // appears below wOn (soft onset), then fades as the wind (and the jet) gets weaker
+                const float x = w / e.wOn;
+                const float onset = juce::jlimit (0.0f, 1.0f, (1.0f - x) / 0.12f);
+                target = e.amp * onset * std::pow (x, 1.3f) * gate * (reed ? 0.5f : 1.0f);
             }
+            e.a += smooth * (target - e.a);
+            if (e.a < 1.0e-4f && target <= 0.0f) { e.a = 0.0f; e.k = -1; continue; }
+            any = true;
+
+            // free edge tone: proportional to the jet speed ~ sqrt (pressure)
+            const float ff = e.fTop * std::sqrt (juce::jmax (0.005f, w) / e.wOn);
+            // leaning on the nearest pipe resonance, with hysteresis: it only moves on when the free tone
+            // has clearly left it, so at a steady wind it stays where it is
+            const float fb = juce::jmax (20.0f, f0);
+            auto resHz = [fb] (int k) { return fb * (float) k * (1.0f + 0.0025f * (float) (k - 1)); };
+            auto nearest = [&] (float hz)
+            {
+                int k = juce::jmax (1, (int) std::lround (hz / fb));
+                if (stopped && k % 2 == 0) k += hz > resHz (k) ? 1 : -1;
+                return juce::jmax (1, k);
+            };
+            if (e.k < 1) e.k = nearest (ff);
             else
             {
-                jetTarget = 1.0f;
-                jetTimer = ms ((reed ? 15.0f + 60.0f * rng.uni() : 50.0f + 600.0f * rng.uni()) * (1.25f - 0.75f * level));
+                const float spacing = stopped ? 2.0f : 1.0f;
+                const float off = std::abs (ff - resHz (e.k)) / (fb * spacing);
+                if (off > 0.5f + 0.3f * e.lock) e.k = nearest (ff);
             }
+            const float fLocked = resHz (e.k);
+            const float fT = juce::jlimit (60.0f, fMax, std::exp (std::log (ff) + e.lock * (std::log (fLocked) - std::log (ff))));
+            if (e.f <= 0.0f) e.f = fT;
+            e.f += (1.0f - std::exp (-dtc / 0.025f)) * (fT - e.f);
+            e.jit += 0.02f * (3.0f * rng.bi() - e.jit);
+            const float hz = juce::jlimit (60.0f, fMax, e.f * std::exp2 (e.jit / 1200.0f));
+            const float wph = juce::MathConstants<float>::twoPi * hz / sr;
+            e.cr = std::cos (wph); e.ci = std::sin (wph);
+            const float n = 1.0f / std::sqrt (e.re * e.re + e.im * e.im);     // keep the phasor on the unit circle
+            e.re *= n; e.im *= n;
+            // breath band around it (narrow, peak gain 1)
+            const float q = 60.0f;
+            const float g = std::tan (juce::MathConstants<float>::pi * hz / sr), kq = 1.0f / q;
+            e.a1 = 1.0f / (1.0f + g * (g + kq)); e.a2 = g * e.a1; e.a3 = g * e.a2;
+            e.nGain = kq * std::sqrt (q * sr / (juce::MathConstants<float>::pi * hz)) * 0.35f;
         }
-        jet += (1.0f - std::exp (-dtc / (reed ? 0.002f : 0.006f))) * (jetTarget - jet);
 
-        // ---- resonances of the pipe body catching the jet noise
-        const float fMax = juce::jmin (9500.0f, 0.42f * sr);
-        const int kMin = stopped ? 3 : 2;
-        const int kTop = (int) (fMax / juce::jmax (20.0f, f0));
-        for (auto& r : res)
+        // steady hiss from the mouth, strongest at low wind
+        const float hx = juce::jlimit (0.0f, 1.0f, (0.5f - w) / 0.4f);
+        hiss += smooth * (0.18f * hx * hx * gate * (reed ? 0.5f : 1.0f) - hiss);
+        any = any || hiss > 1.0e-4f;
+
+        // very low wind: the jet sometimes fails for a few milliseconds
+        const float st = juce::jlimit (0.0f, 1.0f, (0.16f - w) / 0.12f) * gate;
+        stutter += smooth * (st - stutter);
+        if (stutter > 0.01f)
         {
-            if (--r.timer <= 0)
+            any = true;
+            if (--jetTimer <= 0)
             {
-                const float pOn = level < 0.02f ? 0.0f : (reed ? 0.08f : 0.12f) + 0.38f * level;
-                // mostly the lower resonances (2nd .. 8th), now and then a high squeak
-                const int kMax = juce::jmin (kTop, rng.uni() < 0.15f ? 15 : (stopped ? 9 : 8));
-                if (kMax >= kMin && rng.uni() < pOn)
+                auto ms = [sr, ticks] (float m) { return juce::jmax (1, (int) (m * 0.001f * sr / (float) ticks)); };
+                if (jetTarget > 0.5f && rng.uni() < (reed ? 0.6f : 0.35f) * stutter)
                 {
-                    const float u = rng.uni();
-                    int k = kMin + (int) ((float) (kMax - kMin + 1) * u * u);
-                    if (stopped && (k % 2) == 0) k = k + 1 <= kMax ? k + 1 : k - 1;      // a stopped pipe only has the odd ones
-                    k = juce::jlimit (kMin, juce::jmax (kMin, kMax), k);
-                    // the resonances of a real pipe are a little sharp of the harmonics, and wander
-                    const float fk = juce::jmin (fMax, f0 * (float) k * (1.0f + 0.0025f * (float) (k - 1)) * (1.0f + 0.006f * rng.bi()));
-                    // a sounding resonance sometimes slides over to a neighbouring one, otherwise it jumps
-                    const bool slide = r.env > 0.05f && std::abs (k - r.k) <= 2 && rng.uni() < 0.5f;
-                    r.k = k;
-                    r.fTarget = fk;
-                    if (! slide) r.f = fk;
-                    r.glide = 1.0f - std::exp (-dtc / (0.012f + 0.04f * rng.uni()));
-                    r.q = 50.0f + 170.0f * rng.uni();
-                    r.envTarget = 0.3f + 0.7f * rng.uni();
-                    r.rise = 1.0f - std::exp (-dtc / (0.006f + 0.05f * rng.uni()));
-                    r.fall = 1.0f - std::exp (-dtc / (0.03f + 0.15f * rng.uni()));
-                    r.timer = ms ((40.0f + 400.0f * rng.uni() * rng.uni()) * (1.3f - 0.6f * level));
+                    jetTarget = 0.0f;
+                    jetTimer = ms (reed ? 5.0f + 20.0f * rng.uni() : 8.0f + 50.0f * rng.uni());
                 }
                 else
                 {
-                    r.envTarget = 0.0f;
-                    r.timer = ms ((80.0f + 600.0f * rng.uni()) * (1.5f - 0.9f * level));
+                    jetTarget = 1.0f;
+                    jetTimer = ms (reed ? 15.0f + 50.0f * rng.uni() : 60.0f + 400.0f * rng.uni());
                 }
-                r.wobTarget = (10.0f + 30.0f * level) * rng.bi();
             }
-            r.f += r.glide * (r.fTarget - r.f);
-            r.wob += 0.05f * (r.wobTarget - r.wob);
-            r.env += (r.envTarget > r.env ? r.rise : r.fall) * (r.envTarget - r.env);
-            if (! speaking && r.envTarget > 0.0f) r.envTarget = 0.0f;   // the pallet closed: no more jet
-
-            const float f = juce::jlimit (30.0f, 0.45f * sr, r.f * std::exp2 (r.wob / 1200.0f));
-            const float g = std::tan (juce::MathConstants<float>::pi * f / sr);
-            const float k = 1.0f / r.q;
-            r.a1 = 1.0f / (1.0f + g * (g + k));
-            r.a2 = g * r.a1;
-            r.a3 = g * r.a2;
-            // peak gain 1, then white noise in -> about the same RMS out; in the gaps of the jet they ring up
-            const float boost = 1.0f + 1.5f * (1.0f - jet);
-            r.gain = k * std::sqrt (r.q * sr / (juce::MathConstants<float>::pi * f)) * r.env * boost * (0.3f + 0.7f * level) * (reed ? 0.5f : 1.0f);
         }
+        else jetTarget = 1.0f;
+        jet += (1.0f - std::exp (-dtc / (reed ? 0.002f : 0.006f))) * (jetTarget - jet);
+        idle = ! any;
     }
 
     /** one sample of the extra sound (to be added to the pipe, before the air filter) */
@@ -154,18 +172,21 @@ struct WindChaos
     {
         const float n = rng.bi();
         float y = 0.0f;
-        for (auto& r : res)
+        for (auto& e : tones)
         {
-            const float v3 = n - r.ic2;
-            const float v1 = r.a1 * r.ic1 + r.a2 * v3;
-            const float v2 = r.ic2 + r.a2 * r.ic1 + r.a3 * v3;
-            r.ic1 = 2.0f * v1 - r.ic1;
-            r.ic2 = 2.0f * v2 - r.ic2;
-            y += v1 * r.gain;
+            if (e.a <= 0.0f) continue;
+            const float re = e.re * e.cr - e.im * e.ci;
+            e.im = e.re * e.ci + e.im * e.cr;
+            e.re = re;
+            const float v3 = n - e.ic2;
+            const float v1 = e.a1 * e.ic1 + e.a2 * v3;
+            const float v2 = e.ic2 + e.a2 * e.ic1 + e.a3 * v3;
+            e.ic1 = 2.0f * v1 - e.ic1;
+            e.ic2 = 2.0f * v2 - e.ic2;
+            y += e.a * (e.im + v1 * e.nGain);
         }
-        // hiss from the mouth: high-passed noise, louder when the jet fails
         hissLp += 0.35f * (n - hissLp);
-        y += (n - hissLp) * 0.35f * level * (0.4f + 1.2f * (1.0f - jet));
+        y += (n - hissLp) * hiss;
         return y;
     }
 };

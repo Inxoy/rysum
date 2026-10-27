@@ -419,7 +419,8 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples)
     v->env = 0.0f; v->held1 = 0.0f;
     v->windSm = -1.0f; v->lp = 0.0f; v->lpA = 1.0f;
     v->lpAir = 0.0f; v->airA = 1.0f;
-    v->chaos.reset ((uint32_t) (stop * 7919 + key * 104729) ^ (ageCounter * 2654435761u));
+    v->chaos.reset ((uint32_t) (stop * 7919 + key * 104729) ^ (ageCounter * 2654435761u), (uint32_t) (stop * 131 + key + 1),
+                    (float) (pipe.measuredHz > 0.0 ? pipe.measuredHz : pipe.nominalHz), (float) sr);
     v->chAir = 0.0f;
     v->prevDist = -1.0f; v->dop = 1.0f; v->dopTarget = 1.0f;
     XorShift dr ((uint32_t) (stop * 7919 + key * 104729 + 3));
@@ -707,9 +708,9 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 rate = v.baseRate * std::exp2 (cents / 1200.0f) * v.dop;
                 if (chaosModel)
                 {
-                    // wind model 2: the starving pipe whistles on its upper resonances and stutters
+                    // wind model 2: the starving pipe's edge tone (steady at steady wind, lower and quieter as it falls)
                     const double hz = pipe.measuredHz > 0.0 ? pipe.measuredHz : pipe.nominalHz;
-                    v.chaos.control (WindChaos::instabilityForWind (w), (float) (hz * rate / v.baseRate),
+                    v.chaos.control (w, (float) (hz * rate / v.baseRate),
                                      v.stop == 1, v.stop == 6, v.held || v.frozen, (float) sr);
                     a *= v.chaos.toneGain();
                 }
@@ -1059,11 +1060,13 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
             {
                 const float f = (float) (i + 1) * inv;
                 const float d = t.d0 + (t.d1 - t.d0) * f;
-                const float rp = (float) (erClock + (uint32_t) i) - d + (float) kErRing;     // positive, wraps below
-                const int i0 = (int) rp;
-                const float fr = rp - (float) i0;
-                const float a = ring[(uint32_t) i0 & (kErRing - 1)], b = ring[(uint32_t) (i0 + 1) & (kErRing - 1)];
-                const float x = a + fr * (b - a);
+                // integer and fractional part of the delay kept apart: the clock itself grows without end, and
+                // as a float it would lose the fraction after a few minutes (aliasing, a high ringing)
+                const int di = (int) d;
+                const float fd = d - (float) di;
+                const uint32_t at = erClock + (uint32_t) i - (uint32_t) di;          // read position + fd samples earlier
+                const float a = ring[(at - 1u) & (kErRing - 1)], b = ring[at & (kErRing - 1)];
+                const float x = b + fd * (a - b);
                 t.lp += shelfA * (x - t.lp);
                 const float rr = t.r0 + (t.r1 - t.r0) * f;
                 y[i] = (t.lp + rr * (x - t.lp)) * (t.g0 + (t.g1 - t.g0) * f);

@@ -549,7 +549,8 @@ static juce::AudioBuffer<float> render (OrganEngine& e, Scene& sc, double sr, in
 
 int main (int argc, char** argv)
 {
-    const bool onlyWind = std::getenv ("RYSUM_ONLY_WIND") != nullptr;       // quick run: just the wind model tests
+    const bool onlyRoom = std::getenv ("RYSUM_ONLY_ROOM") != nullptr;       // quick run: just the room tests
+    const bool onlyWind = onlyRoom || std::getenv ("RYSUM_ONLY_WIND") != nullptr;   // quick run: just the wind model tests
     if (! onlyWind)
     {
         testEncoder();
@@ -898,17 +899,66 @@ int main (int argc, char** argv)
             const double full = rmsDb (m0.getReadPointer (0) + (int) (0.8 * wsr), (int) wsr);
             const double low0 = rmsDb (m0.getReadPointer (0) + a, n), low1 = rmsDb (m1.getReadPointer (0) + a, n);
             const double hf0 = rmsDb (h0.data() + a, n), hf1 = rmsDb (h1.data() + a, n);
-            // how irregular the high part is: spread of 40 ms frame levels
-            std::vector<double> fr;
-            for (int i = a; i + 1920 <= a + n; i += 1920) fr.push_back (rmsDb (h1.data() + i, 1920));
-            double mean = 0; for (double v : fr) mean += v; mean /= (double) fr.size();
-            double sd = 0; for (double v : fr) sd += (v - mean) * (v - mean); sd = std::sqrt (sd / (double) fr.size());
             std::cout << "wind model 2 " << id << ": full wind " << full << " dB; at 12 % wind classic " << low0 << " dB, new " << low1
-                      << " dB; above 2.5 kHz classic " << hf0 << " dB, new " << hf1 << " dB; frame spread " << sd << " dB; "
-                      << rt1 << "x realtime" << std::endl;
+                      << " dB; above 2.5 kHz classic " << hf0 << " dB, new " << hf1 << " dB; " << rt1 << "x realtime" << std::endl;
             check (hf1 > hf0 + 6.0, "wind model 2 adds high resonances at low wind (" + id + ")");
             check (low1 < full - 6.0, "a starving pipe stays quieter than at full wind (" + id + ")");
-            check (sd > 2.0, "the resonances come and go (" + id + ")");
+        }
+        // the edge tone of one pipe: strongest spectral peak above 1.2 kHz in a 4096-sample frame
+        auto edgePeak = [&] (const float* x, double lo = 1200.0, double hi = 10000.0) -> std::pair<double, double>
+        {
+            juce::dsp::FFT fft (12);
+            std::vector<float> b (8192, 0.0f);
+            for (int i = 0; i < 4096; ++i) b[(size_t) i] = x[i] * (0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / 4096.0f));
+            fft.performFrequencyOnlyForwardTransform (b.data(), true);
+            int best = 0; float bv = 0.0f;
+            for (int k = (int) (lo * 4096 / wsr); k < (int) (hi * 4096 / wsr); ++k) if (b[(size_t) k] > bv) { bv = b[(size_t) k]; best = k; }
+            const double y0 = b[(size_t) best - 1], y1 = b[(size_t) best], y2 = b[(size_t) best + 1];
+            const double kf = best + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2);
+            return { kf * wsr / 4096.0, 20.0 * std::log10 (bv + 1e-12) };
+        };
+        {
+            // steady wind: the edge tone stays where it is (pitch and level)
+            auto [b, rt] = renderWind (0, 1, { 60 }, [] (double t) { return t < 1.0 ? 1.0f : 0.22f; }, 8.0);
+            writeWav (outDir.getChildFile ("46_wind2_steady_c1.wav"), b, wsr);
+            std::vector<double> fs, ls;
+            const double f0 = edgePeak (b.getReadPointer (0) + (int) (3.0 * wsr)).first;       // follow that one (a pipe may have two)
+            for (double t = 3.0; t < 7.8; t += 0.1) { auto [f, l] = edgePeak (b.getReadPointer (0) + (int) (t * wsr), f0 / 1.06, f0 * 1.06); fs.push_back (f); ls.push_back (l); }
+            auto spread = [] (const std::vector<double>& v) { double m = 0; for (double x : v) m += x; m /= (double) v.size();
+                                                             double d = 0; for (double x : v) d += (x - m) * (x - m); return std::make_pair (m, std::sqrt (d / (double) v.size())); };
+            const auto [fm, fsd] = spread (fs); const auto [lm, lsd] = spread (ls);
+            std::cout << "wind model 2, c' at a steady 22 % wind: edge tone " << fm << " Hz (spread "
+                      << 1200.0 * std::log2 ((fm + fsd) / fm) << " ct), level spread " << lsd << " dB" << std::endl;
+            check (1200.0 * std::log2 ((fm + fsd) / fm) < 15.0 && lsd < 2.0, "wind model 2: steady wind -> steady edge tone");
+
+            // the same pipe struck again: the same edge tone
+            OrganEngine e; e.prepare (wsr, 256); e.setLibrary (lib);
+            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0; p.windModel = 1;
+            p.stopWind[0] = 0.22f;
+            juce::AudioBuffer<float> blk (2, 256), all (2, (int) (wsr * 7.0));
+            for (int pos = 0; pos < all.getNumSamples(); pos += 256)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0 || pos == (int) (3.5 * wsr) / 256 * 256) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                if (pos == (int) (2.5 * wsr) / 256 * 256) mb.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+                e.process (blk, mb, p);
+                all.copyFrom (0, pos, blk, 0, 0, juce::jmin (256, all.getNumSamples() - pos));
+            }
+            const double f1 = edgePeak (all.getReadPointer (0) + (int) (1.8 * wsr)).first, f2 = edgePeak (all.getReadPointer (0) + (int) (5.3 * wsr)).first;
+            std::cout << "wind model 2, c' struck twice: " << f1 << " / " << f2 << " Hz" << std::endl;
+            check (std::abs (1200.0 * std::log2 (f2 / f1)) < 15.0, "wind model 2: the same pipe has the same edge tone every time");
+
+            // falling wind: the edge tone glides down and gets quieter
+            auto [c, rt2] = renderWind (0, 1, { 60 }, [] (double t) { return (float) juce::jlimit (0.06, 1.0, 0.5 - 0.06 * (t - 1.0)); }, 8.0);
+            writeWav (outDir.getChildFile ("46_wind2_falling_c1.wav"), c, wsr);
+            const auto early = edgePeak (c.getReadPointer (0) + (int) (2.5 * wsr)), late = edgePeak (c.getReadPointer (0) + (int) (6.6 * wsr));
+            std::cout << "wind model 2, c' with falling wind: " << early.first << " Hz " << early.second << " dB -> " << late.first << " Hz " << late.second << " dB" << std::endl;
+            check (late.first < early.first * 0.85 && late.second < early.second - 3.0, "wind model 2: falling wind -> edge tone glides down and fades");
+            // different pipes: different edge tones
+            auto [d, rt3] = renderWind (0, 1, { 64 }, [] (double t) { return t < 1.0 ? 1.0f : 0.22f; }, 4.0);
+            const double fe = edgePeak (d.getReadPointer (0) + (int) (3.0 * wsr)).first;
+            std::cout << "wind model 2, e' at 22 % wind: " << fe << " Hz (c' " << fm << " Hz)" << std::endl;
+            check (std::abs (1200.0 * std::log2 (fe / fm)) > 50.0, "wind model 2: neighbouring pipes have their own edge tones");
         }
         {
             // 18 pipes starving at once
@@ -918,7 +968,7 @@ int main (int argc, char** argv)
             std::cout << "wind model 2, 18 pipes sweeping down: " << rt << "x realtime, peak " << juce::Decibels::gainToDecibels (b.getMagnitude (0, b.getNumSamples())) << " dBFS" << std::endl;
             check (rt > 1.0, "wind model 2 with 18 pipes faster than realtime");
         }
-        if (onlyWind) { std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
+        if (onlyWind && ! onlyRoom) { std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     }
 
     // ---------------- modulation ----------------
@@ -1226,6 +1276,30 @@ int main (int argc, char** argv)
             if (name.isNotEmpty()) writeWav (outDir.getChildFile (name + ".wav"), all, fsr);
             return all;
         };
+
+        {   // long sessions: the reflections must sound the same after the plugin has run for a long time
+            // (the read position of the delay lines once lost its fraction after ~6 minutes -> aliasing, high ringing)
+            auto setup = [] (EngineParams& p) { p.room.on = true; p.room.tailGain = 0.0f; p.room.order = 2; };
+            OrganEngine fresh, aged;
+            {
+                aged.prepare (fsr, 4096); aged.setLibrary (lib);
+                EngineParams q; q.stopOn = {}; q.clickLevel = 0; q.releaseClick = 0; q.wind = 0; q.stopPull = 0; q.outputMode = 1;
+                juce::AudioBuffer<float> b (4, 4096); juce::MidiBuffer none;
+                const int blocks = (int) (40.0 * 60.0 * fsr / 4096.0);          // 40 minutes of silence
+                for (int i = 0; i < blocks; ++i) aged.process (b, none, q);
+            }
+            auto a = run (setup, 2.0, -1, "", 4, &fresh);
+            auto b = run (setup, 2.0, -1, "41b_room_after_40_minutes", 4, &aged);
+            double e = 0, d = 0;
+            for (int i = (int) (0.5 * fsr); i < a.getNumSamples(); ++i)
+            {
+                const double x = a.getSample (0, i), y = b.getSample (0, i);
+                e += x * x; d += (x - y) * (x - y);
+            }
+            const double db = 10.0 * std::log10 (d / juce::jmax (1e-30, e) + 1e-30);
+            std::cout << "room: reflections after 40 minutes of running differ from a fresh start by " << db << " dB" << std::endl;
+            check (db < -80.0, "room: early reflections unchanged after a long session");
+        }
 
         {   // one strong reflection from the left wall: delay and direction
             auto setup = [&] (bool on) { return [on] (EngineParams& p)

@@ -87,8 +87,9 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     windClassic.onClick = [this] { if (windAtt) windAtt->setValueAsCompleteGesture (0.0f); };
     windUnstable.onClick = [this] { if (windAtt) windAtt->setValueAsCompleteGesture (1.0f); };
     windClassic.setTooltip (u8 ("Ein halb gezogenes Register (Wind-Regler je Register) wird leiser, tiefer, dumpfer und unruhig."));
-    windUnstable.setTooltip (u8 ("Wie klassisch, und bei wenig Wind dazu: Resonanzen der Pfeife pfeifen auf, springen und gleiten, "
-                                 "die Ansprache setzt kurz aus, die M\xc3\xbcndung zischt. Bei vollem Wind klingt alles wie gewohnt."));
+    windUnstable.setTooltip (u8 ("Wie klassisch, und bei wenig Wind dazu ein Schneidenton: jede Pfeife pfeift auf ihre eigene Art, ruhig bei ruhigem Wind, "
+                                 "tiefer und leiser, wenn der Wind sinkt. Die M\xc3\xbcndung zischt, ganz wenig Wind l\xc3\xa4sst die Ansprache stocken. "
+                                 "Bei vollem Wind klingt alles wie gewohnt."));
     addAndMakeVisible (windClassic);
     addAndMakeVisible (windUnstable);
 
@@ -209,8 +210,8 @@ void KlangView::paint (juce::Graphics& g)
         const bool unstable = windUnstable.getToggleState();
         g.setFont (A.sansFont (11.5f));
         g.setColour (col::mute);
-        g.drawFittedText (unstable ? u8 ("Bei wenig Wind pfeifen Resonanzen der Pfeifen auf, springen und gleiten; "
-                                         "die Ansprache stockt, die M\xc3\xbcndung zischt. Voller Wind: unver\xc3\xa4ndert.")
+        g.drawFittedText (unstable ? u8 ("Bei wenig Wind pfeift jede Pfeife ihren Schneidenton: ruhig bei ruhigem Wind, "
+                                         "tiefer und leiser, wenn der Wind sinkt; die M\xc3\xbcndung zischt. Voller Wind: unver\xc3\xa4ndert.")
                                    : u8 ("Ein halb gezogenes Register wird leiser, tiefer, dumpfer und unruhig."),
                           windText, juce::Justification::topLeft, 4);
     }

@@ -1489,7 +1489,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 7;
+    constexpr int kFactoryVersion = 8;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -1754,10 +1754,10 @@ void RysumProcessor::writeFactoryPatches()
           { { "windModel", 1 }, { "stop0", 1 }, { "stop2", 1 }, { "swind0", 0.6f }, { "swind2", 0.5f },
             { "lfo1Rate", 0.035f }, { "lfo2Shape", (float) shSmooth }, { "lfo2Rate", 0.09f } },
           { { srcLfo1, "swind0", 0.45f }, { srcLfo2, "swind2", 0.4f } });
+    currentSet = 8;          // set 8: steady wind (the edge tones stand still)
     make (u8 ("57 Pfeifende Gedackte"),
-          { { "windModel", 1 }, { "stop1", 1 }, { "swind1", 0.13f }, { "master", -6.0f },
-            { "lfo4Shape", (float) shSmooth }, { "lfo4Rate", 0.2f } },
-          { { srcLfo4, "swind1", 0.06f } });
+          { { "windModel", 1 }, { "stop1", 1 }, { "swind1", 0.2f }, { "master", -6.0f } }, {});
+    currentSet = 7;
     make (u8 ("58 Erlahmendes Gebl\xc3\xa4se"),
           { { "windModel", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 },
             { "env1Mode", 1 }, { "env1Delay", 1.0f }, { "env1Attack", 6.0f }, { "env1Decay", 1.0f }, { "env1Sustain", 1.0f }, { "env1Release", 1.5f } },
