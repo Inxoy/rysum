@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "libMTSClient.h"
 
 using namespace rysum;
 
@@ -237,6 +238,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
 
     // ---- wind model of the stops (page "Klang"); classic by default, so older patches sound the same
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "windModel", 1 }, "Windmodell", StringArray { "klassisch", "instabil" }, 0));
+    // late reverb of the simulated room: convolution (default) or the feedback delay network
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "simTailModel", 1 }, "Saal Nachhall-Modell", StringArray { "Faltung", "FDN" }, 0));
+    // MTS-ESP: held notes follow a changing tuning (or keep the pitch they started with)
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "mtsContinuous", 1 }, u8 ("MTS: gehaltene T\xc3\xb6ne folgen"), true));
     return l;
 }
 
@@ -331,7 +336,7 @@ RysumProcessor::RysumProcessor()
     ix.releaseClick = I ("releaseClick"); ix.stopPull = I ("stopPull"); ix.wind = I ("wind");
     ix.degAmount = I ("degAmount"); ix.degGrain = I ("degGrain"); ix.degBits = I ("degBits"); ix.degRate = I ("degRate");
     ix.degWobble = I ("degWobble"); ix.degDropouts = I ("degDropouts"); ix.degMode = I ("degMode");
-    ix.irDry = I ("irDry"); ix.irWet = I ("irWet"); ix.binYaw = I ("binYaw"); ix.windModel = I ("windModel");
+    ix.irDry = I ("irDry"); ix.irWet = I ("irWet"); ix.binYaw = I ("binYaw"); ix.windModel = I ("windModel"); ix.mtsCont = I ("mtsContinuous");
     for (int i = 0; i < kNumLfos; ++i)
     {
         const juce::String id = "lfo" + juce::String (i + 1);
@@ -355,11 +360,14 @@ RysumProcessor::RysumProcessor()
         applyMidiMapState (juce::ValueTree::fromXml (*xml));
     savedMapVersion = midiMapVersion.load();
 
+    mts = MTS_RegisterClient();          // microtuning from an MTS-ESP master (if the MTS-ESP library is installed)
+
     startTimer (250);   // first tick: find + load the samples (after a possible setStateInformation)
 }
 
 RysumProcessor::~RysumProcessor()
 {
+    if (mts != nullptr) { MTS_DeregisterClient (mts); mts = nullptr; }
     aliveFlag->store (false);
     stopTimer();
     loader.reset();
@@ -407,6 +415,12 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     p.air = V (ix.air);
     p.distAmount = V (ix.distAmount);
     p.tuning = tunings[(size_t) juce::jlimit (0, (int) tunings.size() - 1, juce::roundToInt (V (ix.temperament)))];   // precomputed (UI + audio thread)
+    {
+        // free tuning: every MIDI note its own pitch (the table is filled on the audio thread, see processBlock)
+        const int t = juce::roundToInt (V (ix.temperament));
+        if ((t == kScalaTuning && scalaReady.load()) || (t == kMtsTuning && mtsActive())) p.notes = &noteTable;
+        p.notesContinuous = V (ix.mtsCont) > 0.5f;
+    }
     p.pitchCents = V (ix.pitch);
     p.detune = V (ix.detune);
     p.tremOn = V (ix.tremOn) > 0.5f;
@@ -479,6 +493,7 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     r.order = 1 + juce::roundToInt (S (simOrder));
     r.erGain = S (simEr) <= -59.9f ? 0.0f : dbToGain (S (simEr));
     r.tailGain = S (simTail) <= -59.9f ? 0.0f : dbToGain (S (simTail));
+    r.tailModel = juce::roundToInt (S (simTailModel));
     return p;
 }
 
@@ -621,6 +636,31 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             if (target >= 0) { ccPending[(size_t) target] = value; any = true; }
         }
         if (any) triggerAsyncUpdate();
+    }
+
+    // free tuning: MIDI Tuning Standard SysEx (e.g. from Hexatone) goes to the MTS-ESP client (used when no master
+    // is connected); then the note table the engine plays from
+    if (mts != nullptr)
+        for (const auto meta : midi)
+            if (meta.getMessage().isSysEx())
+                MTS_ParseMIDIDataU (mts, meta.data, meta.numBytes);
+    {
+        const int t = juce::roundToInt (extraParams.at ("temperament")->load());
+        if (t == kMtsTuning && mts != nullptr)
+        {
+            for (int ch = 0; ch < 16; ++ch)
+                for (int n = 0; n < 128; ++n)
+                {
+                    const size_t i = (size_t) (ch * 128 + n);
+                    noteTable.hz[i] = (float) MTS_NoteToFrequency (mts, (char) n, (signed char) ch);
+                    noteTable.mapped[i] = MTS_ShouldFilterNote (mts, (char) n, (signed char) ch) ? 0 : 1;
+                }
+        }
+        else if (t == kScalaTuning && scalaVersion.load() != scalaVersionSeen)
+        {
+            const juce::SpinLock::ScopedTryLockType tl (scalaLock);          // (the message thread writes it rarely)
+            if (tl.isLocked()) { noteTable = scalaShared; scalaVersionSeen = scalaVersion.load(); }
+        }
     }
 
     auto params = readParams();
@@ -1160,6 +1200,13 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
     extra.setProperty ("irFile", irFile.getFullPathName(), nullptr);
     if (! forPatch) extra.setProperty ("sofaFile", sofaFile.getFullPathName(), nullptr);
     extra.setProperty ("patch", patchName, nullptr);
+    if (sclText.isNotEmpty())
+    {
+        // the tuning files themselves (not only their paths): the project / patch works on any computer
+        extra.setProperty ("scl", sclText, nullptr);
+        extra.setProperty ("sclName", sclName, nullptr);
+        if (kbmText.isNotEmpty()) { extra.setProperty ("kbm", kbmText, nullptr); extra.setProperty ("kbmName", kbmName, nullptr); }
+    }
     for (int s = 0; s < kNumStops; ++s)
     {
         juce::ValueTree st ("STOP");
@@ -1255,6 +1302,10 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         }
     }
     patchName = extra["patch"].toString();
+    if (extra.hasProperty ("scl"))
+        setScala (extra["scl"].toString(), extra["sclName"].toString(), extra["kbm"].toString(), extra["kbmName"].toString());
+    else if (! forPatch && sclText.isNotEmpty())
+        setScala ({}, {}, {}, {});                   // a project without a Scala file (a patch without one keeps the current file)
 
     {
         const auto mod = extra.getChildWithName ("MOD");
@@ -1320,6 +1371,100 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
 }
 
 // ---------------------------------------------------------------------------
+// free tuning: Scala files, MTS-ESP
+// ---------------------------------------------------------------------------
+bool RysumProcessor::mtsActive() const
+{
+    return mts != nullptr && (MTS_HasMaster (mts) || MTS_HasReceivedMTSSysEx (mts));
+}
+
+bool RysumProcessor::mtsHasMaster() const { return mts != nullptr && MTS_HasMaster (mts); }
+
+bool RysumProcessor::setScala (const juce::String& scl, const juce::String& sName, const juce::String& kbm, const juce::String& kName)
+{
+    if (scl.isEmpty())
+    {
+        sclText = sclName = kbmText = kbmName = tuningError = {};
+        scala = {};
+        scalaReady = false;
+        return true;
+    }
+    ScalaTuning t;
+    juce::String err;
+    if (! ScalaTuning::parseScl (scl, t, err)) { tuningError = sName + ": " + err; return false; }
+    if (kbm.isNotEmpty() && ! ScalaTuning::parseKbm (kbm, t, err)) { tuningError = kName + ": " + err; return false; }
+    scala = std::move (t);
+    sclText = scl; sclName = sName; kbmText = kbm.isNotEmpty() ? kbm : juce::String(); kbmName = kbm.isNotEmpty() ? kName : juce::String();
+    tuningError.clear();
+    const auto f = scala.frequencies();
+    {
+        const juce::SpinLock::ScopedLockType sl (scalaLock);
+        for (int ch = 0; ch < 16; ++ch)
+            for (int n = 0; n < 128; ++n)
+            {
+                scalaShared.hz[(size_t) (ch * 128 + n)] = (float) f[(size_t) n];
+                scalaShared.mapped[(size_t) (ch * 128 + n)] = f[(size_t) n] > 0.0 ? 1 : 0;
+            }
+        ++scalaVersion;
+    }
+    scalaReady = true;
+    ++changeCounter;
+    return true;
+}
+
+bool RysumProcessor::loadTuningFile (const juce::File& f)
+{
+    const auto text = f.loadFileAsString();
+    bool ok;
+    if (f.hasFileExtension ("kbm"))
+    {
+        if (sclText.isEmpty()) { tuningError = u8 ("Erst eine Skala (.scl) laden, dann die Tastenzuordnung (.kbm)"); return false; }
+        ok = setScala (sclText, sclName, text, f.getFileName());
+    }
+    else ok = setScala (text, f.getFileName(), kbmText, kbmName);
+    if (ok)
+        if (auto* t = apvts.getParameter ("temperament"))
+        {
+            t->beginChangeGesture();
+            t->setValueNotifyingHost (t->convertTo0to1 ((float) kScalaTuning));
+            t->endChangeGesture();
+        }
+    return ok;
+}
+
+void RysumProcessor::clearKbm()
+{
+    if (sclText.isNotEmpty()) setScala (sclText, sclName, {}, {});
+}
+
+juce::String RysumProcessor::getTuningStatus() const
+{
+    const int t = juce::roundToInt (extraParams.at ("temperament")->load());
+    const auto dot = u8 (" \xc2\xb7 ");
+    juce::String s;
+    if (tuningError.isNotEmpty() && t == kScalaTuning) return u8 ("Fehler: ") + tuningError;
+    if (t == kScalaTuning)
+    {
+        if (! scalaReady.load()) return u8 ("Noch keine Skala geladen \xe2\x80\x93 \xe2\x80\x9eScala laden\xe2\x80\xa6\xe2\x80\x9c (.scl, dazu optional .kbm)");
+        s = sclName + dot + juce::String (scala.size()) + " Stufen" + dot + "Periode " + juce::String (scala.cents.back(), 1) + " ct";
+        if (scala.description.isNotEmpty()) s << "\n" << scala.description;
+        s << "\n" << (kbmText.isNotEmpty() ? "KBM: " + kbmName
+                                          : u8 ("Standard-Zuordnung: Stufe 0 auf Taste 60, Taste 69 = 444,5 Hz"));
+        return s;
+    }
+    if (t == kMtsTuning)
+    {
+        if (mts == nullptr) return u8 ("MTS-ESP nicht verf\xc3\xbcgbar");
+        const juce::String name (juce::CharPointer_UTF8 (MTS_GetScaleName (mts)));
+        if (MTS_HasMaster (mts)) return u8 ("MTS-ESP: Master verbunden") + (name.isNotEmpty() ? dot + name : juce::String());
+        if (MTS_HasReceivedMTSSysEx (mts)) return u8 ("MIDI-Stimmung (MTS-SysEx) empfangen") + (name.isNotEmpty() ? dot + name : juce::String());
+        return u8 ("Kein MTS-ESP-Master verbunden, noch keine MTS-SysEx empfangen \xe2\x80\x93 bis dahin die gew\xc3\xa4hlte Originalstimmung (\xc2\xbc-Komma)");
+    }
+    if (mtsHasMaster()) return u8 ("Ein MTS-ESP-Master ist verbunden \xe2\x80\x93 \xe2\x80\x9eMTS-ESP\xe2\x80\x9c w\xc3\xa4hlen, um ihm zu folgen");
+    return {};
+}
+
+// ---------------------------------------------------------------------------
 // MIDI learn
 // ---------------------------------------------------------------------------
 RysumProcessor::MidiMap RysumProcessor::getMidiMap (int i) const
@@ -1358,16 +1503,16 @@ void RysumProcessor::learnMidi (int slot)
     ++midiMapVersion;
 }
 
-int RysumProcessor::learnMidiFor (int paramIndex)
+int RysumProcessor::learnMidiFor (int prmIdx)
 {
-    if (getParamAt (paramIndex) == nullptr) return -1;
+    if (getParamAt (prmIdx) == nullptr) return -1;
     for (int i = 0; i < kNumMidiMaps; ++i)
         if (! getMidiMap (i).used())
         {
             MidiMap m;
-            m.param = paramIndex;
+            m.param = prmIdx;
             // switches: a button press flips them
-            m.toggle = dynamic_cast<juce::AudioParameterBool*> (getParamAt (paramIndex)) != nullptr;
+            m.toggle = dynamic_cast<juce::AudioParameterBool*> (getParamAt (prmIdx)) != nullptr;
             setMidiMap (i, m);
             learnMidi (i);
             return i;
@@ -1375,10 +1520,10 @@ int RysumProcessor::learnMidiFor (int paramIndex)
     return -1;
 }
 
-juce::Array<int> RysumProcessor::midiMapsFor (int paramIndex) const
+juce::Array<int> RysumProcessor::midiMapsFor (int prmIdx) const
 {
     juce::Array<int> r;
-    for (int i = 0; i < kNumMidiMaps; ++i) if (mmParam[(size_t) i].load() == paramIndex && paramIndex >= 0) r.add (i);
+    for (int i = 0; i < kNumMidiMaps; ++i) if (mmParam[(size_t) i].load() == prmIdx && prmIdx >= 0) r.add (i);
     return r;
 }
 

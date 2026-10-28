@@ -3,10 +3,13 @@
 #include "OrganEngine.h"
 #include "Convolver.h"
 #include "Binaural.h"
+#include "Scala.h"
 #include <map>
 #include <deque>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
+
+struct MTSClient;
 
 class RysumProcessor : public juce::AudioProcessor,
                        private juce::Timer,
@@ -86,12 +89,22 @@ public:
     void learnMidi (int slot);
     int getLearningSlot() const { return mmLearn.load(); }
     /** new mapping for a parameter, waiting for a controller; returns the slot (-1 = all slots used) */
-    int learnMidiFor (int paramIndex);
+    int learnMidiFor (int prmIdx);
     /** slots that drive this parameter */
-    juce::Array<int> midiMapsFor (int paramIndex) const;
+    juce::Array<int> midiMapsFor (int prmIdx) const;
     /** the last controller that came in: cc | channel << 8 | value << 16, -1 = none yet */
     int getLastController() const { return lastCc.load(); }
     std::atomic<int> midiMapVersion { 0 };
+
+    // ---- free tuning: Scala files, MTS-ESP (message thread)
+    static constexpr int kScalaTuning = 19, kMtsTuning = 20;     // entries of the tuning list
+    /** a .scl (scale) or .kbm (keyboard mapping) file; selects the Scala tuning. false + status text on errors */
+    bool loadTuningFile (const juce::File& f);
+    void clearKbm();
+    juce::String getTuningStatus() const;
+    bool hasScala() const { return scalaReady.load(); }
+    bool hasKbm() const { return kbmText.isNotEmpty(); }
+    bool mtsHasMaster() const;
 
     // ---- patches (message thread)
     static juce::File getPatchFolder();
@@ -173,16 +186,16 @@ private:
         int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
             freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
             releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
-            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0;
+            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0, mtsCont = 0;
         std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
         std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
         std::array<int, rysum::kNumRoutes> modAmt {};
         std::array<int, 32> fx {};
         std::array<int, 16> sim {};
     } ix;
-    enum SimIndex { simOn, simW, simL, simH, simSize, simLx, simLy, simAbs, simAbsFloor, simHigh, simScatter, simOrder, simEr, simTail, kNumSim };
+    enum SimIndex { simOn, simW, simL, simH, simSize, simLx, simLy, simAbs, simAbsFloor, simHigh, simScatter, simOrder, simEr, simTail, simTailModel, kNumSim };
     static constexpr const char* kSimIds[kNumSim] { "simOn", "simW", "simL", "simH", "simSize", "simLx", "simLy", "simAbs", "simAbsFloor",
-                                                    "simHigh", "simScatter", "simOrder", "simEr", "simTail" };
+                                                    "simHigh", "simScatter", "simOrder", "simEr", "simTail", "simTailModel" };
     // late reverb of the simulated room: built in the background from the room as heard
     juce::String builtTailKey, roomStatus;
     bool tailBuilding = false;
@@ -266,6 +279,18 @@ private:
     juce::MidiBuffer latchMidi;
 
     std::vector<rysum::KeyTuning> tunings;                      // every entry of the tuning list, computed once
+    // free tuning
+    rysum::ScalaTuning scala;                                    // message thread
+    juce::String sclText, sclName, kbmText, kbmName, tuningError;
+    std::atomic<bool> scalaReady { false };
+    bool setScala (const juce::String& scl, const juce::String& sName, const juce::String& kbm, const juce::String& kName);
+    rysum::NoteTable scalaShared;                                // written by the message thread under scalaLock
+    juce::SpinLock scalaLock;
+    std::atomic<int> scalaVersion { 0 };
+    int scalaVersionSeen = -1;
+    rysum::NoteTable noteTable;                                  // audio thread: what the engine plays
+    MTSClient* mts = nullptr;
+    bool mtsActive() const;
 
     // binaural
     juce::File sofaFile;

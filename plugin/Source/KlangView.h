@@ -41,6 +41,11 @@ private:
     juce::TextButton windClassic { "klassisch" }, windUnstable { "instabil" };
     std::unique_ptr<juce::ParameterAttachment> windAtt;
     juce::Rectangle<int> windBox, windText;
+    // free tuning: Scala files, MTS-ESP
+    juce::TextButton scalaLoad { juce::String::fromUTF8 ("Scala laden \xe2\x80\xa6") }, kbmClear { "KBM entfernen" };
+    juce::TextButton* mtsFollow = nullptr;
+    juce::Rectangle<int> tuningStatusArea;
+    juce::String shownTuningStatus;
     juce::TextButton midiMapButton { juce::String::fromUTF8 ("Eigene Zuordnungen \xe2\x80\xa6") };
 };
 } // namespace rysum::ui

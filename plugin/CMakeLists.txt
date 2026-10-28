@@ -97,6 +97,19 @@ else()
     target_compile_options(rysum_mysofa PRIVATE -w)
 endif()
 
+# MTS-ESP client (ODDSound, 0BSD): microtuning from an MTS-ESP master plug-in, or MIDI Tuning Standard SysEx.
+# It loads the MTS-ESP library at run time if it is installed; without it everything works, MTS-ESP just stays unconnected.
+set(MTSESP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MTS-ESP)
+add_library(rysum_mtsesp STATIC ${MTSESP_DIR}/libMTSClient.cpp)
+set_target_properties(rysum_mtsesp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(rysum_mtsesp PUBLIC ${MTSESP_DIR})
+if(MSVC)
+    target_compile_options(rysum_mtsesp PRIVATE /W0)
+else()
+    target_compile_options(rysum_mtsesp PRIVATE -w)
+    target_link_libraries(rysum_mtsesp PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 target_sources(Rysum PRIVATE
     Source/SampleLibrary.cpp
     Source/OrganEngine.cpp
@@ -126,6 +139,7 @@ target_link_libraries(Rysum
     PRIVATE
         RysumData
         rysum_mysofa
+        rysum_mtsesp
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_audio_formats
@@ -168,7 +182,7 @@ if(RYSUM_BUILD_TESTS)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
-    target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa
+    target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa rysum_mtsesp
         juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 endif()

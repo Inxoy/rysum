@@ -4,12 +4,13 @@ namespace rysum
 {
 static constexpr float kSpeedOfSound = 343.0f;
 static constexpr float kChaosLevel = 0.009f;     // wind model 2: level of the whistles / hiss against the pipe samples
+static constexpr float kFdnLevel = 6.03f;      // late reverb FDN: level against the convolution tail (same room, same energy)
 
 OrganEngine::OrganEngine()
 {
     voices.resize ((size_t) kMaxVoices);
     noise.resize ((size_t) kMaxNoiseVoices);
-    for (int k = 0; k < kNumKeys; ++k) keySource[(size_t) k] = k;
+    for (int k = 0; k < kNumKeys; ++k) { keySource[(size_t) k] = k; slotHz[(size_t) k] = (float) meantoneHz (kPhysKeys[(size_t) k]); }
     for (int s = 0; s < kNumStops; ++s)
     {
         std::array<Pos, kNumKeys> pos {};
@@ -56,6 +57,38 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     for (auto& n : noise) n.erSlot = -1;
     tail.prepare (sr);
     tailGain = 0.0f; tailWasOn = false;
+    zeroIn.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
+    fdnBuf.assign ((size_t) kFdnLines * (size_t) kFdnLen, 0.0f);
+    fdnPre.assign ((size_t) kFdnLen, 0.0f);
+    resetFdn();
+    convRingOut = fdnRingOut = 0;
+    {
+        // FDN mixing matrix: a fixed random orthogonal matrix (Gram-Schmidt) instead of a Hadamard matrix (that one
+        // left isolated modes around 1.5-2 kHz). Together with a slow, small modulation of every delay (different
+        // rate per line) the modes are smeared out.
+        XorShift r (3);
+        std::array<std::array<double, kFdnLines>, kFdnLines> m {};
+        for (auto& row : m) for (auto& x : row) x = r.bi();
+        for (int i = 0; i < kFdnLines; ++i)
+        {
+            for (int j = 0; j < i; ++j)
+            {
+                double dot = 0; for (int k = 0; k < kFdnLines; ++k) dot += m[(size_t) i][(size_t) k] * m[(size_t) j][(size_t) k];
+                for (int k = 0; k < kFdnLines; ++k) m[(size_t) i][(size_t) k] -= dot * m[(size_t) j][(size_t) k];
+            }
+            double len = 0; for (int k = 0; k < kFdnLines; ++k) len += m[(size_t) i][(size_t) k] * m[(size_t) i][(size_t) k];
+            len = std::sqrt (len);
+            for (int k = 0; k < kFdnLines; ++k) m[(size_t) i][(size_t) k] /= len;
+        }
+        for (int i = 0; i < kFdnLines; ++i) for (int k = 0; k < kFdnLines; ++k) fdnMatrix[(size_t) i][(size_t) k] = (float) m[(size_t) i][(size_t) k];
+        for (int j = 0; j < kFdnLines; ++j)
+        {
+            const double rate = 0.3 + 0.9 * r.uni(), ph = juce::MathConstants<double>::twoPi * r.uni();
+            fdnModC[(size_t) j] = (float) std::cos (ph); fdnModS[(size_t) j] = (float) std::sin (ph);
+            const double w = juce::MathConstants<double>::twoPi * rate / sr;
+            fdnModStepC[(size_t) j] = (float) std::cos (w); fdnModStepS[(size_t) j] = (float) std::sin (w);
+        }
+    }
     numScheduled = 0;
     {
         XorShift r (77);
@@ -370,10 +403,10 @@ float OrganEngine::grainSample (Voice& v, double rate, float smear) noexcept
     return s * (1.0f / 1.5f);
 }
 
-void OrganEngine::startVoice (int stop, int key, int previewSamples)
+void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
 {
     if (library == nullptr) return;
-    const int src = juce::jlimit (0, kNumKeys - 1, keySource[(size_t) key]);
+    const int src = noteId >= 0 ? key : juce::jlimit (0, kNumKeys - 1, keySource[(size_t) key]);
     const Pipe& pipe = library->pipes[(size_t) stop][(size_t) src];
     if (! pipe.valid || pipe.sample == nullptr) return;
     if (previewSamples < 0 && muted[(size_t) stop][(size_t) key].load()) return;
@@ -431,6 +464,9 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples)
     for (auto& e : v->menv) { e.reset(); e.trigger(); }
     v->keyPos = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
     v->randMod = lastRandom;
+    v->noteId = noteId;
+    v->noteCents = noteId >= 0 ? centsFor (noteId, key) : 0.0f;
+    v->velMod = keyVelocity[(size_t) key];       // (a stop pulled later takes the velocity the key was struck with)
     v->modCents0 = v->modCents1 = 0.0f;
     v->crkAmp = 0.0f; v->crkEnv = 1.0f; v->crkCount = 1 + (int) (rng.uni() * 0.2f * (float) sr);
     v->partLp = 0.0f;
@@ -468,11 +504,64 @@ void OrganEngine::freezeVoice (Voice& v)
     v.grainTimer = 0;
 }
 
-void OrganEngine::releaseStopKey (int stop, int key)
+void OrganEngine::releaseStopKey (int stop, int key, int noteId)
 {
     for (auto& v : voices)
-        if (v.active && v.held && v.stop == stop && v.key == key && v.previewRemain < 0)
+        if (v.active && v.held && v.stop == stop && v.key == key && v.previewRemain < 0 && (noteId < 0 || v.noteId == noteId))
             releaseVoice (v);
+}
+
+// ---------------------------------------------------------------------------
+// free tuning: every MIDI note its own pitch (Scala file, MTS-ESP)
+// ---------------------------------------------------------------------------
+float OrganEngine::centsFor (int noteId, int key) const noexcept
+{
+    if (notesNow == nullptr || noteId < 0 || noteId >= NoteTable::kSize) return 0.0f;
+    const float hz = notesNow->hz[(size_t) noteId];
+    if (! (hz > 1.0f)) return 0.0f;
+    return 1200.0f * std::log2 (hz / slotHz[(size_t) key]);
+}
+
+void OrganEngine::noteOnFree (const juce::MidiMessage& m, const EngineParams& p)
+{
+    const int id = (juce::jlimit (1, 16, m.getChannel()) - 1) * 128 + m.getNoteNumber();
+    if (notesNow == nullptr || ! notesNow->mapped[(size_t) id]) return;
+    const float hz = notesNow->hz[(size_t) id];
+    if (! (hz > 1.0f)) return;
+    // the pipe nearest to the wanted pitch plays (beyond the organ's compass: shifted, up to two octaves)
+    int k = 0; float best = 1.0e9f;
+    for (int i = 0; i < kNumKeys; ++i)
+    {
+        const float c = std::abs (std::log2 (hz / slotHz[(size_t) i]));
+        if (c < best) { best = c; k = i; }
+    }
+    if (best * 1200.0f > 2400.0f) return;
+    auto& fn = freeNotes[(size_t) id];
+    if (fn.held) keyUp (fn.key, p, id);                // struck again without a note-off
+    fn.held = true; fn.sustained = false; fn.key = k;
+    ++keyNoteCount[(size_t) k];
+    keyDown (k, m.getFloatVelocity(), p, id);
+}
+
+void OrganEngine::noteOffFree (const juce::MidiMessage& m, const EngineParams& p)
+{
+    const int id = (juce::jlimit (1, 16, m.getChannel()) - 1) * 128 + m.getNoteNumber();
+    auto& fn = freeNotes[(size_t) id];
+    if (! fn.held) return;
+    if (sustainPedal) { fn.sustained = true; return; }
+    keyUp (fn.key, p, id);
+}
+
+void OrganEngine::releaseAllKeys (const EngineParams& p)
+{
+    for (int id = 0; id < NoteTable::kSize; ++id)
+        if (freeNotes[(size_t) id].held) keyUp (freeNotes[(size_t) id].key, p, id);
+    for (int k = 0; k < kNumKeys; ++k)
+    {
+        keySustained[(size_t) k] = false;
+        if (keyHeld[(size_t) k]) keyUp (k, p);
+        keyNoteCount[(size_t) k] = 0;
+    }
 }
 
 void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone)
@@ -503,13 +592,15 @@ void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, c
     nv->sendW = noiseRoomW;
 }
 
-void OrganEngine::keyDown (int key, float velocity, const EngineParams& p)
+void OrganEngine::keyDown (int key, float velocity, const EngineParams& p, int noteId)
 {
     keyHeld[(size_t) key] = true;
     keySustained[(size_t) key] = false;
     globalTrig = true;
     lastKeyPos = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
     lastRandom = rng.bi();
+    lastVelocity = juce::jlimit (0.0f, 1.0f, velocity);
+    keyVelocity[(size_t) key] = lastVelocity;
 
     // click: blend between the console position and the average position of the pipes
     std::array<float, kMaxAmbiChannels> console {}, pipes {}, tmp {};
@@ -543,20 +634,32 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p)
     for (int s = 0; s < kNumStops; ++s)
         if (p.stopOn[(size_t) s])
         {
-            releaseStopKey (s, key);
+            releaseStopKey (s, key, noteId);
             if (wait)
             {
-                Scheduled e; e.voice = true; e.stop = s; e.key = key; e.delay = (int) (p.fx.pathTime * sr);
+                Scheduled e; e.voice = true; e.stop = s; e.key = key; e.noteId = noteId; e.delay = (int) (p.fx.pathTime * sr);
                 schedule (e);
             }
-            else startVoice (s, key);
+            else startVoice (s, key, -1, noteId);
         }
 }
 
-void OrganEngine::keyUp (int key, const EngineParams& p)
+void OrganEngine::keyUp (int key, const EngineParams& p, int noteId)
 {
-    if (! keyHeld[(size_t) key]) return;
-    keyHeld[(size_t) key] = false;
+    if (noteId >= 0)
+    {
+        // free tuning: this note lets go; the pipe stays "held" while other notes still sound on it
+        auto& fn = freeNotes[(size_t) noteId];
+        if (! fn.held) return;
+        fn.held = false; fn.sustained = false;
+        keyNoteCount[(size_t) key] = juce::jmax (0, keyNoteCount[(size_t) key] - 1);
+        keyHeld[(size_t) key] = keyNoteCount[(size_t) key] > 0;
+    }
+    else
+    {
+        if (! keyHeld[(size_t) key]) return;
+        keyHeld[(size_t) key] = false;
+    }
     std::array<float, kMaxAmbiChannels> console {};
     gainsFor ({ p.consoleAz, p.consoleEl }, console.data());
     if (library != nullptr)
@@ -567,7 +670,7 @@ void OrganEngine::keyUp (int key, const EngineParams& p)
     }
     if (p.fx.custLevel > 0.0001f && rng.uni() < p.fx.custUp) customSounds (key, 0.8f * keyVelocity[(size_t) key], p);
     for (auto& v : voices)
-        if (v.active && v.held && v.key == key && v.previewRemain < 0)
+        if (v.active && v.held && v.key == key && v.previewRemain < 0 && (noteId < 0 || v.noteId == noteId))
         {
             if (p.freeze) freezeVoice (v);      // freeze: the pipe keeps sounding as a grain cloud
             else          releaseVoice (v);
@@ -578,26 +681,33 @@ void OrganEngine::handleMidi (const juce::MidiMessage& m, const EngineParams& p)
 {
     if (m.isNoteOn())
     {
+        if (notesNow != nullptr) { noteOnFree (m, p); return; }
         const int k = keyIndexForMidi (m.getNoteNumber());
         if (k >= 0) keyDown (k, m.getFloatVelocity(), p);
     }
     else if (m.isNoteOff())
     {
+        if (notesNow != nullptr) { noteOffFree (m, p); return; }
         const int k = keyIndexForMidi (m.getNoteNumber());
         if (k < 0) return;
         if (sustainPedal) { keySustained[(size_t) k] = true; return; }
         keyUp (k, p);
     }
     else if (m.isController() && m.getControllerNumber() == 1) modWheel = (float) m.getControllerValue() / 127.0f;
+    else if (m.isPitchWheel()) pitchWheel = juce::jlimit (-1.0f, 1.0f, (float) (m.getPitchWheelValue() - 8192) / 8191.0f);
     else if (m.isSustainPedalOn()) sustainPedal = true;
     else if (m.isSustainPedalOff())
     {
         sustainPedal = false;
         for (int k = 0; k < kNumKeys; ++k)
             if (keySustained[(size_t) k]) { keySustained[(size_t) k] = false; keyUp (k, p); }
+        for (int id = 0; id < NoteTable::kSize; ++id)
+            if (freeNotes[(size_t) id].held && freeNotes[(size_t) id].sustained) keyUp (freeNotes[(size_t) id].key, p, id);
     }
     else if (m.isAllNotesOff() || m.isAllSoundOff())
     {
+        for (int id = 0; id < NoteTable::kSize; ++id)
+            if (freeNotes[(size_t) id].held) keyUp (freeNotes[(size_t) id].key, p, id);
         for (int k = 0; k < kNumKeys; ++k)
             if (keyHeld[(size_t) k]) keyUp (k, p);
         if (m.isAllSoundOff())
@@ -651,7 +761,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         float* buf = scratch.data();
         bool finished = false;
         const float windTarget = juce::jlimit (0.0f, 1.0f, p.stopWind[(size_t) v.stop]);
-        const float tuneCents = p.tuning.cents[(size_t) v.key] + p.pitchCents + p.detune * v.detuneRnd;
+        const float tuneCents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t) v.key]) + p.pitchCents + p.detune * v.detuneRnd;
 
         double rate = v.baseRate;
         float amp = 1.0f;
@@ -1021,6 +1131,7 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     {
         erClock += (uint32_t) juce::jmax (0, n);
         tailGain = 0.0f; tailWasOn = false;
+        resetFdn(); convRingOut = fdnRingOut = 0;
         erActive = 0;
         tailSerialInUse = tail.oldestSerialInUse();
         return;
@@ -1079,25 +1190,150 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     }
     erActive = activeCount;
 
-    // ---- late reverb: convolution with the ray-traced, synthesised response (built by the processor)
-    if (! tailWasOn) { tail.reset(); tailWasOn = true; }
+    // ---- late reverb. The decay comes from the ray tracer (the processor builds the response in the
+    // background); two ways to make the tail: convolution with a synthesised response, or a feedback delay network.
     const TailIR* ir = tail.current();
     const float rtL = ir != nullptr ? ir->rtLow : eyringRt (r, false, p.air);
     const float rtH = ir != nullptr ? ir->rtHigh : eyringRt (r, true, p.air);
     const float V = roomVolume (r);
     const float rc = juce::jmax (0.2f, 0.057f * std::sqrt (V / rtL));          // critical distance
     roomRtLow = rtL; roomRtHigh = rtH; roomCritDist = rc;
-    // the response has unit energy (W); reverberant level from the critical distance, softly capped at +4 dB so
-    // very long, hard rooms do not drown everything
-    const float gTarget = juce::jmin (1.6f, distanceGain (rc, distAmountNow)) * r.tailGain;
-    const float g0 = tailGain, g1 = g0 + (gTarget - g0) * (1.0f - std::exp (-(float) n / (0.05f * (float) sr)));
-    tailGain = g1;
-    std::array<float*, kMaxAmbiChannels> o {};
+    // reverberant level from the critical distance, softly capped at +4 dB so very long, hard rooms do not drown everything
+    const float level = juce::jmin (1.6f, distanceGain (rc, distAmountNow)) * r.tailGain;
+    const bool useFdn = r.tailModel == 1;
+    if (useFdn != (lastTailModel == 1))
+    {
+        // switched: the other one keeps ringing out with a silent input
+        if (useFdn) convRingOut = TailIR::maxLength (sr);
+        else        fdnRingOut = (int) (juce::jmin (30.0f, 1.5f * juce::jmax (rtL, 0.1f)) * (float) sr);
+        lastTailModel = useFdn ? 1 : 0;
+    }
+    const float* in = roomSend[0].data() + roomOffset;
     const int tailCh = juce::jmin (usedChannels, kMaxAmbiChannels);
+    std::array<float*, kMaxAmbiChannels> o {};
     for (int c = 0; c < tailCh; ++c) o[(size_t) c] = out.getWritePointer (c);
-    tail.process (roomSend[0].data() + roomOffset, o.data(), tailCh, n, g0, g1);
+
+    if (! useFdn || convRingOut > 0)
+    {
+        if (! tailWasOn) { tail.reset(); tailWasOn = true; }
+        const float g0 = tailGain, g1 = useFdn ? g0 : g0 + (level - g0) * (1.0f - std::exp (-(float) n / (0.05f * (float) sr)));
+        tailGain = g1;
+        // the response has unit energy (W)
+        tail.process (useFdn ? zeroIn.data() : in, o.data(), tailCh, n, g0, g1);
+        if (useFdn && (convRingOut -= n) <= 0) { convRingOut = 0; tailWasOn = false; tailGain = 0.0f; }
+    }
+    if (useFdn && convRingOut == 0) tail.adoptLatest();          // keeps the ray-traced decay current for the FDN
+    if (useFdn || fdnRingOut > 0)
+    {
+        renderFdn (o.data(), K, useFdn ? in : zeroIn.data(), n, rtL, rtH, useFdn ? level : fdnGain, r);
+        if (! useFdn && (fdnRingOut -= n) <= 0) { fdnRingOut = 0; resetFdn(); }
+    }
     tailSerialInUse = tail.oldestSerialInUse();
     erClock += (uint32_t) n;
+}
+
+void OrganEngine::resetFdn() noexcept
+{
+    fdnGain = 0.0f; fdnPreDelay = -1.0f; fdnEncOrder = -1;          // the next use clears the lines
+}
+
+void OrganEngine::renderFdn (float* const* o, int K, const float* in, int n, float rtL, float rtH, float gainLevel, const RoomParams& r)
+{
+    // 16 delay lines (lengths around the mean free path), a random orthogonal mixing matrix, two-band decay
+    // per line (ray-traced reverberation times), slow delay modulation, lines spread over 16 directions
+    const float mfp = meanFreePath (r);
+    rtL = juce::jlimit (0.05f, 30.0f, rtL);
+    rtH = juce::jlimit (0.05f, 30.0f, juce::jmin (rtH, rtL));
+    const float inv = 1.0f / (float) n;
+    static const float ratios[kFdnLines] { 0.53f, 0.59f, 0.67f, 0.71f, 0.77f, 0.83f, 0.89f, 0.97f, 1.03f, 1.09f, 1.13f, 1.21f, 1.27f, 1.33f, 1.41f, 1.49f };
+    const float k = 1.0f - std::exp (-(float) n / (0.08f * (float) sr));
+    std::array<float, kFdnLines> dOld = fdnDelay, dNew {};
+    const bool first = fdnPreDelay < 0.0f;
+    if (first) { std::fill (fdnBuf.begin(), fdnBuf.end(), 0.0f); std::fill (fdnPre.begin(), fdnPre.end(), 0.0f); fdnLp.fill (0.0f); }
+    float gMean = 0.0f;
+    for (int j = 0; j < kFdnLines; ++j)
+    {
+        const float target = juce::jlimit (64.0f, (float) (kFdnLen - 4 * kSubBlock), mfp / kSpeedOfSoundRoom * ratios[j] * (float) sr);
+        if (first) dOld[(size_t) j] = target;
+        dNew[(size_t) j] = dOld[(size_t) j] + (target - dOld[(size_t) j]) * k;
+        fdnGL[(size_t) j] = std::pow (10.0f, -3.0f * dNew[(size_t) j] / ((float) sr * rtL));
+        fdnGH[(size_t) j] = std::pow (10.0f, -3.0f * dNew[(size_t) j] / ((float) sr * rtH));
+        gMean += fdnGL[(size_t) j] / (float) kFdnLines;
+    }
+    fdnDelay = dNew;
+    const float preTarget = juce::jlimit (0.0f, (float) (kFdnLen - 4 * kSubBlock), 0.5f * mfp / kSpeedOfSoundRoom * (float) sr);
+    const float pre0 = first ? preTarget : fdnPreDelay;
+    const float pre1 = pre0 + (preTarget - pre0) * k;
+    fdnPreDelay = pre1;
+    const float gainTarget = std::sqrt (juce::jmax (1.0e-6f, 1.0f - gMean * gMean)) * kFdnLevel * gainLevel;
+    const float gain0 = first ? 0.0f : fdnGain, gain1 = gain0 + (gainTarget - gain0) * k;
+    fdnGain = gain1;
+    const int encOrder = order == 0 ? 0 : juce::jmin (order, 3);
+    if (encOrder != fdnEncOrder)
+    {
+        fdnEncOrder = encOrder;
+        for (int j = 0; j < kFdnLines; ++j)
+        {
+            const float zz = 1.0f - 2.0f * ((float) j + 0.5f) / (float) kFdnLines;
+            const float az = std::fmod (137.508f * (float) j, 360.0f) - 180.0f;
+            const float el = juce::radiansToDegrees (std::asin (zz));
+            auto& e = fdnEnc[(size_t) j];
+            std::fill (e.begin(), e.end(), 0.0f);
+            if (encOrder == 0) encodeStereo (az, e.data());
+            else encodeAmbiX (az, el, encOrder, e.data());
+        }
+    }
+    const float splitA = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 1500.0f / (float) sr);
+    constexpr uint32_t mask = kFdnLen - 1;
+    std::array<float, kFdnLines> yl {};
+    const float modDepth = (float) (8.0 * sr / 48000.0);
+    // read position: the integer clock and the fractional delay are kept apart (a float clock would lose
+    // the fraction after a few minutes - aliasing, a high ringing)
+    auto readLine = [mask] (const float* line, uint32_t now, float d)
+    {
+        const int di = (int) d;
+        const float fd = d - (float) di;
+        const uint32_t at = now - (uint32_t) di;
+        const float b = line[at & mask], a = line[(at - 1u) & mask];
+        return b + fd * (a - b);
+    };
+    for (int i = 0; i < n; ++i)
+    {
+        const float f = (float) (i + 1) * inv;
+        fdnPre[fdnPos & mask] = in[i];
+        const float x = readLine (fdnPre.data(), fdnPos, pre0 + (pre1 - pre0) * f);
+        for (int j = 0; j < kFdnLines; ++j)
+        {
+            // slow modulation of the delay (+-8 samples at 48 kHz): no fixed modes that ring
+            const float c = fdnModC[(size_t) j], sn = fdnModS[(size_t) j];
+            fdnModC[(size_t) j] = c * fdnModStepC[(size_t) j] - sn * fdnModStepS[(size_t) j];
+            fdnModS[(size_t) j] = sn * fdnModStepC[(size_t) j] + c * fdnModStepS[(size_t) j];
+            const float d = dOld[(size_t) j] + (dNew[(size_t) j] - dOld[(size_t) j]) * f + modDepth * sn;
+            const float v = readLine (fdnBuf.data() + (size_t) j * (size_t) kFdnLen, fdnPos, d);
+            fdnLp[(size_t) j] += splitA * (v - fdnLp[(size_t) j]);
+            yl[(size_t) j] = fdnGL[(size_t) j] * fdnLp[(size_t) j] + fdnGH[(size_t) j] * (v - fdnLp[(size_t) j]);
+        }
+        for (int j = 0; j < kFdnLines; ++j)
+        {
+            const auto& row = fdnMatrix[(size_t) j];
+            float h = 0.0f;
+            for (int k2 = 0; k2 < kFdnLines; ++k2) h += row[(size_t) k2] * yl[(size_t) k2];
+            fdnBuf[(size_t) j * (size_t) kFdnLen + (fdnPos & mask)] = h + ((j & 1) ? -0.25f : 0.25f) * x;
+        }
+        const float g = gain0 + (gain1 - gain0) * f;
+        for (int c = 0; c < K; ++c)
+        {
+            float s = 0.0f;
+            for (int j = 0; j < kFdnLines; ++j) s += yl[(size_t) j] * fdnEnc[(size_t) j][(size_t) c];
+            o[c][i] += s * g;
+        }
+        ++fdnPos;
+    }
+    for (int j = 0; j < kFdnLines; ++j)       // keep the modulation phasors on the unit circle
+    {
+        const float len = std::sqrt (fdnModC[(size_t) j] * fdnModC[(size_t) j] + fdnModS[(size_t) j] * fdnModS[(size_t) j]);
+        if (len > 0.0f) { fdnModC[(size_t) j] /= len; fdnModS[(size_t) j] /= len; }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1259,6 +1495,8 @@ void OrganEngine::advanceModulation (const EngineParams& p, double dt) noexcept
     globalSrc[srcKey] = lastKeyPos;
     globalSrc[srcModWheel] = modWheel;
     globalSrc[srcRandom] = lastRandom;
+    globalSrc[srcVelocity] = lastVelocity;
+    globalSrc[srcPitchWheel] = pitchWheel;
     for (int i = 0; i < kNumSources; ++i) sourceOut[(size_t) i] = globalSrc[(size_t) i];
 }
 
@@ -1294,7 +1532,7 @@ Pos OrganEngine::displayPosition (int stop, int key, const EngineParams& p) cons
             else if (r.src >= srcEnv1 && r.src < srcEnv1 + kNumEnvs)
                 v = p.mod.env[(size_t) (r.src - srcEnv1)].perPipe ? 0.0f : sourceOut[(size_t) r.src].load();
             else if (r.src == srcKey)      v = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
-            else if (r.src == srcModWheel) v = sourceOut[srcModWheel].load();
+            else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity) v = sourceOut[(size_t) r.src].load();
             pm[(size_t) r.target] += r.amount * shapeSource (r.src, v, r.uni);
             any = true;
         }
@@ -1327,6 +1565,8 @@ float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) 
         case srcKey:      return v.keyPos;
         case srcModWheel: return modWheel;
         case srcRandom:   return v.randMod;
+        case srcVelocity: return v.velMod;
+        case srcPitchWheel: return pitchWheel;
         default:          return 0.0f;
     }
 }
@@ -1409,6 +1649,13 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
                 for (int i = 0; i < numSamples; ++i) ring[(erClock + (uint32_t) i) & (kErRing - 1)] = 0.0f;
             }
     keySource = p.tuning.source;
+    {
+        // free tuning on / off: let go of everything first (notes are counted differently)
+        const bool fm = p.notes != nullptr;
+        if (fm != freeMode) { releaseAllKeys (p); freeMode = fm; }
+        notesNow = p.notes;
+        notesContinuous = p.notesContinuous;
+    }
     roomFollowNow = p.roomFollow;
     roomBaseAzNow = p.roomBaseAz;
     chunkSeconds = (float) blockSeconds;
@@ -1424,9 +1671,12 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             playNoise (library->stopPulls, p.stopPull * (p.stopOn[(size_t) s] ? 1.4f : 1.1f), console.data(), lastPull, 0.5f);
         for (int k = 0; k < kNumKeys; ++k)
         {
-            if (p.stopOn[(size_t) s] && keyHeld[(size_t) k]) startVoice (s, k);
+            if (p.stopOn[(size_t) s] && keyHeld[(size_t) k] && ! freeMode) startVoice (s, k);
             if (! p.stopOn[(size_t) s]) releaseStopKey (s, k);
         }
+        if (p.stopOn[(size_t) s] && freeMode)
+            for (int id = 0; id < NoteTable::kSize; ++id)
+                if (freeNotes[(size_t) id].held) startVoice (s, freeNotes[(size_t) id].key, -1, id);
     }
     lastStopOn = p.stopOn;
 
@@ -1478,11 +1728,13 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             }
             else if (library != nullptr && p.stopOn[(size_t) e.stop])
             {
-                startVoice (e.stop, e.key);
+                startVoice (e.stop, e.key, -1, e.noteId);
                 // key already let go: the pallet still opened, but closes right away
-                if (! keyHeld[(size_t) e.key] && ! keySustained[(size_t) e.key])
+                const bool stillDown = e.noteId >= 0 ? freeNotes[(size_t) e.noteId].held
+                                                     : (keyHeld[(size_t) e.key] || keySustained[(size_t) e.key]);
+                if (! stillDown)
                     for (auto& v : voices)
-                        if (v.active && v.held && v.stop == e.stop && v.key == e.key && v.previewRemain < 0) releaseVoice (v);
+                        if (v.active && v.held && v.stop == e.stop && v.key == e.key && v.previewRemain < 0 && v.noteId == e.noteId) releaseVoice (v);
             }
         }
         numScheduled = w;
@@ -1499,6 +1751,8 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     for (auto& v : voices)
     {
         if (! v.active) continue;
+        if (v.noteId >= 0 && notesContinuous && v.held && notesNow != nullptr && notesNow->hz[(size_t) v.noteId] > 1.0f)
+            v.noteCents = centsFor (v.noteId, v.key);          // MTS-ESP: held notes follow a changing tuning
         if (! v.fresh) { v.g0 = v.g1; v.gh0 = v.gh1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; }
         updateVoiceSpatial (v, p, blockSeconds);
         if (v.fresh) { v.g0 = v.g1; v.gh0 = v.gh1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false; }

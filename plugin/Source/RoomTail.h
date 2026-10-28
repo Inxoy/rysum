@@ -54,6 +54,8 @@ public:
     /** adds the reverb of 'in' times the gain (ramped from g0 to g1) to the outputs */
     void process (const float* in, float* const* out, int numOut, int n, float g0, float g1) noexcept;
     const TailIR* current() const noexcept { return cur.get(); }
+    /** audio thread, while the convolver is not used: switch to the newest response right away */
+    void adoptLatest() noexcept;
     uint32_t oldestSerialInUse() const noexcept;
 
 private:

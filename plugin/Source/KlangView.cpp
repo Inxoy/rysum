@@ -27,6 +27,23 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     temperament.setTooltip (u8 ("Die Aufnahmen sind \xc2\xbc-Komma mittelt\xc3\xb6nig; jede andere Stimmung verschiebt die Pfeifen, a\xe2\x80\xb2 bleibt. "
                                "Bei den Stufen-Stimmungen (jede Taste ein Schritt) spielt jede Taste die Pfeife, die ihrer Tonh\xc3\xb6he am n\xc3\xa4" "chsten liegt."));
     addAndMakeVisible (temperament);
+    scalaLoad.setTooltip (u8 ("Eine Skala im Scala-Format (.scl) laden \xe2\x80\x93 danach optional eine Tastenzuordnung (.kbm). "
+                              "Jede MIDI-Note bekommt ihre eigene Tonh\xc3\xb6he; es spielt die aufgenommene Pfeife, die ihr am n\xc3\xa4" "chsten liegt. "
+                              "Die Dateien werden im Projekt und im Patch mitgespeichert."));
+    scalaLoad.onClick = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> (u8 ("Scala-Skala (.scl) oder Tastenzuordnung (.kbm)"),
+                                                       juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.scl;*.kbm");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) proc.loadTuningFile (fc.getResult()); repaint (tuneBox); });
+    };
+    kbmClear.setTooltip (u8 ("Tastenzuordnung entfernen: Standard (Stufe 0 auf Taste 60, Taste 69 = 444,5 Hz)"));
+    kbmClear.onClick = [this] { proc.clearKbm(); repaint (tuneBox); };
+    addAndMakeVisible (scalaLoad);
+    addAndMakeVisible (kbmClear);
+    mtsFollow = &toggle ("mtsContinuous", u8 ("T\xc3\xb6ne folgen"));
+    mtsFollow->setTooltip (u8 ("MTS-ESP: gehaltene T\xc3\xb6ne folgen einer ge\xc3\xa4nderten Stimmung sofort. Aus: jeder Ton beh\xc3\xa4lt die Tonh\xc3\xb6he seines Anschlags."));
+
     pitch  = &row ("pitch", "Stimmton");
     detune = &row ("detune", u8 ("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
 
@@ -119,6 +136,15 @@ void KlangView::resized()
         b.removeFromTop (12);
         pitch->setBounds (b.removeFromTop (38));
         detune->setBounds (b.removeFromTop (38));
+        b.removeFromTop (6);
+        auto t = b.removeFromTop (24);
+        scalaLoad.setBounds (t.removeFromLeft (118));
+        t.removeFromLeft (6);
+        kbmClear.setBounds (t.removeFromLeft (106));
+        t.removeFromLeft (6);
+        mtsFollow->setBounds (t);
+        b.removeFromTop (6);
+        tuningStatusArea = b;
     }
     {
         auto b = body (tremBox);
@@ -179,6 +205,13 @@ void KlangView::resized()
 
 void KlangView::refresh()
 {
+    {
+        const auto st = proc.getTuningStatus() + (proc.hasKbm() ? "k" : "");
+        if (st != shownTuningStatus) { shownTuningStatus = st; repaint (tuneBox); }
+        kbmClear.setEnabled (proc.hasKbm());
+        const int t = juce::roundToInt (proc.apvts.getRawParameterValue ("temperament")->load());
+        mtsFollow->setAlpha (t == RysumProcessor::kMtsTuning ? 1.0f : 0.4f);
+    }
     for (auto& r : rows) r->repaint();
     repaint (freezeBox);
     const bool on = proc.isBinaural();
@@ -196,6 +229,11 @@ void KlangView::paint (juce::Graphics& g)
         drawCover (g, A.wall, getLocalBounds().toFloat(), 0.6f);
     }
     drawSectionTitle (g, tuneBox, "Stimmung", u8 ("Original: \xc2\xbc-Komma"));
+    {
+        g.setFont (A.monoFont (10.5f));
+        g.setColour (proc.getTuningStatus().startsWith ("Fehler") ? col::rubric.brighter (0.4f) : col::dim);
+        g.drawFittedText (proc.getTuningStatus(), tuningStatusArea, juce::Justification::topLeft, 4);
+    }
     drawSectionTitle (g, tremBox, "Tremulant", "CC 1 = Tiefe");
     const int fz = proc.engine.frozenVoices.load();
     drawSectionTitle (g, freezeBox, "Freeze", fz > 0 ? juce::String (fz) + " eingefroren" : juce::String ("CC 66"));

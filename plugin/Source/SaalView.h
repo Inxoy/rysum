@@ -51,5 +51,8 @@ private:
     std::array<ParamRow*, 4> dims {}, surf {}, levels {};
     juce::Rectangle<int> saalBox, dimBox, surfBox, levelBox, planBox;
     juce::String shownStatus;
+    // late reverb model: convolution / FDN
+    juce::TextButton tailConv { "Faltung" }, tailFdn { "FDN" };
+    std::unique_ptr<juce::ParameterAttachment> tailAtt;
 };
 } // namespace rysum::ui

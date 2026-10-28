@@ -65,7 +65,9 @@ inline juce::StringArray temperamentNames()
              juce::String::fromUTF8 ("19-EDO \xc2\xb7 jede Taste ein Schritt (63,2 ct)"),
              juce::String::fromUTF8 ("24-EDO \xc2\xb7 Viertelt\xc3\xb6ne (50 ct)"),
              juce::String::fromUTF8 ("Bohlen-Pierce \xc2\xb7 13 Stufen pro Duodezime (146,3 ct)"),
-             juce::String::fromUTF8 ("Carlos Alpha \xc2\xb7 jede Taste 78 ct") };
+             juce::String::fromUTF8 ("Carlos Alpha \xc2\xb7 jede Taste 78 ct"),
+             juce::String::fromUTF8 ("Scala-Datei (.scl / .kbm)"),
+             juce::String::fromUTF8 ("MTS-ESP / MIDI-Stimmung (SysEx)") };
 }
 
 /** tunings from index 14 on: every MIDI note is one step of this size (cents), a' stays put */

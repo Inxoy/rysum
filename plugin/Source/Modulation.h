@@ -18,13 +18,15 @@ enum ModSource
     srcKey,          // key position, low = -1 .. high = +1
     srcModWheel,     // CC 1, 0..1
     srcRandom,       // random per note, -1..1
+    srcVelocity,     // key velocity per note, 0..1 (global targets: the last note)
+    srcPitchWheel,   // pitch wheel, -1..1
     kNumSources
 };
 
 inline juce::StringArray modSourceNames()
 {
     return { "LFO 1", "LFO 2", "LFO 3", "LFO 4", juce::String::fromUTF8 ("H\xc3\xbc" "llkurve 1"), juce::String::fromUTF8 ("H\xc3\xbc" "llkurve 2"),
-             "Tastenlage", "Modrad", juce::String::fromUTF8 ("Zufall je Ton") };
+             "Tastenlage", "Modrad", juce::String::fromUTF8 ("Zufall je Ton"), "Anschlag", juce::String::fromUTF8 ("Tonh\xc3\xb6henrad") };
 }
 
 /** targets 0..kNumPipeTargets-1 act on every pipe separately (LFO spread, per-pipe envelopes);
@@ -85,7 +87,7 @@ struct EnvParams
 struct ModRoute { int src = -1, target = -1; float amount = 0.0f; bool uni = false; };
 
 /** LFOs, key position and the per-note random swing -1..1; envelopes and the mod wheel are 0..1 */
-inline bool isBipolarSource (int s) noexcept { return (s >= srcLfo1 && s < srcLfo1 + kNumLfos) || s == srcKey || s == srcRandom; }
+inline bool isBipolarSource (int s) noexcept { return (s >= srcLfo1 && s < srcLfo1 + kNumLfos) || s == srcKey || s == srcRandom || s == srcPitchWheel; }
 
 /** unipolar routing: a bipolar source is mapped to 0..1 (only pushes the target one way) */
 inline float shapeSource (int s, float v, bool uni) noexcept { return uni && isBipolarSource (s) ? 0.5f * (v + 1.0f) : v; }

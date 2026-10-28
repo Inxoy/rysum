@@ -4,7 +4,8 @@ using namespace rysum;
 using namespace rysum::ui;
 
 static constexpr int kW = 1120, kH = 720, kHeader = 56;
-static constexpr int kOutX = 942, kOutW = 108;      // output format combo in the header
+static constexpr int kOutX = 921, kOutW = 92;       // output format combo in the header
+static constexpr int kFullX = 1064;                 // full-screen button (28 x 28)
 
 RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p), fx (p), saal (p)
 {
@@ -57,6 +58,9 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "output", outputChoice);
     outputChoice.setTooltip (juce::String::fromUTF8 ("Ausgabeformat: Stereo, AmbiX (ACN/SN3D) oder Binaural f\xc3\xbcr Kopfh\xc3\xb6rer (Einstellungen: Seite Klang)"));
     addAndMakeVisible (outputChoice);
+    fullButton.onClick = [this] { if (onToggleFullscreen) onToggleFullscreen(); };
+    setFullscreenShown (false);
+    addAndMakeVisible (fullButton);
 
     // grain over the whole interface, rendered once
     grainLayer = juce::Image (juce::Image::ARGB, kW, kH, true);
@@ -100,15 +104,16 @@ void RysumContent::resized()
     fx.setBounds (body);
     saal.setBounds (body);
     patchPrev.setBounds (150, 14, 20, 28);
-    patchName.setBounds (173, 14, 112, 28);
-    patchNext.setBounds (288, 14, 20, 28);
-    patchSave.setBounds (312, 14, 64, 28);
-    keysButton.setBounds (384, 14, 76, 28);
-    latchButton.setBounds (464, 14, 58, 28);
+    patchName.setBounds (173, 14, 104, 28);
+    patchNext.setBounds (280, 14, 20, 28);
+    patchSave.setBounds (304, 14, 64, 28);
+    keysButton.setBounds (376, 14, 72, 28);
+    latchButton.setBounds (452, 14, 56, 28);
     const int tw[] { 84, 48, 48, 52, 66, 86 };
-    int x = 530;
-    for (int i = 0; i < 6; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 4; }
+    int x = 516;
+    for (int i = 0; i < 6; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 3; }
     outputChoice.setBounds (kOutX, 14, kOutW, 28);
+    fullButton.setBounds (kFullX, 14, 28, 28);
 }
 
 void RysumContent::updatePlayButtons()
@@ -131,6 +136,12 @@ void RysumContent::releaseComputerKeys()
 
 bool RysumContent::keyPressed (const juce::KeyPress& k)
 {
+    // F11: full screen on / off; Esc leaves it
+    if (k.getKeyCode() == juce::KeyPress::F11Key || (k == juce::KeyPress::escapeKey && fullButton.active))
+    {
+        if (onToggleFullscreen) onToggleFullscreen();
+        return true;
+    }
     if (! proc.computerKeys || k.getModifiers().isCommandDown() || k.getModifiers().isCtrlDown() || k.getModifiers().isAltDown()) return false;
     if (dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) != nullptr) return false;   // typing a value
     const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
@@ -297,7 +308,8 @@ void RysumContent::paint (juce::Graphics& g)
     juce::String o = bin ? (proc.binauralReady() ? juce::String ("2 ch HRTF") : juce::String::fromUTF8 ("HRTF \xe2\x80\xa6")) : juce::String (needed) + " ch";
     if (have < needed) o = u8 ("nur ") + juce::String (have) + " ch!";
     g.setColour (have < needed ? col::white : col::faint);
-    const juce::Rectangle<int> info (kOutX + kOutW + 6, 0, kW - 28 - (kOutX + kOutW + 6), kHeader);
+    g.setFont (A.monoFont (10.0f));
+    const juce::Rectangle<int> info (kOutX + kOutW + 2, 0, kFullX - 5 - (kOutX + kOutW + 2), kHeader);
     g.drawText (o, info.withTrimmedBottom (kHeader / 2).withTrimmedTop (9), juce::Justification::centredRight);
     g.setColour (col::faint);
     g.drawText (juce::String (proc.engine.activeVoices.load()) + " St.", info.withTrimmedTop (kHeader / 2).withTrimmedBottom (9), juce::Justification::centredRight);
@@ -375,11 +387,24 @@ RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), proc (p
     setResizeLimits (kW / 2, kH / 2, kW * 2, kH * 2);
     if (auto* c = getConstrainer()) c->setFixedAspectRatio ((double) kW / (double) kH);
     setSize (kW, kH);
+    // deferred: the click / key that asked for it is still being handled by a component that moves
+    // (the safe pointer is made here, outside the nested lambda: MSVC reads 'this' there differently)
+    content.onToggleFullscreen = [safe = juce::Component::SafePointer<RysumEditor> (this)]
+    {
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->toggleFullscreen(); });
+    };
     startTimerHz (30);
 }
 
 RysumEditor::~RysumEditor()
 {
+    if (fullscreen != nullptr)
+    {
+        if (juce::Desktop::getInstance().getKioskModeComponent() == fullscreen.get())
+            juce::Desktop::getInstance().setKioskModeComponent (nullptr, false);
+        fullscreen->removeChildComponent (&content);
+        fullscreen.reset();
+    }
     content.releaseComputerKeys();
     content.setLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
@@ -389,9 +414,82 @@ RysumEditor::~RysumEditor()
 
 void RysumEditor::resized()
 {
+    if (fullscreen != nullptr) return;            // the content is on the full-screen window
     const float s = (float) getWidth() / (float) kW;
     content.setTransform (juce::AffineTransform::scale (s));
     content.setBounds (0, 0, kW, kH);
+}
+
+void RysumEditor::paint (juce::Graphics& g)
+{
+    g.fillAll (col::bg);
+    if (fullscreen == nullptr) return;
+    // while the interface is on the full screen, the plugin window only says where it went
+    auto& A = Assets::get();
+    auto r = getLocalBounds().toFloat();
+    g.setColour (col::ink);
+    g.setFont (A.frakturFont (juce::jmax (18.0f, r.getHeight() * 0.08f)));
+    g.drawText ("Rysum", r.withTrimmedBottom (r.getHeight() * 0.2f), juce::Justification::centred);
+    g.setColour (col::dim);
+    g.setFont (A.sansFont (juce::jmax (11.0f, r.getHeight() * 0.025f)));
+    g.drawText (juce::String::fromUTF8 ("l\xc3\xa4uft im Vollbild \xe2\x80\x93 hier klicken oder Esc dr\xc3\xbc" "cken, um zur\xc3\xbc" "ckzukehren"),
+                r.withTrimmedTop (r.getHeight() * 0.12f), juce::Justification::centred);
+}
+
+void RysumEditor::toggleFullscreen()
+{
+    if (fullscreen == nullptr)
+    {
+        // the screen the plugin window is on
+        const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
+        if (display == nullptr) return;
+        content.releaseComputerKeys();
+        fullscreen = std::make_unique<FullscreenWindow> (*this);
+        fullscreen->setLookAndFeel (&lnf.get());
+        fullscreen->setName ("Rysum");
+        fullscreen->addAndMakeVisible (content);
+        fullscreen->addToDesktop (juce::ComponentPeer::windowAppearsOnTaskbar);
+        fullscreen->setBounds (display->totalArea);
+        fullscreen->setVisible (true);
+        juce::Desktop::getInstance().setKioskModeComponent (fullscreen.get(), false);
+        fullscreen->toFront (true);
+        content.grabKeyboardFocus();
+        content.setFullscreenShown (true);
+    }
+    else
+    {
+        content.releaseComputerKeys();
+        if (juce::Desktop::getInstance().getKioskModeComponent() == fullscreen.get())
+            juce::Desktop::getInstance().setKioskModeComponent (nullptr, false);
+        auto old = std::move (fullscreen);           // fullscreen == nullptr from here on (resized() places the content again)
+        addAndMakeVisible (content);
+        resized();
+        old.reset();
+        content.setFullscreenShown (false);
+        if (auto* top = getTopLevelComponent()) top->toFront (true);
+        content.grabKeyboardFocus();
+    }
+    repaint();
+}
+
+void RysumEditor::FullscreenWindow::resized()
+{
+    // the 1120 x 720 design as large as the screen allows, centred (black bars where the shape differs)
+    auto& c = editor.content;
+    const float s = juce::jmin ((float) getWidth() / (float) kW, (float) getHeight() / (float) kH);
+    const float ox = 0.5f * ((float) getWidth() - s * (float) kW), oy = 0.5f * ((float) getHeight() - s * (float) kH);
+    c.setTransform (juce::AffineTransform::scale (s).translated (ox, oy));
+    c.setBounds (0, 0, kW, kH);
+}
+
+bool RysumEditor::FullscreenWindow::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey || k.getKeyCode() == juce::KeyPress::F11Key)
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RysumEditor> (&editor)] { if (safe != nullptr) safe->toggleFullscreen(); });
+        return true;
+    }
+    return false;
 }
 
 void RysumEditor::timerCallback() { content.tick(); }

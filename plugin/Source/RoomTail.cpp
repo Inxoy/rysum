@@ -143,6 +143,15 @@ void TailConvolver::setIR (std::shared_ptr<const TailIR> ir) noexcept
     else queued = std::move (ir);          // a newer one while fading: it follows right after
 }
 
+void TailConvolver::adoptLatest() noexcept
+{
+    // not sounding: take the newest response directly, no crossfade needed (the processor keeps the old one alive)
+    if (queued != nullptr) { cur = std::move (queued); next.reset(); }
+    else if (next != nullptr) cur = std::move (next);
+    fade = -1;
+    for (auto& st : stages) st.readyB = false;
+}
+
 uint32_t TailConvolver::oldestSerialInUse() const noexcept
 {
     uint32_t s = 0xffffffffu;

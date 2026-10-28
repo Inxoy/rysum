@@ -39,6 +39,14 @@ struct FxParams
     int   echoDiv = 4, echoRepeats = 4;
 };
 
+/** free tuning (Scala file, MTS-ESP / MIDI Tuning Standard): the frequency of every MIDI note on every channel */
+struct NoteTable
+{
+    static constexpr int kSize = 16 * 128;           // [channel 0..15][note 0..127]
+    std::array<float, kSize> hz {};                  // Hz
+    std::array<uint8_t, kSize> mapped {};            // 0 = this note does not sound (unmapped in the .kbm / by the master)
+};
+
 struct EngineParams
 {
     std::array<bool, kNumStops> stopOn {};
@@ -72,6 +80,10 @@ struct EngineParams
 
     // tuning
     KeyTuning tuning = makeKeyTuning (0); // per key: shift (cents) from the recorded pipe that is played, and which pipe
+    /** not null: free tuning - every MIDI note (and channel) has its own pitch; the recorded pipe nearest to it
+        plays (several notes may share one pipe, each with its own voice) */
+    const NoteTable* notes = nullptr;
+    bool notesContinuous = true;         // held notes follow tuning changes (MTS-ESP)
     float pitchCents = 0.0f;             // whole organ
     float detune = 0.0f;                 // max random detune per pipe (cents)
 
@@ -206,7 +218,9 @@ private:
         float detuneRnd = 0.0f;          // -1..1, fixed per pipe
         // modulation
         std::array<EnvState, kNumEnvs> menv {};
-        float keyPos = 0.0f, randMod = 0.0f;
+        float keyPos = 0.0f, randMod = 0.0f, velMod = 0.0f;
+        int noteId = -1;                 // free tuning: channel * 128 + MIDI note (-1 = key mode)
+        float noteCents = 0.0f;          // free tuning: shift from the pipe's own pitch
         float modCents0 = 0.0f, modCents1 = 0.0f;
         // crackle
         int crkCount = 0;
@@ -261,7 +275,7 @@ private:
     {
         int delay = 0;                        // samples
         bool voice = false;                   // true: start a pipe (stop, key), false: a sound
-        int stop = 0, key = 0;
+        int stop = 0, key = 0, noteId = -1;
         const Sample* sample = nullptr;
         float gain = 0.0f, tone = 1.0f, azVel = 0.0f, send = 0.0f;
         double rate = 1.0;
@@ -279,12 +293,23 @@ private:
     };
 
     void handleMidi (const juce::MidiMessage& m, const EngineParams& p);
-    void keyDown (int key, float velocity, const EngineParams& p);
-    void keyUp (int key, const EngineParams& p);
-    void startVoice (int stop, int key, int previewSamples = -1);
+    void keyDown (int key, float velocity, const EngineParams& p, int noteId = -1);
+    void keyUp (int key, const EngineParams& p, int noteId = -1);
+    void startVoice (int stop, int key, int previewSamples = -1, int noteId = -1);
+    // free tuning
+    void noteOnFree (const juce::MidiMessage& m, const EngineParams& p);
+    void noteOffFree (const juce::MidiMessage& m, const EngineParams& p);
+    void releaseAllKeys (const EngineParams& p);
+    float centsFor (int noteId, int key) const noexcept;
+    struct FreeNote { bool held = false, sustained = false; int key = -1; };
+    std::array<FreeNote, NoteTable::kSize> freeNotes {};
+    std::array<int, kNumKeys> keyNoteCount {};          // free notes held on each pipe
+    std::array<float, kNumKeys> slotHz {};              // the pitch every key's own pipe sounds at
+    const NoteTable* notesNow = nullptr;
+    bool notesContinuous = true, freeMode = false;
     void releaseVoice (Voice& v);
     void freezeVoice (Voice& v);
-    void releaseStopKey (int stop, int key);
+    void releaseStopKey (int stop, int key, int noteId = -1);
     void playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone = 1.0f);
     void spawnSound (const Sample& s, float gain, float tone, double rate, Pos pos, float azVel, float send);
     void schedule (const Scheduled& e);
@@ -293,6 +318,8 @@ private:
     void placedGains (NoiseVoice& nv) noexcept;
     void renderLeaks (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
     void renderRoom (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
+    void renderFdn (float* const* out, int K, const float* in, int n, float rtL, float rtH, float gainTarget, const RoomParams& r);
+    void resetFdn() noexcept;
     int  allocSlot (int voice, int noiseVoice) noexcept;
     void releaseSlot (int& slot) noexcept;
     void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p) noexcept;
@@ -330,7 +357,7 @@ private:
     std::array<EnvState, kNumEnvs> globalEnv {};
     std::array<float, kNumSources> globalSrc {};
     bool globalTrig = false;
-    float lastKeyPos = 0.0f, lastRandom = 0.0f, modWheel = 0.0f;
+    float lastKeyPos = 0.0f, lastRandom = 0.0f, modWheel = 0.0f, lastVelocity = 0.0f, pitchWheel = 0.0f;
     ModParams lastMod;
     bool haveLastMod = false;
     int roomOffset = 0;
@@ -365,6 +392,19 @@ private:
     TailConvolver tail;                              // late reverb (ray-traced, synthesised, convolved)
     float tailGain = 0.0f;
     bool tailWasOn = false;
+    // the other late reverb: a 16-line feedback delay network (decay from the ray tracer)
+    static constexpr int kFdnLines = 16, kFdnBits = 16, kFdnLen = 1 << kFdnBits;
+    std::vector<float> fdnBuf, fdnPre;               // [line][kFdnLen], input pre-delay
+    uint32_t fdnPos = 0;
+    std::array<float, kFdnLines> fdnDelay {}, fdnLp {}, fdnGL {}, fdnGH {};
+    std::array<std::array<float, kMaxAmbiChannels>, kFdnLines> fdnEnc {};
+    float fdnPreDelay = -1.0f, fdnGain = 0.0f;
+    std::array<std::array<float, kFdnLines>, kFdnLines> fdnMatrix {};      // random orthogonal mixing matrix
+    std::array<float, kFdnLines> fdnModC {}, fdnModS {}, fdnModStepC {}, fdnModStepS {};   // slow delay modulation (phasors)
+    int fdnEncOrder = -1;
+    // switching between the two: the one switched off rings out on its own (input silent)
+    int convRingOut = 0, fdnRingOut = 0, lastTailModel = 0;
+    std::vector<float> zeroIn;
     std::vector<ErSlot> erSlots;
     std::vector<float> erRing;                       // [slot][kErRing]
     uint32_t erClock = 0;

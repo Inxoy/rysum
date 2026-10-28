@@ -22,6 +22,7 @@ struct RoomParams
     float scatter = 0.3f;                                                // part of the energy reflected diffusely
     int   order = 2;                                                     // early reflections up to this order (1..3)
     float erGain = 1.0f, tailGain = 1.0f;                                // linear
+    int   tailModel = 0;                                                 // late reverb: 0 = convolution (ray-traced response), 1 = FDN
 
     float W() const noexcept { return juce::jmax (1.0f, width * size); }
     float L() const noexcept { return juce::jmax (1.0f, length * size); }

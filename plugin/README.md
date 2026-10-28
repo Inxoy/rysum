@@ -108,6 +108,12 @@ binaural decoder: 128 samples.
   button shows how many notes are held. Works with MIDI, the computer keyboard and the keyboard
   on the Spieltisch page.
 
+- **Full screen** (the square at the far right of the top bar, or `F11`): the whole interface fills
+  the screen the plugin window is on, scaled up as far as the screen allows. `Esc`, `F11` or the button
+  again brings it back into the plugin window. While it is full screen, the plugin window just shows
+  where it went; clicking it also brings the interface back. This works the same in Reaper, Ableton
+  and the standalone app. The plugin window itself can also be dragged larger (up to twice the size).
+
 **Every slider:** click its value to type a number (in the units shown: `50` on a % slider
 = 50 %, `300 ms` or `1.5 s`, `440` on the Stimmton = a′ in Hz, `22` on Abtastrate = 22 kHz),
 Return applies. Double-click the slider = default. Right-click = modulation.
@@ -173,11 +179,18 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
     (4000 rays with specular and diffuse reflections and air absorption) gives the room's decay
     in two bands; from it a dense noise response is synthesised – one independent noise per
     Ambisonics channel with the energy of a diffuse field (up to 2nd order; stereo: two) – and
-    convolved with the organ. A noise response has no modes, so nothing rings (an earlier
-    version used a feedback delay network, whose modes rang audibly). Ray tracing matters when
+    convolved with the organ. A noise response has no modes. Ray tracing matters when
     the absorption is uneven or the room is not diffuse: a corridor with hard walls rings far
     longer than Eyring's formula says. The tail's level follows the room's critical distance
     (big, damped rooms are drier, small hard ones wetter).
+  - *Nachhall: Faltung / FDN* (buttons in the *Hörer · Pegel* title): the late reverb can also
+    be a **feedback delay network**, the earlier model: 16 delay lines around the room's mean
+    free path, a random orthogonal mixing matrix, slowly modulated delays, decay per band from
+    the same ray tracing, the lines spread over 16 directions. It sounds a little more alive
+    and grainy and needs less CPU. Both are set to the same level. When you switch while
+    playing, the old tail rings out underneath, so there is no gap. (The ringing heard in
+    earlier versions was a precision bug in the delay lines of the early reflections and of
+    the FDN, which made both alias after a few minutes of running. It is fixed in both.)
   - When the room changes – also while it is modulated – a new response is built in the
     background (about four times a second while it keeps changing) and crossfaded in. The
     convolution keeps the input history apart from the response, so the reverb that is already
@@ -211,6 +224,32 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
   quarter tones (50 ct), Bohlen–Pierce (13 steps per twelfth, 146.3 ct, no octaves at all) and
   Wendy Carlos's Alpha (78 ct). For those every key takes the recorded pipe closest to its new
   pitch, so the pipes hardly need to be shifted (31-EDO: at most 40 ct). a′ stays where it is.
+- **Free tuning – Scala and MTS-ESP** (the last two entries of the list). Here every MIDI note,
+  on every MIDI channel and over the whole range 0–127, gets its own pitch. The recorded pipe
+  nearest to that pitch plays, shifted by the rest. Its sound comes from that pipe's place.
+  Notes that land on the same pipe (31-EDO steps, clusters) each get their own voice. Notes
+  beyond the organ's compass are shifted from the outermost pipes, up to two octaves (further
+  out they stay silent). Velocity, modulation, Halten and Freeze work as usual.
+  - *Scala-Datei (.scl / .kbm)*: *Scala laden …* takes a scale (`.scl`, cents or ratios) and,
+    loaded afterwards, a keyboard mapping (`.kbm`: which key plays which degree, unmapped keys,
+    reference key and frequency). *KBM entfernen* goes back to the default mapping: degree 0 on
+    note 60, note 69 = 444.5 Hz (the organ's a′), so twelve-note scales sit where the organ
+    is. The files themselves are saved in the project and in patches, so they also work on
+    another computer. Loading a file selects this entry.
+  - *MTS-ESP / MIDI-Stimmung (SysEx)*: follows an **MTS-ESP master** (ODDSound; e.g. the free
+    *MTS-ESP Mini*, or a master in another plugin), including multi-channel tables (keyboards with
+    more than 128 keys, e.g. Lumatone layouts) and keys the master leaves unmapped. Without a
+    master it takes **MIDI Tuning Standard SysEx** from the MIDI input: that is what Hexatone
+    and similar isomorphic-keyboard tools send. *Töne folgen*: held notes follow a tuning change
+    at once (off: each note keeps the pitch it was struck with). Until a master is connected or
+    SysEx has arrived, it plays the original tuning. The line below the buttons shows the state.
+    MTS-ESP needs its library installed (it comes with every MTS-ESP master); without it the
+    plugin works as before.
+  - **Hexatone via MIDI loopback** (loopMIDI on Windows, IAC on macOS): in the **standalone
+    app** choose the loopback port as MIDI input (*Options → Audio/MIDI Settings*), select
+    *MTS-ESP / MIDI-Stimmung*, and let Hexatone send MTS SysEx on that port. In **Reaper** the
+    track's MIDI input passes SysEx on. **Ableton Live does not pass SysEx to plugins.** There,
+    use an MTS-ESP master (e.g. MTS-ESP Mini with the same scale) and send Hexatone only notes.
 - Historical temperaments (¼-comma meantone = the original recording, ⅙-comma,
   Werckmeister III, Kirnberger III, Vallotti, Pythagorean, equal). a′ stays put, the other
   pitch classes are shifted. *Stimmton* moves everything (±200 ct, shown as a′ in Hz).
@@ -283,7 +322,10 @@ follow the pipes. Everything is off in older patches.
   releases when all keys are up. Global targets (any parameter) always follow the global
   envelope.
 - Further sources: *Tastenlage* (low key −1 … high key +1), *Modrad* (CC 1), *Zufall je Ton*
-  (a new random value per key press).
+  (a new random value per key press), *Anschlag* (key velocity 0 … 1, per note – each pipe keeps
+  the velocity its key was struck with; global targets follow the last note), *Tonhöhenrad*
+  (pitch wheel −1 … +1; it bends nothing by itself – route it to *Pfeife: Tonhöhe*, e.g. 17 %
+  = ±2 semitones, or anywhere else).
 - *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 % (click the
   amount to type it), and **± / +**: ± = bipolar (an LFO swings around the slider value),
   + = unipolar (it only pushes one way, 0 … amount; envelopes and the mod wheel are 0 … 1 anyway).
@@ -328,6 +370,10 @@ The project in Reaper still remembers everything on its own, patches are extra.
 MIDI note = sounding pitch (C2 = 36 … a″ = 81). Velocity shapes the key clicks: a light touch
 gives a quieter and duller click, also when the key comes up. C♯2, D♯2, F♯2, G♯2 and g♯″ do not
 exist on the organ and stay silent (short octave). Sustain pedal (CC64) works.
+
+With a free tuning (Scala or MTS-ESP, Klang page) every MIDI note 0–127 on every channel can sound,
+each at the pitch the tuning gives it (see *Stimmung*). MIDI Tuning Standard SysEx is read there.
+The pitch wheel and velocity are also modulation sources (*Tonhöhenrad*, *Anschlag*).
 
 With *MIDI-CC an* (Klang page):
 
@@ -394,11 +440,13 @@ plugin/
     Modulation.h        LFOs, envelopes, routing definitions
     RoomSim.h           simulated room: image sources, Eyring, ray tracer
     RoomTail.*          late reverb of the simulated room: synthesised responses, partitioned convolution
+    Scala.h             Scala files (.scl scales, .kbm keyboard mappings)
     WindChaos.h         wind model "instabil": resonances, intermittent speech, hiss of starving pipes
     PluginEditor.*, ConsoleView.*, SpaceView.*, SaalView.*, KlangView.*, EffectsView.*, ModView.*,
     MidiMapView.*, Theme.h   interface
   Resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
   ThirdParty/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
+  ThirdParty/MTS-ESP/   MTS-ESP client by ODDSound (0BSD, see its LICENSE and README_RYSUM.txt)
   tools/make_fabian.py  rebuilds Resources/fabian_hrir.bin from the FABIAN SOFA file
   Tests/                offline render test + UI snapshot tool (optional)
 ```
@@ -417,3 +465,4 @@ F. Brinkmann et al., "A High Resolution and Full-Spherical Head-Related Transfer
 Database for Different Head-Above-Torso Orientations", JAES 65(10), 2017, data DOI
 10.14279/depositonce-5718, licence CC BY 4.0 (see `Resources/FABIAN_LICENSE.txt`).
 SOFA files are read with libmysofa by Christian Hoene / Symonics (BSD 3-clause).
+Microtuning via the MTS-ESP client library by ODDSound Ltd. (0BSD).

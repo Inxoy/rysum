@@ -379,6 +379,55 @@ public:
             proc->learnMidiFor (proc->getParamIndex ("simTail"));      // shows "bewegen ..." in the snapshot
         }
 
+        // free tuning: a Scala file (kept in the state), MIDI Tuning Standard SysEx (as Hexatone sends it)
+        {
+            auto P = [&] (const char* id) { return proc->apvts.getParameter (id); };
+            const auto scl = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_test_19edo.scl");
+            juce::String txt ("! 19-EDO\n19 equal\n 19\n");
+            for (int i = 1; i <= 19; ++i) txt << juce::String (1200.0 * i / 19.0, 4) << "\n";
+            scl.replaceWithText (txt);
+            const bool loaded = proc->loadTuningFile (scl);
+            const int t = juce::roundToInt (proc->apvts.getRawParameterValue ("temperament")->load());
+            const bool free = proc->readParams().notes != nullptr;
+            juce::MemoryBlock mb; proc->getStateInformation (mb);
+            const bool inState = proc->getXmlFromBinary (mb.getData(), (int) mb.getSize())->toString().contains ("19 equal");
+            std::cout << "scala file: loaded " << loaded << ", tuning " << t << ", free notes " << free << ", in the state " << inState
+                      << " (" << proc->getTuningStatus().upToFirstOccurrenceOf ("\n", false, false) << ")"
+                      << ((loaded && t == RysumProcessor::kScalaTuning && free && inState) ? "  ok" : "  FAIL") << std::endl;
+
+            // MTS: without a master, a real-time single-note tuning change SysEx retunes note 69 to b-flat (466.16 Hz)
+            proc->loadPatch (RysumProcessor::getPatchFolder().getChildFile ("01 Init.rysum"));      // a clean sound (earlier tests leave all sorts)
+            P ("temperament")->setValueNotifyingHost (P ("temperament")->convertTo0to1 ((float) RysumProcessor::kMtsTuning));
+            juce::AudioBuffer<float> st (2, 512);
+            const juce::uint8 sx[] { 0xF0, 0x7F, 0x7F, 0x08, 0x02, 0x00, 0x01, 69, 70, 0x00, 0x00, 0xF7 };
+            for (auto* id : { "stop1", "stop2", "stop6" }) P (id)->setValueNotifyingHost (0.0f);
+            for (auto* id : { "click", "releaseClick", "wind", "irWet" }) P (id)->setValueNotifyingHost (0.0f);
+            for (int r = 0; r < rysum::kNumRoutes; ++r) proc->clearRoute (r);       // earlier tests modulate the wind (pitch gusts)
+            P ("output")->setValueNotifyingHost (0.0f);
+            { juce::MidiBuffer m; m.addEvent (juce::MidiMessage (sx, (int) sizeof (sx)), 0); proc->processBlock (st, m); }
+            const auto status = proc->getTuningStatus();
+            std::vector<float> rec;
+            for (int b = 0; b < 140; ++b)
+            {
+                juce::MidiBuffer m;
+                if (b == 0) m.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
+                if (b == 139) m.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
+                proc->processBlock (st, m);
+                if (b >= 60) for (int i = 0; i < 512; ++i) rec.push_back (st.getSample (0, i));
+            }
+            const double sr = proc->getSampleRate() > 0 ? proc->getSampleRate() : 48000.0;
+            auto ac = [&] (int lag) { double s2 = 0; for (size_t i = 0; i + (size_t) lag < rec.size(); ++i) s2 += (double) rec[i] * rec[i + (size_t) lag]; return s2; };
+            int best = 0; double bv = -1e18;
+            for (int lag = (int) (sr / 520.0); lag <= (int) (sr / 420.0); ++lag) { const double v = ac (lag); if (v > bv) { bv = v; best = lag; } }
+            const double y0 = ac (best - 1), y1 = ac (best), y2 = ac (best + 1);
+            const double hz = sr / (best + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2));
+            const double err = 1200.0 * std::log2 (hz / 466.1638);
+            std::cout << "MTS SysEx: " << status << "; note 69 sounds at " << hz << " Hz (" << err << " ct from 466.16)"
+                      << ((status.contains ("SysEx") && std::abs (err) < 6.0) ? "  ok" : "  FAIL") << std::endl;
+            for (auto* id : { "stop1", "stop2", "stop6" }) P (id)->setValueNotifyingHost (1.0f);
+            P ("temperament")->setValueNotifyingHost (P ("temperament")->convertTo0to1 (0.0f));
+        }
+
         editor.reset (dynamic_cast<RysumEditor*> (proc->createEditor()));
         editor->setSize (1120, 720);
         auto* content = editor->getChildComponent (0);
@@ -458,6 +507,33 @@ public:
             P->setValueNotifyingHost (0.0f);
         }
 
+        // full screen: the interface moves into a window covering the screen, and back
+        if (std::getenv ("RYSUM_SKIP_FULLSCREEN") == nullptr)
+        {
+            auto* c = dynamic_cast<RysumContent*> (content);
+            c->showView (0);
+            editor->toggleFullscreen();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            auto* top = c->getTopLevelComponent();
+            const auto screen = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->totalArea;
+            const bool moved = editor->isFullscreen() && top != editor.get() && top->getBounds() == screen && c->isShowing();
+            if (moved)
+            {
+                auto img = top->createComponentSnapshot (top->getLocalBounds(), true, 1.0f);
+                juce::PNGImageFormat png;
+                auto f = outDir.getChildFile ("ui_fullscreen.png");
+                f.deleteFile();
+                juce::FileOutputStream os (f);
+                png.writeImageToStream (img, os);
+            }
+            // F11 / Esc are handled by the interface itself
+            c->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            const bool back = ! editor->isFullscreen() && c->getParentComponent() == editor.get();
+            std::cout << "full screen: " << screen.toString() << ", moved " << moved << ", back with Esc " << back
+                      << ((moved && back) ? "  ok" : "  FAIL") << std::endl;
+        }
+
         // state round trip
         juce::MemoryBlock mbk;
         proc->getStateInformation (mbk);
@@ -493,6 +569,7 @@ public:
 
         editor.reset();
         proc.reset();
+        std::cout << "done" << std::endl;
         quit();
     }
 

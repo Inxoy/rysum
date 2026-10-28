@@ -261,6 +261,23 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
              &row ("simHigh", U ("H\xc3\xb6hend\xc3\xa4mpfung")), &row ("simScatter", "Streuung") };
     levels = { &row ("simLx", U ("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")), &row ("simLy", U ("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)")),
                &row ("simEr", U ("Fr\xc3\xbche Reflexionen")), &row ("simTail", "Nachhall") };
+
+    if (auto* tm = proc.apvts.getParameter ("simTailModel"))
+    {
+        tailAtt = std::make_unique<juce::ParameterAttachment> (*tm, [this] (float v)
+        {
+            tailConv.setToggleState (v < 0.5f, juce::dontSendNotification);
+            tailFdn.setToggleState (v >= 0.5f, juce::dontSendNotification);
+        });
+        tailAtt->sendInitialUpdate();
+    }
+    tailConv.onClick = [this] { if (tailAtt) tailAtt->setValueAsCompleteGesture (0.0f); };
+    tailFdn.onClick = [this] { if (tailAtt) tailAtt->setValueAsCompleteGesture (1.0f); };
+    tailConv.setTooltip (U ("Nachhall als Faltung: eine aus der Strahlenverfolgung synthetisierte Raumantwort \xe2\x80\x93 dicht, ohne Eigenmoden."));
+    tailFdn.setTooltip (U ("Nachhall als R\xc3\xbc" "ckkopplungsnetz (FDN, 16 Leitungen, langsam moduliert) \xe2\x80\x93 das fr\xc3\xbchere Modell: "
+                           "etwas lebendiger, weniger Rechenzeit. Abklingzeit ebenfalls aus der Strahlenverfolgung."));
+    addAndMakeVisible (tailConv);
+    addAndMakeVisible (tailFdn);
 }
 
 void SaalView::resized()
@@ -309,6 +326,8 @@ void SaalView::resized()
     right.removeFromTop (8);
     levelBox = take (kTitle + 4 * kRow);
     { auto b = levelBox.withTrimmedTop (kTitle); stack (b, levels); }
+    tailFdn.setBounds (levelBox.getRight() - 52, levelBox.getY() + 9, 52, 20);
+    tailConv.setBounds (tailFdn.getX() - 4 - 66, levelBox.getY() + 9, 66, 20);
 }
 
 void SaalView::refresh()
@@ -331,6 +350,9 @@ void SaalView::paint (juce::Graphics& g)
     drawSectionTitle (g, saalBox, "Saal", on ? U ("simuliert \xc2\xb7 statt der Impulsantwort") : juce::String ("aus"));
     drawSectionTitle (g, dimBox, U ("Ma\xc3\x9f" "e"), "modulierbar");
     drawSectionTitle (g, surfBox, U ("Oberfl\xc3\xa4" "chen"), "Material setzt die Absorption");
-    drawSectionTitle (g, levelBox, U ("H\xc3\xb6rer \xc2\xb7 Pegel"), U ("H\xc3\xb6rer auch im Plan ziehen"));
+    drawSectionTitle (g, levelBox, U ("H\xc3\xb6rer \xc2\xb7 Pegel"));
+    g.setColour (col::mute);
+    g.setFont (A.monoFont (11.0f));
+    g.drawText ("Nachhall:", juce::Rectangle<int> (tailConv.getX() - 70, tailConv.getY(), 64, tailConv.getHeight()), juce::Justification::centredRight);
 }
 } // namespace rysum::ui

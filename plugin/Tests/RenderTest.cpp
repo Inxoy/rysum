@@ -6,6 +6,7 @@
 #include "Binaural.h"
 #include "RoomSim.h"
 #include "RoomTail.h"
+#include "Scala.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
 #include <complex>
@@ -968,6 +969,116 @@ int main (int argc, char** argv)
             std::cout << "wind model 2, 18 pipes sweeping down: " << rt << "x realtime, peak " << juce::Decibels::gainToDecibels (b.getMagnitude (0, b.getNumSamples())) << " dBFS" << std::endl;
             check (rt > 1.0, "wind model 2 with 18 pipes faster than realtime");
         }
+        // ---------------- free tuning (Scala, MTS-ESP) and the new modulation sources ----------------
+        {
+            // Scala parser
+            {
+                ScalaTuning t; juce::String err;
+                const bool ok = ScalaTuning::parseScl ("! test.scl\n!\n31-EDO\n 31\n!\n" + [] { juce::String s; for (int i = 1; i <= 31; ++i) s << juce::String (1200.0 * i / 31.0, 5) << "\n"; return s; }(), t, err);
+                const auto f = t.frequencies();
+                const double c70 = 1200.0 * std::log2 (f[70] / f[69]), c38 = 1200.0 * std::log2 (f[69 + 31] / f[69]);
+                std::cout << "scala: 31-EDO parsed " << ok << ", a' " << f[69] << " Hz, one step " << c70 << " ct, 31 steps " << c38 << " ct" << std::endl;
+                check (ok && std::abs (f[69] - kA4) < 1e-6 && std::abs (c70 - 1200.0 / 31.0) < 1e-3 && std::abs (c38 - 1200.0) < 1e-3, "scala: 31-EDO, default mapping (a' = 444.5 Hz on note 69)");
+                ScalaTuning j; juce::String e2;
+                const bool ok2 = ScalaTuning::parseScl ("just\n7\n9/8\n5/4\n4/3\n3/2\n5/3\n15/8\n2/1\n", j, e2)
+                              && ScalaTuning::parseKbm ("! white keys only\n12\n0\n127\n60\n69\n440.0\n7\n0\nx\n1\nx\n2\n3\nx\n4\nx\n5\nx\n6\n", j, e2);
+                const auto g = j.frequencies();
+                std::cout << "scala: just C major on the white keys: c' " << g[60] << ", e' " << g[64] << ", g' " << g[67] << ", c'' " << g[72] << ", c#' " << g[61] << std::endl;
+                check (ok2 && std::abs (g[69] - 440.0) < 1e-6 && std::abs (g[64] / g[60] - 1.25) < 1e-9 && std::abs (g[67] / g[60] - 1.5) < 1e-9
+                       && std::abs (g[72] / g[60] - 2.0) < 1e-9 && g[61] == 0.0, "scala: ratios, .kbm with unmapped keys and reference frequency");
+                ScalaTuning bad; juce::String e3;
+                check (! ScalaTuning::parseScl ("bad\n3\n100.0\n", bad, e3) && e3.isNotEmpty(), "scala: a broken file is refused with a message");
+            }
+            // free tuning in the engine
+            auto pitchOf = [&] (const juce::AudioBuffer<float>& b, double f0)
+            {
+                const float* x = b.getReadPointer (0) + (int) (0.6 * 48000);
+                const int N = 24000;
+                auto ac = [&] (int lag) { double s2 = 0; for (int i = 0; i < N - lag; ++i) s2 += (double) x[i] * x[i + lag]; return s2; };
+                int best = 0; double bv = -1e18;
+                for (int lag = (int) (48000.0 / (f0 * 1.1)); lag <= (int) (48000.0 / (f0 / 1.1)); ++lag) { const double v = ac (lag); if (v > bv) { bv = v; best = lag; } }
+                const double y0 = ac (best - 1), y1 = ac (best), y2 = ac (best + 1);
+                return 48000.0 / (best + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2));
+            };
+            NoteTable table;
+            for (int ch = 0; ch < 16; ++ch)
+                for (int n = 0; n < 128; ++n)
+                {
+                    table.hz[(size_t) (ch * 128 + n)] = (float) (kA4 * std::pow (2.0, (n - 69 + ch * 0.5) / 31.0 * 1.0));   // 31-EDO, channel 2 half a step up
+                    table.mapped[(size_t) (ch * 128 + n)] = n == 72 ? 0 : 1;
+                }
+            auto play = [&] (std::vector<std::pair<int, int>> notes, std::function<void (EngineParams&)> setup, double secs, int* voices = nullptr)
+            {
+                OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0; p.notes = &table;
+                setup (p);
+                juce::AudioBuffer<float> b (2, 512), all (1, (int) (48000 * secs));
+                for (int pos = 0; pos < all.getNumSamples(); pos += 512)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) for (auto [ch, n] : notes) mb.addEvent (juce::MidiMessage::noteOn (ch, n, (juce::uint8) 100), 0);
+                    e.process (b, mb, p);
+                    if (voices != nullptr && pos == 512 * 10) *voices = e.activeVoices.load();
+                    all.copyFrom (0, pos, b, 0, 0, juce::jmin (512, all.getNumSamples() - pos));
+                }
+                return all;
+            };
+            auto none = [] (EngineParams&) {};
+            double worst = 0;
+            for (int n : { 60, 69, 70, 71, 80 })
+            {
+                const double want = table.hz[(size_t) n];
+                const double got = pitchOf (play ({ { 1, n } }, none, 1.5), want);
+                worst = std::max (worst, std::abs (1200.0 * std::log2 (got / want)));
+            }
+            int v2 = 0, vUnmapped = 0, vFar = 0, vCh = 0;
+            play ({ { 1, 69 }, { 1, 70 } }, none, 0.5, &v2);            // 38.7 ct apart: the same pipe, two voices
+            play ({ { 1, 72 } }, none, 0.5, &vUnmapped);
+            play ({ { 1, 127 } }, none, 0.5, &vFar);                     // 31-EDO note 127: 22 ct below a'' + 1 oct -> shifted from a'' (allowed: up to 2 octaves)
+            play ({ { 1, 60 }, { 2, 60 } }, none, 0.5, &vCh);
+            const double gotCh2 = pitchOf (play ({ { 2, 69 } }, none, 1.5), table.hz[128 + 69]);
+            const double errCh2 = 1200.0 * std::log2 (gotCh2 / table.hz[128 + 69]);
+            std::cout << "free tuning (31-EDO table): worst pitch error " << worst << " ct; a' + one step together: " << v2 << " voices; unmapped note: "
+                      << vUnmapped << "; far above: " << vFar << "; same note on two channels: " << vCh << " voices, channel 2 error " << errCh2 << " ct" << std::endl;
+            check (worst < 5.0, "free tuning: every MIDI note sounds at its own pitch (within the recordings' own accuracy)");
+            check (v2 == 2, "free tuning: two notes on one pipe sound as two voices");
+            check (vUnmapped == 0, "free tuning: unmapped notes stay silent");
+            check (vCh == 2 && std::abs (errCh2) < 3.0, "free tuning: MIDI channels have their own pitches (multi-channel tables)");
+            // velocity and pitch wheel as modulation sources
+            auto levelAt = [&] (int vel)
+            {
+                OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+                p.mod.routes[0] = { srcVelocity, tgtLevel, 0.3f };
+                juce::AudioBuffer<float> b (2, 512); double en = 0;
+                for (int pos = 0; pos < 48000; pos += 512)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) vel), 0);
+                    e.process (b, mb, p);
+                    if (pos > 24000) en += b.getRMSLevel (0, 0, 512);
+                }
+                return juce::Decibels::gainToDecibels ((float) en);
+            };
+            const float soft = levelAt (20), hard = levelAt (127);
+            OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+            p.mod.routes[0] = { srcPitchWheel, tgtPitch, 1.0f / 6.0f };        // full wheel = +2 semitones
+            juce::AudioBuffer<float> b (2, 512), all (1, 72000);
+            for (int pos = 0; pos < all.getNumSamples(); pos += 512)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
+                if (pos == 0) mb.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 1);
+                e.process (b, mb, p);
+                all.copyFrom (0, pos, b, 0, 0, juce::jmin (512, all.getNumSamples() - pos));
+            }
+            const double bent = 1200.0 * std::log2 (pitchOf (all, kA4 * std::pow (2.0, 2.0 / 12.0)) / kA4);
+            std::cout << "modulation: velocity 20 -> " << soft << " dB, 127 -> " << hard << " dB; pitch wheel up: " << bent << " ct" << std::endl;
+            check (hard - soft > 8.0f, "modulation source: key velocity");
+            check (std::abs (bent - 200.0) < 4.0, "modulation source: pitch wheel");
+        }
+
         if (onlyWind && ! onlyRoom) { std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     }
 
@@ -1336,30 +1447,82 @@ int main (int argc, char** argv)
                       << "), level " << juce::Decibels::gainToDecibels ((float) std::sqrt (diff.getRMSLevel (0, 0, diff.getNumSamples()))) << std::endl;
             check (std::abs (best / 48.0 - expectMs) < 0.15 && std::abs (az - expectAz) < 8.0, "early reflection: right delay and direction");
         }
-        {   // late reverb decays with the computed decay time
-            OrganEngine e;
-            auto b = run ([] (EngineParams& p)
-                          {
-                              p.room.on = true; p.room.width = 12; p.room.length = 24; p.room.height = 10;
-                              p.room.absWalls = 0.08f; p.room.absFloor = 0.15f; p.room.highDamp = 0.3f; p.room.erGain = 0.0f;
-                          }, 5.0, 0.6, "41_room_tail", 4, &e);
-            const float rt = e.roomRtLow.load();
-            // decay of the W energy after the note (10 ms frames), fit -5 .. -25 dB
-            const int start = (int) (0.75 * fsr), fr = 480;
-            std::vector<double> en;
-            for (int pos = start; pos + fr < b.getNumSamples(); pos += fr) { double s2 = 0; for (int i = 0; i < fr; ++i) s2 += (double) b.getSample (0, pos + i) * b.getSample (0, pos + i); en.push_back (s2); }
-            std::vector<double> sch (en.size()); double acc = 0; for (int i = (int) en.size() - 1; i >= 0; --i) { acc += en[(size_t) i]; sch[(size_t) i] = acc; }
-            double sx = 0, sy = 0, sxx = 0, sxy = 0; int nn = 0;
-            for (size_t i = 0; i < sch.size(); ++i)
+        {   // late reverb decays with the computed decay time - both models (convolution, FDN), at the same level
+            double energy[2] {};
+            for (int model = 0; model < 2; ++model)
             {
-                const double db = 10 * std::log10 (sch[i] / acc);
-                if (db > -5) continue; if (db < -25) break;
-                const double x = i * 0.01; sx += x; sy += db; sxx += x * x; sxy += x * db; ++nn;
+                OrganEngine e;
+                auto b = run ([model] (EngineParams& p)
+                              {
+                                  p.room.on = true; p.room.width = 12; p.room.length = 24; p.room.height = 10;
+                                  p.room.absWalls = 0.08f; p.room.absFloor = 0.15f; p.room.highDamp = 0.3f; p.room.erGain = 0.0f;
+                                  p.room.tailModel = model;
+                              }, 5.0, 0.6, model == 0 ? "41_room_tail" : "41_room_tail_fdn", 4, &e);
+                const float rt = e.roomRtLow.load();
+                // decay of the W energy after the note (10 ms frames), fit -5 .. -25 dB
+                const int start = (int) (0.75 * fsr), fr = 480;
+                std::vector<double> en;
+                for (int pos = start; pos + fr < b.getNumSamples(); pos += fr) { double s2 = 0; for (int i = 0; i < fr; ++i) s2 += (double) b.getSample (0, pos + i) * b.getSample (0, pos + i); en.push_back (s2); }
+                std::vector<double> sch (en.size()); double acc = 0; for (int i = (int) en.size() - 1; i >= 0; --i) { acc += en[(size_t) i]; sch[(size_t) i] = acc; }
+                energy[model] = acc;
+                double sx = 0, sy = 0, sxx = 0, sxy = 0; int nn = 0;
+                for (size_t i = 0; i < sch.size(); ++i)
+                {
+                    const double db = 10 * std::log10 (sch[i] / acc);
+                    if (db > -5) continue; if (db < -25) break;
+                    const double x = i * 0.01; sx += x; sy += db; sxx += x * x; sxy += x * db; ++nn;
+                }
+                const double slope = (nn * sxy - sx * sy) / (nn * sxx - sx * sx);
+                const double measured = -60.0 / slope;
+                std::cout << "room: tail (" << (model == 0 ? "convolution" : "FDN") << ") decay measured " << measured << " s, ray-traced " << rt
+                          << " s, critical distance " << e.roomCritDist.load() << " m" << std::endl;
+                check (nn > 3 && std::abs (measured / rt - 1.0) < 0.25, juce::String ("late reverb decays with the room's decay time (") + (model == 0 ? "convolution)" : "FDN)"));
             }
-            const double slope = (nn * sxy - sx * sy) / (nn * sxx - sx * sx);
-            const double measured = -60.0 / slope;
-            std::cout << "room: tail decay measured " << measured << " s, ray-traced " << rt << " s, critical distance " << e.roomCritDist.load() << " m" << std::endl;
-            check (nn > 3 && std::abs (measured / rt - 1.0) < 0.25, "late reverb decays with the room's decay time");
+            const double diffDb = 10.0 * std::log10 (energy[1] / energy[0]);
+            std::cout << "room: FDN tail level against the convolution tail: " << diffDb << " dB" << std::endl;
+            check (std::abs (diffDb) < 2.0, "room: both late reverb models equally loud");
+        }
+        {   // FDN: unchanged after a long session as well; switching models while playing rings out without a gap
+            auto setup = [] (EngineParams& p) { p.room.on = true; p.room.erGain = 0.0f; p.room.tailModel = 1; };
+            OrganEngine fresh, aged;
+            {
+                aged.prepare (fsr, 4096); aged.setLibrary (lib);
+                EngineParams q; q.stopOn = {}; q.clickLevel = 0; q.releaseClick = 0; q.wind = 0; q.stopPull = 0; q.outputMode = 1;
+                q.room.on = true; q.room.tailModel = 1;          // the FDN runs (silently) all the time
+                juce::AudioBuffer<float> b (4, 4096); juce::MidiBuffer none;
+                const int blocks = (int) (12.0 * 60.0 * fsr / 4096.0);
+                for (int i = 0; i < blocks; ++i) aged.process (b, none, q);
+            }
+            auto a = run (setup, 2.0, -1, "", 4, &fresh);
+            auto b = run (setup, 2.0, -1, "", 4, &aged);
+            double e2 = 0, d2 = 0;
+            for (int i = (int) (0.5 * fsr); i < a.getNumSamples(); ++i) { const double x = a.getSample (0, i), y = b.getSample (0, i); e2 += x * x; d2 += (x - y) * (x - y); }
+            const double db = 10.0 * std::log10 (d2 / juce::jmax (1e-30, e2) + 1e-30);
+            std::cout << "room: FDN after 12 minutes of running differs from a fresh start by " << db << " dB" << std::endl;
+            check (db < -60.0, "room: FDN unchanged after a long session");
+
+            auto sw = run ([] (EngineParams& p) { p.room.on = true; p.room.erGain = 0.0f; }, 4.0, 0.5, "41_room_tail_switch", 4);
+            (void) sw;
+            // switch while the tail rings: 1.0 s convolution, then FDN (the convolution rings out underneath)
+            OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0; p.outputMode = 1;
+            p.room.on = true; p.room.erGain = 0.0f;
+            e.setTailIR (TailIR::build (p.room, p.air, p.outputMode, fsr, 1));
+            juce::AudioBuffer<float> blk (4, B), all (4, (int) (fsr * 3.0));
+            for (int pos = 0; pos < all.getNumSamples(); pos += B)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 110), 0);
+                if (pos == ((int) (0.5 * fsr) / B) * B) mb.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
+                p.room.tailModel = pos >= (int) (1.0 * fsr) ? 1 : 0;
+                e.process (blk, mb, p);
+                for (int c = 0; c < 4; ++c) all.copyFrom (c, pos, blk, c, 0, juce::jmin (B, all.getNumSamples() - pos));
+            }
+            writeWav (outDir.getChildFile ("41_room_tail_switch.wav"), all, fsr);
+            const float before = all.getRMSLevel (0, (int) (0.9 * fsr), (int) (0.1 * fsr)), after = all.getRMSLevel (0, (int) (1.0 * fsr), (int) (0.1 * fsr));
+            const double jump = juce::Decibels::gainToDecibels (after / juce::jmax (1e-9f, before));
+            std::cout << "room: switching convolution -> FDN while the tail rings: level change " << jump << " dB" << std::endl;
+            check (std::isfinite (jump) && jump > -3.0 && jump < 6.0, "room: switching the late reverb model while playing has no gap");
         }
         {   // listening scenes: default room, note on / off, early reflections only / tail only / both (stereo)
             for (int mode = 0; mode < 4; ++mode)
