@@ -398,7 +398,7 @@ private:
     uint32_t fdnPos = 0;
     std::array<float, kFdnLines> fdnDelay {}, fdnLp {}, fdnGL {}, fdnGH {};
     std::array<std::array<float, kMaxAmbiChannels>, kFdnLines> fdnEnc {};
-    float fdnPreDelay = -1.0f, fdnGain = 0.0f;
+    float fdnPreDelay = -1.0f, fdnGain = 0.0f, fdnLevelLast = 0.0f;
     std::array<std::array<float, kFdnLines>, kFdnLines> fdnMatrix {};      // random orthogonal mixing matrix
     std::array<float, kFdnLines> fdnModC {}, fdnModS {}, fdnModStepC {}, fdnModStepS {};   // slow delay modulation (phasors)
     int fdnEncOrder = -1;

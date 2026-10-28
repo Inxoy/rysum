@@ -1225,7 +1225,9 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     if (useFdn && convRingOut == 0) tail.adoptLatest();          // keeps the ray-traced decay current for the FDN
     if (useFdn || fdnRingOut > 0)
     {
-        renderFdn (o.data(), K, useFdn ? in : zeroIn.data(), n, rtL, rtH, useFdn ? level : fdnGain, r);
+        // ringing out: the same room level as while it was on (not its own output gain - that would compound)
+        if (useFdn) fdnLevelLast = level;
+        renderFdn (o.data(), K, useFdn ? in : zeroIn.data(), n, rtL, rtH, fdnLevelLast, r);
         if (! useFdn && (fdnRingOut -= n) <= 0) { fdnRingOut = 0; resetFdn(); }
     }
     tailSerialInUse = tail.oldestSerialInUse();

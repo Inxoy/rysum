@@ -1503,26 +1503,34 @@ int main (int argc, char** argv)
 
             auto sw = run ([] (EngineParams& p) { p.room.on = true; p.room.erGain = 0.0f; }, 4.0, 0.5, "41_room_tail_switch", 4);
             (void) sw;
-            // switch while the tail rings: 1.0 s convolution, then FDN (the convolution rings out underneath)
-            OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
-            EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0; p.outputMode = 1;
-            p.room.on = true; p.room.erGain = 0.0f;
-            e.setTailIR (TailIR::build (p.room, p.air, p.outputMode, fsr, 1));
-            juce::AudioBuffer<float> blk (4, B), all (4, (int) (fsr * 3.0));
-            for (int pos = 0; pos < all.getNumSamples(); pos += B)
+            // switch while the tail rings (note off at 0.5 s, switch at 1.0 s), both ways: no gap, and it keeps decaying
+            // (the old one rings out underneath with a silent input - it must not build up)
+            for (int from = 0; from < 2; ++from)
             {
-                juce::MidiBuffer mb;
-                if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 110), 0);
-                if (pos == ((int) (0.5 * fsr) / B) * B) mb.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
-                p.room.tailModel = pos >= (int) (1.0 * fsr) ? 1 : 0;
-                e.process (blk, mb, p);
-                for (int c = 0; c < 4; ++c) all.copyFrom (c, pos, blk, c, 0, juce::jmin (B, all.getNumSamples() - pos));
+                OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0; p.outputMode = 1;
+                p.room.on = true; p.room.erGain = 0.0f;
+                e.setTailIR (TailIR::build (p.room, p.air, p.outputMode, fsr, 1));
+                juce::AudioBuffer<float> blk (4, B), all (4, (int) (fsr * 6.0));
+                for (int pos = 0; pos < all.getNumSamples(); pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 110), 0);
+                    if (pos == ((int) (0.5 * fsr) / B) * B) mb.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
+                    p.room.tailModel = pos >= (int) (1.0 * fsr) ? 1 - from : from;
+                    e.process (blk, mb, p);
+                    for (int c = 0; c < 4; ++c) all.copyFrom (c, pos, blk, c, 0, juce::jmin (B, all.getNumSamples() - pos));
+                }
+                writeWav (outDir.getChildFile (from == 0 ? "41_room_tail_switch_to_fdn.wav" : "41_room_tail_switch_to_conv.wav"), all, fsr);
+                auto rmsAt = [&] (double t) { return all.getRMSLevel (0, (int) (t * fsr), (int) (0.1 * fsr)); };
+                const double jump = juce::Decibels::gainToDecibels (rmsAt (1.0) / juce::jmax (1e-9f, rmsAt (0.9)));
+                const double later = juce::Decibels::gainToDecibels (rmsAt (3.0) / juce::jmax (1e-9f, rmsAt (1.0)));
+                const double end = juce::Decibels::gainToDecibels (rmsAt (5.8) / juce::jmax (1e-9f, rmsAt (1.0)));
+                std::cout << "room: switching " << (from == 0 ? "convolution -> FDN" : "FDN -> convolution") << " while the tail rings: level change "
+                          << jump << " dB, 2 s later " << later << " dB, at 5.8 s " << end << " dB" << std::endl;
+                check (std::isfinite (jump) && jump > -3.0 && jump < 6.0, "room: switching the late reverb model while playing has no gap");
+                check (later < -10.0 && end < later, "room: after switching the late reverb keeps decaying (no build-up)");
             }
-            writeWav (outDir.getChildFile ("41_room_tail_switch.wav"), all, fsr);
-            const float before = all.getRMSLevel (0, (int) (0.9 * fsr), (int) (0.1 * fsr)), after = all.getRMSLevel (0, (int) (1.0 * fsr), (int) (0.1 * fsr));
-            const double jump = juce::Decibels::gainToDecibels (after / juce::jmax (1e-9f, before));
-            std::cout << "room: switching convolution -> FDN while the tail rings: level change " << jump << " dB" << std::endl;
-            check (std::isfinite (jump) && jump > -3.0 && jump < 6.0, "room: switching the late reverb model while playing has no gap");
         }
         {   // listening scenes: default room, note on / off, early reflections only / tail only / both (stereo)
             for (int mode = 0; mode < 4; ++mode)
