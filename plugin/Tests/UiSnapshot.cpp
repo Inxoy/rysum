@@ -428,8 +428,33 @@ public:
             P ("temperament")->setValueNotifyingHost (P ("temperament")->convertTo0to1 (0.0f));
         }
 
+        // drawn trajectory (Trompete): kept in the state, the engine follows it; ellipse settings for the picture
+        {
+            auto setP = [&] (const juce::String& id, float v) { auto* a = proc->apvts.getParameter (id); a->setValueNotifyingHost (a->convertTo0to1 (v)); };
+            std::vector<RysumProcessor::DrawnPath::Pt> pts;
+            for (int i = 0; i < 120; ++i)
+            {
+                const float t = (float) i / 119.0f;
+                pts.push_back ({ 160.0f * std::sin (6.283f * t) , 30.0f + 25.0f * std::sin (12.566f * t), 2.0f * t * t });   // a figure eight, drawn faster at the end
+            }
+            proc->setDrawnPath (6, pts);
+            setP (RysumProcessor::motionParamId (6), (float) rysum::Motion::Drawn);
+            setP (RysumProcessor::rateParamId (6), 0.05f);
+            setP (RysumProcessor::ellipseParamId (6), 0.5f);
+            setP (RysumProcessor::ellDirParamId (6), 45.0f);
+            setP (RysumProcessor::ellFormParamId (6), 1.0f);
+            const auto prm = proc->readParams();
+            const auto pos = proc->engine.currentPosition (6, 0, prm);
+            juce::MemoryBlock mb; proc->getStateInformation (mb);
+            proc->setDrawnPath (6, {});
+            proc->setStateInformation (mb.getData(), (int) mb.getSize());
+            const auto& back = proc->getDrawnPath (6);
+            std::cout << "drawn path: " << back.points.size() << " points after the state round trip, pipe 0 at az " << pos.az << " el " << pos.el
+                      << ((back.points.size() == 120 && std::abs (back.points[60].az - pts[60].az) < 0.01f && proc->engine.getPath (6).n > 100) ? "  ok" : "  FAIL") << std::endl;
+        }
+
         editor.reset (dynamic_cast<RysumEditor*> (proc->createEditor()));
-        editor->setSize (1120, 720);
+        editor->setSize (1280, 720);
         auto* content = editor->getChildComponent (0);
         auto shoot = [&] (int view, const juce::String& name)
         {

@@ -123,7 +123,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         const String name = prettyLabel (kStops[(size_t) s].label);
         l.add (std::make_unique<AudioParameterChoice> (ParameterID { motionParamId (s), 1 }, name + " Bewegung", motionNames(), 0));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { rateParamId (s), 1 }, name + " Geschwindigkeit",
-                                                      NormalisableRange<float> (-10.0f, 10.0f, 0.001f, 0.3f, true), 0.08f,
+                                                      NormalisableRange<float> (-500.0f, 500.0f, 0.0001f, 0.2f, true), 0.08f,
                                                       AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0 ? "+" : "") + String (v, std::abs (v) < 1.0f ? 3 : 2) + " Hz"; })));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { ellipseParamId (s), 1 }, name + " Ellipse",
                                                       NormalisableRange<float> (0.0f, 0.9f, 0.001f), 0.0f, pct));
@@ -242,6 +242,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "simTailModel", 1 }, "Saal Nachhall-Modell", StringArray { "Faltung", "FDN" }, 0));
     // MTS-ESP: held notes follow a changing tuning (or keep the pitch they started with)
     l.add (std::make_unique<AudioParameterBool> (ParameterID { "mtsContinuous", 1 }, u8 ("MTS: gehaltene T\xc3\xb6ne folgen"), true));
+
+    // ---- shape of the motion per stop (page "Raum"): ellipse direction / tilt / form, drawn path, hard jumps
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        const String name = prettyLabel (kStops[(size_t) s].label);
+        auto sdeg2 = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0.5f ? "+" : "") + String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0"); });
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { ellDirParamId (s), 1 }, name + " Ellipse Richtung",
+                                                      NormalisableRange<float> (-180.0f, 180.0f, 0.1f), 0.0f, sdeg2));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { ellTiltParamId (s), 1 }, name + " Ellipse Neigung",
+                                                      NormalisableRange<float> (-60.0f, 60.0f, 0.1f), 0.0f, sdeg2));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { ellFormParamId (s), 1 }, name + " Ellipse Form", ellipseFormNames(), 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pathSpreadParamId (s), 1 }, name + " Verteilung auf der Bahn",
+                                                      NormalisableRange<float> (0.0f, 1.0f), 1.0f, pct));
+        l.add (std::make_unique<AudioParameterBool> (ParameterID { jumpHardParamId (s), 1 }, name + u8 (" harte Spr\xc3\xbcnge"), false));
+    }
     return l;
 }
 
@@ -328,6 +343,9 @@ RysumProcessor::RysumProcessor()
         ix.stop[(size_t) s] = I (stopParamId (s)); ix.vol[(size_t) s] = I (volParamId (s)); ix.swind[(size_t) s] = I (windParamId (s));
         ix.motion[(size_t) s] = I (motionParamId (s)); ix.rate[(size_t) s] = I (rateParamId (s));
         ix.depth[(size_t) s] = I (depthParamId (s)); ix.ellipse[(size_t) s] = I (ellipseParamId (s));
+        ix.ellDir[(size_t) s] = I (ellDirParamId (s)); ix.ellTilt[(size_t) s] = I (ellTiltParamId (s));
+        ix.ellForm[(size_t) s] = I (ellFormParamId (s)); ix.pathSpread[(size_t) s] = I (pathSpreadParamId (s));
+        ix.jumpHard[(size_t) s] = I (jumpHardParamId (s));
     }
     ix.doppler = I ("doppler"); ix.air = I ("air"); ix.distAmount = I ("distAmount"); ix.temperament = I ("temperament");
     ix.pitch = I ("pitch"); ix.detune = I ("detune"); ix.tremOn = I ("tremOn"); ix.tremRate = I ("tremRate"); ix.tremDepth = I ("tremDepth");
@@ -410,6 +428,11 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         p.motionRate[(size_t) s] = V (ix.rate[(size_t) s]);
         p.motionDepth[(size_t) s] = V (ix.depth[(size_t) s]);
         p.ellipse[(size_t) s] = V (ix.ellipse[(size_t) s]);
+        p.ellipseDir[(size_t) s] = V (ix.ellDir[(size_t) s]);
+        p.ellipseTilt[(size_t) s] = V (ix.ellTilt[(size_t) s]);
+        p.ellipseLobes[(size_t) s] = 1 + juce::roundToInt (V (ix.ellForm[(size_t) s]));
+        p.pathSpread[(size_t) s] = V (ix.pathSpread[(size_t) s]);
+        p.jumpHard[(size_t) s] = V (ix.jumpHard[(size_t) s]) > 0.5f;
     }
     p.doppler = V (ix.doppler);
     p.air = V (ix.air);
@@ -1230,6 +1253,15 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
         st.setProperty ("mute", mu.joinIntoString (","), nullptr);
         st.setProperty ("dist", di.joinIntoString (","), nullptr);
         st.setProperty ("distance", L.distance, nullptr);
+        const auto& dp = drawnPaths[(size_t) s];
+        if (! dp.points.empty())
+        {
+            juce::StringArray pts;
+            for (auto& q : dp.points) pts.add (juce::String (q.az, 2) + " " + juce::String (q.el, 2) + " " + juce::String (q.t, 3));
+            st.setProperty ("path", pts.joinIntoString (","), nullptr);
+            st.setProperty ("pathPingPong", dp.pingPong, nullptr);
+            st.setProperty ("pathTiming", dp.drawnTiming, nullptr);
+        }
         extra.appendChild (st, nullptr);
     }
     {
@@ -1297,6 +1329,8 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             {
                 layouts[(size_t) s] = defaultLayout (s);
                 applyLayout (s);
+                drawnPaths[(size_t) s] = {};
+                sendPath (s);
                 for (auto& m : engine.muted[(size_t) s]) m = false;
             }
         }
@@ -1331,6 +1365,20 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             L.elevation = (float) st.getProperty ("elevation", L.elevation);
             L.spread = (float) st.getProperty ("spread", L.spread);
             L.distance = (float) st.getProperty ("distance", L.distance);
+            {
+                auto& dp = drawnPaths[(size_t) s];
+                dp.points.clear();
+                juce::StringArray pts;
+                pts.addTokens (st["path"].toString(), ",", {});
+                for (auto& t : pts)
+                {
+                    juce::StringArray v; v.addTokens (t, " ", {});
+                    if (v.size() >= 3) dp.points.push_back ({ v[0].getFloatValue(), v[1].getFloatValue(), v[2].getFloatValue() });
+                }
+                dp.pingPong = (bool) st.getProperty ("pathPingPong", false);
+                dp.drawnTiming = (bool) st.getProperty ("pathTiming", false);
+                sendPath (s);
+            }
             juce::StringArray di;
             di.addTokens (st["dist"].toString(), ",", {});
             for (int k = 0; k < juce::jmin (kNumKeys, di.size()); ++k)
@@ -1368,6 +1416,78 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         }
     }
     ++changeCounter;
+}
+
+// ---------------------------------------------------------------------------
+// drawn trajectories
+// ---------------------------------------------------------------------------
+void RysumProcessor::setDrawnPath (int stop, std::vector<DrawnPath::Pt> points)
+{
+    if (stop < 0 || stop >= kNumStops) return;
+    drawnPaths[(size_t) stop].points = std::move (points);
+    sendPath (stop);
+    ++changeCounter;
+}
+
+void RysumProcessor::setPathOptions (int stop, bool pingPong, bool drawnTiming)
+{
+    if (stop < 0 || stop >= kNumStops) return;
+    drawnPaths[(size_t) stop].pingPong = pingPong;
+    drawnPaths[(size_t) stop].drawnTiming = drawnTiming;
+    sendPath (stop);
+    ++changeCounter;
+}
+
+void RysumProcessor::sendPath (int stop)
+{
+    // the drawn points -> the engine's path: unit vectors, at most kMax points, the time (0..1) every point is reached
+    const auto& dp = drawnPaths[(size_t) stop];
+    MotionPath mp;
+    mp.pingPong = dp.pingPong;
+    const int count = (int) dp.points.size();
+    if (count >= 2)
+    {
+        const int maxPts = MotionPath::kMax - 1;                    // room for closing the loop
+        const int stepN = juce::jmax (1, (count + maxPts - 1) / maxPts);
+        std::vector<DrawnPath::Pt> pts;
+        for (int i = 0; i < count; i += stepN) pts.push_back (dp.points[(size_t) i]);
+        if ((count - 1) % stepN != 0) pts.push_back (dp.points.back());
+        pts.resize ((size_t) juce::jmin ((int) pts.size(), maxPts));
+        auto vec = [] (const DrawnPath::Pt& q, float& x, float& y, float& z)
+        {
+            const float a = juce::degreesToRadians (q.az), e = juce::degreesToRadians (q.el);
+            x = std::cos (e) * std::cos (a); y = std::cos (e) * std::sin (a); z = std::sin (e);
+        };
+        const int n = (int) pts.size();
+        for (int i = 0; i < n; ++i) vec (pts[(size_t) i], mp.x[(size_t) i], mp.y[(size_t) i], mp.z[(size_t) i]);
+        const bool loop = ! dp.pingPong;
+        int m = n;
+        if (loop) { mp.x[(size_t) n] = mp.x[0]; mp.y[(size_t) n] = mp.y[0]; mp.z[(size_t) n] = mp.z[0]; m = n + 1; }
+        // the weight of every segment: its length (even speed) or the time it took to draw
+        std::vector<double> w ((size_t) (m - 1), 0.0);
+        double totalLen = 0.0, totalT = 0.0;
+        for (int i = 0; i + 1 < m; ++i)
+        {
+            const double dx = mp.x[(size_t) i + 1] - mp.x[(size_t) i], dy = mp.y[(size_t) i + 1] - mp.y[(size_t) i], dz = mp.z[(size_t) i + 1] - mp.z[(size_t) i];
+            w[(size_t) i] = std::sqrt (dx * dx + dy * dy + dz * dz);
+            totalLen += w[(size_t) i];
+            if (i + 1 < n) totalT += juce::jmax (0.0f, pts[(size_t) i + 1].t - pts[(size_t) i].t);
+        }
+        if (dp.drawnTiming && totalT > 1.0e-3)
+        {
+            // drawing time per segment; the closing segment at the average drawing speed
+            const double speed = totalLen / juce::jmax (1.0e-6, totalLen - (loop ? w.back() : 0.0)) * totalT;
+            for (int i = 0; i + 1 < m; ++i)
+                w[(size_t) i] = (i + 1 < n) ? juce::jmax (0.0, (double) (pts[(size_t) i + 1].t - pts[(size_t) i].t)) + 1.0e-6
+                                            : w[(size_t) i] / juce::jmax (1.0e-6, totalLen) * speed;
+        }
+        double acc = 0.0, sum = 0.0;
+        for (double x : w) sum += x;
+        mp.u[0] = 0.0f;
+        for (int i = 0; i + 1 < m; ++i) { acc += w[(size_t) i]; mp.u[(size_t) i + 1] = (float) (acc / juce::jmax (1.0e-9, sum)); }
+        mp.n = m;
+    }
+    engine.setPath (stop, mp);
 }
 
 // ---------------------------------------------------------------------------

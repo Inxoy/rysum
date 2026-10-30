@@ -165,6 +165,23 @@ public:
     static juce::String rateParamId (int s)   { return "rate" + juce::String (s); }
     static juce::String depthParamId (int s)  { return "depth" + juce::String (s); }
     static juce::String ellipseParamId (int s) { return "ellipse" + juce::String (s); }
+    static juce::String ellDirParamId (int s)   { return "ellDir" + juce::String (s); }
+    static juce::String ellTiltParamId (int s)  { return "ellTilt" + juce::String (s); }
+    static juce::String ellFormParamId (int s)  { return "ellForm" + juce::String (s); }
+    static juce::String pathSpreadParamId (int s) { return "pathSpread" + juce::String (s); }
+    static juce::String jumpHardParamId (int s) { return "jumpHard" + juce::String (s); }
+
+    // ---- drawn trajectories (message thread)
+    struct DrawnPath
+    {
+        struct Pt { float az, el, t; };      // degrees, seconds since the start of drawing
+        std::vector<Pt> points;
+        bool pingPong = false;               // there and back (else a loop)
+        bool drawnTiming = false;            // the speed as it was drawn (else even)
+    };
+    const DrawnPath& getDrawnPath (int stop) const { return drawnPaths[(size_t) stop]; }
+    void setDrawnPath (int stop, std::vector<DrawnPath::Pt> points);
+    void setPathOptions (int stop, bool pingPong, bool drawnTiming);
 
     /** bumps whenever the library, positions or mutes change (UI repaint hint) */
     std::atomic<int> changeCounter { 0 };
@@ -182,7 +199,8 @@ private:
 
     struct Indices
     {
-        std::array<int, rysum::kNumStops> stop {}, vol {}, swind {}, motion {}, rate {}, depth {}, ellipse {};
+        std::array<int, rysum::kNumStops> stop {}, vol {}, swind {}, motion {}, rate {}, depth {}, ellipse {},
+                                          ellDir {}, ellTilt {}, ellForm {}, pathSpread {}, jumpHard {};
         int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
             freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
             releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
@@ -279,6 +297,8 @@ private:
     juce::MidiBuffer latchMidi;
 
     std::vector<rysum::KeyTuning> tunings;                      // every entry of the tuning list, computed once
+    std::array<DrawnPath, rysum::kNumStops> drawnPaths;
+    void sendPath (int stop);
     // free tuning
     rysum::ScalaTuning scala;                                    // message thread
     juce::String sclText, sclName, kbmText, kbmName, tuningError;

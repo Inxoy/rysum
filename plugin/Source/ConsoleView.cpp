@@ -55,7 +55,7 @@ void StopTile::paintButton (juce::Graphics& g, bool over, bool)
     auto cap = caption.withTrimmedTop (6.0f).reduced (3.0f, 0.0f);
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::dim);
-    // the Praestant photo shows pipes, not a labelled knob – name it in the caption
+    // the Praestant is a lever without a label – name it in the caption
     const auto capText = (stop == 0 || stop == kPraestant16) ? prettyLabel (kStops[(size_t) stop].label)
                                    : juce::String (juce::CharPointer_UTF8 (kStops[(size_t) stop].footage)).replace ("'", juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xb2")));
     g.drawText (capText, cap, juce::Justification::centredLeft);
@@ -195,7 +195,7 @@ void ConsoleView::resized()
     keyboardArea = r.removeFromBottom (116);
     r.reduce (28, 0);
     r.removeFromTop (22);
-    stopsArea = r.removeFromTop (214);
+    stopsArea = r.removeFromTop (228);
     {
         auto t = stopsArea.withTrimmedTop (26);
         const int gap = 12;
@@ -203,9 +203,9 @@ void ConsoleView::resized()
         for (int s = 0; s < kNumStops; ++s)
         {
             const int x = t.getX() + displaySlot (s) * (w + gap);
-            tiles[(size_t) s]->setBounds (x - 3, t.getY() - 3, w + 6, 110 + 22 + 3);
-            stopVol[(size_t) s]->setBounds (x, t.getY() + 136, w, 26);
-            stopWind[(size_t) s]->setBounds (x, t.getY() + 162, w, 26);
+            tiles[(size_t) s]->setBounds (x - 3, t.getY() - 3, w + 6, 124 + 22 + 3);
+            stopVol[(size_t) s]->setBounds (x, t.getY() + 150, w, 28);
+            stopWind[(size_t) s]->setBounds (x, t.getY() + 177, w, 28);
         }
     }
     r.removeFromTop (12);

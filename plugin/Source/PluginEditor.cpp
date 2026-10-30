@@ -3,9 +3,9 @@
 using namespace rysum;
 using namespace rysum::ui;
 
-static constexpr int kW = 1120, kH = 720, kHeader = 56;
-static constexpr int kOutX = 921, kOutW = 92;       // output format combo in the header
-static constexpr int kFullX = 1064;                 // full-screen button (28 x 28)
+static constexpr int kW = 1280, kH = 720, kHeader = 56;     // 16:9 - fills a full-HD screen at 1.5x
+static constexpr int kOutX = kW - 206, kOutW = 100; // output format combo in the header
+static constexpr int kFullX = kW - 56;             // full-screen button (28 x 28)
 
 RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p), fx (p), saal (p)
 {
@@ -103,14 +103,14 @@ void RysumContent::resized()
     mod.setBounds (body);
     fx.setBounds (body);
     saal.setBounds (body);
-    patchPrev.setBounds (150, 14, 20, 28);
-    patchName.setBounds (173, 14, 104, 28);
-    patchNext.setBounds (280, 14, 20, 28);
-    patchSave.setBounds (304, 14, 64, 28);
-    keysButton.setBounds (376, 14, 72, 28);
-    latchButton.setBounds (452, 14, 56, 28);
-    const int tw[] { 84, 48, 48, 52, 66, 86 };
-    int x = 516;
+    patchPrev.setBounds (152, 14, 22, 28);
+    patchName.setBounds (177, 14, 124, 28);
+    patchNext.setBounds (304, 14, 22, 28);
+    patchSave.setBounds (330, 14, 72, 28);
+    keysButton.setBounds (410, 14, 80, 28);
+    latchButton.setBounds (494, 14, 64, 28);
+    const int tw[] { 98, 60, 58, 62, 80, 106 };
+    int x = 568;
     for (int i = 0; i < 6; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 3; }
     outputChoice.setBounds (kOutX, 14, kOutW, 28);
     fullButton.setBounds (kFullX, 14, 28, 28);
@@ -377,6 +377,34 @@ void RysumContent::paintOverChildren (juce::Graphics& g)
 }
 
 // ---------------------------------------------------------------------------
+// window size: the last size the user chose (Documents/Rysum/Fenster.xml), else as large as fits the screen
+static juce::File windowSizeFile()
+{
+    return RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("Fenster.xml");
+}
+
+static float loadWindowScale()
+{
+    if (auto xml = juce::parseXML (windowSizeFile()))
+    {
+        const double s = xml->getDoubleAttribute ("scale", 0.0);
+        if (s >= 0.5 && s <= 2.0) return (float) s;
+    }
+    // first start: about 9/10 of the main screen's usable area (on a full-HD screen ~1.35x, text ~1.35x larger)
+    float s = 1.0f;
+    if (auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        s = juce::jmin (0.92f * (float) d->userArea.getWidth() / (float) kW, 0.88f * (float) d->userArea.getHeight() / (float) kH);
+    return juce::jlimit (1.0f, 1.6f, std::floor (s * 20.0f) / 20.0f);
+}
+
+static void saveWindowScale (float s)
+{
+    juce::XmlElement xml ("RysumFenster");
+    xml.setAttribute ("scale", (double) s);
+    windowSizeFile().getParentDirectory().createDirectory();
+    xml.writeTo (windowSizeFile());
+}
+
 RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), proc (p), content (p)
 {
     setLookAndFeel (&lnf.get());
@@ -386,14 +414,16 @@ RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), proc (p
     setResizable (true, true);
     setResizeLimits (kW / 2, kH / 2, kW * 2, kH * 2);
     if (auto* c = getConstrainer()) c->setFixedAspectRatio ((double) kW / (double) kH);
-    setSize (kW, kH);
+    const float s0 = loadWindowScale();
+    setSize (juce::roundToInt (kW * s0), juce::roundToInt (kH * s0));
+    sizeRestored = true;
     // deferred: the click / key that asked for it is still being handled by a component that moves
     // (the safe pointer is made here, outside the nested lambda: MSVC reads 'this' there differently)
     content.onToggleFullscreen = [safe = juce::Component::SafePointer<RysumEditor> (this)]
     {
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->toggleFullscreen(); });
     };
-    startTimerHz (30);
+    startTimer (0, 33);
 }
 
 RysumEditor::~RysumEditor()
@@ -418,6 +448,7 @@ void RysumEditor::resized()
     const float s = (float) getWidth() / (float) kW;
     content.setTransform (juce::AffineTransform::scale (s));
     content.setBounds (0, 0, kW, kH);
+    if (sizeRestored) { scaleToSave = s; startTimer (1, 1500); }   // remembered once the resizing has stopped
 }
 
 void RysumEditor::paint (juce::Graphics& g)
@@ -474,7 +505,7 @@ void RysumEditor::toggleFullscreen()
 
 void RysumEditor::FullscreenWindow::resized()
 {
-    // the 1120 x 720 design as large as the screen allows, centred (black bars where the shape differs)
+    // the 1280 x 720 design as large as the screen allows, centred (black bars where the shape differs)
     auto& c = editor.content;
     const float s = juce::jmin ((float) getWidth() / (float) kW, (float) getHeight() / (float) kH);
     const float ox = 0.5f * ((float) getWidth() - s * (float) kW), oy = 0.5f * ((float) getHeight() - s * (float) kH);
@@ -492,4 +523,9 @@ bool RysumEditor::FullscreenWindow::keyPressed (const juce::KeyPress& k)
     return false;
 }
 
-void RysumEditor::timerCallback() { content.tick(); }
+void RysumEditor::timerCallback (int id)
+{
+    if (id == 0) { content.tick(); return; }
+    stopTimer (1);
+    if (std::abs (scaleToSave - savedScale) > 0.004f) { saveWindowScale (scaleToSave); savedScale = scaleToSave; }
+}

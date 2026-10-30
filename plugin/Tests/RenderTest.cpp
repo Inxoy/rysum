@@ -1079,6 +1079,97 @@ int main (int argc, char** argv)
             check (std::abs (bent - 200.0) < 4.0, "modulation source: pitch wheel");
         }
 
+        // ---------------- motion: ellipse shape, drawn paths, hard jumps ----------------
+        {
+            // ellipse: near side where the direction says, 1 or 2 near sides, tilt
+            auto distAt = [] (float az, float dir, int lobes, float tilt, float& el)
+            {
+                MotionShape sh; sh.ellipse = 0.5f; sh.ellipseDir = dir; sh.ellipseLobes = lobes; sh.ellipseTilt = tilt;
+                const Pos p = applyMotion ({ az, 10.0f, 6.0f }, Motion::Static, 0.0, 0.0f, 1u, sh);
+                el = p.el; return p.dist;
+            };
+            float el = 0;
+            const float near1 = distAt (90, 90, 1, 0, el), far1 = distAt (-90, 90, 1, 0, el), side1 = distAt (0, 90, 1, 0, el);
+            const float n2a = distAt (90, 90, 2, 0, el), n2b = distAt (-90, 90, 2, 0, el), s2 = distAt (0, 90, 2, 0, el);
+            float elNear = 0, elFar = 0; distAt (30, 30, 1, 20, elNear); distAt (-150, 30, 1, 20, elFar);
+            MotionShape old; old.ellipse = 0.5f;
+            const float oldFormula = 6.0f * (1.0f - 0.5f * std::cos (juce::degreesToRadians (10.0f)) * std::cos (juce::degreesToRadians (40.0f)));
+            const float now = applyMotion ({ 40.0f, 10.0f, 6.0f }, Motion::Static, 0.0, 0.0f, 1u, old).dist;
+            std::cout << "ellipse: dir 90: near " << near1 << " m, far " << far1 << " m, side " << side1 << "; two near sides " << n2a << " / " << n2b
+                      << ", side " << s2 << "; tilt 20: near side el " << elNear << ", far side " << elFar << std::endl;
+            check (near1 < side1 && side1 < far1, "ellipse: the near side follows the direction");
+            check (std::abs (n2a - n2b) < 1e-4f && n2a < s2, "ellipse form 2: near on both sides");
+            check (std::abs (elNear - (10.0f + 20.0f * std::cos (juce::degreesToRadians (10.0f)))) < 0.01f && elFar < 10.0f - 15.0f, "ellipse: tilted orbit");
+            check (std::abs (now - oldFormula) < 1e-4f, "ellipse: default settings unchanged (older patches sound the same)");
+
+            // drawn path: a square loop; the pipes follow it, spread along it
+            MotionPath path;
+            const float corners[4][2] { { 0, 0 }, { 90, 0 }, { 180, 0 }, { -90, 0 } };
+            for (int i = 0; i < 4; ++i)
+            {
+                const float a = juce::degreesToRadians (corners[i][0]);
+                path.x[(size_t) i] = std::cos (a); path.y[(size_t) i] = std::sin (a); path.z[(size_t) i] = 0.0f;
+                path.u[(size_t) i] = (float) i / 4.0f;
+            }
+            path.x[4] = 1.0f; path.y[4] = 0.0f; path.z[4] = 0.0f; path.u[4] = 1.0f; path.n = 5;
+            MotionShape sh; sh.path = &path; sh.pathSpread = 0.0f;
+            const Pos q0 = applyMotion ({ 33.0f, 20.0f, 7.0f }, Motion::Drawn, 0.25, 0.0f, 1u, sh);
+            const Pos q1 = applyMotion ({ 33.0f, 20.0f, 7.0f }, Motion::Drawn, 0.625, 0.0f, 1u, sh);
+            sh.pathSpread = 1.0f; sh.keyFrac = 0.5f;
+            const Pos q2 = applyMotion ({ 33.0f, 20.0f, 7.0f }, Motion::Drawn, 0.0, 0.0f, 1u, sh);
+            path.pingPong = true; sh.pathSpread = 0.0f;
+            const Pos q3 = applyMotion ({ 33.0f, 20.0f, 7.0f }, Motion::Drawn, 0.75, 0.0f, 1u, sh);
+            std::cout << "drawn path: at 1/4 az " << q0.az << ", at 5/8 az " << q1.az << " (between 180 and -90), spread pipe at 1/2: az " << q2.az
+                      << ", there-and-back at 3/4: az " << q3.az << ", distance kept " << q0.dist << " m" << std::endl;
+            check (std::abs (q0.az - 90.0f) < 0.5f && q1.az < -90.0f && q1.az > -180.0f && std::abs (std::abs (q2.az) - 180.0f) < 0.5f
+                   && std::abs (std::abs (q3.az) - 180.0f) < 0.5f && std::abs (q0.dist - 7.0f) < 1e-4f, "drawn path: pipes follow the path (loop, spread, there and back)");
+
+            // hard jumps: same jump rate, with and without the glide: the hard ones click (much more energy above 8 kHz)
+            auto jumps = [&] (bool hard)
+            {
+                OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[1] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+                p.motionMode[1] = (int) Motion::Jumps; p.motionRate[1] = 150.0f; p.motionDepth[1] = 120.0f; p.jumpHard[1] = hard;
+                juce::AudioBuffer<float> b (2, 512), all (2, 48000 * 2);
+                for (int pos = 0; pos < all.getNumSamples(); pos += 512)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 53, (juce::uint8) 100), 0);
+                    e.process (b, mb, p);
+                    for (int c = 0; c < 2; ++c) all.copyFrom (c, pos, b, c, 0, juce::jmin (512, all.getNumSamples() - pos));
+                }
+                writeWav (outDir.getChildFile (hard ? "47_jumps_hard_150hz.wav" : "47_jumps_soft_150hz.wav"), all, 48000.0);
+                juce::IIRFilter f1, f2;
+                f1.setCoefficients (juce::IIRCoefficients::makeHighPass (48000.0, 8000.0)); f2.setCoefficients (juce::IIRCoefficients::makeHighPass (48000.0, 8000.0));
+                double eh = 0, et = 0; bool finite = true;
+                for (int i = 24000; i < all.getNumSamples(); ++i)
+                {
+                    const float x = all.getSample (0, i);
+                    finite = finite && std::isfinite (x);
+                    const float h = f2.processSingleSampleRaw (f1.processSingleSampleRaw (x));
+                    eh += (double) h * h; et += (double) x * x;
+                }
+                return finite ? 10.0 * std::log10 (eh / juce::jmax (1e-30, et)) : 999.0;
+            };
+            const double soft = jumps (false), hard = jumps (true);
+            std::cout << "jumps at 150 Hz: energy above 8 kHz relative to all: glided " << soft << " dB, hard " << hard << " dB" << std::endl;
+            check (hard < 900.0 && hard > soft + 10.0, "hard jumps: they click (and stay finite)");
+            // very fast rotation stays clean (finite)
+            {
+                OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.motionMode[0] = (int) Motion::Rotation; p.motionRate[0] = 500.0f; p.ellipse[0] = 0.8f;
+                juce::AudioBuffer<float> b (2, 512); bool finite = true;
+                for (int pos = 0; pos < 48000; pos += 512)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
+                    e.process (b, mb, p);
+                    for (int i = 0; i < 512; ++i) finite = finite && std::isfinite (b.getSample (0, i));
+                }
+                check (finite, "rotation at 500 Hz with an ellipse stays finite");
+            }
+        }
+
         if (onlyWind && ! onlyRoom) { std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     }
 

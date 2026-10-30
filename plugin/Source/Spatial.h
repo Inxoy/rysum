@@ -65,11 +65,57 @@ inline void encodeStereo (float azDeg, float* out) noexcept
 // --------------------------------------------------------------------------
 // Motion
 // --------------------------------------------------------------------------
-enum class Motion { Static = 0, Rotation, Pendulum, Drift, Vertical, Jumps };
+enum class Motion { Static = 0, Rotation, Pendulum, Drift, Vertical, Jumps, Drawn };
 
 inline juce::StringArray motionNames()
 {
-    return { "Statisch", "Rotation", "Pendel", "Drift", "Vertikal", juce::String::fromUTF8 ("Spr\xc3\xbcnge") };
+    // new entries only at the end: projects and patches store the index
+    return { "Statisch", "Rotation", "Pendel", "Drift", "Vertikal", juce::String::fromUTF8 ("Spr\xc3\xbcnge"), "Gezeichnet" };
+}
+
+/** a drawn trajectory (Raum page): points on the sphere in the order (and timing) they were drawn */
+struct MotionPath
+{
+    static constexpr int kMax = 256;
+    int n = 0;                                  // points (0 = no path)
+    std::array<float, kMax> x {}, y {}, z {};   // unit vectors: x = front, y = left, z = up
+    std::array<float, kMax> u {};               // 0..1: where along one pass the point is reached (time)
+    bool pingPong = false;                      // false: a loop (closes back to the start), true: there and back
+
+    /** direction at u (0..1) */
+    void at (float uu, float& az, float& el) const noexcept
+    {
+        if (n <= 0) { az = 0.0f; el = 0.0f; return; }
+        int lo = 0, hi = n - 1;
+        if (uu <= u[0]) hi = 0;
+        else if (uu >= u[(size_t) (n - 1)]) lo = n - 1;
+        else while (hi - lo > 1) { const int m = (lo + hi) / 2; if (u[(size_t) m] <= uu) lo = m; else hi = m; }
+        float vx = x[(size_t) lo], vy = y[(size_t) lo], vz = z[(size_t) lo];
+        if (hi != lo)
+        {
+            const float t = (uu - u[(size_t) lo]) / juce::jmax (1.0e-6f, u[(size_t) hi] - u[(size_t) lo]);
+            vx += t * (x[(size_t) hi] - vx); vy += t * (y[(size_t) hi] - vy); vz += t * (z[(size_t) hi] - vz);
+        }
+        az = juce::radiansToDegrees (std::atan2 (vy, vx));
+        el = juce::radiansToDegrees (std::atan2 (vz, std::sqrt (vx * vx + vy * vy)));
+    }
+};
+
+/** the shape of an orbit / path, per stop */
+struct MotionShape
+{
+    float ellipse = 0.0f;         // 0..0.9: how much nearer the near side is
+    float ellipseDir = 0.0f;      // direction of the near side (deg, 0 = front)
+    float ellipseTilt = 0.0f;     // orbit tilted: up to this much higher at the near side, lower at the far side (deg)
+    int   ellipseLobes = 1;       // 1 = listener at a focus (near on one side), 2 = in the centre (near front and back), 3, 4
+    const MotionPath* path = nullptr;
+    float pathSpread = 1.0f;      // drawn path: 0 = all pipes at one point, 1 = spread over the whole path
+    float keyFrac = 0.0f;         // 0..1: where this pipe is among the stop's pipes
+};
+
+inline juce::StringArray ellipseFormNames()
+{
+    return { "Brennpunkt", "Mitte", "Dreieck", "Viereck" };
 }
 
 /** smooth pseudo-random function of time, -1..1, different per seed */
@@ -83,10 +129,13 @@ inline float smoothNoise (double t, uint32_t seed) noexcept
                      + 0.8 * std::sin (two_pi * f3 * t + p3)) / 2.4);
 }
 
+/** jumps: every pipe jumps at its own moment within a cycle (0..1) */
+inline double jumpOffset (uint32_t seed) noexcept { XorShift off (seed * 31u + 7u); return off.uni(); }
+
 /** Moves a pipe. 'phase' is the integrated motion phase in cycles (speed in Hz integrated
     over time by the engine), so changing the speed never makes the position jump;
     a negative speed simply runs the phase backwards (other direction). */
-inline Pos applyMotion (Pos base, Motion mode, double phase, float depthDeg, uint32_t seed, float ellipse = 0.0f) noexcept
+inline Pos applyMotion (Pos base, Motion mode, double phase, float depthDeg, uint32_t seed, const MotionShape& shape = {}) noexcept
 {
     switch (mode)
     {
@@ -116,8 +165,7 @@ inline Pos applyMotion (Pos base, Motion mode, double phase, float depthDeg, uin
         case Motion::Jumps:
         {
             // sudden jumps to random places around the base position; every pipe jumps at its own moment
-            XorShift off (seed * 31u + 7u);
-            const double idx = std::floor (phase + off.uni());
+            const double idx = std::floor (phase + jumpOffset (seed));
             XorShift r ((uint32_t) (seed * 7919u) ^ (uint32_t) (int64_t) idx * 104729u);
             r.next(); r.next();
             base.az = wrapAz (base.az + depthDeg * r.bi());
@@ -125,14 +173,30 @@ inline Pos applyMotion (Pos base, Motion mode, double phase, float depthDeg, uin
             base.dist *= 1.0f + 0.6f * (depthDeg / 180.0f) * r.bi();
             break;
         }
+        case Motion::Drawn:
+        {
+            // along the drawn path; the pipes of the stop follow each other along it like a train
+            if (shape.path != nullptr && shape.path->n > 0)
+            {
+                double t = phase + (double) (shape.pathSpread * shape.keyFrac);
+                t -= std::floor (t);
+                const float u = shape.path->pingPong ? 1.0f - std::abs (1.0f - 2.0f * (float) t) : (float) t;
+                shape.path->at (u, base.az, base.el);
+            }
+            break;
+        }
         case Motion::Static:
         default: break;
     }
-    if (ellipse > 0.0f)
+    if (shape.ellipse > 0.0f || shape.ellipseTilt != 0.0f)
     {
-        // elliptic orbit: pipes come closer when they pass in front of the listener
-        const float a = juce::degreesToRadians (base.az), e = juce::degreesToRadians (base.el);
-        base.dist *= 1.0f - ellipse * std::cos (e) * std::cos (a);
+        const float rel = juce::degreesToRadians (base.az - shape.ellipseDir), e = juce::degreesToRadians (base.el);
+        // the orbit leans: higher towards the near side, lower on the far side
+        if (shape.ellipseTilt != 0.0f)
+            base.el = juce::jlimit (-90.0f, 90.0f, base.el + shape.ellipseTilt * std::cos (rel) * std::cos (e));
+        // elliptic orbit: nearer on the near side(s); 1 lobe = the listener at a focus, 2 = in the centre, 3 / 4 = triangle / square
+        if (shape.ellipse > 0.0f)
+            base.dist *= 1.0f - shape.ellipse * std::cos (e) * std::cos ((float) juce::jlimit (1, 4, shape.ellipseLobes) * rel);
     }
     base.dist = juce::jlimit (kMinDist, kMaxDist, base.dist);
     return base;

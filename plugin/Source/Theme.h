@@ -15,8 +15,8 @@ namespace col
     const juce::Colour ink    { 0xffe9e7e2 };
     const juce::Colour white  { 0xffffffff };
     const juce::Colour dim    { 0xffb9b7b2 };
-    const juce::Colour mute   { 0xff8a8883 };
-    const juce::Colour faint  { 0xff6f6d69 };
+    const juce::Colour mute   { 0xffa3a19b };
+    const juce::Colour faint  { 0xff858380 };
     const juce::Colour line   { 0xff2a2a28 };
     const juce::Colour border { 0xff3f3f3c };
     const juce::Colour track  { 0xff34342f };
@@ -62,10 +62,12 @@ struct Assets
 
     // IM Fell (as "Rysum Fell") everywhere: roman for labels, italic for values and small notes.
     // Fell has a small x-height, so sizes are scaled up a little.
-    juce::Font sansFont (float h) const    { return juce::Font (juce::FontOptions (fell).withHeight (h * 1.16f)); }
-    juce::Font boldFont (float h) const    { return juce::Font (juce::FontOptions (fell).withHeight (h * 1.16f)); }
-    juce::Font monoFont (float h) const    { return juce::Font (juce::FontOptions (fellItalic).withHeight (h * 1.2f)); }
-    juce::Font romanFont (float h) const   { return juce::Font (juce::FontOptions (fell).withHeight (h * 1.16f)); }
+    // sizes are the design sizes; small text is set larger than its nominal size so it stays readable
+    static float readable (float h, float k) { return (h + juce::jmax (0.0f, 14.0f - h) * 0.45f + 0.5f) * k; }
+    juce::Font sansFont (float h) const    { return juce::Font (juce::FontOptions (fell).withHeight (readable (h, 1.16f))); }
+    juce::Font boldFont (float h) const    { return juce::Font (juce::FontOptions (fell).withHeight (readable (h, 1.16f))); }
+    juce::Font monoFont (float h) const    { return juce::Font (juce::FontOptions (fellItalic).withHeight (readable (h, 1.2f))); }
+    juce::Font romanFont (float h) const   { return juce::Font (juce::FontOptions (fell).withHeight (readable (h, 1.16f))); }
     juce::Font frakturFont (float h) const { return juce::Font (juce::FontOptions (fraktur).withHeight (h)); }
 
     ~Assets() { instance() = nullptr; }
@@ -85,14 +87,14 @@ struct Assets
         wall      = img (wall_jpg, wall_jpgSize);
         keys      = img (keys_jpg, keys_jpgSize);
         knobBare  = img (knob_bare_jpg, knob_bare_jpgSize);
-        knobs[0]  = img (k_praestant_jpg, k_praestant_jpgSize);   // Praestant: a lever on the organ – photo of its pipes
+        knobs[0]  = img (k_praestant_jpg, k_praestant_jpgSize);   // Praestant: a wooden lever on the organ, no label
         knobs[1]  = img (k_gedackt_jpg, k_gedackt_jpgSize);
         knobs[2]  = img (k_oktave4_jpg, k_oktave4_jpgSize);
         knobs[3]  = img (k_oktave2_jpg, k_oktave2_jpgSize);
         knobs[4]  = img (k_sesquialtera_jpg, k_sesquialtera_jpgSize);
         knobs[5]  = img (k_mixtur_jpg, k_mixtur_jpgSize);
         knobs[6]  = img (k_trompete_jpg, k_trompete_jpgSize);
-        knobs[7]  = knobs[0];      // Praestant 16': the same pipes, an octave lower
+        knobs[7]  = img (k_praestant16_jpg, k_praestant16_jpgSize);
     }
 };
 
@@ -176,7 +178,7 @@ public:
 
     juce::Font getComboBoxFont (juce::ComboBox&) override { return Assets::get().romanFont (13.0f); }
     juce::Font getPopupMenuFont() override { return Assets::get().romanFont (14.0f); }
-    juce::Font getTextButtonFont (juce::TextButton&, int h) override { return Assets::get().romanFont (juce::jmin (13.0f, (float) h * 0.55f)); }
+    juce::Font getTextButtonFont (juce::TextButton&, int h) override { return Assets::get().romanFont (juce::jmin (13.5f, (float) h * 0.56f)); }
 
     void drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box) override
     {
@@ -430,8 +432,8 @@ public:
     {
         if (findAccess()) midiCc = access->midiControllerFor (index);
         auto r = headerArea();
-        g.setColour (compact ? col::mute : col::ink);
-        g.setFont (compact ? Assets::get().monoFont (10.0f) : Assets::get().sansFont (14.0f));
+        g.setColour (compact ? col::dim : col::ink);
+        g.setFont (compact ? Assets::get().romanFont (11.5f) : Assets::get().sansFont (14.0f));
         g.drawText (title, r, juce::Justification::centredLeft);
         g.setFont (Assets::get().monoFont (compact ? 10.0f : 12.0f));
         if (dragRoute >= 0 && access != nullptr)
@@ -465,7 +467,7 @@ public:
 
     void resized() override
     {
-        if (compact) slider.setBounds (getLocalBounds().withTrimmedTop (11).withHeight (14));
+        if (compact) slider.setBounds (getLocalBounds().withTrimmedTop (14).withHeight (14));
         else         slider.setBounds (getLocalBounds().withTrimmedTop (16).withHeight (18));
     }
 
@@ -525,8 +527,8 @@ public:
     const juce::String& getParamId() const { return id; }
 
 private:
-    juce::Rectangle<int> headerArea() const { return getLocalBounds().removeFromTop (compact ? 13 : 18); }
-    juce::Rectangle<int> valueArea() const { return headerArea().removeFromRight (compact ? 64 : 84); }
+    juce::Rectangle<int> headerArea() const { return getLocalBounds().removeFromTop (compact ? 16 : 18); }
+    juce::Rectangle<int> valueArea() const { return headerArea().removeFromRight (compact ? 72 : 88); }
 
     bool handleDown (const juce::MouseEvent& e)
     {

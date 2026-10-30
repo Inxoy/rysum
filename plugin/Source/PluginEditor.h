@@ -45,7 +45,7 @@ public:
     }
 };
 
-/** fixed 1120 x 720 design, scaled as a whole when the window is resized */
+/** fixed 1280 x 720 design, scaled as a whole when the window is resized */
 class RysumContent : public juce::Component, public rysum::ui::ModUiAccess
 {
 public:
@@ -118,7 +118,7 @@ private:
 };
 
 class RysumEditor : public juce::AudioProcessorEditor,
-                    private juce::Timer
+                    private juce::MultiTimer
 {
 public:
     explicit RysumEditor (RysumProcessor&);
@@ -130,7 +130,9 @@ public:
     bool isFullscreen() const { return fullscreen != nullptr; }
 
 private:
-    void timerCallback() override;
+    void timerCallback (int id) override;
+    bool sizeRestored = false;
+    float scaleToSave = 1.0f, savedScale = -1.0f;
     RysumProcessor& proc;
     juce::SharedResourcePointer<rysum::ui::Assets> assets;     // fonts + images, alive while an editor exists
     juce::SharedResourcePointer<rysum::ui::LookAndFeel> lnf;   // also the default look (context menus, dialogs)

@@ -16,8 +16,14 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     std::function<void()> onUserMovedPipes;
+    /** drawing a trajectory instead of moving pipes; the finished stroke goes here */
+    bool drawMode = false;
+    std::function<void (std::vector<RysumProcessor::DrawnPath::Pt>)> onPathDrawn;
 
 private:
+    std::vector<RysumProcessor::DrawnPath::Pt> stroke;
+    double strokeStart = 0.0;
+    juce::Point<float> lastStrokePos;
     juce::Point<float> toScreen (Pos p) const;
     Pos fromScreen (juce::Point<float> s) const;
     float radius() const { return (float) juce::jmin (getWidth(), getHeight()) * 0.5f - 34.0f; }
@@ -94,7 +100,18 @@ private:
     std::vector<std::unique_ptr<PullToggle>> pullButtons;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> pullAttachments;
     std::array<juce::TextButton, 6> layoutButtons;
-    std::array<juce::TextButton, 6> motionButtons;
+    std::array<juce::TextButton, 7> motionButtons;
+    juce::TextButton drawButton { juce::String::fromUTF8 ("\xe2\x9c\x8e Bahn zeichnen") };
+    juce::TextButton pathLoop { "Schleife" }, pathPing { juce::String::fromUTF8 ("Hin & zur\xc3\xbc" "ck") }, pathEven { juce::String::fromUTF8 ("gleichm\xc3\xa4\xc3\x9fig") },
+                     pathDrawnT { "Zeichentempo" }, jumpHard { juce::String::fromUTF8 ("harte Spr\xc3\xbcnge") };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> jumpHardAttachment;
+    std::array<juce::TextButton, 4> ellForm;
+    std::unique_ptr<juce::ParameterAttachment> ellFormAttachment;
+    std::unique_ptr<ParamRow> spreadRow, ellDirRow, ellTiltRow;
+    juce::Rectangle<int> ellPreview;
+    juce::TextButton tabMotion { "Bewegung" }, tabHall { "Hall" };
+    bool hallTab = false;
+    void showTab (bool hall);
     juce::Slider width, centre, elevation, spread, distance;
     std::unique_ptr<ParamRow> rateRow, depthRow, ellipseRow, irDry, irWet, irEnvelop, irDirect;
     juce::ComboBox irOrder;
@@ -103,7 +120,7 @@ private:
                      irN3D { "N3D" }, irFollow { juce::String::fromUTF8 ("folgt Pfeifen") };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> irFumaAttachment, irN3DAttachment, irFollowAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> left, right, stopsBox, layoutBox, motionBox, hallBox;
+    juce::Rectangle<int> left, right, stopsBox, layoutBox, motionBox, hallBox, tabBox;
     bool updating = false;
 };
 } // namespace rysum::ui

@@ -267,7 +267,49 @@ Pos OrganEngine::currentPosition (int stop, int key, const EngineParams& p) cons
     Pos base { baseAz[(size_t) stop][(size_t) key].load(), baseEl[(size_t) stop][(size_t) key].load(),
                baseDist[(size_t) stop][(size_t) key].load() };
     return applyMotion (base, (Motion) p.motionMode[(size_t) stop], motionPhase[(size_t) stop].load(),
-                        p.motionDepth[(size_t) stop], (uint32_t) (stop * 101 + key * 7 + 1), p.ellipse[(size_t) stop]);
+                        p.motionDepth[(size_t) stop], (uint32_t) (stop * 101 + key * 7 + 1), shapeFor (stop, key, p));
+}
+
+MotionShape OrganEngine::shapeFor (int stop, int key, const EngineParams& p) const noexcept
+{
+    MotionShape sh;
+    sh.ellipse = p.ellipse[(size_t) stop];
+    sh.ellipseDir = p.ellipseDir[(size_t) stop];
+    sh.ellipseTilt = p.ellipseTilt[(size_t) stop];
+    sh.ellipseLobes = p.ellipseLobes[(size_t) stop];
+    sh.path = &getPath (stop);
+    sh.pathSpread = p.pathSpread[(size_t) stop];
+    sh.keyFrac = (float) key / (float) kNumKeys;
+    return sh;
+}
+
+void OrganEngine::setPath (int stop, const MotionPath& path) noexcept
+{
+    if (stop < 0 || stop >= kNumStops) return;
+    const int next = 1 - pathActive[(size_t) stop].load();
+    paths[(size_t) stop][(size_t) next] = path;
+    pathActive[(size_t) stop] = next;
+}
+
+void OrganEngine::hardJumpGains (const Voice& v, const EngineParams& p, double phase, float* g, float* gh) const noexcept
+{
+    const Pos base { baseAz[(size_t) v.stop][(size_t) v.key].load(), baseEl[(size_t) v.stop][(size_t) v.key].load(),
+                     baseDist[(size_t) v.stop][(size_t) v.key].load() };
+    Pos pos = applyMotion (base, Motion::Jumps, phase, p.motionDepth[(size_t) v.stop], (uint32_t) (v.stop * 101 + v.key * 7 + 1),
+                           shapeFor (v.stop, v.key, p));
+    pos.az = wrapAz (pos.az + v.pmAz);
+    pos.el = juce::jlimit (-90.0f, 90.0f, pos.el + v.pmEl);
+    pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * v.pmDist);
+    const float k = v.gainLin * distanceGain (pos.dist, p.distAmount);
+    gainsFor (pos, g);
+    for (int c = 0; c < kMaxAmbiChannels; ++c) g[c] *= k;
+    if (gh != nullptr)
+    {
+        Pos ph = pos;
+        ph.az = wrapAz (pos.az + p.fx.partSpread * v.partSide + (float) partRot);
+        gainsFor (ph, gh);
+        for (int c = 0; c < kMaxAmbiChannels; ++c) gh[c] *= k;
+    }
 }
 
 void OrganEngine::gainsFor (Pos pos, float* out) const noexcept
@@ -313,6 +355,11 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     gainsFor (pos, v.g1.data());
     const float sg = p.stopGain[(size_t) v.stop];
     const float lvl = anyMod ? dbToGain (juce::jlimit (-100.0f, 12.0f, 36.0f * pm[tgtLevel])) : 1.0f;
+    v.hard = (Motion) p.motionMode[(size_t) v.stop] == Motion::Jumps && p.jumpHard[(size_t) v.stop];
+    v.pmAz = anyMod ? 180.0f * pm[tgtAz] : 0.0f;
+    v.pmEl = anyMod ? 90.0f * pm[tgtEl] : 0.0f;
+    v.pmDist = anyMod ? std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist])) : 1.0f;
+    v.gainLin = sg * lvl;
     const float g = sg * lvl * distanceGain (pos.dist, p.distAmount);
     for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] *= g;
     if (p.fx.partSpread > 0.5f)
@@ -331,7 +378,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     if (anyMod && pm[tgtSend] != 0.0f) v.send1 *= dbToGain (juce::jlimit (-100.0f, 24.0f, 24.0f * pm[tgtSend]));
 
     // jumps: a ~4 ms glide so the teleport is sudden but does not click
-    if (! v.fresh && (Motion) p.motionMode[(size_t) v.stop] == Motion::Jumps && blockSeconds > 0.0)
+    if (! v.fresh && ! v.hard && (Motion) p.motionMode[(size_t) v.stop] == Motion::Jumps && blockSeconds > 0.0)
     {
         const float k = 1.0f - (float) std::exp (-blockSeconds / 0.004);
         for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] = v.g0[(size_t) c] + k * (v.g1[(size_t) c] - v.g0[(size_t) c]);
@@ -913,35 +960,65 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             if (finished) { for (int j = i + 1; j < n; ++j) { buf[j] = 0.0f; bufH[j] = 0.0f; } break; }
         }
 
-        // add to the output with the gain ramp of this block:
-        // o += buf * (ga + d*i)  ==  o += ga*buf + d*(buf*i)   (two vectorised passes per channel)
         float* bufRamp = scratchRamp.data();
-        for (int i = 0; i < n; ++i) bufRamp[i] = buf[i] * (float) i;
-        for (int c = 0; c < usedChannels; ++c)
+        if (v.hard)
         {
-            const float a = v.g0[(size_t) c], b = v.g1[(size_t) c];
-            float* o = out.getWritePointer (c) + start;
-            const float ga = a + (b - a) * (float) start * inv;
-            const float dg = (b - a) * inv;
-            if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf, ga, n);
-            if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufRamp, dg, n);
+            // hard jumps: constant gains between the jumps, switched at the exact sample (audible clicks at high speed)
+            const double ph0 = phasePrev[(size_t) v.stop], dph = phaseNow[(size_t) v.stop] - ph0;
+            const double off = jumpOffset ((uint32_t) (v.stop * 101 + v.key * 7 + 1));
+            std::array<float, kMaxAmbiChannels> g {}, gh {};
+            int i = start;
+            while (i < end)
+            {
+                const double phI = ph0 + dph * (double) i / (double) blockLen;
+                const double cell = std::floor (phI + off);
+                int j = end;
+                if (dph > 1.0e-12)       j = (int) std::ceil ((cell + 1.0 - off - ph0) * (double) blockLen / dph);
+                else if (dph < -1.0e-12) j = (int) std::floor ((cell - off - ph0) * (double) blockLen / dph) + 1;
+                j = juce::jlimit (i + 1, end, j);
+                hardJumpGains (v, p, cell + 0.5 - off, g.data(), split ? gh.data() : nullptr);
+                for (int c = 0; c < usedChannels; ++c)
+                {
+                    float* o = out.getWritePointer (c);
+                    if (std::abs (g[(size_t) c]) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o + i, buf + (i - start), g[(size_t) c], j - i);
+                    if (split && std::abs (gh[(size_t) c]) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o + i, bufH + (i - start), gh[(size_t) c], j - i);
+                }
+                i = j;
+            }
+            if (split) juce::FloatVectorOperations::add (buf, bufH, n);
+            for (int k2 = 0; k2 < n; ++k2) bufRamp[k2] = buf[k2] * (float) k2;
         }
-        if (split)
+        else
         {
-            // upper partials with their own direction; afterwards both parts go to the room together
-            float* bufHRamp = fxScratch.data() + maxBlock;
-            for (int i = 0; i < n; ++i) bufHRamp[i] = bufH[i] * (float) i;
+            // add to the output with the gain ramp of this block:
+            // o += buf * (ga + d*i)  ==  o += ga*buf + d*(buf*i)   (two vectorised passes per channel)
+            for (int i = 0; i < n; ++i) bufRamp[i] = buf[i] * (float) i;
             for (int c = 0; c < usedChannels; ++c)
             {
-                const float a = v.gh0[(size_t) c], b = v.gh1[(size_t) c];
+                const float a = v.g0[(size_t) c], b = v.g1[(size_t) c];
                 float* o = out.getWritePointer (c) + start;
                 const float ga = a + (b - a) * (float) start * inv;
                 const float dg = (b - a) * inv;
-                if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, bufH, ga, n);
-                if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufHRamp, dg, n);
+                if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf, ga, n);
+                if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufRamp, dg, n);
             }
-            juce::FloatVectorOperations::add (buf, bufH, n);
-            juce::FloatVectorOperations::add (bufRamp, bufHRamp, n);
+            if (split)
+            {
+                // upper partials with their own direction; afterwards both parts go to the room together
+                float* bufHRamp = fxScratch.data() + maxBlock;
+                for (int i = 0; i < n; ++i) bufHRamp[i] = bufH[i] * (float) i;
+                for (int c = 0; c < usedChannels; ++c)
+                {
+                    const float a = v.gh0[(size_t) c], b = v.gh1[(size_t) c];
+                    float* o = out.getWritePointer (c) + start;
+                    const float ga = a + (b - a) * (float) start * inv;
+                    const float dg = (b - a) * inv;
+                    if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, bufH, ga, n);
+                    if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufHRamp, dg, n);
+                }
+                juce::FloatVectorOperations::add (buf, bufH, n);
+                juce::FloatVectorOperations::add (bufRamp, bufHRamp, n);
+            }
         }
         {
             // room sends: plain sum + circular harmonics of the pipe direction (start / end of the slice)
@@ -1714,6 +1791,10 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             ph = motionPhase[(size_t) s].load() + (double) p.motionRate[(size_t) s] * scale * blockSeconds;
         }
         if (std::abs (ph) > 1.0e7) ph = std::fmod (ph, 1000.0);
+        // hard jumps need the phase at every sample of this block: start and end (a relocation = no movement)
+        phasePrev[(size_t) s] = motionPhase[(size_t) s].load();
+        if (std::abs (ph - phasePrev[(size_t) s]) > 1000.0) phasePrev[(size_t) s] = ph;
+        phaseNow[(size_t) s] = ph;
         motionPhase[(size_t) s] = ph;
     }
 

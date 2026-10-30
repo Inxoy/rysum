@@ -68,7 +68,13 @@ struct EngineParams
     std::array<int,   kNumStops> motionMode {};
     std::array<float, kNumStops> motionRate {};
     std::array<float, kNumStops> motionDepth {};
-    std::array<float, kNumStops> ellipse {};        // 0..0.9: elliptic orbit, closer in front
+    std::array<float, kNumStops> ellipse {};        // 0..0.9: elliptic orbit, closer on the near side
+    std::array<float, kNumStops> ellipseDir {};     // deg: direction of the near side
+    std::array<float, kNumStops> ellipseTilt {};    // deg: the orbit leans up towards the near side
+    std::array<int,   kNumStops> ellipseLobes = onesInt();   // 1..4 near sides
+    std::array<float, kNumStops> pathSpread = ones();        // drawn path: how far the pipes are spread along it
+    std::array<bool,  kNumStops> jumpHard {};       // jumps without any glide (they click)
+    static std::array<int, kNumStops> onesInt() { std::array<int, kNumStops> a {}; a.fill (1); return a; }
     bool   sync = false;                             // speeds relative to 120 BPM, locked to the host position
     double bpm = 120.0, ppq = 0.0;
     bool   playing = false;
@@ -177,6 +183,11 @@ public:
     /** integrated motion phase per stop (cycles); speed changes only change its slope */
     std::array<std::atomic<double>, kNumStops> motionPhase {};
 
+    /** drawn trajectory of a stop (message thread; the engine and the UI read it without locking) */
+    void setPath (int stop, const MotionPath& path) noexcept;
+    const MotionPath& getPath (int stop) const noexcept { return paths[(size_t) stop][(size_t) pathActive[(size_t) stop].load()]; }
+    MotionShape shapeFor (int stop, int key, const EngineParams& p) const noexcept;
+
     static constexpr int kMaxVoices = 384;
     static constexpr int kMaxNoiseVoices = 48;
     static constexpr int kGrains = 4;
@@ -220,6 +231,9 @@ private:
         std::array<EnvState, kNumEnvs> menv {};
         float keyPos = 0.0f, randMod = 0.0f, velMod = 0.0f;
         int noteId = -1;                 // free tuning: channel * 128 + MIDI note (-1 = key mode)
+        // hard jumps: gains switched sample-accurately at every jump (no ramp)
+        bool hard = false;
+        float pmAz = 0.0f, pmEl = 0.0f, pmDist = 1.0f, gainLin = 1.0f;
         float noteCents = 0.0f;          // free tuning: shift from the pipe's own pitch
         float modCents0 = 0.0f, modCents1 = 0.0f;
         // crackle
@@ -408,6 +422,11 @@ private:
     std::vector<ErSlot> erSlots;
     std::vector<float> erRing;                       // [slot][kErRing]
     uint32_t erClock = 0;
+    // drawn paths, double-buffered (the writer fills the inactive one, then flips)
+    std::array<std::array<MotionPath, 2>, kNumStops> paths {};
+    std::array<std::atomic<int>, kNumStops> pathActive {};
+    std::array<double, kNumStops> phasePrev {}, phaseNow {};       // motion phase at the start / end of this block
+    void hardJumpGains (const Voice& v, const EngineParams& p, double phase, float* g, float* gh) const noexcept;
     bool roomOnNow = false;
     float consoleAzNow = 0.0f, consoleElNow = -10.0f;
 

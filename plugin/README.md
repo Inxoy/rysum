@@ -112,7 +112,12 @@ binaural decoder: 128 samples.
   the screen the plugin window is on, scaled up as far as the screen allows. `Esc`, `F11` or the button
   again brings it back into the plugin window. While it is full screen, the plugin window just shows
   where it went; clicking it also brings the interface back. This works the same in Reaper, Ableton
-  and the standalone app. The plugin window itself can also be dragged larger (up to twice the size).
+  and the standalone app. The interface is 16:9 (1280 x 720), so on a full-HD screen it fills the
+  whole screen at 1.5x.
+- **Window size**: the first time, the plugin window opens about as large as the screen allows
+  (on a 1920 x 1080 screen roughly 1.3x). Drag the corner to change it (half to twice the size); the
+  size you leave it at is remembered for every new instance (`Documents/Rysum/Fenster.xml`;
+  delete that file to get the automatic size again).
 
 **Every slider:** click its value to type a number (in the units shown: `50` on a % slider
 = 50 %, `300 ms` or `1.5 s`, `440` on the Stimmton = a′ in Hz, `22` on Abtastrate = 22 kHz),
@@ -135,19 +140,44 @@ each pipe before it is placed in space ("pro Pfeife") or to the whole output
 ("Summe"); *Windschwankung* also gets disproportionately wilder towards 100 %. The
 keyboard strip can be clicked to play.
 
-**Raum** – every pipe of every stop as a dot (top view: centre = zenith, edge = horizon,
+**Raum** – every pipe of every stop as a small dot (top view: centre = zenith, edge = horizon,
 outside the circle = below the horizon). Select a stop on the right, then
 - drag a dot to move one pipe,
 - drag on empty space to turn the whole stop around you,
 - *Anordnung*: layout generators (organ case C/C♯ side, pitch, scatter, ring,
   spiral, zone) with width / centre / height / spread / *Abstand* (distance, 1–40 m;
   bigger dots = nearer),
+- The lower part has two tabs, *Bewegung* and *Hall* (buttons in its title line).
 - *Bewegung*: Statisch, Rotation (horizontal), Pendel, Drift, Vertikal (turns over your
   head: front → up → back → down), Sprünge (every pipe suddenly jumps to a new random place
-  around its position, each at its own moment; *Tiefe* = how far). *Geschwindigkeit* runs
-  from −10 to +10 Hz: negative = the other direction. Changing the speed never resets the
-  position, so you can do smooth speed glissandi (also by automation). *Ellipse* squashes
-  the path so pipes come closer in front and move away behind (gives Doppler, see Klang).
+  around its position, each at its own moment; *Tiefe* = how far), Gezeichnet (see below).
+  *Geschwindigkeit* runs from −500 to +500 Hz (fine at slow speeds, the knob gets coarser
+  towards the top): negative = the other direction. Changing the speed never resets the
+  position, so you can do smooth speed glissandi (also by automation). Positions are
+  computed every 64 samples, so above ~300 Hz the motion itself starts to alias – a sound of its own.
+  - *harte Sprünge* (Sprünge only): no smoothing at all. The place changes at the exact sample,
+    so jumps click; from ~50 Hz on it buzzes and rattles.
+- *Gezeichnet* – draw your own trajectory: press *✎ Bahn zeichnen*, then draw a line in the top
+  view with the mouse held down (centre = overhead, edge = horizon, outside = below). When you
+  let go, the stop switches to *Gezeichnet* and its pipes travel along the line like a train
+  (the line stays visible in red). *Geschwindigkeit* = passes per second.
+  - *Verteilung auf der Bahn*: 0 % = all pipes of the stop together at one point, 100 % = spread
+    over the whole path (along the keyboard). It is modulatable.
+  - *Schleife*: at the end back to the start (the path closes). *Hin & zurück*: forwards, then
+    backwards.
+  - *gleichmäßig*: even speed along the path. *Zeichentempo*: as fast as you drew, so fast
+    where you drew fast and slow where you drew slowly.
+  - The distance stays the pipe's own (*Abstand*, layout). The ellipse below still applies.
+  - Paths are saved with the project and in patches; drawing again replaces the path.
+- *Ellipse* – the shape of the orbit, for every motion. *Ellipse* = how much nearer the near
+  side is (and the far side farther); this gives Doppler (see Klang).
+  - *Richtung*: where the near side is (0° = front); modulate it and the ellipse turns.
+  - *Form*: *1* = one near side (you are at a focus, as before), *2* = near on two opposite sides
+    (you in the centre of the ellipse), *3* / *4* = triangle / square-like orbits.
+  - *Neigung*: the orbit tilts – higher towards the near side, lower on the far side (negative:
+    the other way).
+  - The small picture shows the orbit from above (front up). Defaults are as before, so older
+    projects sound the same.
 - *Hall*: load an impulse response (*IR laden …*: WAV/AIFF/FLAC, up to 10 s). 4/9/16/25/36
   channels are read as AmbiX (ACN/SN3D); switch on *N3D* for N3D-normalised files, *FuMa* for
   first-order B-format in FuMa order (W X Y Z). 2 channels = stereo, 1 = mono. Files with other
