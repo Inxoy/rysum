@@ -94,7 +94,7 @@ the order, the HRTF or the sample rate changes. The built-in HRTF is the **FABIA
 torso simulator of the TU Berlin (2000 of the 11 950 measured directions). Latency of the
 binaural decoder: 128 samples.
 
-## 3. The six pages
+## 3. The pages
 
 **Top bar, next to the patches:**
 - *Tastatur*: play with the computer keyboard. `A W S E D F T G Z H U J K O L P` = C up to
@@ -107,6 +107,14 @@ binaural decoder: 128 samples.
   hands. Strike it once more to let it go; switching *Halten* off lets all held notes go. The
   button shows how many notes are held. Works with MIDI, the computer keyboard and the keyboard
   on the Spieltisch page.
+- *Zufall* (dice): random settings. *Sanft* takes small steps away from the current sound,
+  *Wild* sets everything anew – but playable: at least one stop pulled, stop volumes between
+  −12 and +6 dB, stop wind at least 30 %, slow movement, effects either off or moderate.
+  Below in the menu: which areas are diced (Register, Raum, Saal, Klang, Traktur und Verfall,
+  Effekte, Modulation, Lucier – Saal and Lucier are off at first). Never touched: master volume,
+  output, tuning, MIDI, Freeze, the pipe layouts. *Zurück zum Klang davor* undoes the last dice.
+- **The organ itself**: click the *Rysum* in the top left. A page about the organ in Rysum –
+  its history, the stops and where their pipes come from, photos. Click *Rysum* again to go back.
 
 - **Full screen** (the square at the far right of the top bar, or `F11`): the whole interface fills
   the screen the plugin window is on, scaled up as far as the screen allows. `Esc`, `F11` or the button
@@ -127,6 +135,15 @@ Return applies. Double-click the slider = default. Right-click = modulation.
 samples played an octave lower (it comes first in the lists; its parameters are added after the
 others, so older projects and patches still load). Default volumes are set so all stops start
 about equally loud (measured K-weighted loudness of all pipes, including their default distance).
+
+**Scenes** (Spieltisch, under *Ausgang*): four snapshots *A–D* of the whole sound – every
+slider and switch except master volume, output, tuning and MIDI (not the pipe layouts, drawn
+paths and routings: those stay). Click an empty letter = store the current sound there (and go
+there); click a stored one = go there; right-click = store again / clear. *Überblenden* blends
+between the stored scenes (empty ones are skipped): sliders glide, switches change half way.
+It is a normal parameter – automate it, learn a MIDI fader for it, or let an LFO wander through
+the scenes. Only moving it blends: between two moves you can change the sound freely and store
+it. Scenes are saved in the project and in patches.
 
 **Spieltisch** – click the stop knobs (photos) to pull/push stops. Under every stop:
 *Lautst.* (volume, −48…+12 dB) and *Wind* – how far the stop is drawn: below 100 % the
@@ -195,6 +212,27 @@ outside the circle = below the horizon). Select a stop on the right, then
   - *Direkt* and *Hall* set the dry and room levels, *x* removes the IR. The IR is resampled to
     the project rate and normalised automatically; changing these settings or the output format
     rebuilds the room in the background (~½ s).
+
+**Lucier** (Saal page, middle column) – after Alvin Lucier's *I am sitting in a room* (1969):
+a recording is played into a room and recorded again, over and over, until only the room's
+resonances are left. Here the whole output goes through a room *n* times (*Generation*): every
+pass multiplies the spectrum by the room's response once more, so its strongest resonances rise
+above everything else.
+- *Raum*: the simulated hall (its eigenmodes, computed from the dimensions up to about twice the
+  Schroeder frequency, with a diffuse field above) or the impulse response loaded on the Raum page –
+  e.g. a recording from the church in Rysum itself. Loudspeaker and microphone are part of every
+  pass, as in Lucier's setup (about 60 Hz – 10 kHz).
+- *Generation* 1–40, fractions blend two passes; modulatable. *Wachsen*: the generation rises by
+  itself while Lucier is on (generations per minute) – over a whole piece. *Wachsen neu beginnen*
+  goes back to the set generation.
+- *Nachklingen je Durchgang*: a real pass lasts the whole recording; here each pass is damped so
+  the resonances swell up within seconds. Short = fast and broader, long = slow and very narrow.
+- *Anteil*: 0 = only the organ, 100 % = only the room's resonances. The resonances are kept about
+  as loud as the organ (like Lucier bringing every generation back up to level); a chord that hits
+  a resonance is caught at once, so nothing bursts out.
+- The display shows the response after *n* passes, its strongest resonances (Hz and the nearest
+  note, from a′ = 444.5 Hz) and how loud the room sings right now. The response is rebuilt in the
+  background whenever something changes and crossfaded in. Switched off, the room rings out.
 
 **Saal** – a simulated room instead of the impulse response, made to be played. *Saal an*
 switches it on (the IR on the Raum page pauses meanwhile and comes back when it is off).
@@ -311,7 +349,7 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
 - *MIDI*: *MIDI-CC an* switches the fixed CC mapping (section 4); *Eigene Zuordnungen …*
   opens your own controller assignments (MIDI learn); *Bewegung im Tempo* locks all
   motion to the host tempo and song position (speeds count as written at 120 BPM; for
-  free speed glissandi switch it off).
+  free speed glissandi switch it off); *MPE* and *MPE-Beugung*: see section 4.
 - *Kopfhörer (binaural)*: *Binaural an* switches the output to binaural (and back to
   stereo), order, own SOFA file, head rotation, diffuse-field EQ – see section 2.
 
@@ -403,7 +441,24 @@ exist on the organ and stay silent (short octave). Sustain pedal (CC64) works.
 
 With a free tuning (Scala or MTS-ESP, Klang page) every MIDI note 0–127 on every channel can sound,
 each at the pitch the tuning gives it (see *Stimmung*). MIDI Tuning Standard SysEx is read there.
-The pitch wheel and velocity are also modulation sources (*Tonhöhenrad*, *Anschlag*).
+The pitch wheel and velocity are also modulation sources (*Tonhöhenrad*, *Anschlag*), and so are
+pressure and slide (*Druck (MPE)*: MPE pressure, polyphonic aftertouch or channel pressure;
+*Gleiten (MPE, CC 74)*), per note.
+
+### MPE (Lumatone, LinnStrument, Seaboard, Osmose …)
+
+Switch on *MPE* (Klang page, MIDI). Then every note is on its own MIDI channel (2–16) and is
+bent, pressed and slid on its own:
+- *Pitch bend* on a note channel bends only that note; *MPE-Beugung* is the bend range for a full
+  bend (default 48 semitones, as most MPE controllers send; set it to what yours sends). The pipe
+  keeps sounding and is shifted, so a long slide sounds like the pipe being pitched, not like
+  changing pipes.
+- *Pressure* and *slide* (CC 74) are modulation sources per note: route them on the Modulation page
+  (e.g. *Druck* → *Pfeife: Lautstärke* or → *Pfeife: Helligkeit*, *Gleiten* → *Pfeife: Richtung*).
+- Channel 1 is the whole instrument: its pitch wheel is the *Tonhöhenrad* modulation source.
+- With a free tuning (Scala, MTS-ESP) the tuning of channel 1 applies to all channels (MPE uses the
+  channels for the notes, not for different tunings).
+- MPE and its bend range belong to your controller, not to the sound: patches do not change them.
 
 With *MIDI-CC an* (Klang page):
 

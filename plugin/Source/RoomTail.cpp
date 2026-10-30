@@ -65,33 +65,54 @@ std::shared_ptr<const TailIR> TailIR::build (const RoomParams& r, float air, int
     const float norm = e > 0 ? (float) (1.0 / std::sqrt (e)) : 0.0f;
     for (auto& ch : h) for (auto& v : ch) v *= norm;
 
+    ir->partition (h);
+    return ir;
+}
+
+std::shared_ptr<TailIR> TailIR::fromResponses (const std::vector<std::vector<float>>& h, double sr, uint32_t serial)
+{
+    auto ir = std::make_shared<TailIR>();
+    ir->serial = serial;
+    ir->sampleRate = sr;
+    ir->channels = (int) h.size();
+    ir->order = 0;
+    ir->length = 0;
+    for (auto& c : h) ir->length = juce::jmax (ir->length, juce::jmin ((int) c.size(), maxLength (sr)));
+    ir->partition (h);
+    return ir;
+}
+
+void TailIR::partition (const std::vector<std::vector<float>>& h)
+{
+    const double sr = sampleRate;
+    const int len = length;
     // ---- partitions per stage: segment p of a stage is h[(p+1)B, (p+2)B) (the stage runs one block late)
     for (int s = 0; s < kStages; ++s)
     {
         const int B = kBlock[s];
         const int nb = bins (s);
-        int p0 = kStart[s] / B - 1, p1 = stageEnd (s, sr) / B - 1;
-        p1 = juce::jmin (p1, (len + B - 1) / B - 1);         // nothing after the end
-        if (p1 < p0) p1 = p0;
-        ir->p0[(size_t) s] = p0; ir->p1[(size_t) s] = p1;
-        const int np = p1 - p0;
-        ir->re[(size_t) s].assign ((size_t) ir->channels * (size_t) juce::jmax (1, np) * (size_t) nb, 0.0f);
-        ir->im[(size_t) s].assign (ir->re[(size_t) s].size(), 0.0f);
-        int order = 0; while ((1 << order) < 2 * B) ++order;
-        juce::dsp::FFT fft (order);
+        int q0 = kStart[s] / B - 1, q1 = stageEnd (s, sr) / B - 1;
+        q1 = juce::jmin (q1, (len + B - 1) / B - 1);         // nothing after the end
+        if (q1 < q0) q1 = q0;
+        p0[(size_t) s] = q0; p1[(size_t) s] = q1;
+        const int np = q1 - q0;
+        re[(size_t) s].assign ((size_t) channels * (size_t) juce::jmax (1, np) * (size_t) nb, 0.0f);
+        im[(size_t) s].assign (re[(size_t) s].size(), 0.0f);
+        int fftOrder = 0; while ((1 << fftOrder) < 2 * B) ++fftOrder;
+        juce::dsp::FFT fft (fftOrder);
         std::vector<float> buf ((size_t) (4 * B));
-        for (int c = 0; c < ir->channels; ++c)
-            for (int p = p0; p < p1; ++p)
+        for (int c = 0; c < channels; ++c)
+            for (int p = q0; p < q1; ++p)
             {
                 std::fill (buf.begin(), buf.end(), 0.0f);
                 const int a = (p + 1) * B;
-                for (int i = 0; i < B && a + i < len; ++i) buf[(size_t) i] = h[(size_t) c][(size_t) (a + i)];
+                const auto& x = h[(size_t) c];
+                for (int i = 0; i < B && a + i < len && a + i < (int) x.size(); ++i) buf[(size_t) i] = x[(size_t) (a + i)];
                 fft.performRealOnlyForwardTransform (buf.data(), true);
-                const size_t base = ((size_t) c * (size_t) np + (size_t) (p - p0)) * (size_t) nb;
-                for (int k = 0; k < nb; ++k) { ir->re[(size_t) s][base + (size_t) k] = buf[(size_t) (2 * k)]; ir->im[(size_t) s][base + (size_t) k] = buf[(size_t) (2 * k + 1)]; }
+                const size_t base = ((size_t) c * (size_t) np + (size_t) (p - q0)) * (size_t) nb;
+                for (int k = 0; k < nb; ++k) { re[(size_t) s][base + (size_t) k] = buf[(size_t) (2 * k)]; im[(size_t) s][base + (size_t) k] = buf[(size_t) (2 * k + 1)]; }
             }
     }
-    return ir;
 }
 
 // ---------------------------------------------------------------------------

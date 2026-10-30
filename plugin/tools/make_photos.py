@@ -1,5 +1,5 @@
 """Rysum: crops the stop / manual photos, makes them black & white and adds film grain.
-usage: python3 -I tools/make_photos.py <newpics folder> Resources   (needs Pillow + numpy)
+usage: python3 -I tools/make_photos.py <newpics folder> Resources [<folder with rysum_photos_*.jpg>]   (needs Pillow + numpy)
 
 Stop tiles on the Spieltisch are about 140 x 121 px (aspect 1.16) and drawn 'cover', so every stop crop has
 that aspect: the label fits completely, the knob sits below it. Where the next stop's label would show at the
@@ -7,6 +7,7 @@ bottom, the photo fades into the panel tone instead."""
 import sys, numpy as np
 from PIL import Image, ImageOps, ImageFilter
 src, dst = sys.argv[1], sys.argv[2]
+older = sys.argv[3] if len(sys.argv) > 3 else None
 TILE_ASPECT = 1.16
 
 def load(n):
@@ -78,3 +79,10 @@ if __name__ == "__main__":
     free("k_praestant16",  "praestant2",   (250, 2280, 2050, 2280 + round(1800 / TILE_ASPECT)), 420, seed=18, gamma=1.35, pct=(0.5, 99.0))
     # the manual, frontal, at the aspect of the photo field next to the key strip (250 x 115)
     free("keys",           "klav2",        (120, 720, 3930, 720 + round(3810 / 2.17)), 900, seed=19, gamma=1.05)
+
+    # the page about the organ: facade pipes and the two stop jambs (older photos)
+    if older is not None:
+        src = older
+        free("org_pipes",  "rysum_photos_0028", (300, 300, 3356, 5168), 420, seed=21, gamma=1.2)
+        free("org_jamb_l", "rysum_photos_0019", (1100, 1300, 2750, 4000), 300, seed=22, gamma=1.15)
+        free("org_jamb_r", "rysum_photos_0020", (1050, 1200, 2700, 3900), 300, seed=23, gamma=1.15)

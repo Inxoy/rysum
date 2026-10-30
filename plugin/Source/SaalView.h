@@ -54,5 +54,15 @@ private:
     // late reverb model: convolution / FDN
     juce::TextButton tailConv { "Faltung" }, tailFdn { "FDN" };
     std::unique_ptr<juce::ParameterAttachment> tailAtt;
+    // Lucier mode
+    juce::TextButton lucOn { "Lucier an" }, lucRestart { juce::String::fromUTF8 ("Wachsen neu beginnen") };
+    std::unique_ptr<ButtonAtt> lucOnAtt;
+    juce::ComboBox lucSource;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lucSourceAtt;
+    std::array<ParamRow*, 4> lucRows {};
+    juce::Rectangle<int> lucBox, lucGenArea, lucCurveArea, lucPeakArea, lucNoteArea;
+    int shownLucVersion = -1;
+    float shownLucGen = -1.0f, shownLucLevel = -1.0f;
+    void paintLucier (juce::Graphics&);
 };
 } // namespace rysum::ui

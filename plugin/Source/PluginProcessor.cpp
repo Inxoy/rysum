@@ -242,6 +242,43 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "simTailModel", 1 }, "Saal Nachhall-Modell", StringArray { "Faltung", "FDN" }, 0));
     // MTS-ESP: held notes follow a changing tuning (or keep the pitch they started with)
     l.add (std::make_unique<AudioParameterBool> (ParameterID { "mtsContinuous", 1 }, u8 ("MTS: gehaltene T\xc3\xb6ne folgen"), true));
+    // Lucier mode (off by default): the output passes through the room again and again
+    // scenes: where between the stored scenes A..D the sound is (0 = A .. 3 = D)
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "sceneMorph", 1 }, "Szene", NormalisableRange<float> (0.0f, 3.0f, 0.001f), 0.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+                                                  {
+                                                      const char* n[] { "A", "B", "C", "D" };
+                                                      const int i = juce::jlimit (0, 3, (int) std::floor (v + 1.0e-4f));
+                                                      const float t = v - (float) i;
+                                                      if (t < 0.005f || i >= 3) return String (n[i]);
+                                                      if (t > 0.995f) return String (n[i + 1]);
+                                                      return String (n[i]) + String::fromUTF8 (" \xe2\x86\x92 ") + n[i + 1] + " " + String (roundToInt (t * 100.0f)) + " %";
+                                                  })
+                                                  .withValueFromStringFunction ([] (const String& t)
+                                                  {
+                                                      const auto c = t.trim().toUpperCase();
+                                                      if (c.length() == 1 && c[0] >= 'A' && c[0] <= 'D') return (float) (c[0] - 'A');
+                                                      return t.getFloatValue();
+                                                  })));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "lucOn", 1 }, "Lucier an", false));
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lucSource", 1 }, "Lucier Raum", StringArray { "Saal (simuliert)", "Impulsantwort (Seite Raum)" }, 0));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lucGen", 1 }, "Lucier Generation", NormalisableRange<float> (1.0f, 40.0f, 0.01f, 0.6f), 6.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, v < 10.0f ? 2 : 1); })
+                                                                                 .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lucGrow", 1 }, "Lucier Wachsen", NormalisableRange<float> (0.0f, 20.0f, 0.01f, 0.5f), 0.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 0.005f ? String ("steht") : String (v, 2) + " / min"; })
+                                                                                 .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lucTime", 1 }, "Lucier Nachklingen", NormalisableRange<float> (0.03f, 1.5f, 0.001f, 0.5f), 0.3f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 2) + " s"; })
+                                                                                 .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lucMix", 1 }, "Lucier Anteil", NormalisableRange<float> (0.0f, 1.0f), 0.5f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v * 100.0f)) + " %"; })
+                                                                                 .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue() / 100.0f; })));
+    // MPE (off by default): note channels bend, press and slide their own notes
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "mpe", 1 }, "MPE", false));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "mpeBend", 1 }, "MPE Bend-Bereich", NormalisableRange<float> (1.0f, 96.0f, 1.0f), 48.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + " HT"; })
+                                                                                 .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
 
     // ---- shape of the motion per stop (page "Raum"): ellipse direction / tilt / form, drawn path, hard jumps
     for (int s = 0; s < kNumStops; ++s)
@@ -355,6 +392,7 @@ RysumProcessor::RysumProcessor()
     ix.degAmount = I ("degAmount"); ix.degGrain = I ("degGrain"); ix.degBits = I ("degBits"); ix.degRate = I ("degRate");
     ix.degWobble = I ("degWobble"); ix.degDropouts = I ("degDropouts"); ix.degMode = I ("degMode");
     ix.irDry = I ("irDry"); ix.irWet = I ("irWet"); ix.binYaw = I ("binYaw"); ix.windModel = I ("windModel"); ix.mtsCont = I ("mtsContinuous");
+    ix.mpe = I ("mpe"); ix.mpeBend = I ("mpeBend"); ix.lucOn = I ("lucOn"); ix.lucMix = I ("lucMix");
     for (int i = 0; i < kNumLfos; ++i)
     {
         const juce::String id = "lfo" + juce::String (i + 1);
@@ -381,6 +419,7 @@ RysumProcessor::RysumProcessor()
     mts = MTS_RegisterClient();          // microtuning from an MTS-ESP master (if the MTS-ESP library is installed)
 
     startTimer (250);   // first tick: find + load the samples (after a possible setStateInformation)
+    morphTimer.startTimerHz (40);
 }
 
 RysumProcessor::~RysumProcessor()
@@ -388,8 +427,10 @@ RysumProcessor::~RysumProcessor()
     if (mts != nullptr) { MTS_DeregisterClient (mts); mts = nullptr; }
     aliveFlag->store (false);
     stopTimer();
+    morphTimer.stopTimer();
     loader.reset();
     irPool.removeAllJobs (true, 10000);
+    lucPool.removeAllJobs (true, 10000);
 }
 
 bool RysumProcessor::isBusesLayoutSupported (const BusesLayout& busLayout) const
@@ -443,6 +484,10 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         const int t = juce::roundToInt (V (ix.temperament));
         if ((t == kScalaTuning && scalaReady.load()) || (t == kMtsTuning && mtsActive())) p.notes = &noteTable;
         p.notesContinuous = V (ix.mtsCont) > 0.5f;
+        p.mpe = V (ix.mpe) > 0.5f;
+        p.mpeBendRange = V (ix.mpeBend);
+        p.lucierOn = V (ix.lucOn) > 0.5f;
+        p.lucierMix = V (ix.lucMix);
     }
     p.pitchCents = V (ix.pitch);
     p.detune = V (ix.detune);
@@ -702,6 +747,8 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     if (irClearRequest.exchange (false)) irActive.reset();          // still referenced by retiredIr
     if (auto t = std::atomic_exchange (&pendingTail, std::shared_ptr<const rysum::TailIR>()))
         engine.setTailIR (std::move (t));                         // still referenced by tailKeepAlive
+    if (auto t = std::atomic_exchange (&pendingLucier, std::shared_ptr<const rysum::TailIR>()))
+        engine.setLucierIR (std::move (t));                       // still referenced by lucKeepAlive
     if (auto pending = std::atomic_exchange (&pendingIr, std::shared_ptr<rysum::Convolver>()))
         irActive = std::move (pending);
     if (irActive != nullptr && ! params.room.on)
@@ -981,6 +1028,77 @@ void RysumProcessor::buildTailNow (const juce::String& key)
 }
 
 // ---------------------------------------------------------------------------
+// Lucier mode: the response of n passes through the room, rebuilt in the background whenever the
+// generation (growing by itself, or modulated), the room or the damping changes
+// ---------------------------------------------------------------------------
+void RysumProcessor::updateLucier (double dt)
+{
+    auto raw = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
+    const bool on = raw ("lucOn") > 0.5f;
+    // the generation as modulated right now, plus what it has grown by
+    float gen = raw ("lucGen");
+    {
+        const int idx = getParamIndex ("lucGen");
+        const float mn = getModulatedNorm (idx);
+        if (! std::isnan (mn)) gen = prmList[(size_t) idx]->convertFrom0to1 (mn);
+    }
+    if (on) lucGrown += (float) (raw ("lucGrow") / 60.0 * dt);
+    lucEffective = juce::jlimit (1.0f, 40.0f, gen + lucGrown);
+    if (gen + lucGrown > 40.0f) lucGrown = juce::jmax (0.0f, 40.0f - gen);
+    if (! on || lucBuilding) return;
+
+    const int source = juce::roundToInt (raw ("lucSource"));
+    const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    rysum::RoomParams r;
+    r.width = raw ("simW"); r.length = raw ("simL"); r.height = raw ("simH"); r.size = raw ("simSize");
+    r.listenerX = raw ("simLx"); r.listenerY = raw ("simLy");
+    r.absWalls = raw ("simAbs"); r.absFloor = raw ("simAbsFloor"); r.highDamp = raw ("simHigh"); r.scatter = raw ("simScatter");
+    const float air = raw ("air");
+    auto q = [] (float v, float step) { return juce::String (juce::roundToInt (v / step)); };
+    const juce::String baseKey = source == 1 ? "ir|" + irFile.getFullPathName() + "|" + juce::String (rate, 0)
+                                             : "saal|" + q (r.W(), 0.05f) + "|" + q (r.L(), 0.05f) + "|" + q (r.H(), 0.05f) + "|" + q (r.listenerX, 0.01f) + "|"
+                                               + q (r.listenerY, 0.01f) + "|" + q (r.absWalls, 0.004f) + "|" + q (r.absFloor, 0.004f) + "|" + q (r.highDamp, 0.01f)
+                                               + "|" + q (air, 0.02f) + "|" + juce::String (rate, 0);
+    const float tau = raw ("lucTime");
+    const juce::String key = baseKey + "#" + q (lucEffective, 0.02f) + "|" + q (tau, 0.005f);
+    if (key == builtLucKey) return;
+    if (source == 1 && ! irFile.existsAsFile())
+    {
+        if (lucView.status != "keine Impulsantwort geladen (Seite Raum)") { lucView.status = "keine Impulsantwort geladen (Seite Raum)"; ++lucView.version; }
+        return;
+    }
+    builtLucKey = key;
+    lucBuilding = true;
+    const uint32_t serial = ++lucSerial;
+    auto base = baseKey == lucBaseKey ? lucBase : nullptr;
+    const float g = lucEffective;
+    const juce::File file = irFile;
+    lucPool.addJob ([this, base, baseKey, source, r, air, rate, file, g, tau, serial, alive = aliveFlag]
+    {
+        auto b = base;
+        juce::String err;
+        if (b == nullptr) b = source == 1 ? rysum::lucierFromFile (file, rate, err) : rysum::lucierFromRoom (r, air, rate);
+        std::shared_ptr<rysum::LucierResult> res;
+        if (b != nullptr) res = std::make_shared<rysum::LucierResult> (rysum::buildLucier (*b, g, tau, serial));
+        juce::MessageManager::callAsync ([this, b, baseKey, res, err, alive]
+        {
+            if (! alive->load()) return;
+            lucBuilding = false;
+            if (b == nullptr || res == nullptr) { lucView.status = err; builtLucKey.clear(); ++lucView.version; return; }
+            lucBase = b; lucBaseKey = baseKey;
+            lucKeepAlive.push_back (res->ir);
+            std::atomic_store (&pendingLucier, res->ir);
+            lucView.curve = res->curve;
+            lucView.peaks = res->peaks;
+            lucView.generation = res->generation;
+            lucView.what = b->what;
+            lucView.status.clear();
+            ++lucView.version;
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
 // binaural
 // ---------------------------------------------------------------------------
 juce::String RysumProcessor::binauralKey() const
@@ -1150,7 +1268,10 @@ void RysumProcessor::timerCallback()
         // responses the engine no longer uses are freed here, not on the audio thread
         const uint32_t inUse = engine.tailSerialInUse.load();
         while (tailKeepAlive.size() > 1 && tailKeepAlive.front()->serial < inUse) tailKeepAlive.pop_front();
+        const uint32_t lucInUse = engine.lucierSerialInUse.load();
+        while (lucKeepAlive.size() > 1 && lucKeepAlive.front()->serial < lucInUse) lucKeepAlive.pop_front();
     }
+    if (autoLoadDone) updateLucier (getTimerInterval() * 0.001);
     // binaural: (re)design the decoder when the mode is on and its settings changed (~0.5 s debounce)
     if (autoLoadDone && isBinaural())
     {
@@ -1275,6 +1396,13 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
         extra.appendChild (mod, nullptr);
     }
     if (! forPatch) extra.appendChild (midiMapState(), nullptr);       // controller assignments belong to the setup, not to the sound
+    extra.appendChild (scenesState(), nullptr);
+    if (! forPatch)
+    {
+        juce::String dg;
+        for (int g = 0; g < kNumDiceGroups; ++g) dg << (diceGroups[(size_t) g] ? "1" : "0");
+        extra.setProperty ("diceGroups", dg, nullptr);
+    }
     state.removeChild (state.getChildWithName ("EXTRA"), nullptr);
     state.appendChild (extra, nullptr);
     return state;
@@ -1297,7 +1425,10 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
     if (! state.hasType (apvts.state.getType())) return;
     auto extra = state.getChildWithName ("EXTRA");
     const float keepOutput = output->load();
-    const float keepBin[] { binOrderParam->load(), binYawParam->load(), binDfParam->load() };
+    // kept when a patch loads: headphone settings and the controller setup (MPE) belong to the player, not the sound
+    static const char* const keepIds[] { "binOrder", "binYaw", "binDfEq", "mpe", "mpeBend" };
+    float keepVals[std::size (keepIds)] {};
+    for (size_t i = 0; i < std::size (keepIds); ++i) keepVals[i] = apvts.getRawParameterValue (keepIds[i])->load();
     if (forPatch)
     {
         // a patch sets every parameter: ones missing in the file (older patches) go to their defaults
@@ -1316,10 +1447,9 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
     {
         // the output format belongs to the track, not to the sound
         if (auto* o = apvts.getParameter ("output")) o->setValueNotifyingHost (o->convertTo0to1 (keepOutput));
-        // so do the headphone settings
-        int bi = 0;
-        for (auto* id : { "binOrder", "binYaw", "binDfEq" })
-            if (auto* o = apvts.getParameter (id)) o->setValueNotifyingHost (o->convertTo0to1 (keepBin[bi++]));
+        // so do the headphone settings and MPE
+        for (size_t i = 0; i < std::size (keepIds); ++i)
+            if (auto* o = apvts.getParameter (keepIds[i])) o->setValueNotifyingHost (o->convertTo0to1 (keepVals[i]));
         // stops the patch does not describe get their default layout
         for (int s = 0; s < kNumStops; ++s)
         {
@@ -1401,6 +1531,12 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             if (autoLoadDone) loadIr (irf);           // otherwise the first timer tick loads it
         }
         else if (irf == juce::File() && irFile != juce::File() && autoLoadDone && ! forPatch) clearIr();   // patches without IR keep the room
+        applyScenesState (extra.getChildWithName ("SCENES"));
+        if (! forPatch && extra.hasProperty ("diceGroups"))
+        {
+            const auto dg = extra["diceGroups"].toString();
+            for (int g = 0; g < juce::jmin ((int) kNumDiceGroups, dg.length()); ++g) diceGroups[(size_t) g] = dg[g] == '1';
+        }
         if (! forPatch)
         {
             const auto mm = extra.getChildWithName ("MIDIMAP");

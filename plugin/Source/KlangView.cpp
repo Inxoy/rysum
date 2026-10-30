@@ -115,6 +115,11 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     midiMapButton.setTooltip (u8 ("Drehregler, Fader und Taster deines Keyboards auf beliebige Regler legen (Seite Modulation)"));
     midiMapButton.onClick = [this] { if (auto* a = findParentComponentOfClass<ModUiAccess>()) a->openMidiMap(); };
     addAndMakeVisible (midiMapButton);
+    mpeOn = &toggle ("mpe", "MPE");
+    mpeOn->setTooltip (u8 ("MPE (z. B. Lumatone, Linnstrument, Seaboard, Osmose): jede Note auf ihrem eigenen MIDI-Kanal (2\xe2\x80\x93" "16) "
+                           "mit eigener Tonh\xc3\xb6henbeugung; Druck und Gleiten (CC 74) sind Modulationsquellen je Ton. "
+                           "Kanal 1 gilt f\xc3\xbcr alle (Tonh\xc3\xb6henrad als Modulationsquelle). Bleibt beim Patch-Wechsel erhalten."));
+    mpeBend = &row ("mpeBend", u8 ("MPE-Beugung (ganzer Ausschlag)"));
     syncOn = &toggle ("motionSync", "Bewegung im Tempo");
     syncOn->setTooltip (u8 ("Geschwindigkeiten gelten bei 120 BPM, laufen mit dem Projekttempo und rasten auf die Taktposition ein."));
 }
@@ -199,7 +204,13 @@ void KlangView::resized()
         t.removeFromLeft (8);
         syncOn->setBounds (t.removeFromLeft (170));
         b.removeFromTop (8);
-        midiMapButton.setBounds (b.removeFromTop (26).withWidth (200));
+        t = b.removeFromTop (26);
+        midiMapButton.setBounds (t.removeFromLeft (200));
+        t.removeFromLeft (8);
+        mpeOn->setBounds (t.removeFromLeft (80));
+        b.removeFromTop (6);
+        mpeBend->setBounds (b.removeFromTop (38));
+        midiTextTop = b.getY() + 4 - midiBox.getY();
     }
 }
 
@@ -253,7 +264,9 @@ void KlangView::paint (juce::Graphics& g)
                                    : u8 ("Ein halb gezogenes Register wird leiser, tiefer, dumpfer und unruhig."),
                           windText, juce::Justification::topLeft, 4);
     }
-    auto midiText = midiBox.withTrimmedTop (118);
+    g.setFont (A.monoFont (11.0f));
+    g.setColour (col::dim);
+    auto midiText = midiBox.withTrimmedTop (midiTextTop);
     const char* lines[] {
         "CC 11       Wind (global) / Schweller",
         "CC 20-26    Register an/aus (Praestant ... Trompete)",

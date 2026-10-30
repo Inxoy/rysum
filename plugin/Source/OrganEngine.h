@@ -90,6 +90,12 @@ struct EngineParams
         plays (several notes may share one pipe, each with its own voice) */
     const NoteTable* notes = nullptr;
     bool notesContinuous = true;         // held notes follow tuning changes (MTS-ESP)
+    // Lucier mode: the whole output passes through the room n times (the response is built by the processor)
+    bool lucierOn = false;
+    float lucierMix = 0.5f;              // 0 = only the organ .. 1 = only the room's resonances
+    // MPE: every note on its own MIDI channel (2..16; channel 1 = the whole instrument), bent, pressed and slid on its own
+    bool mpe = false;
+    float mpeBendRange = 48.0f;          // semitones for a full bend on a note channel
     float pitchCents = 0.0f;             // whole organ
     float detune = 0.0f;                 // max random detune per pipe (cents)
 
@@ -160,6 +166,10 @@ public:
     std::atomic<uint32_t> tailSerialInUse { 0xffffffffu };
     /** audio thread: the late reverb for the current room (built in the background) */
     void setTailIR (std::shared_ptr<const TailIR> ir) noexcept { tail.setIR (std::move (ir)); }
+    /** audio thread: the response of the Lucier passes (built in the background) */
+    void setLucierIR (std::shared_ptr<const TailIR> ir) noexcept { lucier.setIR (std::move (ir)); }
+    std::atomic<uint32_t> lucierSerialInUse { 0xffffffffu };
+    std::atomic<float> lucierLevel { 0.0f };          // wet peak, for the display
     std::array<std::atomic<uint64_t>, kNumStops> soundingMask {};   // bit k = pipe k of that stop sounds
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
@@ -231,6 +241,7 @@ private:
         std::array<EnvState, kNumEnvs> menv {};
         float keyPos = 0.0f, randMod = 0.0f, velMod = 0.0f;
         int noteId = -1;                 // free tuning: channel * 128 + MIDI note (-1 = key mode)
+        float bendSm = 0.0f;             // MPE: this note's own pitch bend in cents (smoothed)
         // hard jumps: gains switched sample-accurately at every jump (no ramp)
         bool hard = false;
         float pmAz = 0.0f, pmEl = 0.0f, pmDist = 1.0f, gainLin = 1.0f;
@@ -321,6 +332,22 @@ private:
     std::array<float, kNumKeys> slotHz {};              // the pitch every key's own pipe sounds at
     const NoteTable* notesNow = nullptr;
     bool notesContinuous = true, freeMode = false;
+    // MPE / expression: per MIDI channel (pitch bend -1..1, pressure, slide) and per note (polyphonic aftertouch)
+    bool mpeNow = false;
+    float mpeBendCents = 4800.0f;
+    NoteTable mpeTable;                                  // MPE without a free tuning: the organ's own tuning as a note table
+    std::array<float, 16> chBend {}, chPress {}, chSlide {};
+    std::array<float, NoteTable::kSize> notePress {};
+    std::array<float, kNumKeys> keyPress {};
+    float lastPress = 0.0f, lastSlide = 0.0f, lastChanPress = 0.0f;
+    float lastPressChannel() const noexcept { return lastChanPress; }
+    int tableIndex (int noteId) const noexcept { return mpeNow ? (noteId & 127) : noteId; }   // MPE: one tuning for all channels
+    float voicePressure (const Voice& v) const noexcept;
+    float voiceSlide (const Voice& v) const noexcept;
+    float voiceBendTarget (const Voice& v) const noexcept
+    {
+        return mpeNow && v.noteId >= 128 ? chBend[(size_t) (v.noteId >> 7)] * mpeBendCents : 0.0f;   // (channel 1 is the master channel)
+    }
     void releaseVoice (Voice& v);
     void freezeVoice (Voice& v);
     void releaseStopKey (int stop, int key, int noteId = -1);
@@ -371,6 +398,14 @@ private:
     std::array<EnvState, kNumEnvs> globalEnv {};
     std::array<float, kNumSources> globalSrc {};
     bool globalTrig = false;
+    // Lucier mode
+    TailConvolver lucier;
+    std::vector<float> lucIn, lucWet;
+    float lucDry = 1.0f, lucWetGain = 0.0f;
+    float lucInEnv = 0.0f, lucOutEnv = 0.0f, lucAgc = 1.0f;     // the resonances follow the organ's loudness
+    int lucRing = 0;
+    bool lucRunning = false;
+    void renderLucier (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept;
     float lastKeyPos = 0.0f, lastRandom = 0.0f, modWheel = 0.0f, lastVelocity = 0.0f, pitchWheel = 0.0f;
     ModParams lastMod;
     bool haveLastMod = false;

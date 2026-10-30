@@ -42,6 +42,10 @@ struct TailIR
 
     /** ray-traces the room (as heard right now), synthesises and partitions the response. Background thread. */
     static std::shared_ptr<const TailIR> build (const RoomParams& r, float air, int outputOrder, double sr, uint32_t serial);
+    /** any responses (one per output channel, at most maxLength samples), partitioned for the convolver. Background thread.
+        (The convolver leaves out the first kStart[0] samples.) */
+    static std::shared_ptr<TailIR> fromResponses (const std::vector<std::vector<float>>& h, double sr, uint32_t serial);
+    void partition (const std::vector<std::vector<float>>& h);
 };
 
 class TailConvolver

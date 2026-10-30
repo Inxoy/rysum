@@ -49,7 +49,7 @@ inline juce::Image toneImage (juce::Image img, float amount = 0.55f)
 struct Assets
 {
     juce::Typeface::Ptr sans, sansBold, mono, fraktur, fell, fellItalic;
-    juce::Image grainTile, wall, keys, knobBare;
+    juce::Image grainTile, wall, keys, knobBare, orgPipes, jambLeft, jambRight;
     std::array<juce::Image, kNumStops> knobs;
 
     /** the editor keeps one alive via juce::SharedResourcePointer<Assets>; views use get() */
@@ -95,6 +95,9 @@ struct Assets
         knobs[5]  = img (k_mixtur_jpg, k_mixtur_jpgSize);
         knobs[6]  = img (k_trompete_jpg, k_trompete_jpgSize);
         knobs[7]  = img (k_praestant16_jpg, k_praestant16_jpgSize);
+        orgPipes  = img (org_pipes_jpg, org_pipes_jpgSize);
+        jambLeft  = img (org_jamb_l_jpg, org_jamb_l_jpgSize);
+        jambRight = img (org_jamb_r_jpg, org_jamb_r_jpgSize);
     }
 };
 
@@ -407,9 +410,11 @@ private:
     - right-click = modulation menu
     - modulated: the red bar is each routing's range (drag its lozenge to change the amount),
       the white tick is where the modulation takes the parameter right now */
-class ParamRow : public juce::Component, private juce::Timer
+class ParamRow : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
+    /** the tooltip also shows over the slider */
+    void setTooltip (const juce::String& t) override { SettableTooltipClient::setTooltip (t); slider.setTooltip (t); }
     ParamRow (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& name, bool compactRow = false)
         : title (name), compact (compactRow), id (paramId)
     {

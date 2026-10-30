@@ -10,6 +10,14 @@ static constexpr int kFullX = kW - 56;             // full-screen button (28 x 2
 RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p), klang (p), mod (p), fx (p), saal (p)
 {
     addAndMakeVisible (console);
+    addChildComponent (organ);
+    logoButton.setTooltip (juce::String::fromUTF8 ("Ã" "ber die Orgel zu Rysum (nochmal klicken: zurÃ¼" "ck)"));
+    logoButton.onClick = [this] { showView (current == 6 ? viewBeforeOrgan : 6); };
+    addAndMakeVisible (logoButton);
+    diceButton.setTooltip (juce::String::fromUTF8 ("WÃ¼rfeln: zufÃ¤llige Einstellungen â sanft oder wild, nur in den gewÃ¤hlten Bereichen. "
+                                                   "Ein Schritt zurÃ¼" "ck ist mÃ¶glich."));
+    diceButton.onClick = [this] { showDiceMenu(); };
+    addAndMakeVisible (diceButton);
     addChildComponent (space);
     addChildComponent (klang);
     addChildComponent (mod);
@@ -83,7 +91,9 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
 
 void RysumContent::showView (int v)
 {
+    if (v == 6 && current != 6) viewBeforeOrgan = current;
     current = v;
+    organ.setVisible (v == 6);
     console.setVisible (v == 0);
     space.setVisible (v == 1);
     saal.setVisible (v == 2);
@@ -103,14 +113,17 @@ void RysumContent::resized()
     mod.setBounds (body);
     fx.setBounds (body);
     saal.setBounds (body);
+    organ.setBounds (body);
+    logoButton.setBounds (24, 6, 116, 44);
     patchPrev.setBounds (152, 14, 22, 28);
-    patchName.setBounds (177, 14, 124, 28);
-    patchNext.setBounds (304, 14, 22, 28);
-    patchSave.setBounds (330, 14, 72, 28);
-    keysButton.setBounds (410, 14, 80, 28);
-    latchButton.setBounds (494, 14, 64, 28);
-    const int tw[] { 98, 60, 58, 62, 80, 106 };
-    int x = 568;
+    patchName.setBounds (177, 14, 112, 28);
+    patchNext.setBounds (292, 14, 22, 28);
+    patchSave.setBounds (318, 14, 72, 28);
+    diceButton.setBounds (394, 14, 60, 28);
+    keysButton.setBounds (462, 14, 74, 28);
+    latchButton.setBounds (540, 14, 60, 28);
+    const int tw[] { 94, 58, 54, 58, 76, 102 };
+    int x = 608;
     for (int i = 0; i < 6; ++i) { tabs[(size_t) i].setBounds (x, 13, tw[i], 30); x += tw[i] + 3; }
     outputChoice.setBounds (kOutX, 14, kOutW, 28);
     fullButton.setBounds (kFullX, 14, 28, 28);
@@ -298,6 +311,11 @@ void RysumContent::paint (juce::Graphics& g)
         g.drawText ("R", head.withWidth (rw + 4).translated (0, 2), juce::Justification::centredLeft);
         g.setColour (col::ink);
         g.drawText ("ysum", head.withTrimmedLeft (rw).withWidth (110).translated (0, 2), juce::Justification::centredLeft);
+        if (current == 6 || logoButton.isOver())
+        {
+            g.setColour (current == 6 ? col::rubric : col::border);
+            g.fillRect (head.getX(), kHeader - 12, 96, 2);
+        }
     }
     g.setFont (A.monoFont (11.0f));
 
@@ -313,6 +331,35 @@ void RysumContent::paint (juce::Graphics& g)
     g.drawText (o, info.withTrimmedBottom (kHeader / 2).withTrimmedTop (9), juce::Justification::centredRight);
     g.setColour (col::faint);
     g.drawText (juce::String (proc.engine.activeVoices.load()) + " St.", info.withTrimmedTop (kHeader / 2).withTrimmedBottom (9), juce::Justification::centredRight);
+}
+
+void RysumContent::showDiceMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader (juce::String::fromUTF8 ("W\xc3\xbcrfeln"));
+    m.addItem (1, juce::String::fromUTF8 ("Sanft \xe2\x80\x93 kleine Schritte vom jetzigen Klang"));
+    m.addItem (2, juce::String::fromUTF8 ("Wild \xe2\x80\x93 alles neu (aber spielbar)"));
+    m.addItem (3, juce::String::fromUTF8 ("Zur\xc3\xbc" "ck zum Klang davor"), proc.canUndoDice());
+    m.addSeparator();
+    m.addSectionHeader (juce::String::fromUTF8 ("Was gew\xc3\xbcrfelt wird"));
+    const auto names = RysumProcessor::diceGroupNames();
+    for (int g = 0; g < RysumProcessor::kNumDiceGroups; ++g) m.addItem (10 + g, names[g], true, proc.isDiceGroupOn (g));
+    m.addSeparator();
+    m.addItem (4, juce::String::fromUTF8 ("Nie: Lautst\xc3\xa4rke, Ausgabe, Stimmung, MIDI, Freeze, Anordnung der Pfeifen"), false);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&diceButton),
+                     [safe = juce::Component::SafePointer<RysumContent> (this)] (int r)
+                     {
+                         if (safe == nullptr || r == 0) return;
+                         auto& pr = safe->proc;
+                         if (r == 1 || r == 2) pr.dice (r == 2);
+                         else if (r == 3) pr.undoDice();
+                         else if (r >= 10)
+                         {
+                             pr.setDiceGroupOn (r - 10, ! pr.isDiceGroupOn (r - 10));
+                             safe->showDiceMenu();             // keep choosing
+                         }
+                         safe->repaint();
+                     });
 }
 
 void RysumContent::showModMenu (juce::Component& target, const juce::String& paramId)

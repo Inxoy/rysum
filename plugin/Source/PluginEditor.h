@@ -8,6 +8,7 @@
 #include "ModView.h"
 #include "EffectsView.h"
 #include "SaalView.h"
+#include "OrganView.h"
 
 /** the full-screen toggle in the header: four corner marks (outwards = go full screen, inwards = back) */
 class FullscreenButton : public juce::Button
@@ -102,6 +103,16 @@ private:
     rysum::ui::ModView mod;
     rysum::ui::EffectsView fx;
     rysum::ui::SaalView saal;
+    rysum::ui::OrganView organ;
+    /** the "Rysum" in the top bar opens the page about the organ (and goes back) */
+    struct LogoButton : juce::Button
+    {
+        LogoButton() : juce::Button ("Rysum") { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+        void paintButton (juce::Graphics&, bool, bool) override {}
+    } logoButton;
+    int viewBeforeOrgan = 0;
+    juce::TextButton diceButton { "Zufall" };
+    void showDiceMenu();
     std::array<juce::TextButton, 6> tabs;
     juce::TextButton keysButton { "Tastatur" }, latchButton { "Halten" };
     std::array<int, 18> keyNoteDown {};                 // MIDI note each computer key is playing (-1 = up)

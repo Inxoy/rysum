@@ -135,20 +135,20 @@ void SaalPlan::paint (juce::Graphics& g)
     g.setFont (A.monoFont (10.5f));
     g.setColour (on ? col::dim : col::faint);
     const float V = roomVolume (now);
-    auto info = getLocalBounds().removeFromBottom (30).removeFromTop (15).reduced (4, 0);
+    auto info = getLocalBounds().removeFromBottom (48).removeFromTop (32).reduced (4, 0);
     if (on)
-        g.drawText ("V " + juce::String (juce::roundToInt (V)) + U (" m\xc2\xb3 \xc2\xb7 Nachhall ") + juce::String (proc.engine.roomRtLow.load(), 2)
+        g.drawFittedText ("V " + juce::String (juce::roundToInt (V)) + U (" m\xc2\xb3 \xc2\xb7 Nachhall ") + juce::String (proc.engine.roomRtLow.load(), 2)
                     + U (" s tief / ") + juce::String (proc.engine.roomRtHigh.load(), 2) + U (" s hoch \xc2\xb7 Hallradius ")
                     + juce::String (proc.engine.roomCritDist.load(), 1) + U (" m \xc2\xb7 ") + juce::String (proc.engine.erActive.load()) + U (" Kl\xc3\xa4nge mit eigenen Reflexionen"),
-                    info, juce::Justification::centredLeft);
+                    info, juce::Justification::bottomLeft, 2);
     else
-        g.drawText (U ("Saal aus \xe2\x80\x93 der Hall kommt von der Impulsantwort (Seite Raum)"), info, juce::Justification::centredLeft);
+        g.drawFittedText (U ("Saal aus \xe2\x80\x93 der Hall kommt von der Impulsantwort (Seite Raum)"), info, juce::Justification::bottomLeft, 2);
     g.setFont (A.monoFont (9.5f));
     g.setColour (col::faint);
-    if (on) g.drawText (proc.getRoomStatus(), getLocalBounds().removeFromBottom (15).reduced (4, 0), juce::Justification::centredLeft);
+    if (on) g.drawFittedText (proc.getRoomStatus(), getLocalBounds().removeFromBottom (15).reduced (4, 0), juce::Justification::centredLeft, 1, 0.7f);
     g.setFont (A.monoFont (10.5f));
-    g.drawText (U ("Draufsicht \xc2\xb7 H\xc3\xb6rer ziehen \xc2\xb7 rot: Reflexionen der zuletzt gespielten Pfeife"),
-                getLocalBounds().removeFromTop (14).reduced (4, 0), juce::Justification::centredLeft);
+    g.drawFittedText (U ("Draufsicht \xc2\xb7 H\xc3\xb6rer ziehen \xc2\xb7 rot: Reflexionen der zuletzt gespielten Pfeife"),
+                      getLocalBounds().removeFromTop (30).reduced (4, 0), juce::Justification::topLeft, 2);
 }
 
 void SaalPlan::setListener (juce::Point<float> screen)
@@ -278,6 +278,27 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
                            "etwas lebendiger, weniger Rechenzeit. Abklingzeit ebenfalls aus der Strahlenverfolgung."));
     addAndMakeVisible (tailConv);
     addAndMakeVisible (tailFdn);
+
+    // ---- Lucier mode
+    lucOn.setClickingTogglesState (true);
+    lucOn.setTooltip (U ("Alvin Lucier, \xe2\x80\x9eI am sitting in a room\xe2\x80\x9c (1969): eine Aufnahme wird in den Raum gespielt und neu aufgenommen, "
+                         "immer wieder, bis nur die Resonanzen des Raums \xc3\xbc" "brig sind. Hier live: der ganze Klang geht n-mal durch den Raum."));
+    lucOnAtt = std::make_unique<ButtonAtt> (proc.apvts, "lucOn", lucOn);
+    addAndMakeVisible (lucOn);
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("lucSource")))
+        lucSource.addItemList (choice->choices, 1);
+    lucSourceAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "lucSource", lucSource);
+    lucSource.setTooltip (U ("Welcher Raum singt: der simulierte Saal (seine Eigenmoden aus den Ma\xc3\x9f" "en) oder die Impulsantwort von der Seite Raum "
+                             "(z. B. eine Aufnahme aus der Kirche in Rysum)."));
+    addAndMakeVisible (lucSource);
+    lucRows = { &row ("lucGen", "Generation"), &row ("lucGrow", U ("Wachsen (Generationen pro Minute)")),
+                &row ("lucTime", "Nachklingen je Durchgang"), &row ("lucMix", U ("Anteil (0 = nur Orgel, 100 = nur Raum)")) };
+    lucRows[0]->setTooltip (U ("Wie oft der Klang durch den Raum gegangen ist. Kommazahlen blenden zwischen zwei Durchg\xc3\xa4ngen. Modulierbar."));
+    lucRows[1]->setTooltip (U ("Die Generation steigt von selbst, solange Lucier an ist \xe2\x80\x93 \xc3\xbc" "ber ein ganzes St\xc3\xbc" "ck hinweg. 0 = steht."));
+    lucRows[2]->setTooltip (U ("Wie lange jeder Durchgang nachklingt. Kurz: die Resonanzen kommen schnell und breiter; lang: langsam und ganz schmal."));
+    lucRestart.setTooltip (U ("Das Gewachsene zur\xc3\xbc" "cksetzen: wieder bei der eingestellten Generation anfangen."));
+    lucRestart.onClick = [this] { proc.resetLucierGrowth(); };
+    addAndMakeVisible (lucRestart);
 }
 
 void SaalView::resized()
@@ -285,8 +306,27 @@ void SaalView::resized()
     auto r = getLocalBounds().reduced (28, 0).withTrimmedTop (18).withTrimmedBottom (14);
     auto right = r.removeFromRight (404);
     r.removeFromRight (24);
+    lucBox = r.removeFromRight (300);
+    r.removeFromRight (20);
     planBox = r;
     plan.setBounds (r);
+    {
+        auto b = lucBox.withTrimmedTop (32);
+        auto t = b.removeFromTop (26);
+        lucOn.setBounds (t.removeFromLeft (100));
+        t.removeFromLeft (6);
+        lucSource.setBounds (t);
+        b.removeFromTop (6);
+        lucGenArea = b.removeFromTop (34);
+        lucCurveArea = b.removeFromTop (118);
+        lucPeakArea = b.removeFromTop (34);
+        b.removeFromTop (4);
+        for (auto* x : lucRows) x->setBounds (b.removeFromTop (30).withTrimmedBottom (2));
+        b.removeFromTop (4);
+        lucRestart.setBounds (b.removeFromTop (24).withWidth (180));
+        b.removeFromTop (8);
+        lucNoteArea = b;
+    }
 
     constexpr int kRow = 28, kTitle = 32;
     auto take = [&] (int h) { return right.removeFromTop (h); };
@@ -336,6 +376,101 @@ void SaalView::refresh()
     for (auto& r : rows) r->repaint();
     const auto st = proc.getRoomStatus();
     if (st != shownStatus) { shownStatus = st; repaint (saalBox); }
+    const auto& lv = proc.getLucierView();
+    const float lvl = proc.engine.lucierLevel.load();
+    if (lv.version != shownLucVersion || std::abs (proc.getLucierGeneration() - shownLucGen) > 0.004f || std::abs (lvl - shownLucLevel) > 0.01f)
+    {
+        shownLucVersion = lv.version; shownLucGen = proc.getLucierGeneration(); shownLucLevel = lvl;
+        repaint (lucBox);
+    }
+}
+
+void SaalView::paintLucier (juce::Graphics& g)
+{
+    auto& A = Assets::get();
+    const auto& lv = proc.getLucierView();
+    const bool on = proc.apvts.getRawParameterValue ("lucOn")->load() > 0.5f;
+    drawSectionTitle (g, lucBox, "Lucier", U ("\xe2\x80\x9eIch sitze in einem Raum\xe2\x80\x9c"));
+    // generation, large
+    {
+        auto r = lucGenArea;
+        g.setColour (on ? col::ink : col::mute);
+        g.setFont (A.romanFont (26.0f));
+        const float gen = proc.getLucierGeneration();
+        g.drawText (juce::String (gen, gen < 10.0f ? 2 : 1).replace (".", ","), r.removeFromLeft (110), juce::Justification::centredLeft);
+        g.setFont (A.monoFont (11.0f));
+        g.setColour (col::dim);
+        g.drawText (gen < 1.5f ? U ("Durchgang \xc2\xb7 der Raum, wie er ist") : U ("Durchg\xc3\xa4nge durch den Raum"), r, juce::Justification::centredLeft);
+    }
+    // the room's response after n passes (log frequency, 50 dB)
+    {
+        auto r = lucCurveArea.toFloat().reduced (0.0f, 4.0f);
+        g.setColour (col::line);
+        g.drawRect (r, 1.0f);
+        const float lo = rysum::LucierResult::kCurveLo, hi = rysum::LucierResult::kCurveHi;
+        auto xOf = [&] (float f) { return r.getX() + r.getWidth() * std::log (f / lo) / std::log (hi / lo); };
+        g.setFont (A.monoFont (9.0f));
+        for (float f : { 100.0f, 1000.0f, 10000.0f })
+        {
+            g.setColour (col::line);
+            g.drawVerticalLine ((int) xOf (f), r.getY(), r.getBottom());
+            g.setColour (col::faint);
+            g.drawText (f >= 1000.0f ? juce::String ((int) (f / 1000.0f)) + " kHz" : juce::String ((int) f) + " Hz",
+                        juce::Rectangle<float> (xOf (f) + 3.0f, r.getBottom() - 14.0f, 50.0f, 12.0f), juce::Justification::centredLeft);
+        }
+        if (lv.curve.size() > 1)
+        {
+            juce::Path p;
+            const int n = (int) lv.curve.size();
+            for (int i = 0; i < n; ++i)
+            {
+                const float x = r.getX() + r.getWidth() * (float) i / (float) (n - 1);
+                const float y = r.getY() + 3.0f + (r.getHeight() - 6.0f) * juce::jlimit (0.0f, 1.0f, -lv.curve[(size_t) i] / 50.0f);
+                if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+            }
+            g.setColour (on ? col::rubric.brighter (0.3f) : col::mute);
+            g.strokePath (p, juce::PathStrokeType (1.2f));
+            for (size_t i = 0; i < lv.peaks.size(); ++i)
+            {
+                const float x = xOf (lv.peaks[i]);
+                g.setColour ((on ? col::ink : col::mute).withAlpha (i == 0 ? 1.0f : 0.6f));
+                g.fillEllipse (x - 2.5f, r.getY() + 2.0f, 5.0f, 5.0f);
+            }
+        }
+        // how loud the room sings right now
+        const float lvl = juce::jlimit (0.0f, 1.0f, proc.engine.lucierLevel.load());
+        g.setColour (col::ink.withAlpha (0.8f));
+        g.fillRect (r.getRight() - 3.0f, r.getBottom() - r.getHeight() * lvl, 3.0f, r.getHeight() * lvl);
+    }
+    // the strongest resonances, as notes
+    {
+        auto r = lucPeakArea;
+        g.setFont (A.monoFont (11.0f));
+        g.setColour (col::dim);
+        juce::String s;
+        static const char* names[] { "c", "cis", "d", "es", "e", "f", "fis", "g", "gis", "a", "b", "h" };
+        for (size_t i = 0; i < juce::jmin<size_t> (4, lv.peaks.size()); ++i)
+        {
+            const float f = lv.peaks[i];
+            const float m = 69.0f + 12.0f * std::log2 (f / 444.5f);
+            const int mi = juce::roundToInt (m);
+            const int ct = juce::roundToInt ((m - (float) mi) * 100.0f);
+            s << (i > 0 ? U (" \xc2\xb7 ") : juce::String()) << juce::String (juce::roundToInt (f)) << " Hz " << names[((mi % 12) + 12) % 12]
+              << (ct >= 0 ? "+" : "") << ct;
+        }
+        if (s.isEmpty()) s = on ? U ("berechne \xe2\x80\xa6") : U ("aus");
+        if (lv.status.isNotEmpty()) { s = lv.status; g.setColour (col::rubric.brighter (0.4f)); }
+        g.drawFittedText (s, r.removeFromTop (17), juce::Justification::centredLeft, 1, 0.8f);
+        g.setFont (A.monoFont (10.0f));
+        g.setColour (col::mute);
+        g.drawFittedText (lv.what, r, juce::Justification::centredLeft, 1, 0.8f);
+    }
+    g.setFont (A.sansFont (12.0f));
+    g.setColour (col::mute);
+    if (lucNoteArea.getHeight() > 20)
+        g.drawFittedText (U ("Jeder Durchgang filtert den Klang noch einmal mit dem Raum: seine st\xc3\xa4rksten Resonanzen bleiben, alles andere verschwindet. "
+                             "Lautsprecher und Mikrofon sind wie bei Lucier Teil jedes Durchgangs. Die Resonanzen werden so laut gehalten wie die Orgel."),
+                          lucNoteArea, juce::Justification::topLeft, juce::jmax (1, lucNoteArea.getHeight() / 16));
 }
 
 void SaalView::paint (juce::Graphics& g)
@@ -354,5 +489,6 @@ void SaalView::paint (juce::Graphics& g)
     g.setColour (col::mute);
     g.setFont (A.monoFont (11.0f));
     g.drawText ("Nachhall:", juce::Rectangle<int> (tailConv.getX() - 70, tailConv.getY(), 64, tailConv.getHeight()), juce::Justification::centredRight);
+    paintLucier (g);
 }
 } // namespace rysum::ui

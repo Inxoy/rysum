@@ -68,6 +68,61 @@ void StopTile::paintButton (juce::Graphics& g, bool over, bool)
 }
 
 // ---------------------------------------------------------------------------
+void SceneButton::paintButton (juce::Graphics& g, bool over, bool)
+{
+    auto& A = Assets::get();
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const bool stored = proc.isSceneStored (slot);
+    if (current && stored) { g.setColour (col::ink); g.fillRect (r); }
+    else { g.setColour (over ? col::line : col::panel); g.fillRect (r); }
+    g.setColour (stored ? (current ? col::ink : col::dim) : col::border);
+    g.drawRect (r, 1.0f);
+    g.setColour (current && stored ? col::bg : (stored ? col::ink : col::faint));
+    g.setFont (A.romanFont (16.0f));
+    g.drawText (getButtonText(), getLocalBounds(), juce::Justification::centred);
+    if (! stored)
+    {
+        g.setFont (A.monoFont (8.5f));
+        g.setColour (col::faint);
+        g.drawText ("leer", getLocalBounds().removeFromBottom (12), juce::Justification::centred);
+    }
+}
+
+void SceneButton::clicked (const juce::ModifierKeys& m)
+{
+    if (m.isPopupMenu()) return;
+    if (proc.isSceneStored (slot)) proc.goToScene (slot);
+    else { proc.storeScene (slot); proc.goToScene (slot); }
+    if (auto* p = getParentComponent()) p->repaint();
+}
+
+void SceneButton::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu()) { showMenu(); return; }
+    juce::Button::mouseDown (e);
+}
+
+void SceneButton::showMenu()
+{
+    juce::PopupMenu m;
+    const auto name = getButtonText();
+    m.addSectionHeader ("Szene " + name);
+    m.addItem (1, juce::String::fromUTF8 ("Aktuellen Klang hier speichern"));
+    m.addItem (2, "Hierhin wechseln", proc.isSceneStored (slot));
+    m.addItem (3, "Leeren", proc.isSceneStored (slot));
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                     [safe = juce::Component::SafePointer<SceneButton> (this)] (int r)
+                     {
+                         if (safe == nullptr) return;
+                         auto& pr = safe->proc;
+                         if (r == 1) pr.storeScene (safe->slot);
+                         if (r == 2) pr.goToScene (safe->slot);
+                         if (r == 3) pr.clearScene (safe->slot);
+                         if (auto* p = safe->getParentComponent()) p->repaint();
+                     });
+}
+
+// ---------------------------------------------------------------------------
 int KeyStrip::midiAt (juce::Point<int> p) const
 {
     const int n = 46;
@@ -187,6 +242,21 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
     };
 
     addAndMakeVisible (keys);
+
+    // scenes A..D and the control that blends between them
+    for (int s = 0; s < RysumProcessor::kNumScenes; ++s)
+    {
+        sceneButtons.push_back (std::make_unique<SceneButton> (proc, s));
+        sceneButtons.back()->setTooltip (juce::String::fromUTF8 ("Szene ") + sceneButtons.back()->getButtonText()
+                                         + juce::String::fromUTF8 (": Klicken = dorthin wechseln (eine leere Szene speichert den aktuellen Klang). "
+                                                                   "Rechtsklick = speichern / leeren."));
+        addAndMakeVisible (*sceneButtons.back());
+    }
+    sceneMorph = std::make_unique<ParamRow> (proc.apvts, "sceneMorph", juce::String::fromUTF8 ("\xc3\x9c" "berblenden"), true);
+    sceneMorph->setTooltip (juce::String::fromUTF8 ("Blendet zwischen den gespeicherten Szenen (leere werden \xc3\xbc" "bersprungen): alle Regler gleiten, "
+                                                    "Schalter wechseln auf halbem Weg. Automatisierbar, MIDI-lernbar, modulierbar. "
+                                                    "Nicht dabei: Lautst\xc3\xa4rke, Ausgabe, Stimmung, MIDI."));
+    addAndMakeVisible (*sceneMorph);
 }
 
 void ConsoleView::resized()
@@ -212,8 +282,8 @@ void ConsoleView::resized()
     auto panels = r.withTrimmedBottom (14);
     const int gap = 28;
     const int total = panels.getWidth() - 2 * gap;
-    noiseArea = panels.removeFromLeft ((int) (total * 1.15f / 3.0f)); panels.removeFromLeft (gap);
-    decayArea = panels.removeFromLeft ((int) (total * 1.15f / 3.0f)); panels.removeFromLeft (gap);
+    noiseArea = panels.removeFromLeft ((int) (total * 1.0f / 3.0f)); panels.removeFromLeft (gap);
+    decayArea = panels.removeFromLeft ((int) (total * 1.0f / 3.0f)); panels.removeFromLeft (gap);
     outArea = panels;
 
     auto rows = noiseArea.withTrimmedTop (40);
@@ -224,9 +294,23 @@ void ConsoleView::resized()
     onSum.setBounds (decayArea.getRight() - 70, decayArea.getY() + 8, 70, 20);
 
     auto o = outArea.withTrimmedTop (40);
-    meterArea = o.removeFromTop (120).removeFromLeft (110);
+    {
+        auto top = o.removeFromTop (120);
+        meterArea = top.removeFromLeft (110);
+        top.removeFromLeft (16);
+        outInfoArea = top;
+    }
     volume.setBounds (meterArea.getRight() - 30, meterArea.getY(), 28, meterArea.getHeight());
-    folderButton.setBounds (outArea.getX(), outArea.getBottom() - 24, outArea.getWidth(), 22);
+    folderButton.setBounds (outInfoArea.getX(), outInfoArea.getBottom() - 22, outInfoArea.getWidth(), 22);
+    o.removeFromTop (14);
+    scenesArea = o.removeFromTop (18);
+    {
+        auto b = o.removeFromTop (30);
+        const int bw = 44;
+        for (auto& sb : sceneButtons) { sb->setBounds (b.removeFromLeft (bw)); b.removeFromLeft (6); }
+        o.removeFromTop (4);
+        sceneMorph->setBounds (o.removeFromTop (30));
+    }
 
     auto kb = keyboardArea;
     photoArea = kb.removeFromLeft (250);
@@ -245,6 +329,19 @@ void ConsoleView::refresh()
     for (auto& r : stopVol) r->repaint();
     for (auto& r : stopWind) r->repaint();
     keys.repaint();
+    sceneMorph->repaint();
+    {
+        const float x = proc.apvts.getRawParameterValue ("sceneMorph")->load();
+        if (proc.getSceneVersion() != shownSceneVersion || std::abs (x - shownMorph) > 0.001f)
+        {
+            shownSceneVersion = proc.getSceneVersion(); shownMorph = x;
+            for (int s = 0; s < (int) sceneButtons.size(); ++s)
+            {
+                sceneButtons[(size_t) s]->current = std::abs (x - (float) s) < 0.02f;
+                sceneButtons[(size_t) s]->repaint();
+            }
+        }
+    }
     repaint (outArea);
 }
 
@@ -291,7 +388,7 @@ void ConsoleView::paint (juce::Graphics& g)
     meterBar ({ m.getX() + 4, m.getY(), 10, m.getHeight() }, meterL);
     meterBar ({ m.getX() + 20, m.getY(), 10, m.getHeight() }, meterR);
 
-    auto info = outArea.withTrimmedTop (170);
+    auto info = outInfoArea;
     g.setFont (A.sansFont (14.0f));
     g.setColour (col::ink);
     g.drawText (juce::String (juce::CharPointer_UTF8 ("Lautst\xc3\xa4rke")), info.removeFromTop (18), juce::Justification::centredLeft);
@@ -301,7 +398,16 @@ void ConsoleView::paint (juce::Graphics& g)
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::mute);
     g.drawText (juce::String (proc.engine.activeVoices.load()) + " Stimmen aktiv", info.removeFromTop (18), juce::Justification::centredLeft);
-    g.drawFittedText (proc.getLoadStatus(), info.removeFromTop (34), juce::Justification::topLeft, 2);
+    g.drawFittedText (proc.getLoadStatus(), info.removeFromTop (48), juce::Justification::topLeft, 3);
+    {
+        g.setColour (col::mute);
+        g.setFont (A.sansFont (11.0f).withExtraKerningFactor (0.18f));
+        g.drawText ("SZENEN", scenesArea, juce::Justification::centredLeft);
+        int n = 0;
+        for (int s = 0; s < RysumProcessor::kNumScenes; ++s) n += proc.isSceneStored (s);
+        g.setFont (A.monoFont (10.5f));
+        g.drawText (n == 0 ? juce::String::fromUTF8 ("Klick auf einen Buchstaben speichert") : juce::String (n) + " gespeichert", scenesArea, juce::Justification::centredRight);
+    }
 
     // keyboard band
     g.setColour (col::line);

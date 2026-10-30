@@ -35,7 +35,9 @@ private:
 
     ParamRow *pitch = nullptr, *detune = nullptr, *tremRate = nullptr, *tremDepth = nullptr, *smear = nullptr, *release = nullptr,
              *doppler = nullptr, *distAmount = nullptr, *air = nullptr;
-    juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr;
+    juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr, *mpeOn = nullptr;
+    ParamRow* mpeBend = nullptr;
+    int midiTextTop = 118;
     juce::Rectangle<int> tuneBox, tremBox, freezeBox, distBox, midiBox, binBox;
     // wind model of the stops
     juce::TextButton windClassic { "klassisch" }, windUnstable { "instabil" };

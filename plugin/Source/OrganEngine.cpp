@@ -56,6 +56,10 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     for (auto& v : voices) v.erSlot = -1;
     for (auto& n : noise) n.erSlot = -1;
     tail.prepare (sr);
+    lucier.prepare (sr);
+    lucIn.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
+    lucWet.assign (lucIn.size(), 0.0f);
+    lucRunning = false; lucRing = 0; lucDry = 1.0f; lucWetGain = 0.0f;
     tailGain = 0.0f; tailWasOn = false;
     zeroIn.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
     fdnBuf.assign ((size_t) kFdnLines * (size_t) kFdnLen, 0.0f);
@@ -513,6 +517,7 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->randMod = lastRandom;
     v->noteId = noteId;
     v->noteCents = noteId >= 0 ? centsFor (noteId, key) : 0.0f;
+    v->bendSm = voiceBendTarget (*v);
     v->velMod = keyVelocity[(size_t) key];       // (a stop pulled later takes the velocity the key was struck with)
     v->modCents0 = v->modCents1 = 0.0f;
     v->crkAmp = 0.0f; v->crkEnv = 1.0f; v->crkCount = 1 + (int) (rng.uni() * 0.2f * (float) sr);
@@ -564,7 +569,7 @@ void OrganEngine::releaseStopKey (int stop, int key, int noteId)
 float OrganEngine::centsFor (int noteId, int key) const noexcept
 {
     if (notesNow == nullptr || noteId < 0 || noteId >= NoteTable::kSize) return 0.0f;
-    const float hz = notesNow->hz[(size_t) noteId];
+    const float hz = notesNow->hz[(size_t) tableIndex (noteId)];
     if (! (hz > 1.0f)) return 0.0f;
     return 1200.0f * std::log2 (hz / slotHz[(size_t) key]);
 }
@@ -572,8 +577,8 @@ float OrganEngine::centsFor (int noteId, int key) const noexcept
 void OrganEngine::noteOnFree (const juce::MidiMessage& m, const EngineParams& p)
 {
     const int id = (juce::jlimit (1, 16, m.getChannel()) - 1) * 128 + m.getNoteNumber();
-    if (notesNow == nullptr || ! notesNow->mapped[(size_t) id]) return;
-    const float hz = notesNow->hz[(size_t) id];
+    if (notesNow == nullptr || ! notesNow->mapped[(size_t) tableIndex (id)]) return;
+    const float hz = notesNow->hz[(size_t) tableIndex (id)];
     if (! (hz > 1.0f)) return;
     // the pipe nearest to the wanted pitch plays (beyond the organ's compass: shifted, up to two octaves)
     int k = 0; float best = 1.0e9f;
@@ -726,8 +731,10 @@ void OrganEngine::keyUp (int key, const EngineParams& p, int noteId)
 
 void OrganEngine::handleMidi (const juce::MidiMessage& m, const EngineParams& p)
 {
+    const int ch = juce::jlimit (1, 16, m.getChannel());
     if (m.isNoteOn())
     {
+        notePress[(size_t) ((ch - 1) * 128 + m.getNoteNumber())] = 0.0f;      // (a new note starts unpressed)
         if (notesNow != nullptr) { noteOnFree (m, p); return; }
         const int k = keyIndexForMidi (m.getNoteNumber());
         if (k >= 0) keyDown (k, m.getFloatVelocity(), p);
@@ -741,7 +748,27 @@ void OrganEngine::handleMidi (const juce::MidiMessage& m, const EngineParams& p)
         keyUp (k, p);
     }
     else if (m.isController() && m.getControllerNumber() == 1) modWheel = (float) m.getControllerValue() / 127.0f;
-    else if (m.isPitchWheel()) pitchWheel = juce::jlimit (-1.0f, 1.0f, (float) (m.getPitchWheelValue() - 8192) / 8191.0f);
+    else if (m.isController() && m.getControllerNumber() == 74)
+    {
+        chSlide[(size_t) (ch - 1)] = lastSlide = (float) m.getControllerValue() / 127.0f;
+    }
+    else if (m.isPitchWheel())
+    {
+        const float b = juce::jlimit (-1.0f, 1.0f, (float) (m.getPitchWheelValue() - 8192) / 8191.0f);
+        chBend[(size_t) (ch - 1)] = b;
+        if (! mpeNow || ch == 1) pitchWheel = b;           // MPE: note channels bend their own notes, channel 1 is the wheel
+    }
+    else if (m.isChannelPressure())
+    {
+        chPress[(size_t) (ch - 1)] = lastPress = lastChanPress = (float) m.getChannelPressureValue() / 127.0f;
+    }
+    else if (m.isAftertouch())
+    {
+        const float a = (float) m.getAfterTouchValue() / 127.0f;
+        notePress[(size_t) ((ch - 1) * 128 + m.getNoteNumber())] = lastPress = a;
+        const int k = keyIndexForMidi (m.getNoteNumber());
+        if (k >= 0) keyPress[(size_t) k] = a;
+    }
     else if (m.isSustainPedalOn()) sustainPedal = true;
     else if (m.isSustainPedalOff())
     {
@@ -862,6 +889,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 }
                 v.dop += 0.08f * (v.dopTarget - v.dop);
                 cents += v.modCents0 + (v.modCents1 - v.modCents0) * (float) (start + i) * inv;
+                if (mpeNow) { v.bendSm += 0.2f * (voiceBendTarget (v) - v.bendSm); cents += v.bendSm; }
                 rate = v.baseRate * std::exp2 (cents / 1200.0f) * v.dop;
                 if (chaosModel)
                 {
@@ -1576,6 +1604,8 @@ void OrganEngine::advanceModulation (const EngineParams& p, double dt) noexcept
     globalSrc[srcRandom] = lastRandom;
     globalSrc[srcVelocity] = lastVelocity;
     globalSrc[srcPitchWheel] = pitchWheel;
+    globalSrc[srcPressure] = lastPress;
+    globalSrc[srcSlide] = lastSlide;
     for (int i = 0; i < kNumSources; ++i) sourceOut[(size_t) i] = globalSrc[(size_t) i];
 }
 
@@ -1611,7 +1641,8 @@ Pos OrganEngine::displayPosition (int stop, int key, const EngineParams& p) cons
             else if (r.src >= srcEnv1 && r.src < srcEnv1 + kNumEnvs)
                 v = p.mod.env[(size_t) (r.src - srcEnv1)].perPipe ? 0.0f : sourceOut[(size_t) r.src].load();
             else if (r.src == srcKey)      v = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
-            else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity) v = sourceOut[(size_t) r.src].load();
+            else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity || r.src == srcPressure || r.src == srcSlide)
+                v = sourceOut[(size_t) r.src].load();
             pm[(size_t) r.target] += r.amount * shapeSource (r.src, v, r.uni);
             any = true;
         }
@@ -1624,6 +1655,19 @@ Pos OrganEngine::displayPosition (int stop, int key, const EngineParams& p) cons
     pos.el = juce::jlimit (-90.0f, 90.0f, pos.el + el);
     pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * dm);
     return pos;
+}
+
+float OrganEngine::voicePressure (const Voice& v) const noexcept
+{
+    // MPE: the note's channel; otherwise channel pressure (any channel) - polyphonic aftertouch wins when higher
+    const float poly = v.noteId >= 0 ? notePress[(size_t) v.noteId] : keyPress[(size_t) v.key];
+    const float chan = mpeNow && v.noteId >= 128 ? chPress[(size_t) (v.noteId >> 7)] : lastPressChannel();
+    return juce::jmax (poly, chan);
+}
+
+float OrganEngine::voiceSlide (const Voice& v) const noexcept
+{
+    return mpeNow && v.noteId >= 128 ? chSlide[(size_t) (v.noteId >> 7)] : lastSlide;
 }
 
 float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) const noexcept
@@ -1646,6 +1690,8 @@ float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) 
         case srcRandom:   return v.randMod;
         case srcVelocity: return v.velMod;
         case srcPitchWheel: return pitchWheel;
+        case srcPressure: return voicePressure (v);
+        case srcSlide:    return voiceSlide (v);
         default:          return 0.0f;
     }
 }
@@ -1673,12 +1719,89 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
         processChunk (view, chunkMidi, pc);
     }
     roomOffset = 0;
+    renderLucier (out, n, pIn);
 
     // meters
     const float pk0 = out.getNumChannels() > 0 ? out.getMagnitude (0, 0, n) : 0.0f;
     const float pk1 = out.getNumChannels() > 1 ? (order == 0 ? out.getMagnitude (1, 0, n) : pk0) : 0.0f;
     meterL = juce::jmax (pk0, meterL.load() * 0.9f);
     meterR = juce::jmax (pk1, meterR.load() * 0.9f);
+}
+
+// ---------------------------------------------------------------------------
+// Lucier mode: the output (W / L+R) through the room n times, added back as one (omni / centre) signal
+// ---------------------------------------------------------------------------
+void OrganEngine::renderLucier (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept
+{
+    const bool on = p.lucierOn && lucier.current() != nullptr;
+    if (! on && ! lucRunning) { lucierSerialInUse = lucier.oldestSerialInUse(); lucierLevel = 0.0f; return; }
+    if (on && ! lucRunning) { lucier.reset(); lucRunning = true; lucInEnv = lucOutEnv = 0.0f; lucAgc = 1.0f; }
+    if (on) lucRing = TailIR::maxLength (sr);
+    const int chans = out.getNumChannels();
+    if (chans <= 0 || n > (int) lucIn.size()) return;
+    const bool stereo = order == 0 && chans > 1;
+    // input: what the listener hears (omni)
+    const float* a = out.getReadPointer (0);
+    if (on)
+    {
+        if (stereo) { const float* b = out.getReadPointer (1); for (int i = 0; i < n; ++i) lucIn[(size_t) i] = 0.5f * (a[i] + b[i]); }
+        else std::copy_n (a, n, lucIn.data());
+    }
+    else std::fill_n (lucIn.data(), n, 0.0f);               // switched off: the room rings out
+    std::fill_n (lucWet.data(), n, 0.0f);
+    // dry part fades with the mix (equal power), the wet part comes in; the response has unit-ish energy
+    const float mix = juce::jlimit (0.0f, 1.0f, p.lucierMix);
+    const float dryT = on ? std::cos (mix * juce::MathConstants<float>::halfPi) : 1.0f;
+    const float wetT = std::sin (mix * juce::MathConstants<float>::halfPi);
+    const float k = 1.0f - std::exp (-(float) n / (0.05f * (float) sr));
+    const float d0 = lucDry, d1 = lucDry + (dryT - lucDry) * k;
+    const float w0 = lucWetGain, w1 = lucWetGain + (wetT - lucWetGain) * k;
+    lucDry = d1; lucWetGain = w1;
+    float* wp = lucWet.data();
+    lucier.process (lucIn.data(), &wp, 1, n, 1.0f, 1.0f);
+    // level: the passes keep only narrow resonances - an organ's partials may hit them or not. Like Lucier's
+    // re-recording (each generation brought back up to level), the result is kept about as loud as what went in;
+    // in silence the gain holds, so the room rings out naturally
+    {
+        double ei = 0.0, eo = 0.0;
+        for (int i = 0; i < n; ++i) { ei += (double) lucIn[(size_t) i] * lucIn[(size_t) i]; eo += (double) lucWet[(size_t) i] * lucWet[(size_t) i]; }
+        auto coef = [&] (float seconds) { return 1.0f - std::exp (-(float) n / (seconds * (float) sr)); };
+        const float pi = (float) (ei / n), po = (float) (eo / n);
+        lucInEnv += coef (0.4f) * (pi - lucInEnv);
+        lucOutEnv += (po > lucOutEnv ? coef (0.03f) : coef (0.4f)) * (po - lucOutEnv);      // a resonance that is hit: noticed at once
+        if (on && lucInEnv > 1.0e-9f && lucOutEnv > 1.0e-14f)
+        {
+            const float target = juce::jlimit (0.25f, 100.0f, std::sqrt (lucInEnv / lucOutEnv));
+            // down quickly (no bursts when a chord hits a resonance), up slowly
+            lucAgc *= std::pow (target / lucAgc, target < lucAgc ? coef (0.03f) : coef (1.5f));
+        }
+        const float g0 = w0 * lucAgc, g1 = w1 * lucAgc;
+        const float inv0 = 1.0f / (float) n;
+        for (int i = 0; i < n; ++i) lucWet[(size_t) i] *= g0 + (g1 - g0) * (float) (i + 1) * inv0;
+    }
+    // soft limit: the strongest resonance of a high generation can be very narrow and loud
+    float pk = 0.0f;
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = lucWet[(size_t) i];
+        lucWet[(size_t) i] = x / std::sqrt (1.0f + 0.25f * x * x);
+        pk = juce::jmax (pk, std::abs (lucWet[(size_t) i]));
+    }
+    lucierLevel = juce::jmax (pk, lucierLevel.load() * 0.9f);
+    const float inv = 1.0f / (float) n;
+    for (int c = 0; c < chans; ++c)
+    {
+        float* o = out.getWritePointer (c);
+        const bool takes = stereo ? c < 2 : c == 0;
+        const float wg = stereo ? 0.7071f : 1.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const float dg = d0 + (d1 - d0) * (float) (i + 1) * inv;
+            o[i] = o[i] * dg + (takes ? wg * lucWet[(size_t) i] : 0.0f);
+        }
+    }
+    if (! on && (lucRing -= n) <= 0) { lucRing = 0; lucRunning = false; lucDry = 1.0f; lucWetGain = 0.0f; }
+    lucierSerialInUse = lucier.oldestSerialInUse();
 }
 
 void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& pIn)
@@ -1730,9 +1853,25 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     keySource = p.tuning.source;
     {
         // free tuning on / off: let go of everything first (notes are counted differently)
-        const bool fm = p.notes != nullptr;
-        if (fm != freeMode) { releaseAllKeys (p); freeMode = fm; }
-        notesNow = p.notes;
+        // MPE needs every note apart (its channel says whose bend it is): without a free tuning the organ's own
+        // tuning becomes a note table
+        mpeNow = p.mpe;
+        mpeBendCents = 100.0f * p.mpeBendRange;
+        const NoteTable* table = p.notes;
+        if (mpeNow && table == nullptr)
+        {
+            for (int n = 0; n < 128; ++n)
+            {
+                const int k = keyIndexForMidi (n);
+                mpeTable.mapped[(size_t) n] = k >= 0 ? 1 : 0;
+                mpeTable.hz[(size_t) n] = k >= 0 ? slotHz[(size_t) juce::jlimit (0, kNumKeys - 1, p.tuning.source[(size_t) k])]
+                                                       * std::exp2 (p.tuning.cents[(size_t) k] / 1200.0f) : 0.0f;
+            }
+            table = &mpeTable;
+        }
+        const bool fm = table != nullptr;
+        if (fm != freeMode || (fm && (table == &mpeTable) != (notesNow == &mpeTable))) { releaseAllKeys (p); freeMode = fm; }
+        notesNow = table;
         notesContinuous = p.notesContinuous;
     }
     roomFollowNow = p.roomFollow;
@@ -1834,7 +1973,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     for (auto& v : voices)
     {
         if (! v.active) continue;
-        if (v.noteId >= 0 && notesContinuous && v.held && notesNow != nullptr && notesNow->hz[(size_t) v.noteId] > 1.0f)
+        if (v.noteId >= 0 && notesContinuous && v.held && notesNow != nullptr && notesNow->hz[(size_t) tableIndex (v.noteId)] > 1.0f)
             v.noteCents = centsFor (v.noteId, v.key);          // MTS-ESP: held notes follow a changing tuning
         if (! v.fresh) { v.g0 = v.g1; v.gh0 = v.gh1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; }
         updateVoiceSpatial (v, p, blockSeconds);

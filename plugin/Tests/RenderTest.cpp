@@ -7,6 +7,7 @@
 #include "RoomSim.h"
 #include "RoomTail.h"
 #include "Scala.h"
+#include "Lucier.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
 #include <complex>
@@ -548,11 +549,93 @@ static juce::AudioBuffer<float> render (OrganEngine& e, Scene& sc, double sr, in
     return out;
 }
 
+// ---------------- Lucier mode ----------------
+static void testLucier (std::shared_ptr<const SampleLibrary> lib)
+    {
+        RoomParams rp;     // the default hall
+        auto t0 = std::chrono::high_resolution_clock::now();
+        auto base = lucierFromRoom (rp, 0.5f, 48000.0);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto contrast = [] (const LucierResult& r)       // how far the strongest resonance stands out (curve: max 0 dB, median below)
+        {
+            auto c = r.curve; std::sort (c.begin(), c.end()); return -c[c.size() / 2];
+        };
+        std::vector<LucierResult> res;
+        double buildMs = 0;
+        for (float g : { 1.0f, 4.0f, 12.0f, 30.0f, 12.5f })
+        {
+            auto a0 = std::chrono::high_resolution_clock::now();
+            res.push_back (buildLucier (*base, g, 0.3f, 1));
+            buildMs = std::max (buildMs, std::chrono::duration<double, std::milli> (std::chrono::high_resolution_clock::now() - a0).count());
+        }
+        std::cout << "lucier: base '" << base->what << "' in " << std::chrono::duration<double, std::milli> (t1 - t0).count() << " ms; builds up to "
+                  << buildMs << " ms; contrast gen 1/4/12/30: " << contrast (res[0]) << " / " << contrast (res[1]) << " / " << contrast (res[2]) << " / "
+                  << contrast (res[3]) << " dB; strongest at gen 30:";
+        for (auto f : res[3].peaks) std::cout << " " << f;
+        std::cout << " Hz" << std::endl;
+        check (contrast (res[1]) > contrast (res[0]) + 3.0f && contrast (res[2]) > contrast (res[1]) + 3.0f && contrast (res[3]) > contrast (res[2]),
+               "lucier: the room's resonances stand out more with every generation");
+        check (! res[3].peaks.empty() && res[3].peaks[0] > 30.0f && res[3].peaks[0] < 12000.0f, "lucier: resonances found");
+
+        // in the engine: a chord through 12 generations, all wet; then off: the room rings out, the organ is back unchanged
+        auto run = [&] (bool on, float mix, float& wetDb, float& afterDb, bool& finite, float& peak)
+        {
+            OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+            e.setLucierIR (res[2].ir);
+            EngineParams p; p.stopOn = {}; p.stopOn[1] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+            p.lucierOn = on; p.lucierMix = mix;
+            juce::AudioBuffer<float> b (2, 512);
+            double eOn = 0, eAfter = 0; finite = true; peak = 0;
+            for (int pos = 0; pos < 48000 * 12; pos += 512)
+            {
+                juce::MidiBuffer mb;
+                if (pos == 0) for (int nn : { 48, 55, 60, 64 }) mb.addEvent (juce::MidiMessage::noteOn (1, nn, (juce::uint8) 100), 0);
+                if (pos >= 48000 * 6) p.lucierOn = false;
+                e.process (b, mb, p);
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) { const float v = b.getSample (c, i); finite = finite && std::isfinite (v); peak = std::max (peak, std::abs (v)); }
+                const double r = b.getRMSLevel (0, 0, 512);
+                if (pos > 48000 * 3 && pos < 48000 * 6) eOn += r * r;
+                if (pos > 48000 * 10) eAfter += r * r;
+                if (std::getenv ("RYSUM_DEBUG_LUCIER") != nullptr && pos % 48128 == 0) std::cout << "   t " << pos / 48000.0 << " rms " << r << std::endl;
+            }
+            wetDb = (float) (10.0 * std::log10 (eOn + 1e-20)); afterDb = (float) (10.0 * std::log10 (eAfter + 1e-20));
+        };
+        float dryOn, dryAfter, wetOn, wetAfter, pk1, pk2; bool f1, f2;
+        run (false, 1.0f, dryOn, dryAfter, f1, pk1);
+        run (true, 1.0f, wetOn, wetAfter, f2, pk2);
+        std::cout << "lucier in the engine: dry " << dryOn << " dB, all wet (gen 12) " << wetOn << " dB, peak " << pk2
+                  << "; after switching off " << wetAfter << " dB (dry " << dryAfter << ")" << std::endl;
+        check (f2 && pk2 < 2.0f, "lucier: output finite and limited");
+        check (std::abs (wetOn - dryOn) < 12.0f, "lucier: the wet sound is about as loud as the organ");
+        check (std::abs (wetAfter - dryAfter) < 0.5f, "lucier: switched off, the organ sounds as before (after the room rang out)");
+
+        // a response from a file (a recorded room): read, trimmed to the direct sound
+        juce::File tmp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_lucier_test.wav");
+        {
+            juce::AudioBuffer<float> ir (1, 96000); ir.clear();
+            XorShift rng (7);
+            for (int i = 4800; i < 96000; ++i) ir.setSample (0, i, (i == 4800 ? 1.0f : 0.3f * rng.bi()) * std::exp (-(float) (i - 4800) / 9000.0f));
+            tmp.deleteFile();
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (tmp), 44100.0, 1, 24, {}, 0));
+            w->writeFromAudioSampleBuffer (ir, 0, ir.getNumSamples());
+        }
+        juce::String err;
+        auto fb = lucierFromFile (tmp, 48000.0, err);
+        int argMax = 0;
+        if (fb != nullptr) for (int i = 0; i < (int) fb->h.size(); ++i) if (std::abs (fb->h[(size_t) i]) > std::abs (fb->h[(size_t) argMax])) argMax = i;
+        const bool fileOk = fb != nullptr && fb->h.size() > 48000 && argMax > 0.001 * 48000 && argMax < 0.004 * 48000;
+        std::cout << "lucier from a file (44.1 kHz, 100 ms silence before): " << (fb != nullptr ? fb->what : err) << ", starts at the direct sound: " << fileOk << std::endl;
+        check (fileOk, "lucier: impulse response file read, resampled and trimmed");
+        tmp.deleteFile();
+    }
+
 int main (int argc, char** argv)
 {
     const bool onlyRoom = std::getenv ("RYSUM_ONLY_ROOM") != nullptr;       // quick run: just the room tests
     const bool onlyWind = onlyRoom || std::getenv ("RYSUM_ONLY_WIND") != nullptr;   // quick run: just the wind model tests
-    if (! onlyWind)
+    const bool onlyLucier = std::getenv ("RYSUM_ONLY_LUCIER") != nullptr;
+    if (! onlyWind && ! onlyLucier)
     {
         testEncoder();
         testConvolver();
@@ -572,6 +655,45 @@ int main (int argc, char** argv)
     auto t1 = std::chrono::high_resolution_clock::now();
     check (lib != nullptr, "library loaded " + err);
     if (lib == nullptr) return 1;
+    if (std::getenv ("RYSUM_LUCIER_DEMO") != nullptr)
+    {
+        // a demo for the ears: a slow chord progression while the generation grows from 1 to 20 (all wet towards the end)
+        RoomParams rp;
+        auto base = lucierFromRoom (rp, 0.5f, 48000.0);
+        OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+        EngineParams p; p.stopOn = {}; p.stopOn[1] = true; p.stopOn[2] = true; p.clickLevel = 0.3f; p.wind = 0.1f;
+        p.lucierOn = true; p.lucierMix = 0.35f;
+        const int secs = 48;
+        juce::AudioBuffer<float> all (2, 48000 * secs), b (2, 512);
+        const int chords[4][4] { { 48, 55, 60, 64 }, { 45, 52, 57, 60 }, { 41, 53, 57, 60 }, { 43, 50, 55, 59 } };
+        int lastGen = -1;
+        for (int pos = 0; pos + 512 <= all.getNumSamples(); pos += 512)
+        {
+            const double t = pos / 48000.0;
+            const float gen = 1.0f + 19.0f * (float) juce::jlimit (0.0, 1.0, t / 40.0);
+            if ((int) (gen * 2) != lastGen) { lastGen = (int) (gen * 2); e.setLucierIR (buildLucier (*base, gen, 0.3f, (uint32_t) lastGen).ir); }
+            p.lucierMix = 0.35f + 0.6f * (float) juce::jlimit (0.0, 1.0, t / 40.0);
+            juce::MidiBuffer mb;
+            const int c = (int) (t / 6.0) % 4, cPrev = (int) ((t - 512 / 48000.0) / 6.0) % 4;
+            if (pos == 0 || (c != cPrev && t < 42.0))
+            {
+                if (pos > 0) for (int nn : chords[cPrev]) mb.addEvent (juce::MidiMessage::noteOff (1, nn), 0);
+                for (int nn : chords[c]) mb.addEvent (juce::MidiMessage::noteOn (1, nn, (juce::uint8) 90), 1);
+            }
+            if (t >= 42.0 && t < 42.0 + 512 / 48000.0) for (int nn : chords[c]) mb.addEvent (juce::MidiMessage::noteOff (1, nn), 0);
+            e.process (b, mb, p);
+            for (int ch = 0; ch < 2; ++ch) all.copyFrom (ch, pos, b, ch, 0, 512);
+        }
+        all.applyGain (0.8f / juce::jmax (0.01f, all.getMagnitude (0, all.getNumSamples())));
+        auto f = outDir.getChildFile ("lucier_demo.wav");
+        f.deleteFile();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), 48000.0, 2, 24, {}, 0));
+        w->writeFromAudioSampleBuffer (all, 0, all.getNumSamples());
+        std::cout << "wrote " << f.getFullPathName() << std::endl;
+        return 0;
+    }
+    if (onlyLucier) { testLucier (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     std::cout << "  " << lib->loadedPipes << " pipes, " << lib->substitutedPipes << " substituted, "
               << lib->clicksDown.size() << "/" << lib->clicksUp.size() << "/" << lib->clicksOther.size() << " clicks, "
               << lib->stopPulls.size() << " pulls, " << lib->wind.size() << " wind, "
@@ -1077,7 +1199,53 @@ int main (int argc, char** argv)
             std::cout << "modulation: velocity 20 -> " << soft << " dB, 127 -> " << hard << " dB; pitch wheel up: " << bent << " ct" << std::endl;
             check (hard - soft > 8.0f, "modulation source: key velocity");
             check (std::abs (bent - 200.0) < 4.0, "modulation source: pitch wheel");
+
+            // MPE: two notes on their own channels; channel 2 bends its note +2 semitones (range 48), channel 3 stays;
+            // pressure on channel 3 makes only that note louder; MPE off: the same bend does nothing to the pitch
+            auto mpePlay = [&] (bool mpe, int onlyCh, std::function<void (juce::MidiBuffer&, int)> extra, EngineParams* out = nullptr)
+            {
+                OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+                p.mpe = mpe; p.mpeBendRange = 48.0f;
+                p.mod.routes[0] = { srcPressure, tgtLevel, 0.4f };
+                if (out != nullptr) *out = p;
+                juce::AudioBuffer<float> b (2, 512), all (1, 72000);
+                for (int pos = 0; pos < all.getNumSamples(); pos += 512)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                    {
+                        if (onlyCh == 0 || onlyCh == 2) mb.addEvent (juce::MidiMessage::noteOn (2, 69, (juce::uint8) 100), 0);
+                        if (onlyCh == 0 || onlyCh == 3) mb.addEvent (juce::MidiMessage::noteOn (3, 57, (juce::uint8) 100), 0);
+                    }
+                    extra (mb, pos);
+                    e.process (b, mb, p);
+                    all.copyFrom (0, pos, b, 0, 0, juce::jmin (512, all.getNumSamples() - pos));
+                }
+                return all;
+            };
+            const int bend2 = 8192 + juce::roundToInt (8191.0 * 2.0 / 48.0);
+            auto bendCh2 = [&] (juce::MidiBuffer& mb, int pos) { if (pos == 4096) mb.addEvent (juce::MidiMessage::pitchWheel (2, bend2), 0); };
+            const double mpeBent = 1200.0 * std::log2 (pitchOf (mpePlay (true, 2, bendCh2), kA4 * std::pow (2.0, 2.0 / 12.0)) / kA4);
+            const double other = 1200.0 * std::log2 (pitchOf (mpePlay (true, 3, bendCh2), kA4 / 2.0) / (kA4 / 2.0));
+            const double offBent = 1200.0 * std::log2 (pitchOf (mpePlay (false, 2, bendCh2), kA4) / kA4);
+            auto rmsLate = [] (const juce::AudioBuffer<float>& b) { return juce::Decibels::gainToDecibels (b.getRMSLevel (0, 36000, 30000)); };
+            auto press3 = [&] (juce::MidiBuffer& mb, int pos) { if (pos == 4096) mb.addEvent (juce::MidiMessage::channelPressureChange (3, 127), 0); };
+            const float quiet2 = rmsLate (mpePlay (true, 2, [] (juce::MidiBuffer&, int) {})), pressed2 = rmsLate (mpePlay (true, 2, press3));
+            const float quiet3 = rmsLate (mpePlay (true, 3, [] (juce::MidiBuffer&, int) {})), pressed3 = rmsLate (mpePlay (true, 3, press3));
+            auto polyAt = [&] (juce::MidiBuffer& mb, int pos) { if (pos == 4096) mb.addEvent (juce::MidiMessage::aftertouchChange (3, 57, 127), 0); };
+            const float poly3 = rmsLate (mpePlay (false, 3, polyAt));
+            const float plain3 = rmsLate (mpePlay (false, 3, [] (juce::MidiBuffer&, int) {}));
+            std::cout << "MPE: channel 2 bent +2 HT -> " << mpeBent << " ct; channel 3 note meanwhile " << other << " ct; MPE off: " << offBent
+                      << " ct; pressure on ch 3: ch 2 note " << pressed2 - quiet2 << " dB, ch 3 note " << pressed3 - quiet3
+                      << " dB; poly aftertouch (MPE off) " << poly3 - plain3 << " dB" << std::endl;
+            check (std::abs (mpeBent - 200.0) < 5.0 && std::abs (other) < 5.0, "MPE: every note channel bends its own note");
+            check (std::abs (offBent) < 5.0, "MPE off: pitch bend does not bend (unchanged)");
+            check (std::abs (pressed2 - quiet2) < 0.5f && pressed3 - quiet3 > 6.0f, "MPE: pressure modulates only its own note");
+            check (poly3 - plain3 > 6.0f, "polyphonic aftertouch as pressure");
         }
+
+        testLucier (lib);
 
         // ---------------- motion: ellipse shape, drawn paths, hard jumps ----------------
         {

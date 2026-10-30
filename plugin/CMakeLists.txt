@@ -67,6 +67,9 @@ juce_add_binary_data(RysumData
         Resources/RysumFell-Italic.ttf
         Resources/k_praestant.jpg
         Resources/k_praestant16.jpg
+        Resources/org_pipes.jpg
+        Resources/org_jamb_l.jpg
+        Resources/org_jamb_r.jpg
         Resources/k_gedackt.jpg
         Resources/k_mixtur.jpg
         Resources/k_oktave2.jpg
@@ -75,6 +78,7 @@ juce_add_binary_data(RysumData
         Resources/k_trompete.jpg
         Resources/knob_bare.jpg
         Resources/keys.jpg
+        Resources/orgel.txt
         Resources/wall.jpg
         Resources/grain.png
         Resources/fabian_hrir.bin)
@@ -117,8 +121,10 @@ target_sources(Rysum PRIVATE
     Source/Convolver.cpp
     Source/Binaural.cpp
     Source/RoomTail.cpp
+    Source/Lucier.cpp
     Source/SofaGunzip.cpp
     Source/PluginProcessor.cpp
+    Source/ProcessorScenes.cpp
     Source/PluginEditor.cpp
     Source/ConsoleView.cpp
     Source/SpaceView.cpp
@@ -126,6 +132,7 @@ target_sources(Rysum PRIVATE
     Source/EffectsView.cpp
     Source/SaalView.cpp
     Source/MidiMapView.cpp
+    Source/OrganView.cpp
     Source/ModView.cpp)
 
 target_include_directories(Rysum PRIVATE Source)
@@ -167,6 +174,7 @@ if(RYSUM_BUILD_TESTS)
         Source/Convolver.cpp
         Source/Binaural.cpp
         Source/RoomTail.cpp
+        Source/Lucier.cpp
         Source/SofaGunzip.cpp)
     target_include_directories(RysumRenderTest PRIVATE Source)
     target_compile_definitions(RysumRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
@@ -177,8 +185,8 @@ if(RYSUM_BUILD_TESTS)
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
-        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp
-        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp Source/SaalView.cpp Source/MidiMapView.cpp)
+        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/Lucier.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/ProcessorScenes.cpp Source/PluginEditor.cpp
+        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp Source/SaalView.cpp Source/MidiMapView.cpp Source/OrganView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0

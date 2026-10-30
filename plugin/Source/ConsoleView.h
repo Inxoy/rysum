@@ -37,6 +37,22 @@ private:
     int playing = -1;
 };
 
+/** a scene slot A..D: click = go there (an empty one stores the sound), right-click = store / clear */
+class SceneButton : public juce::Button
+{
+public:
+    SceneButton (RysumProcessor& p, int s) : juce::Button (juce::String::charToString ((juce::juce_wchar) ('A' + s))), proc (p), slot (s) {}
+    void paintButton (juce::Graphics&, bool over, bool down) override;
+    using juce::Button::clicked;
+    void clicked (const juce::ModifierKeys&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    bool current = false;
+private:
+    void showMenu();
+    RysumProcessor& proc;
+    int slot;
+};
+
 class ConsoleView : public juce::Component
 {
 public:
@@ -56,6 +72,12 @@ private:
     juce::TextButton folderButton { juce::String (juce::CharPointer_UTF8 ("Samples-Ordner \xe2\x80\xa6")) };
     std::unique_ptr<juce::FileChooser> chooser;
     KeyStrip keys;
+    // scenes
+    std::vector<std::unique_ptr<SceneButton>> sceneButtons;
+    std::unique_ptr<ParamRow> sceneMorph;
+    juce::Rectangle<int> scenesArea, outInfoArea;
+    int shownSceneVersion = -1;
+    float shownMorph = -1.0f;
     juce::Rectangle<int> stopsArea, noiseArea, decayArea, outArea, keyboardArea, meterArea, photoArea;
     float meterL = 0, meterR = 0;
 };

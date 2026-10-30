@@ -527,9 +527,76 @@ public:
             std::cout << "Saal: engine RT " << proc->engine.roomRtLow.load() << " s, tail in use " << proc->engine.tailSerialInUse.load() << ", "
                       << proc->engine.erActive.load() << " sounds with reflections"
                       << (proc->engine.erActive.load() > 0 && proc->engine.tailSerialInUse.load() != 0xffffffffu ? "  ok" : "  FAIL") << std::endl;
+            // Lucier mode on: the response of 12 passes is built in the background, the engine takes it
+            auto* L = proc->apvts.getParameter ("lucOn");
+            L->setValueNotifyingHost (1.0f);
+            if (auto* g = proc->apvts.getParameter ("lucGen")) g->setValueNotifyingHost (g->convertTo0to1 (12.0f));
+            for (int i = 0; i < 60 && proc->getLucierView().curve.empty(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+            for (int b = 0; b < 200; ++b) { juce::MidiBuffer mb; proc->processBlock (st, mb); }
+            const auto& lv = proc->getLucierView();
+            std::cout << "Lucier: " << lv.what << ", gen " << lv.generation << ", " << lv.peaks.size() << " resonances, first "
+                      << (lv.peaks.empty() ? 0.0f : lv.peaks[0]) << " Hz, engine level " << proc->engine.lucierLevel.load()
+                      << (lv.curve.size() > 10 && proc->engine.lucierSerialInUse.load() != 0xffffffffu ? "  ok" : "  FAIL") << std::endl;
             shoot (2, "ui_saal.png");
+            L->setValueNotifyingHost (0.0f);
             { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 64), 0); proc->processBlock (st, mb); }
             P->setValueNotifyingHost (0.0f);
+        }
+
+        {
+            // scenes: A with a soft Gedackt, B louder with more wind leaks; half way glides, switches change at the middle
+            auto setReal = [&] (const char* id, float v) { if (auto* q = proc->apvts.getParameter (id)) q->setValueNotifyingHost (q->convertTo0to1 (v)); };
+            auto real = [&] (const char* id) { return proc->apvts.getRawParameterValue (id)->load(); };
+            setReal ("vol1", -10.0f); setReal ("fxLeakLevel", 0.0f); setReal ("tremOn", 0.0f); setReal ("sceneMorph", 0.0f);
+            proc->storeScene (0);
+            setReal ("vol1", 2.0f); setReal ("fxLeakLevel", 0.8f); setReal ("tremOn", 1.0f);
+            proc->storeScene (1);
+            const float master0 = real ("master");
+            setReal ("sceneMorph", 0.25f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+            const float v25 = real ("vol1"), t25 = real ("tremOn");
+            setReal ("sceneMorph", 0.75f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+            const float v75 = real ("vol1"), t75 = real ("tremOn"), l75 = real ("fxLeakLevel");
+            // stored in the state
+            juce::MemoryBlock mb; proc->getStateInformation (mb);
+            proc->clearScene (0); proc->clearScene (1);
+            proc->setStateInformation (mb.getData(), (int) mb.getSize());
+            const bool kept = proc->isSceneStored (0) && proc->isSceneStored (1) && ! proc->isSceneStored (2);
+            std::cout << "scenes: at 25 % vol " << v25 << " dB trem " << t25 << ", at 75 % vol " << v75 << " dB trem " << t75 << " leaks " << l75
+                      << ", master unchanged " << (real ("master") == master0) << ", kept in the state " << kept
+                      << ((std::abs (v25 - (-7.0f)) < 0.6f && t25 < 0.5f && std::abs (v75 - (-1.0f)) < 0.6f && t75 > 0.5f && kept) ? "  ok" : "  FAIL") << std::endl;
+            shoot (0, "ui_spieltisch.png");
+            proc->clearScene (0); proc->clearScene (1);
+            setReal ("sceneMorph", 0.0f); setReal ("vol1", 0.0f); setReal ("fxLeakLevel", 0.0f); setReal ("tremOn", 0.0f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+
+            // dice: wild changes things, keeps master/output, at least one stop; undo restores
+            juce::MemoryBlock before; proc->getStateInformation (before);
+            std::vector<float> normBefore;
+            for (auto* q : proc->getParameters()) normBefore.push_back (q->getValue());
+            const float m0 = real ("master");
+            proc->dice (true);
+            int stops = 0, changed = 0;
+            for (int s2 = 0; s2 < rysum::kNumStops; ++s2) stops += real (RysumProcessor::stopParamId (s2).toRawUTF8()) > 0.5f;
+            juce::MemoryBlock after; proc->getStateInformation (after);
+            changed = after == before ? 0 : 1;
+            proc->undoDice();
+            juce::MemoryBlock undone; proc->getStateInformation (undone);
+            float worstUndo = 0.0f;
+            { int i = 0; for (auto* q : proc->getParameters()) worstUndo = std::max (worstUndo, std::abs (q->getValue() - normBefore[(size_t) i++])); }
+            const bool restored = worstUndo < 1.0e-4f;
+            std::cout << "dice: changed " << changed << ", stops pulled " << stops << ", master kept " << (real ("master") == m0)
+                      << ", undo restores (worst " << worstUndo << ")" << ((changed && stops > 0 && real ("master") == m0 && restored) ? "  ok" : "  FAIL") << std::endl;
+            if (! restored)
+            {
+                auto xa = proc->getXmlFromBinary (before.getData(), (int) before.getSize())->toString();
+                auto xb = proc->getXmlFromBinary (undone.getData(), (int) undone.getSize())->toString();
+                juce::StringArray la, lb; la.addLines (xa); lb.addLines (xb);
+                for (int i = 0, shown = 0; i < juce::jmax (la.size(), lb.size()) && shown < 6; ++i)
+                    if (la[i] != lb[i]) { std::cout << "- " << la[i].substring (0, 200) << "\n+ " << lb[i].substring (0, 200) << std::endl; ++shown; }
+            }
+            shoot (6, "ui_orgel.png");
         }
 
         // full screen: the interface moves into a window covering the screen, and back

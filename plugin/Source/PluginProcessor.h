@@ -4,6 +4,7 @@
 #include "Convolver.h"
 #include "Binaural.h"
 #include "Scala.h"
+#include "Lucier.h"
 #include <map>
 #include <deque>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -128,6 +129,36 @@ public:
     juce::String getLoadStatus() const { const juce::ScopedLock sl (statusLock); return loadStatus; }
     bool isLoading() const { return loading.load(); }
 
+    // Lucier mode (message thread): what the room does to the sound after n passes
+    struct LucierView
+    {
+        std::vector<float> curve;          // dB, LucierResult::kCurvePoints
+        std::vector<float> peaks;          // Hz
+        float generation = 0.0f;
+        juce::String what, status;
+        int version = 0;
+    };
+    const LucierView& getLucierView() const { return lucView; }
+
+    // scenes (message thread): up to four snapshots of all sound settings, "Szene" blends between them
+    static constexpr int kNumScenes = 4;
+    void storeScene (int slot);
+    void clearScene (int slot);
+    bool isSceneStored (int slot) const { return slot >= 0 && slot < kNumScenes && ! scenes[(size_t) slot].empty(); }
+    void goToScene (int slot);
+    int getSceneVersion() const { return sceneVersion; }
+
+    // dice (message thread): random settings within the chosen groups, gently or wildly; one step undo
+    enum DiceGroup { dgRegister, dgRaum, dgSaal, dgKlang, dgSpieltisch, dgEffekte, dgModulation, dgLucier, kNumDiceGroups };
+    static juce::StringArray diceGroupNames();
+    bool isDiceGroupOn (int g) const { return g >= 0 && g < kNumDiceGroups && diceGroups[(size_t) g]; }
+    void setDiceGroupOn (int g, bool on) { if (g >= 0 && g < kNumDiceGroups) diceGroups[(size_t) g] = on; }
+    void dice (bool wild);
+    bool canUndoDice() const { return diceUndo.isValid(); }
+    void undoDice();
+    float getLucierGeneration() const { return lucEffective; }
+    void resetLucierGrowth() { lucGrown = 0.0f; }
+
     // room / impulse response (message thread)
     void loadIr (const juce::File& file);
     void clearIr();
@@ -204,7 +235,7 @@ private:
         int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
             freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
             releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
-            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0, mtsCont = 0;
+            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0, mtsCont = 0, mpe = 0, mpeBend = 0, lucOn = 0, lucMix = 0;
         std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
         std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
         std::array<int, rysum::kNumRoutes> modAmt {};
@@ -276,6 +307,36 @@ private:
     juce::File irFile;
     juce::String irStatus { juce::String::fromUTF8 ("keine \xe2\x80\x93 nur trocken") };
     juce::ThreadPool irPool { 1 };
+    // scenes: per slot (param index, normalised value); empty = not stored
+    std::array<std::vector<std::pair<int, float>>, kNumScenes> scenes;
+    int sceneVersion = 0, sceneVersionApplied = 0;
+    float morphApplied = -1.0f;
+    bool takesPartInScenes (const juce::String& id) const;
+    void applySceneMorph();
+    juce::ValueTree scenesState() const;
+    void applyScenesState (const juce::ValueTree& t);
+    struct MorphTimer : juce::Timer
+    {
+        explicit MorphTimer (RysumProcessor& p) : proc (p) {}
+        void timerCallback() override { proc.applySceneMorph(); }
+        RysumProcessor& proc;
+    } morphTimer { *this };
+    // dice
+    std::array<bool, kNumDiceGroups> diceGroups { true, true, false, true, true, true, true, false };
+    juce::ValueTree diceUndo;
+    juce::Random diceRng;
+    int diceGroupOf (const juce::String& id) const;
+    // Lucier mode: responses built on their own thread
+    juce::ThreadPool lucPool { 1 };
+    LucierView lucView;
+    float lucGrown = 0.0f, lucEffective = 1.0f;
+    bool lucBuilding = false;
+    juce::String builtLucKey, lucBaseKey;
+    std::shared_ptr<const rysum::LucierBase> lucBase;          // the pool thread reads it, the message thread swaps it
+    uint32_t lucSerial = 0;
+    std::deque<std::shared_ptr<const rysum::TailIR>> lucKeepAlive;
+    std::shared_ptr<const rysum::TailIR> pendingLucier;
+    void updateLucier (double dtSeconds);
     std::shared_ptr<rysum::Convolver> irActive;          // audio thread
     std::shared_ptr<rysum::Convolver> pendingIr;         // handed over (atomic_store / exchange)
     std::shared_ptr<rysum::Convolver> irUi, retiredIr;   // message thread keeps them alive

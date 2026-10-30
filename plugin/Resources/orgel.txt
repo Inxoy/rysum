@@ -1,0 +1,30 @@
+@middle
+# Die Orgel zu Rysum
+> Rysumer Kirche · Krummhörn, Ostfriesland · um 1440 / 1457
+## Geschichte
+Eine der ältesten spielbaren Orgeln der Welt und das älteste Instrument ihrer Art in Nordeuropa, das noch weitgehend seine originalen Pfeifen hat. Gebaut hat sie vermutlich Meister Harmannus aus Groningen. Nach der Chronik des Eggerik Beninga bezahlten die Rysumer Bauern sie mit ihren zehn besten Kühen, die über die Ems nach Groningen gebracht wurden – traditionell auf 1457 datiert, nach Hajo van Lengen eher um 1440.
+Ursprünglich stand die Orgel auf dem Lettner im Chor und war ein Blockwerk: alle Reihen klangen zusammen, nur der Praestant im Prospekt ließ sich allein spielen – mit dem Hebel über dem Notenpult, der bis heute so funktioniert. Die Pfeifen aus dick gehämmertem Blei klingen dunkel und eindringlich.
+## Umbauten
+- 1513 · Inschrift an der Empore (Victor Frese, Pastor Edo Eissink)
+- um 1680 · Joachim Kayser: sieben gedrechselte Registerknöpfe
+- 1736–38 · Matthias Amoor: Umfang erweitert, angehängtes Pedal, Gedackt aus älteren Pfeifen
+- 1941 · Karl Puchar: drei Register durch Fabrikpfeifen ersetzt
+- 1959/60 · Jürgen Ahrend und Gerhard Brunzema (Berater Cornelius H. Edskes): Sesquialtera, Mixtur und Trompete neu aus gehämmertem Blei; Klaviatur, Traktur, Windlade und Keilbälge nach dem Original; das Pedal entfernt
+- 1996–2009 · Hendrik Ahrend: gereinigt, Prospektpfeifen neu verzinnt
+@right
+## Disposition
+| Praestant 8′ | Prospekt, gotisch · Hebel
+| Gedackt 8′ | aus älteren Pfeifen, 1736–38
+| Octave 4′ | gotisch
+| Octave 2′ | gotisch
+| Sesquialtera II | Ahrend 1959/60
+| Mixtur III–IV | Ahrend 1959/60
+| Trompete 8′ | Ahrend 1959/60
+## Daten
+- Ein Manual, kurze Oktave (C – a″, 41 Tasten), kein Pedal
+- ¼-Komma mitteltönig, reine Terzen · a′ ≈ 444,5 Hz
+- Schleiflade, Keilbälge, 70 mm Wassersäule
+- Flügeltüren aus Eiche (um 1480 gefällt) mit Sonne, Mond und Sternen
+[photos]
+## Dieses Plugin
+~ Jede Pfeife einzeln in der Rysumer Kirche aufgenommen, die Fotos ebenso. Praestant 16′ gibt es an der Orgel nicht: im Plugin die Praestant-Pfeifen eine Oktave tiefer. Schriften: IM Fell DW Pica, UnifrakturMaguntia, IBM Plex (SIL OFL) · HRTF: FABIAN, TU Berlin (CC BY 4.0) · MTS-ESP: ODDSound (0BSD) · JUCE. Quellen: Wikipedia „Rysum organ“; Vox Humana Journal (2018).
