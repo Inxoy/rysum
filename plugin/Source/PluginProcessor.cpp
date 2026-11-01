@@ -52,7 +52,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "master", 1 }, u8 ("Lautst\xc3\xa4rke"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f), -12.0f,
                                                   AudioParameterFloatAttributes().withLabel ("dB")));
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "output", 1 }, "Ausgabe",
-                                                   StringArray { "Stereo", "AmbiX 1", "AmbiX 2", "AmbiX 3", "AmbiX 4", "AmbiX 5", "Binaural" }, 0));
+                                                   StringArray { "Stereo", "AmbiX 1", "AmbiX 2", "AmbiX 3", "AmbiX 4", "AmbiX 5", "Binaural", "Lautsprecher" }, 0));
+    // loudspeakers: AllRAD decoding of this order to the layout set up on the page "Lautsprecher"
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "spkOrder", 1 }, "Lautsprecher-Ordnung",
+                                                   StringArray { "1. Ordnung", "2. Ordnung", "3. Ordnung", "4. Ordnung", "5. Ordnung" }, 2));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "spkDistComp", 1 }, "Lautsprecher-Abstand ausgleichen", true));
     // binaural: Ambisonics of this order, decoded with HRTFs (FABIAN or an own SOFA file)
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "binOrder", 1 }, "Binaural-Ordnung",
                                                    StringArray { "1. Ordnung", "2. Ordnung", "3. Ordnung", "4. Ordnung", "5. Ordnung" }, 2));
@@ -280,6 +284,40 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                   AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + " HT"; })
                                                                                  .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
 
+    // ---- audio input ("Eingang", page "Raum"): live sound placed and moved like a pipe. In the instrument off by default
+    // (older projects / patches sound the same); in the effect version "Rysum FX" the input is the point, so on.
+#if RYSUM_FX
+    const bool inputDefault = true;
+#else
+    const bool inputDefault = false;
+#endif
+    {
+        auto dbIn = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= -59.9f ? String ("aus") : (v > 0 ? "+" : "") + String (v, 1) + " dB"; })
+                                                   .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); });
+        auto degIn = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0.5f ? "+" : "") + String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0"); })
+                                                    .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); });
+        auto spinIn = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return std::abs (v) < 0.05f ? String ("steht") : (v > 0 ? "+" : "") + String (v, std::abs (v) < 10.0f ? 1 : 0) + String::fromUTF8 ("\xc2\xb0/s"); })
+                                                     .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); });
+        l.add (std::make_unique<AudioParameterBool> (ParameterID { "inpOn", 1 }, "Eingang an", inputDefault));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpLevel", 1 }, "Eingang Pegel", NormalisableRange<float> (-60.0f, 12.0f, 0.1f), 0.0f, dbIn));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "inpMode", 1 }, String::fromUTF8 ("Eingang Kan\xc3\xa4le"), StringArray { "Mono", "Stereo" }, 1));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpAz", 1 }, "Eingang Richtung", NormalisableRange<float> (-180.0f, 180.0f, 0.1f), 0.0f, degIn));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpEl", 1 }, String::fromUTF8 ("Eingang H\xc3\xb6he"), NormalisableRange<float> (-15.0f, 90.0f, 0.1f), 10.0f, degIn));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpDist", 1 }, "Eingang Abstand", NormalisableRange<float> (0.5f, 40.0f, 0.01f, 0.4f), 4.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, v < 10.0f ? 1 : 0) + " m"; })
+                                                                                     .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpWidth", 1 }, "Eingang Breite", NormalisableRange<float> (0.0f, 180.0f, 0.1f), 60.0f, degIn));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpSpin", 1 }, "Eingang Kreisen", NormalisableRange<float> (-360.0f, 360.0f, 0.01f, 0.4f, true), 0.0f, spinIn));
+        StringArray follow { "eigener Ort" };
+        for (int s = 0; s < kNumStops; ++s) follow.add (String::fromUTF8 ("auf ") + prettyLabel (kStops[(size_t) s].label));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "inpFollow", 1 }, "Eingang Ort", follow, 0));
+        l.add (std::make_unique<AudioParameterBool> (ParameterID { "inpGate", 1 }, String::fromUTF8 ("Eingang: Tasten \xc3\xb6" "ffnen"), false));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpRelease", 1 }, "Eingang Ausklang", NormalisableRange<float> (0.01f, 4.0f, 0.001f, 0.4f), 0.3f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 1.0f ? String (roundToInt (v * 1000.0f)) + " ms" : String (v, 2) + " s"; })
+                                                                                     .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpSend", 1 }, "Eingang Hall-Anteil", NormalisableRange<float> (-60.0f, 12.0f, 0.1f), 0.0f, dbIn));
+    }
+
     // ---- shape of the motion per stop (page "Raum"): ellipse direction / tilt / form, drawn path, hard jumps
     for (int s = 0; s < kNumStops; ++s)
     {
@@ -297,8 +335,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     return l;
 }
 
+// the audio input: the instrument has a main input (Reaper: the track's own audio; the standalone app: the audio interface)
+// and a side chain (Ableton Live and others route other tracks there); the effect "Rysum FX" sits on an audio track
+juce::AudioProcessor::BusesProperties RysumProcessor::makeBuses()
+{
+    auto b = BusesProperties();
+#if RYSUM_FX
+    b = b.withInput ("Input", juce::AudioChannelSet::stereo(), true);
+#else
+    b = b.withInput (juce::String::fromUTF8 ("Eingang"), juce::AudioChannelSet::stereo(), true)
+         .withInput ("Sidechain", juce::AudioChannelSet::stereo(), true);
+#endif
+    return b.withOutput ("Output", juce::AudioChannelSet::ambisonic (kMaxOrder), true);
+}
+
 RysumProcessor::RysumProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::ambisonic (kMaxOrder), true)),
+    : AudioProcessor (makeBuses()),
       apvts (*this, nullptr, "RYSUM", createLayout())
 {
     for (int s = 0; s < kNumStops; ++s)
@@ -408,6 +460,7 @@ RysumProcessor::RysumProcessor()
     for (int r = 0; r < kNumRoutes; ++r) { ix.modAmt[(size_t) r] = I ("mod" + juce::String (r + 1) + "Amt"); routeSrc[(size_t) r] = -1; routeTgt[(size_t) r] = -1; }
     for (int k = 0; k < kNumFx; ++k) ix.fx[(size_t) k] = I (kFxIds[k]);
     for (int k = 0; k < kNumSim; ++k) ix.sim[(size_t) k] = I (kSimIds[k]);
+    for (int k = 0; k < kNumInp; ++k) ix.inp[(size_t) k] = I (kInpIds[k]);
     engine.setModHook (this);
 
     // MIDI controller assignments: every new instance starts with the ones saved last (Documents/Rysum/MIDI-Regler.xml);
@@ -415,6 +468,14 @@ RysumProcessor::RysumProcessor()
     if (auto xml = juce::XmlDocument::parse (midiMapFile()))
         applyMidiMapState (juce::ValueTree::fromXml (*xml));
     savedMapVersion = midiMapVersion.load();
+
+    {
+        // loudspeakers: the layout used last (Documents/Rysum/Lautsprecher.json), otherwise an octagon
+        rysum::SpeakerLayout l; juce::String err;
+        if (! (speakerDefaultFile().existsAsFile() && rysum::speakerLayoutFromJson (speakerDefaultFile().loadFileAsString(), l, err)))
+            l = rysum::speakerPresets()[4];
+        setSpeakerLayout (l, false);
+    }
 
     mts = MTS_RegisterClient();          // microtuning from an MTS-ESP master (if the MTS-ESP library is installed)
 
@@ -435,7 +496,9 @@ RysumProcessor::~RysumProcessor()
 
 bool RysumProcessor::isBusesLayoutSupported (const BusesLayout& busLayout) const
 {
-    if (busLayout.getMainInputChannels() > 0) return false;
+    // inputs: off, mono or stereo
+    for (const auto& in : busLayout.inputBuses)
+        if (in.size() > 2) return false;
     const int n = busLayout.getMainOutputChannels();
     return n >= 1 && n <= kMaxOutChannels;
 }
@@ -451,6 +514,8 @@ void RysumProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     hostRate = sampleRate;
     if (irActive != nullptr) irActive->reset();
     binBuf.setSize (kMaxAmbiChannels, juce::jmax (512, samplesPerBlock), false, true, false);   // reserved once (see processBlock)
+    spkRenderer.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
+    inBuf.setSize (2, juce::jmax (512, samplesPerBlock), false, true, false);
     if (binActive != nullptr) binActive->reset();
     if (rateChanged && irFile.existsAsFile())
         juce::MessageManager::callAsync ([this, alive = aliveFlag] { if (alive->load()) loadIr (irFile); });   // resample IR
@@ -501,6 +566,7 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     p.masterGain = dbToGain (V (ix.master));
     p.outputMode = juce::roundToInt (V (ix.output));
     if (p.outputMode == kBinauralOutput) p.outputMode = 1 + juce::roundToInt (binOrderParam->load());   // processBlock uses the decoder's order
+    if (p.outputMode == kSpeakerOutput) p.outputMode = spkOrderNow.load();       // processBlock uses the decoder's order
     p.clickLevel = V (ix.click);
     p.clickBlend = V (ix.clickBlend);
     p.releaseClick = V (ix.releaseClick);
@@ -551,6 +617,19 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     f.echoLevel = X (fxEchoLevel); f.echoTime = X (fxEchoTime); f.echoSync = X (fxEchoSync) > 0.5f;
     f.echoDiv = juce::roundToInt (X (fxEchoDiv)); f.echoRepeats = juce::roundToInt (X (fxEchoRepeats));
     f.echoFeedback = X (fxEchoFeedback); f.echoTurn = X (fxEchoTurn); f.echoTilt = X (fxEchoTilt); f.echoDamp = X (fxEchoDamp);
+
+    {
+        auto In = [&] (int k) { return V (ix.inp[(size_t) k]); };
+        auto& ip = p.input;
+        ip.on = In (inpOn) > 0.5f;
+        ip.level = In (inpLevel) <= -59.9f ? 0.0f : dbToGain (In (inpLevel));
+        ip.stereo = In (inpMode) > 0.5f;
+        ip.az = In (inpAz); ip.el = In (inpEl); ip.dist = In (inpDist); ip.width = In (inpWidth); ip.spin = In (inpSpin);
+        ip.follow = juce::roundToInt (In (inpFollow)) - 1;
+        ip.gate = In (inpGate) > 0.5f;
+        ip.release = In (inpRelease);
+        ip.send = In (inpSend) <= -59.9f ? 0.0f : dbToGain (In (inpSend));
+    }
 
     auto S = [&] (int k) { return V (ix.sim[(size_t) k]); };
     auto& r = p.room;
@@ -766,11 +845,45 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     const bool binaural = juce::roundToInt (output->load()) == kBinauralOutput && binActive != nullptr && buffer.getNumChannels() > 0;
     if (juce::roundToInt (output->load()) == kBinauralOutput)
         params.outputMode = binaural ? binActive->getOrder() : 0;
+    // loudspeakers: the same Ambisonics buffer, decoded with AllRAD to the layout's channels
+    if (auto pending = std::atomic_exchange (&pendingSpk, std::shared_ptr<const rysum::AllRadDecoder>()))
+        spkRenderer.setDecoder (std::move (pending));                 // still referenced by spkKeepAlive
+    const bool speakers = juce::roundToInt (output->load()) == kSpeakerOutput && spkRenderer.next() != nullptr
+                          && spkRenderer.next()->error.isEmpty() && buffer.getNumChannels() > 0;
+    if (juce::roundToInt (output->load()) == kSpeakerOutput)
+        params.outputMode = speakers ? spkRenderer.next()->order : 0;
     // (setSize with avoidReallocating: no allocation as long as the block fits what prepareToPlay reserved)
     if (binaural) binBuf.setSize (binActive->getNumChannels(), n, false, false, true);
-    juce::AudioBuffer<float>& work = binaural ? binBuf : buffer;
+    if (speakers) binBuf.setSize ((params.outputMode + 1) * (params.outputMode + 1), n, false, false, true);
+    juce::AudioBuffer<float>& work = binaural || speakers ? binBuf : buffer;
+
+    // the audio input (main input + side chain, summed) is copied first: the engine overwrites the buffer
+    {
+        bool any = false;
+        if (inBuf.getNumSamples() < n) inBuf.setSize (2, n, false, false, true);    // (only if the host sends a longer block than announced)
+        for (int b = 0; b < getBusCount (true); ++b)
+        {
+            const auto* bus = getBus (true, b);
+            if (bus == nullptr || ! bus->isEnabled()) continue;
+            const int nc = bus->getNumberOfChannels();
+            for (int c = 0; c < juce::jmin (2, nc); ++c)
+            {
+                const int idx = bus->getChannelIndexInProcessBlockBuffer (c);
+                if (idx < 0 || idx >= buffer.getNumChannels()) continue;
+                for (int dst = (nc == 1 ? 0 : c); dst <= (nc == 1 ? 1 : c); ++dst)
+                {
+                    if (! any) inBuf.clear (0, n);
+                    any = true;
+                    juce::FloatVectorOperations::add (inBuf.getWritePointer (dst), buffer.getReadPointer (idx), n);
+                }
+            }
+        }
+        if (! any) engine.setInput (nullptr, nullptr, 0);
+        else engine.setInput (inBuf.getReadPointer (0), inBuf.getReadPointer (1), n);
+    }
 
     engine.process (work, midi, params);
+    engine.setInput (nullptr, nullptr, 0);
     midi.clear();
 
     // ---- room: dry level + convolution with the loaded impulse response
@@ -832,6 +945,73 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         }
         for (int c = 2; c < buffer.getNumChannels(); ++c) buffer.clear (c, 0, n);
     }
+
+    // ---- loudspeakers (AllRAD)
+    if (speakers)
+        spkRenderer.process (binBuf.getArrayOfReadPointers(), binBuf.getNumChannels(), buffer.getArrayOfWritePointers(), buffer.getNumChannels(), n);
+
+    // ---- test noise on one loudspeaker (setting up a layout); straight to its channel, about -20 dBFS, pink-ish
+    {
+        const int t = speakerTest.load();
+        const auto* d = speakers ? spkRenderer.current() : nullptr;
+        if (t >= 0 && d != nullptr && t < (int) d->all.size())
+        {
+            const int ch = d->all[(size_t) t].channel - 1;
+            if (! d->all[(size_t) t].imaginary && ch >= 0 && ch < buffer.getNumChannels())
+            {
+                float* o = buffer.getWritePointer (ch);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float w = testNoise.bi();
+                    testLp1 += 0.05f * (w - testLp1);
+                    testLp2 = 0.6f * testLp2 + 0.4f * w;
+                    o[i] += 0.1f * (0.7f * testLp2 + 2.5f * testLp1);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// loudspeakers
+// ---------------------------------------------------------------------------
+juce::File RysumProcessor::speakerDefaultFile()
+{
+    return getPatchFolder().getParentDirectory().getChildFile ("Lautsprecher.json");
+}
+
+void RysumProcessor::setSpeakerLayout (const rysum::SpeakerLayout& l, bool rememberAsDefault)
+{
+    spkLayout = l;
+    if (rememberAsDefault)
+    {
+        speakerDefaultFile().getParentDirectory().createDirectory();
+        speakerDefaultFile().replaceWithText (rysum::speakerLayoutToJson (l));
+    }
+    rebuildSpeakers (true);
+}
+
+void RysumProcessor::rebuildSpeakers (bool force)
+{
+    const int order = 1 + juce::roundToInt (apvts.getRawParameterValue ("spkOrder")->load());
+    const bool comp = apvts.getRawParameterValue ("spkDistComp")->load() > 0.5f;
+    const juce::String key = juce::String (order) + (comp ? "c" : "-");
+    if (! force && key == spkBuiltKey) return;
+    spkBuiltKey = key;
+    auto d = rysum::buildAllRad (spkLayout, order, comp, ++spkSerial);       // a few ms: on the message thread
+    spkUi = d;
+    spkOrderNow = d->error.isEmpty() ? d->order : 0;
+    spkKeepAlive.push_back (d);
+    std::atomic_store (&pendingSpk, std::shared_ptr<const rysum::AllRadDecoder> (d));
+    ++spkVersion;
+    ++changeCounter;
+}
+
+juce::ValueTree RysumProcessor::speakersState() const
+{
+    juce::ValueTree t ("SPEAKERS");
+    t.setProperty ("json", rysum::speakerLayoutToJson (spkLayout), nullptr);
+    return t;
 }
 
 // ---------------------------------------------------------------------------
@@ -1180,7 +1360,16 @@ void RysumProcessor::loadSamples (const juce::File& folder)
 
 juce::File RysumProcessor::getCustomFolder() const
 {
+    if (customOverride != juce::File()) return customOverride;
     return samplesFolder != juce::File() ? SampleLibrary::customFolder (samplesFolder) : juce::File();
+}
+
+void RysumProcessor::setCustomFolder (const juce::File& dir)
+{
+    if (dir == customOverride) { reloadCustomSounds(); return; }
+    customOverride = dir.isDirectory() ? dir : juce::File();
+    reloadCustomSounds();
+    ++changeCounter;
 }
 
 int RysumProcessor::getNumCustomSounds() const
@@ -1194,10 +1383,12 @@ void RysumProcessor::reloadCustomSounds()
     auto old = std::atomic_load (&uiLibrary);
     if (old == nullptr || samplesFolder == juce::File()) return;
     const auto folder = samplesFolder;
-    irPool.addJob ([this, old, folder, alive = aliveFlag]
+    const auto dir = getCustomFolder();
+    customReloading = true;
+    irPool.addJob ([this, old, folder, dir, alive = aliveFlag]
     {
         auto lib = std::make_shared<SampleLibrary> (*old);       // pipes / clicks are shared, only the own sounds are new
-        lib->custom = SampleLibrary::loadCustom (folder);
+        lib->custom = SampleLibrary::loadCustomDir (dir);
         std::shared_ptr<const SampleLibrary> shared (lib);
         juce::MessageManager::callAsync ([this, shared, folder, alive]
         {
@@ -1209,6 +1400,7 @@ void RysumProcessor::reloadCustomSounds()
 void RysumProcessor::onLoaded (std::shared_ptr<const SampleLibrary> lib, const juce::String& err, const juce::File& folder)
 {
     loading = false;
+    const bool wasCustomReload = std::exchange (customReloading, false);
     if (lib == nullptr)
     {
         setStatus ("Keine Samples: " + err);
@@ -1226,6 +1418,8 @@ void RysumProcessor::onLoaded (std::shared_ptr<const SampleLibrary> lib, const j
     if (! lib->custom.empty()) s << ", " << (int) lib->custom.size() << juce::String::fromUTF8 (" eigene Ger\xc3\xa4usche");
     setStatus (s);
     ++changeCounter;
+    // a full load reads the standard folder: a chosen one is read right after
+    if (! wasCustomReload && customOverride != juce::File()) reloadCustomSounds();
 }
 
 void RysumProcessor::startAutoLoad()
@@ -1251,6 +1445,13 @@ void RysumProcessor::timerCallback()
         if (irFile.existsAsFile()) loadIr (irFile);
     }
     if (retireCountdown > 0 && --retireCountdown == 0) { retiredLibrary.reset(); retiredIr.reset(); retiredBin.reset(); }
+    rebuildSpeakers (false);
+    {
+        // decoders the audio thread no longer uses (the latest one always stays)
+        const uint32_t inUse = spkRenderer.serialInUse.load();
+        while (spkKeepAlive.size() > 1 && spkKeepAlive.front()->serial < inUse && std::atomic_load (&pendingSpk) == nullptr) spkKeepAlive.pop_front();
+        while (spkKeepAlive.size() > 8) spkKeepAlive.pop_front();
+    }
     // MIDI controller assignments changed (edited, learned, or a project brought its own): the next new instance starts with them
     if (midiMapVersion.load() != savedMapVersion && mmLearn.load() < 0)
     {
@@ -1342,8 +1543,10 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
     juce::ValueTree extra ("EXTRA");
     if (! forPatch) extra.setProperty ("samplesFolder", samplesFolder.getFullPathName(), nullptr);
     extra.setProperty ("irFile", irFile.getFullPathName(), nullptr);
+    extra.setProperty ("customFolder", customOverride.getFullPathName(), nullptr);
     if (! forPatch) extra.setProperty ("sofaFile", sofaFile.getFullPathName(), nullptr);
     extra.setProperty ("patch", patchName, nullptr);
+    if (forPatch && apvts.getRawParameterValue ("inpOn")->load() > 0.5f) extra.setProperty ("input", true, nullptr);   // a patch made for the input
     if (sclText.isNotEmpty())
     {
         // the tuning files themselves (not only their paths): the project / patch works on any computer
@@ -1396,6 +1599,7 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
         extra.appendChild (mod, nullptr);
     }
     if (! forPatch) extra.appendChild (midiMapState(), nullptr);       // controller assignments belong to the setup, not to the sound
+    if (! forPatch) extra.appendChild (speakersState(), nullptr);      // so does the loudspeaker layout
     extra.appendChild (scenesState(), nullptr);
     if (! forPatch)
     {
@@ -1426,7 +1630,7 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
     auto extra = state.getChildWithName ("EXTRA");
     const float keepOutput = output->load();
     // kept when a patch loads: headphone settings and the controller setup (MPE) belong to the player, not the sound
-    static const char* const keepIds[] { "binOrder", "binYaw", "binDfEq", "mpe", "mpeBend" };
+    static const char* const keepIds[] { "binOrder", "binYaw", "binDfEq", "mpe", "mpeBend", "inpOn", "spkOrder", "spkDistComp" };
     float keepVals[std::size (keepIds)] {};
     for (size_t i = 0; i < std::size (keepIds); ++i) keepVals[i] = apvts.getRawParameterValue (keepIds[i])->load();
     if (forPatch)
@@ -1450,6 +1654,9 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         // so do the headphone settings and MPE
         for (size_t i = 0; i < std::size (keepIds); ++i)
             if (auto* o = apvts.getParameter (keepIds[i])) o->setValueNotifyingHost (o->convertTo0to1 (keepVals[i]));
+        // the input stays as it is (it is part of the setup) - unless the patch is made for it: then it comes on
+        if ((bool) extra.getProperty ("input", false))
+            if (auto* o = apvts.getParameter ("inpOn")) o->setValueNotifyingHost (1.0f);
         // stops the patch does not describe get their default layout
         for (int s = 0; s < kNumStops; ++s)
         {
@@ -1531,6 +1738,12 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             if (autoLoadDone) loadIr (irf);           // otherwise the first timer tick loads it
         }
         else if (irf == juce::File() && irFile != juce::File() && autoLoadDone && ! forPatch) clearIr();   // patches without IR keep the room
+        {
+            // own sounds: a project always says which folder; a patch only if it was saved with a chosen one
+            const juce::File cf (extra["customFolder"].toString());
+            if (cf != juce::File() && cf.isDirectory()) { if (cf != customOverride) { customOverride = cf; if (autoLoadDone) reloadCustomSounds(); } }
+            else if (! forPatch && customOverride != juce::File()) { customOverride = juce::File(); if (autoLoadDone) reloadCustomSounds(); }
+        }
         applyScenesState (extra.getChildWithName ("SCENES"));
         if (! forPatch && extra.hasProperty ("diceGroups"))
         {
@@ -1541,6 +1754,9 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         {
             const auto mm = extra.getChildWithName ("MIDIMAP");
             if (mm.isValid()) applyMidiMapState (mm);
+            const auto sp = extra.getChildWithName ("SPEAKERS");
+            rysum::SpeakerLayout sl; juce::String err;
+            if (sp.isValid() && rysum::speakerLayoutFromJson (sp["json"].toString(), sl, err)) setSpeakerLayout (sl, false);
             const juce::File sf (extra["sofaFile"].toString());
             if (sf != sofaFile) setSofaFile (sf.existsAsFile() ? sf : juce::File());
         }
@@ -1890,7 +2106,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 8;
+    constexpr int kFactoryVersion = 9;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -1898,8 +2114,13 @@ void RysumProcessor::writeFactoryPatches()
     if (! folder.createDirectory()) return;
 
     struct Route { int src; juce::String tgt; float amt; bool uni = false; };
-    auto make = [&] (const juce::String& name, std::vector<std::pair<juce::String, double>> values, std::vector<Route> routesIn)
+    using Values = std::vector<std::pair<juce::String, double>>;
+    // scenes: each one = the patch's values with these changes on top; 'input' = made for the audio input (switches it on)
+    auto makeFull = [&] (const juce::String& name, Values values, std::vector<Route> routesIn, std::vector<Values> scenesIn, bool input)
     {
+        for (auto& sc : scenesIn)
+            for (auto& kv : sc)
+                if (paramIndex.count (kv.first) == 0) factoryWarnings.add (name + ": unknown scene parameter " + kv.first);
         for (auto& kv : values)
             if (paramIndex.count (kv.first) == 0) factoryWarnings.add (name + ": unknown parameter " + kv.first);
         for (auto& rt : routesIn)
@@ -1929,9 +2150,33 @@ void RysumProcessor::writeFactoryPatches()
                         state.getChild (i).setProperty ("value", routesIn[(size_t) r].amt, nullptr);
         }
         extra.appendChild (mod, nullptr);
+        if (input) extra.setProperty ("input", true, nullptr);
+        if (! scenesIn.empty())
+        {
+            juce::ValueTree scs ("SCENES");
+            for (size_t slot = 0; slot < scenesIn.size() && slot < (size_t) kNumScenes; ++slot)
+            {
+                juce::StringArray kv;
+                for (auto* prm : prmList)
+                {
+                    const auto id = prm->getParameterID();
+                    if (! takesPartInScenes (id)) continue;
+                    float v = prm->convertFrom0to1 (prm->getDefaultValue());
+                    for (auto& b : values) if (b.first == id) v = (float) b.second;
+                    for (auto& c : scenesIn[slot]) if (c.first == id) v = (float) c.second;
+                    kv.add (id + "=" + juce::String (prm->convertTo0to1 (v), 6));
+                }
+                juce::ValueTree sc ("SCENE");
+                sc.setProperty ("slot", (int) slot, nullptr);
+                sc.setProperty ("values", kv.joinIntoString (";"), nullptr);
+                scs.appendChild (sc, nullptr);
+            }
+            extra.appendChild (scs, nullptr);
+        }
         state.appendChild (extra, nullptr);
         if (auto xml = state.createXml()) xml->writeTo (folder.getChildFile (name + ".rysum"));
     };
+    auto make = [&] (const juce::String& name, Values values, std::vector<Route> routesIn) { makeFull (name, std::move (values), std::move (routesIn), {}, false); };
     const auto pipe = [] (int t) { return pipeTargetId (t); };
 
     make ("01 Init", {}, {});
@@ -2163,6 +2408,96 @@ void RysumProcessor::writeFactoryPatches()
           { { "windModel", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 },
             { "env1Mode", 1 }, { "env1Delay", 1.0f }, { "env1Attack", 6.0f }, { "env1Decay", 1.0f }, { "env1Sustain", 1.0f }, { "env1Release", 1.5f } },
           { { srcEnv1, "swind0", -0.88f }, { srcEnv1, "swind1", -0.85f }, { srcEnv1, "swind2", -0.9f }, { srcEnv1, "swind3", -0.8f } });
+
+    // ---- set 9: Lucier, expression (MPE / aftertouch), scenes, the audio input
+    currentSet = 9;
+    const auto pipes = [] (int t) { return pipeTargetId (t); };
+    make (u8 ("59 Lucier \xe2\x80\x93 Ich sitze in einem Raum"),
+          { { "stop1", 1 }, { "lucOn", 1 }, { "lucGen", 8.0f }, { "lucMix", 0.6f }, { "lucTime", 0.4f },
+            { "simW", 9.0f }, { "simL", 12.0f }, { "simH", 4.0f } }, {});
+    make (u8 ("60 Lucier \xe2\x80\x93 Wachsende Generationen"),
+          { { "stop0", 0 }, { "stop1", 1 }, { "stop2", 1 }, { "lucOn", 1 }, { "lucGen", 1.0f }, { "lucGrow", 1.5f }, { "lucMix", 0.75f } }, {});
+    make (u8 ("61 Lucier \xe2\x80\x93 Kammer aus Glas"),
+          { { "stop0", 0 }, { "stop3", 1 }, { "stop5", 1 }, { "lucOn", 1 }, { "lucGen", 22.0f }, { "lucMix", 0.85f }, { "lucTime", 0.8f },
+            { "simW", 3.2f }, { "simL", 4.1f }, { "simH", 2.6f }, { "simAbs", 0.02f }, { "simAbsFloor", 0.02f } }, {});
+    make ("62 Lucier atmet",
+          { { "stop1", 1 }, { "stop7", 1 }, { "lucOn", 1 }, { "lucGen", 10.0f }, { "lucMix", 0.5f },
+            { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.05f } },
+          { { srcLfo1, "lucMix", 0.35f } });
+    make ("63 Lucier im Dom",
+          { { "stop7", 1 }, { "stop1", 1 }, { "simOn", 1 }, { "simW", 30.0f }, { "simL", 90.0f }, { "simH", 32.0f }, { "simAbs", 0.04f },
+            { "lucOn", 1 }, { "lucGen", 5.0f }, { "lucMix", 0.45f } }, {});
+
+    // expression: MPE pressure / slide - polyphonic and channel aftertouch count as pressure too
+    make (u8 ("64 Druck \xe2\x80\x93 Schwellwerk"),
+          { { "stop1", 1 }, { "stop2", 1 }, { "vol0", -12.0f }, { "vol1", -12.0f }, { "vol2", -12.0f } },
+          { { srcPressure, pipes (tgtLevel), 0.33f }, { srcPressure, pipes (tgtBright), 0.3f } });
+    make (u8 ("65 Gleiten \xe2\x80\x93 Pfeifen wandern"),
+          { { "stop0", 0 }, { "stop1", 1 }, { "stop3", 1 } },
+          { { srcSlide, pipes (tgtAz), 0.5f }, { srcPressure, pipes (tgtDist), -0.35f } });
+    make (u8 ("66 Druck \xc3\xb6" "ffnet den Wind"),
+          { { "windModel", 1 }, { "stop1", 1 }, { "swind0", 0.35f }, { "swind1", 0.35f } },
+          { { srcPressure, "swind0", 0.65f }, { srcPressure, "swind1", 0.65f } });
+    make ("67 Vibrato unter dem Finger",
+          { { "stop2", 1 }, { "tremOn", 1 }, { "tremDepth", 0.0f }, { "tremRate", 5.5f } },
+          { { srcPressure, "tremDepth", 0.8f }, { srcSlide, pipes (tgtPitch), 0.02f } });
+
+    // scenes: "Ueberblenden" on the Spieltisch (or a fader / automation) moves from A to D
+    makeFull (u8 ("68 Szenen \xe2\x80\x93 Vom Fl\xc3\xbcstern zum Plenum"),
+              { { "stop0", 0 }, { "stop1", 1 }, { "vol1", -6.0f }, { "rate2", 0.08f } }, {},
+              { {},
+                { { "stop2", 1 }, { "motion2", 1 }, { "vol1", -3.0f } },
+                { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop7", 1 }, { "motion2", 1 }, { "vol1", 0.0f } },
+                { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop7", 1 }, { "stop5", 1 }, { "stop6", 1 }, { "motion2", 1 }, { "vol1", 0.0f },
+                  { "click", 0.4f }, { "irEnvelop", 0.9f } } }, false);
+    makeFull (u8 ("69 Szenen \xe2\x80\x93 Der Raum \xc3\xb6" "ffnet sich"),
+              { { "stop1", 1 }, { "stop2", 1 }, { "simOn", 1 }, { "simW", 3.0f }, { "simL", 4.0f }, { "simH", 2.5f }, { "simAbs", 0.3f }, { "master", -21.0f } }, {},
+              { {},
+                { { "simW", 10.0f }, { "simL", 16.0f }, { "simH", 6.0f }, { "simAbs", 0.1f } },
+                { { "simW", 22.0f }, { "simL", 45.0f }, { "simH", 15.0f }, { "simAbs", 0.05f } },
+                { { "simW", 30.0f }, { "simL", 90.0f }, { "simH", 32.0f }, { "simAbs", 0.03f }, { "lucOn", 1 }, { "lucGen", 4.0f }, { "lucMix", 0.4f } } }, false);
+    makeFull (u8 ("70 Szenen \xe2\x80\x93 Wanderung von selbst"),
+              { { "stop1", 1 }, { "lfo1Shape", (float) shTriangle }, { "lfo1Rate", 0.02f } },
+              { { srcLfo1, "sceneMorph", 1.0f, true } },
+              { {},
+                { { "motion0", 1 }, { "motion1", 1 }, { "rate0", 0.2f }, { "rate1", -0.15f }, { "ellipse0", 0.5f }, { "ellipse1", 0.5f } },
+                { { "motion0", 1 }, { "motion1", 1 }, { "rate0", 0.35f }, { "rate1", -0.3f }, { "stop3", 1 },
+                  { "fxEchoLevel", 0.6f }, { "fxEchoTurn", 120.0f } },
+                { { "stop0", 0 }, { "stop7", 1 }, { "stop3", 1 }, { "tremOn", 1 }, { "tremDepth", 0.4f }, { "degAmount", 0.4f }, { "degWobble", 0.5f },
+                  { "motion1", 2 }, { "rate1", 0.1f } } }, false);
+    makeFull (u8 ("71 Szenen \xe2\x80\x93 Verfall in vier Stufen"),
+              { { "stop1", 1 }, { "stop2", 1 } }, {},
+              { {},
+                { { "degAmount", 0.3f }, { "degWobble", 0.4f } },
+                { { "degAmount", 0.6f }, { "degBits", 6.0f }, { "degRate", 8000.0f }, { "wind", 0.4f }, { "degWobble", 0.4f } },
+                { { "degAmount", 0.9f }, { "degDropouts", 0.5f }, { "degBits", 4.0f }, { "degRate", 3000.0f }, { "wind", 0.7f }, { "degWobble", 0.6f },
+                  { "windModel", 1 } } }, false);
+
+    // the audio input (switches the input on): voice, instrument, anything - placed and moved with the pipes
+    makeFull (u8 ("72 Eingang \xe2\x80\x93 Stimme kreist"),
+              { { "stop0", 0 }, { "stop1", 1 }, { "vol1", -10.0f }, { "inpMode", 0 }, { "inpSpin", 25.0f }, { "inpDist", 3.5f }, { "inpEl", 15.0f },
+                { "irEnvelop", 0.6f } }, {}, {}, true);
+    makeFull (u8 ("73 Eingang \xe2\x80\x93 Auf der Mixtur"),
+              { { "stop0", 0 }, { "stop2", 1 }, { "stop5", 1 }, { "motion5", 1 }, { "rate5", 0.12f }, { "ellipse5", 0.5f },
+                { "inpFollow", 6 }, { "inpWidth", 120.0f } }, {}, {}, true);
+    makeFull (u8 ("74 Eingang \xe2\x80\x93 Ich sitze in einem Raum"),
+              { { "stop0", 0 }, { "inpMode", 0 }, { "inpDist", 2.0f }, { "lucOn", 1 }, { "lucGen", 1.0f }, { "lucGrow", 2.0f }, { "lucMix", 0.9f },
+                { "simW", 6.0f }, { "simL", 8.0f }, { "simH", 3.0f } }, {}, {}, true);
+    makeFull (u8 ("75 Eingang \xe2\x80\x93 Tasten \xc3\xb6" "ffnen die Stimme"),
+              { { "vol0", -8.0f }, { "motion0", 2 }, { "rate0", 0.3f }, { "depth0", 60.0f }, { "inpFollow", 1 }, { "inpGate", 1 }, { "inpRelease", 0.6f },
+                { "fxEchoLevel", 0.5f }, { "fxEchoTurn", 90.0f } }, {}, {}, true);
+    makeFull ("76 Eingang steuert die Orgel",
+              { { "stop1", 1 }, { "stop2", 1 }, { "swind0", 0.4f }, { "swind1", 0.4f }, { "swind2", 0.4f }, { "inpLevel", -6.0f } },
+              { { srcInput, "swind0", 0.6f }, { srcInput, "swind1", 0.6f }, { srcInput, "swind2", 0.6f }, { srcInput, pipes (tgtBright), 0.4f } }, {}, true);
+    makeFull ("77 Eingang im Spiegelsaal",
+              { { "stop0", 0 }, { "stop3", 1 }, { "vol3", -12.0f }, { "inpSpin", -40.0f }, { "simOn", 1 }, { "simW", 6.0f }, { "simL", 6.0f }, { "simH", 6.0f },
+                { "simAbs", 0.0f }, { "simAbsFloor", 0.0f }, { "simHigh", 0.0f }, { "simScatter", 0.05f }, { "master", -18.0f } }, {}, {}, true);
+    makeFull (u8 ("78 Eingang \xe2\x80\x93 Echo-Kompass"),
+              { { "stop0", 0 }, { "stop1", 1 }, { "vol1", -14.0f }, { "inpMode", 0 }, { "fxEchoLevel", 0.7f }, { "fxEchoTurn", 90.0f },
+                { "fxEchoRepeats", 6 }, { "fxEchoFeedback", 0.7f }, { "fxEchoTilt", 15.0f } }, {}, {}, true);
+    makeFull (u8 ("79 Eingang zerf\xc3\xa4llt"),
+              { { "stop0", 0 }, { "stop7", 1 }, { "vol7", -10.0f }, { "degMode", 1 }, { "degAmount", 0.6f }, { "degBits", 6.0f }, { "degRate", 6000.0f },
+                { "degDropouts", 0.3f }, { "inpWidth", 150.0f } }, {}, {}, true);
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

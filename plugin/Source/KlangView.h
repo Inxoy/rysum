@@ -9,6 +9,7 @@ namespace rysum::ui
 class KlangView : public juce::Component
 {
 public:
+    std::function<void()> onOpenSpeakers;      // the editor shows the page "Lautsprecher"
     explicit KlangView (RysumProcessor&);
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -23,6 +24,7 @@ private:
     std::vector<std::unique_ptr<ParamRow>> rows;
     std::vector<std::unique_ptr<juce::TextButton>> toggles;
     std::vector<std::unique_ptr<ButtonAtt>> toggleAtts;
+    juce::TextButton speakersButton { juce::String::fromUTF8 ("Lautsprecher (AllRAD) \xe2\x80\xa6") };
     juce::ComboBox temperament, binOrder;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> binOrderAtt;
     juce::TextButton sofaLoad { juce::String::fromUTF8 ("SOFA laden \xe2\x80\xa6") }, sofaReset { "FABIAN" }, binOn { "Binaural an" };

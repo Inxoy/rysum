@@ -69,6 +69,8 @@ public:
 
     /** reads all audio files of the own-sounds folder (mono, trimmed, peak-normalised) */
     static std::vector<NoiseSample> loadCustom (const juce::File& sampleFolder, std::function<bool()> shouldExit = {});
+    /** the same from any folder (with its subfolders) */
+    static std::vector<NoiseSample> loadCustomDir (const juce::File& dir, std::function<bool()> shouldExit = {});
 
     static bool looksLikeSampleFolder (const juce::File& f) { return f.getChildFile ("rysum_samples.json").existsAsFile(); }
 };

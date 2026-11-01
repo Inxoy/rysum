@@ -11,6 +11,12 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
 {
     addAndMakeVisible (console);
     addChildComponent (organ);
+    addChildComponent (speakers);
+    klang.onOpenSpeakers = [this] { showView (7); };
+    outInfoButton.setTooltip (juce::String::fromUTF8 ("Lautsprecher einrichten (AllRAD)"));
+    outInfoButton.setAlpha (0.0f);
+    outInfoButton.onClick = [this] { showView (current == 7 ? viewBeforeOrgan : 7); };
+    addAndMakeVisible (outInfoButton);
     logoButton.setTooltip (juce::String::fromUTF8 ("Ã" "ber die Orgel zu Rysum (nochmal klicken: zurÃ¼" "ck)"));
     logoButton.onClick = [this] { showView (current == 6 ? viewBeforeOrgan : 6); };
     addAndMakeVisible (logoButton);
@@ -64,7 +70,13 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
     if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("output")))
         outputChoice.addItemList (choice->choices, 1);
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "output", outputChoice);
-    outputChoice.setTooltip (juce::String::fromUTF8 ("Ausgabeformat: Stereo, AmbiX (ACN/SN3D) oder Binaural f\xc3\xbcr Kopfh\xc3\xb6rer (Einstellungen: Seite Klang)"));
+    outputChoice.setTooltip (juce::String::fromUTF8 ("Ausgabeformat: Stereo, AmbiX (ACN/SN3D), Binaural f\xc3\xbcr Kopfh\xc3\xb6rer (Einstellungen: Seite Klang) "
+                                                     "oder Lautsprecher (AllRAD, Klick auf die Kanalanzeige daneben)"));
+    outputChoice.onChange = [this]
+    {
+        // switching to loudspeakers: show the layout once
+        if (outputChoice.getSelectedId() - 1 == RysumProcessor::kSpeakerOutput && current != 7 && ! speakerPageShown) { speakerPageShown = true; showView (7); }
+    };
     addAndMakeVisible (outputChoice);
     fullButton.onClick = [this] { if (onToggleFullscreen) onToggleFullscreen(); };
     setFullscreenShown (false);
@@ -91,9 +103,10 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
 
 void RysumContent::showView (int v)
 {
-    if (v == 6 && current != 6) viewBeforeOrgan = current;
+    if ((v == 6 || v == 7) && current != 6 && current != 7) viewBeforeOrgan = current;
     current = v;
     organ.setVisible (v == 6);
+    speakers.setVisible (v == 7);
     console.setVisible (v == 0);
     space.setVisible (v == 1);
     saal.setVisible (v == 2);
@@ -114,6 +127,8 @@ void RysumContent::resized()
     fx.setBounds (body);
     saal.setBounds (body);
     organ.setBounds (body);
+    speakers.setBounds (body);
+    outInfoButton.setBounds (kOutX + kOutW + 2, 8, kFullX - 5 - (kOutX + kOutW + 2), kHeader - 16);
     logoButton.setBounds (24, 6, 116, 44);
     patchPrev.setBounds (152, 14, 22, 28);
     patchName.setBounds (177, 14, 112, 28);
@@ -211,6 +226,7 @@ void RysumContent::tick()
     if (mod.isVisible()) mod.refresh();
     if (fx.isVisible()) fx.refresh();
     if (saal.isVisible()) saal.refresh();
+    if (speakers.isVisible()) speakers.refresh();
     if (proc.patchVersion != shownPatchVersion)
     {
         shownPatchVersion = proc.patchVersion;
@@ -320,10 +336,13 @@ void RysumContent::paint (juce::Graphics& g)
     g.setFont (A.monoFont (11.0f));
 
     const int out = (int) proc.apvts.getRawParameterValue ("output")->load();
-    const bool bin = out == RysumProcessor::kBinauralOutput;
-    const int needed = out == 0 || bin ? 2 : (out + 1) * (out + 1);
+    const bool bin = out == RysumProcessor::kBinauralOutput, spk = out == RysumProcessor::kSpeakerOutput;
+    auto dec = proc.getSpeakerDecoder();
+    const int spkCh = dec != nullptr ? dec->numOutChannels : 0;
+    const int needed = out == 0 || bin ? 2 : spk ? spkCh : (out + 1) * (out + 1);
     const int have = proc.getTotalNumOutputChannels();
-    juce::String o = bin ? (proc.binauralReady() ? juce::String ("2 ch HRTF") : juce::String::fromUTF8 ("HRTF \xe2\x80\xa6")) : juce::String (needed) + " ch";
+    juce::String o = bin ? (proc.binauralReady() ? juce::String ("2 ch HRTF") : juce::String::fromUTF8 ("HRTF \xe2\x80\xa6"))
+                   : spk ? (dec != nullptr && dec->error.isEmpty() ? juce::String (spkCh) + " ch LS" : juce::String ("LS: Fehler")) : juce::String (needed) + " ch";
     if (have < needed) o = u8 ("nur ") + juce::String (have) + " ch!";
     g.setColour (have < needed ? col::white : col::faint);
     g.setFont (A.monoFont (10.0f));

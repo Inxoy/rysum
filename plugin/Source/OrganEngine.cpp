@@ -55,6 +55,9 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     erRing.assign ((size_t) kErSlots * (size_t) kErRing, 0.0f);
     for (auto& v : voices) v.erSlot = -1;
     for (auto& n : noise) n.erSlot = -1;
+    inRing.assign ((size_t) 2 * (size_t) kInRing, 0.0f);
+    for (auto& is : inSrc) { is = InSrc {}; }
+    inRunning = false; inGate = inLevelSm = inEnv = inFollowVal = 0.0f;
     tail.prepare (sr);
     lucier.prepare (sr);
     lucIn.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
@@ -1166,7 +1169,7 @@ int OrganEngine::allocSlot (int voice, int noiseVoice) noexcept
     if (best < 0) return -1;                   // all busy: this sound gets no own reflections (the tail still has it)
     auto& s = erSlots[(size_t) best];
     s.active = true; s.fresh = true;
-    s.voice = voice; s.noiseVoice = noiseVoice;
+    s.voice = voice; s.noiseVoice = noiseVoice; s.input = -1;
     s.drain = 0; s.numTaps = 0;
     for (auto& t : s.taps) t.lp = 0.0f;
     std::fill_n (erRing.data() + (size_t) best * (size_t) kErRing, kErRing, 0.0f);
@@ -1177,7 +1180,7 @@ void OrganEngine::releaseSlot (int& slot) noexcept
 {
     if (slot < 0 || slot >= (int) erSlots.size()) { slot = -1; return; }
     auto& s = erSlots[(size_t) slot];
-    s.voice = -1; s.noiseVoice = -1;
+    s.voice = -1; s.noiseVoice = -1; s.input = -1;
     float maxD = 0.0f;
     for (int t = 0; t < s.numTaps; ++t) maxD = juce::jmax (maxD, s.taps[(size_t) t].d1);
     s.drain = (int) maxD + 512;
@@ -1264,6 +1267,12 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
             const auto& nv = noise[(size_t) s.noiseVoice];
             if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p);
             else { s.noiseVoice = -1; s.drain = kErRing; }
+        }
+        else if (s.input >= 0)
+        {
+            const auto& is = inSrc[(size_t) s.input];
+            if (inRunning && is.erSlot == (int) si) updateSlotTaps (s, is.pos, 1.0f, p);
+            else { s.input = -1; s.drain = kErRing; }
         }
         else if ((s.drain -= n) <= 0) { s.active = false; continue; }
 
@@ -1606,6 +1615,7 @@ void OrganEngine::advanceModulation (const EngineParams& p, double dt) noexcept
     globalSrc[srcPitchWheel] = pitchWheel;
     globalSrc[srcPressure] = lastPress;
     globalSrc[srcSlide] = lastSlide;
+    globalSrc[srcInput] = inFollowVal;
     for (int i = 0; i < kNumSources; ++i) sourceOut[(size_t) i] = globalSrc[(size_t) i];
 }
 
@@ -1641,7 +1651,7 @@ Pos OrganEngine::displayPosition (int stop, int key, const EngineParams& p) cons
             else if (r.src >= srcEnv1 && r.src < srcEnv1 + kNumEnvs)
                 v = p.mod.env[(size_t) (r.src - srcEnv1)].perPipe ? 0.0f : sourceOut[(size_t) r.src].load();
             else if (r.src == srcKey)      v = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
-            else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity || r.src == srcPressure || r.src == srcSlide)
+            else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity || r.src == srcPressure || r.src == srcSlide || r.src == srcInput)
                 v = sourceOut[(size_t) r.src].load();
             pm[(size_t) r.target] += r.amount * shapeSource (r.src, v, r.uni);
             any = true;
@@ -1692,6 +1702,7 @@ float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) 
         case srcPitchWheel: return pitchWheel;
         case srcPressure: return voicePressure (v);
         case srcSlide:    return voiceSlide (v);
+        case srcInput:    return inFollowVal;
         default:          return 0.0f;
     }
 }
@@ -1712,6 +1723,7 @@ void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer
         chunkMidi.addEvents (midi, start, len, -start);
         EngineParams pc = pIn;
         pc.ppq = pIn.ppq + (start / sr) * pIn.bpm / 60.0;
+        followInput (start, len, pIn);
         advanceModulation (pc, len / sr);
         if (modHook != nullptr) modHook->modulate (pc, globalSrc.data());
         lastMod = pc.mod; haveLastMod = true;
@@ -1802,6 +1814,186 @@ void OrganEngine::renderLucier (juce::AudioBuffer<float>& out, int n, const Engi
     }
     if (! on && (lucRing -= n) <= 0) { lucRing = 0; lucRunning = false; lucDry = 1.0f; lucWetGain = 0.0f; }
     lucierSerialInUse = lucier.oldestSerialInUse();
+}
+
+// ---------------------------------------------------------------------------
+// audio input: one or two sources (left / right) placed and moved in the same space as the pipes
+// ---------------------------------------------------------------------------
+void OrganEngine::followInput (int start, int len, const EngineParams& p) noexcept
+{
+    // loudness of the input (after its level) as a modulation source - also while the input itself is not heard
+    double e = 0.0;
+    const float* l = inPtr[0];
+    const float* r = inPtr[1] != nullptr ? inPtr[1] : l;
+    if (l != nullptr && start + len <= inLen)
+        for (int i = start; i < start + len; ++i) e += 0.5 * ((double) l[i] * l[i] + (double) r[i] * r[i]);
+    const float pw = (float) (e / juce::jmax (1, len)) * p.input.level * p.input.level;
+    const float k = 1.0f - std::exp (-(float) len / ((pw > inEnv ? 0.01f : 0.2f) * (float) sr));
+    inEnv += k * (pw - inEnv);
+    const float db = 10.0f * std::log10 (inEnv + 1.0e-12f);
+    inFollowVal = juce::jlimit (0.0f, 1.0f, (db + 54.0f) / 54.0f);
+}
+
+void OrganEngine::renderInput (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept
+{
+    const auto& ip = p.input;
+    if (n <= 0 || n > kSubBlock || inRing.empty()) return;
+    // raw peak for the meter
+    {
+        float pk = 0.0f;
+        for (int c = 0; c < 2; ++c)
+            if (inPtr[c] != nullptr && roomOffset + n <= inLen)
+                pk = juce::jmax (pk, juce::FloatVectorOperations::findMaximum (inPtr[c] + roomOffset, n),
+                                 -juce::FloatVectorOperations::findMinimum (inPtr[c] + roomOffset, n));
+        inPeak = juce::jmax (pk, inPeak.load() * 0.93f);
+    }
+    if (! ip.on && ! inRunning)
+    {
+        inShowCount = 0;
+        return;
+    }
+    if (! inRunning)
+    {
+        std::fill (inRing.begin(), inRing.end(), 0.0f);
+        inRunning = true;
+        inGate = 0.0f; inLevelSm = 0.0f;
+        for (auto& is : inSrc) { is.fresh = true; is.lp = 0.0f; }
+    }
+
+    // level and gate (keys open it), per sample
+    std::array<float, kSubBlock> amp {};
+    bool anyKey = false;
+    for (int k = 0; k < kNumKeys && ! anyKey; ++k) anyKey = keyHeld[(size_t) k] || keySustained[(size_t) k];
+    const float gateT = ip.gate ? (anyKey ? 1.0f : 0.0f) : 1.0f;
+    const float levelT = ip.on ? ip.level : 0.0f;
+    const float ca = 1.0f - std::exp (-1.0f / (0.005f * (float) sr));
+    const float cr = 1.0f - std::exp (-1.0f / (juce::jmax (0.01f, ip.release) * (float) sr));
+    const float cl = 1.0f - std::exp (-1.0f / (0.02f * (float) sr));
+    for (int i = 0; i < n; ++i)
+    {
+        inGate += (gateT > inGate ? ca : cr) * (gateT - inGate);
+        inLevelSm += cl * (levelT - inLevelSm);
+        amp[(size_t) i] = inGate * inLevelSm;
+    }
+
+    // places (end of this slice; ramped from the last ones)
+    const double secs = (double) n / sr;
+    inSpin = std::fmod (inSpin + (double) ip.spin * secs, 360.0);
+    const int nSrc = ip.stereo ? 2 : 1;
+    const int mid = kNumKeys / 2;
+    for (int c = 0; c < 2; ++c)
+    {
+        auto& is = inSrc[(size_t) c];
+        if (c >= nSrc) { releaseSlot (is.erSlot); is.fresh = true; continue; }
+        Pos pos;
+        if (ip.follow >= 0 && ip.follow < kNumStops)
+        {
+            // riding on the pipes of a stop: left on the low side, right on the high side (width = how far apart)
+            const int w = nSrc == 2 ? juce::jlimit (0, mid, juce::roundToInt (ip.width / 180.0f * (float) mid)) : 0;
+            const int key = juce::jlimit (0, kNumKeys - 1, c == 0 ? mid - w : mid + w);
+            pos = currentPosition (ip.follow, key, p);
+            pos.az = wrapAz (pos.az + ip.az + (float) inSpin);
+        }
+        else
+        {
+            const float off = nSrc == 2 ? (c == 0 ? 0.5f : -0.5f) * ip.width : 0.0f;
+            pos = { wrapAz (ip.az + off + (float) inSpin), juce::jlimit (-90.0f, 90.0f, ip.el), juce::jlimit (kMinDist, kMaxDist, ip.dist) };
+        }
+        is.pos = pos;
+        gainsFor (pos, is.g1.data());
+        const float dg = distanceGain (pos.dist, p.distAmount);
+        for (auto& g : is.g1) g *= dg;
+        is.send1 = distanceGain (pos.dist, p.distAmount * 0.35f) * ip.send;
+        is.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
+        // distance takes time (sound travels): moving sources are Doppler-shifted, like the pipes
+        is.d1 = p.doppler > 0.0f ? juce::jlimit (0.0f, (float) (kInRing - 4 * kSubBlock),
+                                                 p.doppler * (pos.dist - kMinDist) / kSpeedOfSound * (float) sr) : 0.0f;
+        const float fc = juce::jlimit (1200.0f, 20000.0f, 20000.0f / (1.0f + p.air * pos.dist / 5.0f));
+        is.airA = fc >= 19999.0f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / (float) sr);
+        if (is.fresh) { is.g0 = is.g1; is.send0 = is.send1; is.sendAz0 = is.sendAz1; is.d0 = is.d1; is.fresh = false; }
+        if (roomOnNow && ip.on)
+        {
+            if (is.erSlot < 0) { is.erSlot = allocSlot (-1, -1); if (is.erSlot >= 0) erSlots[(size_t) is.erSlot].input = c; }
+        }
+        else releaseSlot (is.erSlot);
+        inShowAz[(size_t) c] = pos.az; inShowEl[(size_t) c] = pos.el; inShowDist[(size_t) c] = pos.dist;
+    }
+    inShowCount = ip.on ? nSrc : 0;
+
+    // into the delay lines
+    const float* l = inPtr[0];
+    const float* r = inPtr[1] != nullptr ? inPtr[1] : l;
+    const bool have = l != nullptr && roomOffset + n <= inLen;
+    for (int i = 0; i < n; ++i)
+    {
+        const uint32_t w = (inClock + (uint32_t) i) & (kInRing - 1);
+        const float a = have ? l[roomOffset + i] : 0.0f, b = have ? r[roomOffset + i] : 0.0f;
+        const float g = amp[(size_t) i];
+        if (nSrc == 2) { inRing[w] = a * g; inRing[(size_t) kInRing + w] = b * g; }
+        else           { inRing[w] = 0.5f * (a + b) * g; inRing[(size_t) kInRing + w] = 0.0f; }
+    }
+
+    // out of them: delayed, air-filtered, placed, into the room
+    std::array<float, kSubBlock> buf {}, bufRamp {};
+    const float inv = 1.0f / (float) n;
+    for (int c = 0; c < nSrc; ++c)
+    {
+        auto& is = inSrc[(size_t) c];
+        const float* ring = inRing.data() + (size_t) c * (size_t) kInRing;
+        float peak = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const float d = is.d0 + (is.d1 - is.d0) * (float) (i + 1) * inv;
+            const int di = (int) d;
+            const float fd = d - (float) di;
+            const uint32_t at = inClock + (uint32_t) i - (uint32_t) di;
+            const float x0 = ring[(at - 1u) & (kInRing - 1)], x1 = ring[at & (kInRing - 1)];
+            is.lp += is.airA * (x1 + fd * (x0 - x1) - is.lp);
+            buf[(size_t) i] = is.lp;
+            bufRamp[(size_t) i] = is.lp * (float) i;
+            peak = juce::jmax (peak, std::abs (is.lp));
+        }
+        if (peak > 1.0e-9f)
+        {
+            for (int ch = 0; ch < usedChannels; ++ch)
+            {
+                const float a = is.g0[(size_t) ch], b = is.g1[(size_t) ch];
+                const float dg = (b - a) * inv;
+                float* o = out.getWritePointer (ch);
+                if (std::abs (a) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf.data(), a, n);
+                if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufRamp.data(), dg, n);
+            }
+            const double a0 = juce::degreesToRadians ((double) is.sendAz0), a1 = juce::degreesToRadians ((double) is.sendAz1);
+            for (int k = 0; k < roomSends; ++k)
+            {
+                const int m = (k + 1) / 2;
+                const float w0 = k == 0 ? 1.0f : (float) (k % 2 == 1 ? std::cos (m * a0) : std::sin (m * a0));
+                const float w1 = k == 0 ? 1.0f : (float) (k % 2 == 1 ? std::cos (m * a1) : std::sin (m * a1));
+                const float g0 = is.send0 * w0, g1 = is.send1 * w1;
+                float* dst = roomSend[(size_t) k].data() + roomOffset;
+                if (std::abs (g0) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, buf.data(), g0, n);
+                if (std::abs (g1 - g0) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, bufRamp.data(), (g1 - g0) * inv, n);
+            }
+            if (is.erSlot >= 0)
+            {
+                float* er = erRing.data() + (size_t) is.erSlot * (size_t) kErRing;
+                for (int i = 0; i < n; ++i) er[(erClock + (uint32_t) i) & (kErRing - 1)] += buf[(size_t) i];
+            }
+        }
+        is.g0 = is.g1; is.send0 = is.send1; is.sendAz0 = is.sendAz1; is.d0 = is.d1;
+    }
+    inClock += (uint32_t) n;
+
+    // switched off: runs on until the delay lines and the fade are empty
+    if (ip.on || inLevelSm >= 1.0e-5f) inDrain = -1;
+    else if (inDrain < 0) inDrain = (int) juce::jmax (inSrc[0].d1, inSrc[1].d1) + 2 * kSubBlock;
+    else if ((inDrain -= n) <= 0)
+    {
+        inDrain = -1;
+        inRunning = false;
+        for (auto& is : inSrc) { releaseSlot (is.erSlot); is.fresh = true; }
+        inShowCount = 0;
+    }
 }
 
 void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& pIn)
@@ -2003,6 +2195,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     initFresh();                // voices started by stop changes / previews before any MIDI
     renderRange (out, pos, numSamples, numSamples, p);
     renderLeaks (out, numSamples, p);
+    renderInput (out, numSamples, p);       // the audio input: placed like a pipe, then everything below (wear, echoes, room, Lucier)
 
     // ---- degradation on the sum
     if (! p.deg.perPipe && p.deg.amount > 0.0001f)

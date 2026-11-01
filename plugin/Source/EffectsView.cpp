@@ -41,8 +41,8 @@ float EffectsView::value (const char* id) const
 EffectsView::EffectsView (RysumProcessor& p) : proc (p)
 {
     // ---- own sounds
-    openFolder.setTooltip (U ("Legt den Ordner samples/noise/eigene an (falls n\xc3\xb6tig) und \xc3\xb6" "ffnet ihn. "
-                              "WAV/AIFF/FLAC bis 20 s: Schrauben, Ketten, Holz, Metall \xe2\x80\x93 kurze, helle Ger\xc3\xa4usche orten sich am besten."));
+    openFolder.setTooltip (U ("\xc3\x96" "ffnet den Ordner im Explorer (der Standardordner samples/noise/eigene wird bei Bedarf angelegt) \xe2\x80\x93 "
+                              "Dateien hineinlegen, dann \xe2\x80\x9eNeu einlesen\xe2\x80\x9c. Kurze, helle Ger\xc3\xa4usche orten sich am besten."));
     rescan.setTooltip (U ("Liest den Ordner neu ein, ohne die Pfeifen neu zu laden"));
     openFolder.onClick = [this]
     {
@@ -52,6 +52,24 @@ EffectsView::EffectsView (RysumProcessor& p) : proc (p)
         dir.startAsProcess();
     };
     rescan.onClick = [this] { proc.reloadCustomSounds(); };
+    chooseFolder.setTooltip (U ("Einen beliebigen Ordner mit Ger\xc3\xa4uschen w\xc3\xa4hlen (WAV/AIFF/FLAC/OGG bis 20 s, auch in Unterordnern, bis 64 Dateien). "
+                                "Wird im Projekt und in Patches gespeichert."));
+    chooseFolder.onClick = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> (U ("Ordner mit eigenen Ger\xc3\xa4uschen"), proc.getCustomFolder());
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [this] (const juce::FileChooser& fc)
+                              {
+                                  const auto r = fc.getResult();
+                                  if (r.isDirectory()) proc.setCustomFolder (r);
+                                  else if (r.existsAsFile()) proc.setCustomFolder (r.getParentDirectory());
+                                  repaint();
+                              });
+    };
+    resetFolder.setTooltip (U ("Zur\xc3\xbc" "ck zum Standardordner samples/noise/eigene"));
+    resetFolder.onClick = [this] { proc.setCustomFolder ({}); repaint(); };
+    addAndMakeVisible (chooseFolder);
+    addChildComponent (resetFolder);
     addAndMakeVisible (openFolder);
     addAndMakeVisible (rescan);
     custPlace = &combo ("fxCustPlace");
@@ -109,9 +127,13 @@ void EffectsView::resized()
     {
         auto b = body (custBox);
         auto t = b.removeFromTop (24);
-        openFolder.setBounds (t.removeFromLeft (118));
+        chooseFolder.setBounds (t.removeFromLeft (132));
+        t.removeFromLeft (6);
+        openFolder.setBounds (t.removeFromLeft (70));
         t.removeFromLeft (6);
         rescan.setBounds (t.removeFromLeft (104));
+        t.removeFromLeft (6);
+        resetFolder.setBounds (t.removeFromLeft (24));
         b.removeFromTop (6);
         custPlace->setBounds (b.removeFromTop (24));
         b.removeFromTop (6);
@@ -171,6 +193,7 @@ void EffectsView::refresh()
     echoDiv->setAlpha (sync ? 1.0f : 0.45f);
     const int n = proc.getNumCustomSounds();
     if (n != shownCustom) { shownCustom = n; repaint (custBox); }
+    if (resetFolder.isVisible() != proc.hasOwnCustomFolder()) { resetFolder.setVisible (proc.hasOwnCustomFolder()); repaint (custBox); }
     for (auto& r : rows) r->repaint();
     repaint (echoCompass.expanded (14));
     repaint (partCompass.expanded (14));
@@ -253,8 +276,9 @@ void EffectsView::paint (juce::Graphics& g)
         drawCover (g, A.wall, getLocalBounds().toFloat(), 0.4f);
     }
     const int n = proc.getNumCustomSounds();
+    const juce::String where = proc.hasOwnCustomFolder() ? proc.getCustomFolder().getFileName() + U (" \xc2\xb7 ") : juce::String();
     drawSectionTitle (g, custBox, U ("Eigene Ger\xc3\xa4usche"),
-                      n > 0 ? juce::String (n) + (n == 1 ? " Datei" : " Dateien") : U ("Ordner leer \xe2\x86\x92 Klicks"));
+                      where + (n > 0 ? juce::String (n) + (n == 1 ? " Datei" : " Dateien") : U ("Ordner leer \xe2\x86\x92 Klicks")));
     drawSectionTitle (g, pathBox, "Trakturweg", U ("Spieltisch \xe2\x86\x92 Pfeife"));
     drawSectionTitle (g, crackBox, "Knistern", "an jeder Pfeife");
     drawSectionTitle (g, leakBox, "Windlecks", "zischende Stellen");

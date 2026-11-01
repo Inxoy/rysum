@@ -28,7 +28,16 @@ public:
         {
             std::cout << "status: " << proc->getLoadStatus() << std::endl;
             // a synthetic 4-channel AmbiX IR to exercise the room path
-            proc->setPlayConfigDetails (0, 36, 48000.0, 512);
+            {
+                // like a host: main input and side chain stereo, 5th-order output
+                juce::AudioProcessor::BusesLayout lay;
+                lay.inputBuses.add (juce::AudioChannelSet::stereo());
+                lay.inputBuses.add (juce::AudioChannelSet::stereo());
+                lay.outputBuses.add (juce::AudioChannelSet::ambisonic (5));
+                const bool okLayout = proc->setBusesLayout (lay);
+                proc->setRateAndBufferSizeDetails (48000.0, 512);
+                std::cout << "bus layout with inputs: " << (okLayout && proc->getTotalNumInputChannels() == 4 ? "ok" : "FAIL") << std::endl;
+            }
             proc->prepareToPlay (48000.0, 512);
             juce::AudioBuffer<float> ir (4, 48000);
             juce::Random rnd (5);
@@ -57,7 +66,7 @@ public:
             juce::MidiBuffer mb;
             if (b == 2) for (int m : { 57, 64, 69 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
             if (b == 1) { proc->apvts.getParameter ("swind2")->setValueNotifyingHost (0.4f); proc->apvts.getParameter ("vol1")->setValueNotifyingHost (0.6f); }
-            proc->processBlock (buf, mb);
+            buf.clear(), proc->processBlock (buf, mb);
         }
         // the room must add sound: same phrase with and without IR, compare the energy
         {
@@ -73,14 +82,14 @@ public:
                     juce::MidiBuffer mb;
                     if (b == 10) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
                     if (b == 40) mb.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
-                    proc->processBlock (buf, mb);
+                    buf.clear(), proc->processBlock (buf, mb);
                     for (int c = 0; c < 4; ++c) for (int i = 0; i < 512; ++i) e += (double) buf.getSample (c, i) * buf.getSample (c, i);
                 }
                 return e;
             };
             const double withIr = phrase();
             proc->clearIr();
-            { juce::MidiBuffer none; proc->processBlock (buf, none); }
+            { juce::MidiBuffer none; buf.clear(), proc->processBlock (buf, none); }
             const double dry = phrase();
             std::cout << "energy with IR / dry: " << withIr / dry << (withIr > dry * 1.2 ? "  ok" : "  FAIL") << std::endl;
             proc->loadIr (irFile);
@@ -128,7 +137,7 @@ public:
                     if (b == 0) for (int m : { 57, 60, 64, 69 }) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);   // earlier tests left keys down
                     if (b == 150) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
                     if (b == 250) mb.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
-                    proc->processBlock (st, mb);
+                    st.clear(), proc->processBlock (st, mb);
                     if (b > 170 && b < 250)
                         for (int i = 0; i < 512; ++i)
                         {
@@ -175,7 +184,7 @@ public:
             {
                 juce::MidiBuffer mb; int pos = 0;
                 for (auto& m : msgs) mb.addEvent (m, pos += 40);
-                proc->processBlock (st, mb);
+                st.clear(), proc->processBlock (st, mb);
             };
             const int k62 = rysum::keyIndexForMidi (62);
             auto held = [&] { return (proc->engine.heldMask.load() >> k62) & 1u; };
@@ -245,11 +254,15 @@ public:
                 proc->loadPatch (f);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
                 float peak = 0.0f; double e = 0.0; bool finite = true; long cnt = 0;
+                const bool feedInput = proc->apvts.getRawParameterValue ("inpOn")->load() > 0.5f;
+                rysum::XorShift noise (11);
                 for (int b = 0; b < 600; ++b)          // 6.4 s
                 {
                     juce::MidiBuffer mb;
                     if (b == 5)   for (int m : { 41, 53, 57, 60, 65, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) (b % 2 ? 60 : 110)), 0);
                     if (b == 420) for (int m : { 41, 53, 57, 60, 65, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                    buf.clear();
+                    if (feedInput) for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) buf.setSample (c, i, 0.1f * noise.bi());   // a patch for the input: something to hear
                     proc->processBlock (buf, mb);
                     for (int c = 0; c < 4; ++c)
                         for (int i = 0; i < 512; ++i)
@@ -262,12 +275,19 @@ public:
                 }
                 juce::MidiBuffer off;
                 for (int m = 36; m < 82; ++m) off.addEvent (juce::MidiMessage::noteOff (1, m), 0);
-                proc->processBlock (buf, off);
-                for (int b = 0; b < 300; ++b) { juce::MidiBuffer none; proc->processBlock (buf, none); }   // let tails / freeze die
+                buf.clear(), proc->processBlock (buf, off);
+                for (int b = 0; b < 300; ++b) { juce::MidiBuffer none; buf.clear(), proc->processBlock (buf, none); }   // let tails / freeze die
                 const float rmsDb = juce::Decibels::gainToDecibels ((float) std::sqrt (e / juce::jmax (1L, cnt)));
                 const bool ok = finite && peak > 1.0e-4f;
                 allOk = allOk && ok;
-                std::cout << "  " << f.getFileNameWithoutExtension() << ": peak " << juce::Decibels::gainToDecibels (peak) << " dB, rms W "
+                if (feedInput && std::getenv ("RYSUM_DEBUG_INPUT") != nullptr)
+                {
+                    const auto pp = proc->readParams();
+                    std::cout << "    input: on " << pp.input.on << " level " << pp.input.level << " dist " << pp.input.dist << " shown " << proc->engine.inShowCount.load()
+                              << " peak " << proc->engine.inPeak.load() << " out " << pp.outputMode << std::endl;
+                }
+                if (auto* io = proc->apvts.getParameter ("inpOn")) io->setValueNotifyingHost (0.0f);    // the next patch: without the input again
+                std::cout << "  " << f.getFileNameWithoutExtension() << (feedInput ? " [Eingang]" : "") << ": peak " << juce::Decibels::gainToDecibels (peak) << " dB, rms W "
                           << rmsDb << " dB" << (ok ? "" : "  FAIL") << std::endl;
             }
             std::cout << "all factory patches play: " << (allOk ? "ok" : "FAIL") << std::endl;
@@ -291,11 +311,11 @@ public:
             {
                 juce::MidiBuffer mb;
                 if (b == 1) for (int m : { 45, 52, 57, 64, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
-                proc->processBlock (buf, mb);
+                buf.clear(), proc->processBlock (buf, mb);
                 const float n = proc->getModulatedNorm (windIdx);
                 if (! std::isnan (n)) { lo = juce::jmin (lo, n); hi = juce::jmax (hi, n); }
             }
-            for (int b = 0; b < 200 && ! (proc->getModulatedNorm (windIdx) > 0.3f); ++b) { juce::MidiBuffer none; proc->processBlock (buf, none); }
+            for (int b = 0; b < 200 && ! (proc->getModulatedNorm (windIdx) > 0.3f); ++b) { juce::MidiBuffer none; buf.clear(), proc->processBlock (buf, none); }
             const float base = proc->apvts.getParameter ("wind")->getValue();
             std::cout << "wind modulated: base " << base << " range " << lo << " .. " << hi
                       << ((hi - lo > 0.3f && lo <= base + 1e-4f && hi > base) ? "  ok" : "  FAIL") << std::endl;
@@ -312,7 +332,7 @@ public:
                           << ((dSilent > 0.5f && dSound > 0.5f) ? "  ok" : "  FAIL") << std::endl;
                 proc->setRoute (19, rysum::srcLfo4, rysum::tgtEl);
                 setP ("mod20Amt", 0.2f);
-                juce::MidiBuffer none; proc->processBlock (buf, none);
+                juce::MidiBuffer none; buf.clear(), proc->processBlock (buf, none);
                 auto prm2 = proc->readParams();
                 std::cout << "slot 20: " << ((prm2.mod.routes[19].src == rysum::srcLfo4 && std::abs (prm2.mod.routes[19].amount - 0.2f) < 1e-4f) ? "ok" : "FAIL") << std::endl;
             }
@@ -327,7 +347,7 @@ public:
             auto cc = [&] (int ch, int num, int val)
             {
                 juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (ch, num, val), 10);
-                proc->processBlock (st, mb);
+                st.clear(), proc->processBlock (st, mb);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
             };
             const int knob = proc->learnMidiFor (proc->getParamIndex ("swind0"));
@@ -404,7 +424,7 @@ public:
             for (auto* id : { "click", "releaseClick", "wind", "irWet" }) P (id)->setValueNotifyingHost (0.0f);
             for (int r = 0; r < rysum::kNumRoutes; ++r) proc->clearRoute (r);       // earlier tests modulate the wind (pitch gusts)
             P ("output")->setValueNotifyingHost (0.0f);
-            { juce::MidiBuffer m; m.addEvent (juce::MidiMessage (sx, (int) sizeof (sx)), 0); proc->processBlock (st, m); }
+            { juce::MidiBuffer m; m.addEvent (juce::MidiMessage (sx, (int) sizeof (sx)), 0); st.clear(), proc->processBlock (st, m); }
             const auto status = proc->getTuningStatus();
             std::vector<float> rec;
             for (int b = 0; b < 140; ++b)
@@ -412,7 +432,7 @@ public:
                 juce::MidiBuffer m;
                 if (b == 0) m.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 100), 0);
                 if (b == 139) m.addEvent (juce::MidiMessage::noteOff (1, 69), 0);
-                proc->processBlock (st, m);
+                st.clear(), proc->processBlock (st, m);
                 if (b >= 60) for (int i = 0; i < 512; ++i) rec.push_back (st.getSample (0, i));
             }
             const double sr = proc->getSampleRate() > 0 ? proc->getSampleRate() : 48000.0;
@@ -470,7 +490,69 @@ public:
         };
         shoot (0, "ui_spieltisch.png");
         shoot (1, "ui_raum.png");
+        {
+            // the audio input: on, stereo, kreisend; some noise through the processor so the meter and the places show
+            auto setN = [&] (const char* id, float v) { if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v)); };
+            setN ("inpOn", 1.0f); setN ("inpSpin", 20.0f); setN ("inpWidth", 90.0f); setN ("inpAz", 30.0f); setN ("inpDist", 3.0f);
+            juce::AudioBuffer<float> io (36, 512);
+            rysum::XorShift r (5);
+            float meanAbs = 0.0f;
+            for (int b = 0; b < 40; ++b)
+            {
+                io.clear();
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) io.setSample (c, i, 0.2f * r.bi());
+                juce::MidiBuffer mb;
+                proc->processBlock (io, mb);
+                if (b > 30) meanAbs += io.getMagnitude (0, 0, 512) + io.getMagnitude (1, 0, 512);
+            }
+            std::cout << "input through the processor: out peak " << meanAbs / 18.0f << ", shown sources " << proc->engine.inShowCount.load()
+                      << ((proc->engine.inShowCount.load() == 2 && meanAbs > 0.01f) ? "  ok" : "  FAIL") << std::endl;
+            rysum::ui::SpaceView* sv = nullptr;
+            std::function<void (juce::Component*)> find = [&] (juce::Component* c)
+            {
+                if (auto* v = dynamic_cast<rysum::ui::SpaceView*> (c)) sv = v;
+                for (auto* ch : c->getChildren()) if (sv == nullptr) find (ch);
+            };
+            find (editor.get());
+            if (sv != nullptr) sv->selectInput();
+            shoot (1, "ui_eingang.png");
+            if (sv != nullptr) sv->selectStop (6);
+            setN ("inpOn", 0.0f); setN ("inpSpin", 0.0f); setN ("inpWidth", 60.0f); setN ("inpAz", 0.0f); setN ("inpDist", 4.0f);
+        }
         shoot (3, "ui_klang.png");
+        {
+            // loudspeakers: 7.1.4 at 3rd order through the processor - sound on the layout's channels only, the LFE channel silent
+            auto l714 = rysum::speakerPresets()[3];
+            proc->setSpeakerLayout (l714, false);
+            auto* o = proc->apvts.getParameter ("output");
+            const float outBefore = o->getValue();
+            o->setValueNotifyingHost (o->convertTo0to1 ((float) RysumProcessor::kSpeakerOutput));
+            juce::AudioBuffer<float> io (36, 512);
+            double e[36] {};
+            for (int b = 0; b < 60; ++b)
+            {
+                io.clear();
+                juce::MidiBuffer mb;
+                if (b == 2) for (int m : { 48, 55, 60, 64 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
+                proc->processBlock (io, mb);
+                if (b > 20) for (int c = 0; c < 36; ++c) e[c] += io.getRMSLevel (c, 0, 512);
+            }
+            int sounding = 0; for (int c = 0; c < 12; ++c) sounding += e[c] > 1.0e-4 ? 1 : 0;
+            double rest = 0; for (int c = 12; c < 36; ++c) rest += e[c];
+            proc->speakerTest = 0;
+            io.clear(); { juce::MidiBuffer none; proc->processBlock (io, none); }
+            proc->speakerTest = -1;
+            std::cout << "loudspeakers 7.1.4: " << sounding << " of 12 channels sound, LFE " << e[3] << ", above 12: " << rest
+                      << ((sounding == 11 && e[3] == 0.0 && rest == 0.0) ? "  ok" : "  FAIL") << std::endl;
+            juce::MemoryBlock mb; proc->getStateInformation (mb);
+            proc->setSpeakerLayout (rysum::speakerPresets()[0], false);
+            proc->setStateInformation (mb.getData(), (int) mb.getSize());
+            std::cout << "loudspeaker layout in the state: " << (proc->getSpeakerLayout().speakers.size() == 11 ? "ok" : "FAIL") << std::endl;
+            shoot (7, "ui_lautsprecher.png");
+            for (int b = 0; b < 20; ++b) { io.clear(); juce::MidiBuffer mb; if (b == 0) for (int m : { 48, 55, 60, 64 }) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0); proc->processBlock (io, mb); }
+            o->setValueNotifyingHost (outBefore);
+            proc->setSpeakerLayout (rysum::speakerPresets()[4], false);
+        }
         shoot (5, "ui_mod.png");
         {
             proc->apvts.getParameter ("windModel")->setValueNotifyingHost (1.0f);
@@ -506,6 +588,37 @@ public:
             // effects page with some effects switched on (so the diagrams show something)
             for (auto [id, v] : { std::pair<const char*, float> { "fxEchoLevel", 0.5f }, { "fxPartSpread", 70.0f }, { "fxEchoTilt", 10.0f } })
                 if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+            {
+                // own sounds from a chosen folder (not samples/noise/eigene): read, kept in the state, back to standard
+                auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_own_sounds_test");
+                dir.deleteRecursively(); dir.getChildFile ("sub").createDirectory();
+                juce::AudioBuffer<float> snd (1, 9600);
+                for (int i = 0; i < 9600; ++i) snd.setSample (0, i, 0.3f * std::exp (-i / 900.0f) * std::sin (i * 0.7f));
+                for (auto name : { "a.wav", "sub/b.wav" })
+                {
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (dir.getChildFile (name)), 48000.0, 1, 24, {}, 0));
+                    w->writeFromAudioSampleBuffer (snd, 0, 9600);
+                }
+                auto waitFor = [&] (int n) { for (int k = 0; k < 150 && proc->getNumCustomSounds() != n; ++k) juce::MessageManager::getInstance()->runDispatchLoopUntil (20); };
+                const int before = proc->getNumCustomSounds();
+                proc->setCustomFolder (dir);
+                waitFor (2);
+                const int got = proc->getNumCustomSounds();
+                juce::MemoryBlock mb; proc->getStateInformation (mb);
+                proc->setCustomFolder ({});
+                waitFor (before);
+                proc->setStateInformation (mb.getData(), (int) mb.getSize());
+                waitFor (2);
+                const bool restored = proc->getCustomFolder() == dir && proc->getNumCustomSounds() == 2;
+                shoot (4, "ui_effekte_ordner.png");
+                proc->setCustomFolder ({});
+                waitFor (before);
+                std::cout << "own sounds from a chosen folder: read " << got << ", from the state " << restored << ", back to standard "
+                          << (! proc->hasOwnCustomFolder() && proc->getNumCustomSounds() == before)
+                          << ((got == 2 && restored && ! proc->hasOwnCustomFolder()) ? "  ok" : "  FAIL") << std::endl;
+                dir.deleteRecursively();
+            }
             shoot (4, "ui_effekte.png");
             for (auto* id : { "fxEchoLevel", "fxPartSpread", "fxEchoTilt" })
                 if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
@@ -519,10 +632,10 @@ public:
             {
                 juce::MidiBuffer mb;
                 if (b == 2) mb.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100), 0);
-                proc->processBlock (st, mb);
+                st.clear(), proc->processBlock (st, mb);
             }
             for (int i = 0; i < 40 && ! proc->getRoomStatus().contains ("Strahlen"); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
-            for (int b = 0; b < 20; ++b) { juce::MidiBuffer mb; proc->processBlock (st, mb); }        // the engine takes the response
+            for (int b = 0; b < 20; ++b) { juce::MidiBuffer mb; st.clear(), proc->processBlock (st, mb); }        // the engine takes the response
             std::cout << "Saal: " << proc->getRoomStatus() << (proc->getRoomStatus().contains ("Strahlen") ? "  ok" : "  FAIL") << std::endl;
             std::cout << "Saal: engine RT " << proc->engine.roomRtLow.load() << " s, tail in use " << proc->engine.tailSerialInUse.load() << ", "
                       << proc->engine.erActive.load() << " sounds with reflections"
@@ -532,14 +645,14 @@ public:
             L->setValueNotifyingHost (1.0f);
             if (auto* g = proc->apvts.getParameter ("lucGen")) g->setValueNotifyingHost (g->convertTo0to1 (12.0f));
             for (int i = 0; i < 60 && proc->getLucierView().curve.empty(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
-            for (int b = 0; b < 200; ++b) { juce::MidiBuffer mb; proc->processBlock (st, mb); }
+            for (int b = 0; b < 200; ++b) { juce::MidiBuffer mb; st.clear(), proc->processBlock (st, mb); }
             const auto& lv = proc->getLucierView();
             std::cout << "Lucier: " << lv.what << ", gen " << lv.generation << ", " << lv.peaks.size() << " resonances, first "
                       << (lv.peaks.empty() ? 0.0f : lv.peaks[0]) << " Hz, engine level " << proc->engine.lucierLevel.load()
                       << (lv.curve.size() > 10 && proc->engine.lucierSerialInUse.load() != 0xffffffffu ? "  ok" : "  FAIL") << std::endl;
             shoot (2, "ui_saal.png");
             L->setValueNotifyingHost (0.0f);
-            { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 64), 0); proc->processBlock (st, mb); }
+            { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 64), 0); st.clear(), proc->processBlock (st, mb); }
             P->setValueNotifyingHost (0.0f);
         }
 

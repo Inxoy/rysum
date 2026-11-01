@@ -33,12 +33,17 @@ option(RYSUM_DEV "Build the side-by-side development version 'Rysum Dev'" OFF)
 if(RYSUM_DEV)
     set(RYSUM_PRODUCT "Rysum Dev")
     set(RYSUM_CODE Rys2)
+    set(RYSUM_FX_CODE Rys4)
     set(RYSUM_BUNDLE "org.rysum.organ.dev")
 else()
     set(RYSUM_PRODUCT "Rysum")
     set(RYSUM_CODE Rys1)
+    set(RYSUM_FX_CODE Rys3)
     set(RYSUM_BUNDLE "org.rysum.organ")
 endif()
+# The same plugin as an audio effect ("Rysum FX"): for audio tracks - its input is placed in space, MIDI from
+# another track still plays the organ. Turn off with -DRYSUM_BUILD_FX=OFF to build only the instrument (faster).
+option(RYSUM_BUILD_FX "Also build the effect version 'Rysum FX'" ON)
 
 juce_add_plugin(Rysum
     PRODUCT_NAME "${RYSUM_PRODUCT}"
@@ -115,13 +120,14 @@ else()
     target_link_libraries(rysum_mtsesp PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
-target_sources(Rysum PRIVATE
+set(RYSUM_PLUGIN_SOURCES
     Source/SampleLibrary.cpp
     Source/OrganEngine.cpp
     Source/Convolver.cpp
     Source/Binaural.cpp
     Source/RoomTail.cpp
     Source/Lucier.cpp
+    Source/Speakers.cpp
     Source/SofaGunzip.cpp
     Source/PluginProcessor.cpp
     Source/ProcessorScenes.cpp
@@ -133,32 +139,62 @@ target_sources(Rysum PRIVATE
     Source/SaalView.cpp
     Source/MidiMapView.cpp
     Source/OrganView.cpp
+    Source/SpeakerView.cpp
     Source/ModView.cpp)
 
-target_include_directories(Rysum PRIVATE Source)
+function(rysum_setup_plugin target)
+    target_sources(${target} PRIVATE ${RYSUM_PLUGIN_SOURCES})
+    target_include_directories(${target} PRIVATE Source)
+    target_compile_definitions(${target} PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(${target}
+        PRIVATE
+            RysumData
+            rysum_mysofa
+            rysum_mtsesp
+            juce::juce_audio_utils
+            juce::juce_audio_processors
+            juce::juce_audio_formats
+            juce::juce_dsp
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_lto_flags
+            juce::juce_recommended_warning_flags)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /MP /utf-8)
+    endif()
+endfunction()
 
-target_compile_definitions(Rysum PUBLIC
-    JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
-    JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0)
+rysum_setup_plugin(Rysum)
 
-target_link_libraries(Rysum
-    PRIVATE
-        RysumData
-        rysum_mysofa
-        rysum_mtsesp
-        juce::juce_audio_utils
-        juce::juce_audio_processors
-        juce::juce_audio_formats
-        juce::juce_dsp
-    PUBLIC
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
-        juce::juce_recommended_warning_flags)
+# ---------------------------------------------------------------------------
+# ASIO for the standalone app (Windows): JUCE 8 brings Steinberg's ASIO headers (GPLv3 / Steinberg licence,
+# fine for your own use). Turn off with -DRYSUM_ASIO=OFF.
+# ---------------------------------------------------------------------------
+option(RYSUM_ASIO "Standalone app with ASIO (Windows)" ON)
+if(WIN32 AND RYSUM_ASIO)
+    target_compile_definitions(Rysum PRIVATE JUCE_ASIO=1)
+endif()
 
-if(MSVC)
-    target_compile_options(Rysum PRIVATE /MP /utf-8)
+if(RYSUM_BUILD_FX)
+    juce_add_plugin(RysumFX
+        PRODUCT_NAME "${RYSUM_PRODUCT} FX"
+        COMPANY_NAME "Rysum"
+        BUNDLE_ID "${RYSUM_BUNDLE}.fx"
+        PLUGIN_MANUFACTURER_CODE Rysm
+        PLUGIN_CODE ${RYSUM_FX_CODE}
+        FORMATS VST3
+        IS_SYNTH FALSE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+        VST3_CATEGORIES Fx Spatial
+        COPY_PLUGIN_AFTER_BUILD FALSE)
+    rysum_setup_plugin(RysumFX)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -175,6 +211,7 @@ if(RYSUM_BUILD_TESTS)
         Source/Binaural.cpp
         Source/RoomTail.cpp
         Source/Lucier.cpp
+        Source/Speakers.cpp
         Source/SofaGunzip.cpp)
     target_include_directories(RysumRenderTest PRIVATE Source)
     target_compile_definitions(RysumRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
@@ -185,8 +222,8 @@ if(RYSUM_BUILD_TESTS)
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
-        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/Lucier.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/ProcessorScenes.cpp Source/PluginEditor.cpp
-        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp Source/SaalView.cpp Source/MidiMapView.cpp Source/OrganView.cpp)
+        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/Lucier.cpp Source/Speakers.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/ProcessorScenes.cpp Source/PluginEditor.cpp
+        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp Source/SaalView.cpp Source/MidiMapView.cpp Source/OrganView.cpp Source/SpeakerView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0

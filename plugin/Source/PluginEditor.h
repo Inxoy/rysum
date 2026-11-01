@@ -9,6 +9,7 @@
 #include "EffectsView.h"
 #include "SaalView.h"
 #include "OrganView.h"
+#include "SpeakerView.h"
 
 /** the full-screen toggle in the header: four corner marks (outwards = go full screen, inwards = back) */
 class FullscreenButton : public juce::Button
@@ -104,6 +105,8 @@ private:
     rysum::ui::EffectsView fx;
     rysum::ui::SaalView saal;
     rysum::ui::OrganView organ;
+    rysum::ui::SpeakerView speakers { proc };      // view 7: the loudspeaker layout
+    juce::TextButton outInfoButton;                // over the channel info in the top bar: opens it
     /** the "Rysum" in the top bar opens the page about the organ (and goes back) */
     struct LogoButton : juce::Button
     {
@@ -125,6 +128,7 @@ private:
     int shownPatchVersion = -1;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputAttachment;
     int current = 0;
+    bool speakerPageShown = false;
     juce::Image grainLayer, vignette;
 };
 

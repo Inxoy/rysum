@@ -23,6 +23,37 @@ Pos SpaceCircle::fromScreen (juce::Point<float> s) const
     return p;
 }
 
+int SpaceCircle::inputPositions (std::array<Pos, 2>& out) const
+{
+    const int n = proc.engine.inShowCount.load();
+    if (n > 0)
+    {
+        for (int c = 0; c < n; ++c) out[(size_t) c] = { proc.engine.inShowAz[(size_t) c].load(), proc.engine.inShowEl[(size_t) c].load(), proc.engine.inShowDist[(size_t) c].load() };
+        return n;
+    }
+    // switched off (or not running yet): where it would be, from the settings
+    auto raw = [this] (const char* id) { return proc.apvts.getRawParameterValue (id)->load(); };
+    const bool stereo = raw ("inpMode") > 0.5f;
+    const int follow = juce::roundToInt (raw ("inpFollow")) - 1;
+    const float az = raw ("inpAz"), w = raw ("inpWidth");
+    const auto params = proc.readParams();
+    const int cnt = stereo ? 2 : 1;
+    for (int c = 0; c < cnt; ++c)
+    {
+        if (follow >= 0 && follow < kNumStops)
+        {
+            const int mid = kNumKeys / 2;
+            const int dk = stereo ? juce::jlimit (0, mid, juce::roundToInt (w / 180.0f * (float) mid)) : 0;
+            auto pos = proc.engine.currentPosition (follow, juce::jlimit (0, kNumKeys - 1, c == 0 ? mid - dk : mid + dk), params);
+            pos.az = wrapAz (pos.az + az);
+            out[(size_t) c] = pos;
+        }
+        else
+            out[(size_t) c] = { wrapAz (az + (stereo ? (c == 0 ? 0.5f : -0.5f) * w : 0.0f)), raw ("inpEl"), raw ("inpDist") };
+    }
+    return cnt;
+}
+
 void SpaceCircle::paint (juce::Graphics& g)
 {
     auto& A = Assets::get();
@@ -118,6 +149,29 @@ void SpaceCircle::paint (juce::Graphics& g)
             }
         }
 
+    // the audio input
+    {
+        const bool on = proc.apvts.getRawParameterValue ("inpOn")->load() > 0.5f;
+        if (on || inputSel)
+        {
+            std::array<Pos, 2> ip {};
+            const int n = inputPositions (ip);
+            for (int c = 0; c < n; ++c)
+            {
+                const float near = juce::jlimit (0.6f, 1.7f, std::sqrt (6.0f / juce::jmax (0.5f, ip[(size_t) c].dist)));
+                drawInputGlyph (g, toScreen (ip[(size_t) c]), (inputSel ? 15.0f : 11.0f) * near, on, n == 2 ? juce::String (c == 0 ? "L" : "R") : juce::String());
+            }
+            if (inputSel)
+            {
+                g.setFont (A.monoFont (11.0f));
+                g.setColour (col::rubric.brighter (0.4f));
+                g.drawText (on ? juce::String::fromUTF8 ("Eingang: ziehen = Richtung und H\xc3\xb6he")
+                               : juce::String::fromUTF8 ("Eingang ist aus \xe2\x80\x93 links in der Liste einschalten"),
+                            juce::Rectangle<float> (c.x - R, c.y + R + 22.0f, 2.0f * R, 14.0f), juce::Justification::centred);
+            }
+        }
+    }
+
     // listener in the centre
     g.setColour (col::ink);
     g.drawEllipse (juce::Rectangle<float> (16.0f, 16.0f).withCentre (c), 1.0f);
@@ -133,6 +187,27 @@ void SpaceCircle::mouseDown (const juce::MouseEvent& e)
         stroke.push_back ({ q.az, q.el, 0.0f });
         lastStrokePos = e.position;
         repaint();
+        return;
+    }
+    if (inputSel)
+    {
+        // the input: drag its sources (own place: direction and height; on a stop: an extra turn)
+        std::array<Pos, 2> ip {};
+        const int n = inputPositions (ip);
+        int grab = 0; float best = 1.0e9f;
+        for (int c = 0; c < n; ++c)
+        {
+            const float d = toScreen (ip[(size_t) c]).getDistanceFrom (e.position);
+            if (d < best) { best = d; grab = c; }
+        }
+        const float w = proc.apvts.getRawParameterValue ("inpWidth")->load();
+        inGrabOffset = n == 2 ? (grab == 0 ? 0.5f : -0.5f) * w : 0.0f;
+        const auto cc = centre();
+        inDragAngle = juce::radiansToDegrees (std::atan2 (-(e.position.x - cc.x), -(e.position.y - cc.y)));
+        inDragAz = proc.apvts.getRawParameterValue ("inpAz")->load();
+        draggingInput = true;
+        for (auto* id : { "inpAz", "inpEl" }) if (auto* pr = proc.apvts.getParameter (id)) pr->beginChangeGesture();
+        mouseDrag (e);
         return;
     }
     const auto params = proc.readParams();
@@ -167,6 +242,28 @@ void SpaceCircle::mouseDrag (const juce::MouseEvent& e)
         }
         return;
     }
+    if (draggingInput)
+    {
+        const bool follows = proc.apvts.getRawParameterValue ("inpFollow")->load() > 0.5f;
+        auto set = [this] (const char* id, float v)
+        {
+            if (auto* pr = proc.apvts.getParameter (id)) pr->setValueNotifyingHost (pr->convertTo0to1 (juce::jlimit (pr->getNormalisableRange().start, pr->getNormalisableRange().end, v)));
+        };
+        if (follows)
+        {
+            const auto cc = centre();
+            const float a = juce::radiansToDegrees (std::atan2 (-(e.position.x - cc.x), -(e.position.y - cc.y)));
+            set ("inpAz", wrapAz (inDragAz + a - inDragAngle));
+        }
+        else
+        {
+            const auto np = fromScreen (e.position);
+            set ("inpAz", wrapAz (np.az - inGrabOffset));
+            set ("inpEl", np.el);
+        }
+        repaint();
+        return;
+    }
     if (dragKey >= 0)
     {
         auto np = fromScreen (e.position);
@@ -192,6 +289,11 @@ void SpaceCircle::mouseDrag (const juce::MouseEvent& e)
 
 void SpaceCircle::mouseUp (const juce::MouseEvent&)
 {
+    if (draggingInput)
+    {
+        for (auto* id : { "inpAz", "inpEl" }) if (auto* pr = proc.apvts.getParameter (id)) pr->endChangeGesture();
+        draggingInput = false;
+    }
     dragKey = -1; rotating = false;
     if (drawMode)
     {
@@ -203,9 +305,59 @@ void SpaceCircle::mouseUp (const juce::MouseEvent&)
 }
 
 // ---------------------------------------------------------------------------
-SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected)
+SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected, inputSel)
 {
     addAndMakeVisible (circle);
+
+    // the audio input: a row under the stops, its own panel
+    inputRow.onClick = [this] { selectInput(); };
+    addAndMakeVisible (inputRow);
+    inputPull.setTooltip (juce::String::fromUTF8 ("Eingang an / aus: das Audio, das in Rysum hineingeht, klingt im Raum"));
+    addAndMakeVisible (inputPull);
+    inputPullAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "inpOn", inputPull);
+    for (auto* b : { &inMono, &inStereo })
+    {
+        b->setRadioGroupId (0);
+        addChildComponent (*b);
+    }
+    if (auto* m = proc.apvts.getParameter ("inpMode"))
+    {
+        inModeAttachment = std::make_unique<juce::ParameterAttachment> (*m, [this] (float v)
+        {
+            inMono.setToggleState (v < 0.5f, juce::dontSendNotification);
+            inStereo.setToggleState (v >= 0.5f, juce::dontSendNotification);
+            if (inWidth) inWidth->setAlpha (v >= 0.5f ? 1.0f : 0.45f);
+        });
+        inModeAttachment->sendInitialUpdate();
+    }
+    inMono.onClick = [this] { if (inModeAttachment) inModeAttachment->setValueAsCompleteGesture (0.0f); };
+    inStereo.onClick = [this] { if (inModeAttachment) inModeAttachment->setValueAsCompleteGesture (1.0f); };
+    inMono.setTooltip (juce::String::fromUTF8 ("Eine Quelle: links und rechts zusammen"));
+    inStereo.setTooltip (juce::String::fromUTF8 ("Zwei Quellen: links und rechts, \xe2\x80\x9e" "Breite\xe2\x80\x9c auseinander"));
+    inGate.setClickingTogglesState (true);
+    inGate.setTooltip (juce::String::fromUTF8 ("Der Eingang klingt nur, solange Tasten gehalten werden (\xe2\x80\x9e" "Ausklang\xe2\x80\x9c: wie schnell er sich schlie\xc3\x9ft)"));
+    inGateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "inpGate", inGate);
+    addChildComponent (inGate);
+    if (auto* f = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("inpFollow")))
+        inFollow.addItemList (f->choices, 1);
+    inFollowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "inpFollow", inFollow);
+    inFollow.setTooltip (juce::String::fromUTF8 ("Eigener Ort, oder auf den Pfeifen eines Registers: der Eingang macht dessen Bewegung mit "
+                                                 "(links auf der tiefen, rechts auf der hohen Seite)"));
+    addChildComponent (inFollow);
+    inLevel = std::make_unique<ParamRow> (proc.apvts, "inpLevel", "Pegel", true);
+    inSend = std::make_unique<ParamRow> (proc.apvts, "inpSend", "Hall-Anteil", true);
+    inAz = std::make_unique<ParamRow> (proc.apvts, "inpAz", "Richtung", true);
+    inEl = std::make_unique<ParamRow> (proc.apvts, "inpEl", juce::String::fromUTF8 ("H\xc3\xb6he"), true);
+    inDist = std::make_unique<ParamRow> (proc.apvts, "inpDist", "Abstand", true);
+    inWidth = std::make_unique<ParamRow> (proc.apvts, "inpWidth", "Breite (L / R)", true);
+    inSpin = std::make_unique<ParamRow> (proc.apvts, "inpSpin", "Kreisen", true);
+    inRelease = std::make_unique<ParamRow> (proc.apvts, "inpRelease", "Ausklang (Tasten)", true);
+    inAz->setTooltip (juce::String::fromUTF8 ("0\xc2\xb0 = vorn, +90\xc2\xb0 = links. Auf einem Register: zus\xc3\xa4tzliche Drehung"));
+    inDist->setTooltip (juce::String::fromUTF8 ("Leiser, dumpfer und sp\xc3\xa4ter mit der Entfernung (Doppler, Luft, Abstand: Seite Raum \xc2\xb7 Klang)"));
+    inSpin->setTooltip (juce::String::fromUTF8 ("Kreist um dich, Grad pro Sekunde (negativ = andersherum)"));
+    inSend->setTooltip (juce::String::fromUTF8 ("Wie viel vom Eingang in den Hall / Saal geht, verglichen mit einer Pfeife"));
+    for (auto* r : { inLevel.get(), inSend.get(), inAz.get(), inEl.get(), inDist.get(), inWidth.get(), inSpin.get(), inRelease.get() })
+        addChildComponent (*r);
 
     for (int s = 0; s < kNumStops; ++s)
     {
@@ -347,19 +499,45 @@ void SpaceView::showTab (bool hall)
     hallTab = hall;
     tabMotion.setToggleState (! hall, juce::dontSendNotification);
     tabHall.setToggleState (hall, juce::dontSendNotification);
+    updateVisibility();
+}
+
+void SpaceView::updateVisibility()
+{
+    const bool stopPanel = ! inputSel;
+    const bool motion = stopPanel && ! hallTab, hall = stopPanel && hallTab;
     juce::Component* motionComps[] { &drawButton, &pathLoop, &pathPing, &pathEven, &pathDrawnT, &jumpHard,
                                      &ellForm[0], &ellForm[1], &ellForm[2], &ellForm[3] };
-    for (auto* c : motionComps) c->setVisible (! hall);
-    for (auto& b : motionButtons) b.setVisible (! hall);
-    for (auto* r : { rateRow.get(), depthRow.get(), ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get() }) if (r) r->setVisible (! hall);
+    for (auto* c : motionComps) c->setVisible (motion);
+    for (auto& b : motionButtons) b.setVisible (motion);
+    for (auto* r : { rateRow.get(), depthRow.get(), ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get() }) if (r) r->setVisible (motion);
     juce::Component* hallComps[] { &irLoad, &irClear, &irFuma, &irN3D, &irFollow, &irOrder, irDry.get(), irWet.get(), irEnvelop.get(), irDirect.get() };
     for (auto* c : hallComps) c->setVisible (hall);
+    for (auto& b : layoutButtons) b.setVisible (stopPanel);
+    for (auto* c : { &width, &centre, &elevation, &spread, &distance }) c->setVisible (stopPanel);
+    tabMotion.setVisible (stopPanel);
+    tabHall.setVisible (stopPanel);
+    juce::Component* inputComps[] { &inMono, &inStereo, &inGate, &inFollow, inLevel.get(), inSend.get(), inAz.get(), inEl.get(),
+                                    inDist.get(), inWidth.get(), inSpin.get(), inRelease.get() };
+    for (auto* c : inputComps) if (c) c->setVisible (inputSel);
+    inputRow.setToggleState (inputSel, juce::dontSendNotification);
+    if (inputSel) for (auto& b : stopButtons) b->setToggleState (false, juce::dontSendNotification);
+    drawButton.setToggleState (false, juce::dontSendNotification);
+    circle.drawMode = false;
+    circle.repaint();
     repaint();
+}
+
+void SpaceView::selectInput()
+{
+    inputSel = true;
+    updateVisibility();
 }
 
 void SpaceView::selectStop (int s)
 {
     selected = s;
+    inputSel = false;
     for (int i = 0; i < kNumStops; ++i) stopButtons[(size_t) i]->setToggleState (i == s, juce::dontSendNotification);
     rateRow = std::make_unique<ParamRow> (proc.apvts, RysumProcessor::rateParamId (s), "Geschwindigkeit");
     depthRow = std::make_unique<ParamRow> (proc.apvts, RysumProcessor::depthParamId (s), "Tiefe", true);
@@ -382,7 +560,7 @@ void SpaceView::selectStop (int s)
         });
         ellFormAttachment->sendInitialUpdate();
     }
-    for (auto* r : { rateRow.get(), depthRow.get(), ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get() }) r->setVisible (! hallTab);
+    updateVisibility();
     syncLayoutControls();
     resized();
     repaint();
@@ -422,7 +600,7 @@ void SpaceView::resized()
     circle.setBounds (left.reduced (20, 34).withTrimmedTop (10));
 
     auto rr = right;
-    stopsBox = rr.removeFromTop (20 + kNumStops * 18);
+    stopsBox = rr.removeFromTop (20 + (kNumStops + 1) * 18 + 4);
     auto sb = stopsBox.withTrimmedTop (20);
     for (int slot = 0; slot < kNumStops; ++slot)
     {
@@ -432,7 +610,42 @@ void SpaceView::resized()
         row.removeFromLeft (4);
         stopButtons[(size_t) s]->setBounds (row.reduced (0, 1));
     }
+    {
+        sb.removeFromTop (4);
+        auto row = sb.removeFromTop (18);
+        inputPull.setBounds (row.removeFromLeft (16));
+        row.removeFromLeft (4);
+        inputRow.setBounds (row.reduced (0, 1));
+    }
     rr.removeFromTop (4);
+
+    // the input's panel takes the place of "Anordnung" and "Bewegung"
+    {
+        inputBox = rr;
+        auto ib = inputBox.withTrimmedTop (34);
+        auto row = ib.removeFromTop (22);
+        inMono.setBounds (row.removeFromLeft (64).withHeight (20));
+        row.removeFromLeft (4);
+        inStereo.setBounds (row.removeFromLeft (64).withHeight (20));
+        row.removeFromLeft (12);
+        inGate.setBounds (row.removeFromLeft (118).withHeight (20));
+        row.removeFromLeft (12);
+        inFollow.setBounds (row.withHeight (20));
+        ib.removeFromTop (8);
+        inMeter = ib.removeFromTop (18);
+        ib.removeFromTop (6);
+        const int half = (ib.getWidth() - 16) / 2;
+        ParamRow* rows[][2] { { inLevel.get(), inSend.get() }, { inAz.get(), inEl.get() }, { inDist.get(), inWidth.get() }, { inSpin.get(), inRelease.get() } };
+        for (auto& pr : rows)
+        {
+            auto line = ib.removeFromTop (26);
+            pr[0]->setBounds (line.getX(), line.getY(), half, 26);
+            pr[1]->setBounds (line.getX() + half + 16, line.getY(), half, 26);
+            ib.removeFromTop (6);
+        }
+        ib.removeFromTop (6);
+        inHelp = ib;
+    }
 
     layoutBox = rr.removeFromTop (30 + 44 + 5 * 18);
     auto lb = layoutBox.withTrimmedTop (30);
@@ -532,6 +745,23 @@ void SpaceView::refresh()
         if (stopButtons[(size_t) s]->motion != txt || stopButtons[(size_t) s]->pulled != pulled)
         { stopButtons[(size_t) s]->motion = txt; stopButtons[(size_t) s]->pulled = pulled; stopButtons[(size_t) s]->repaint(); }
     }
+    {
+        auto raw = [this] (const char* id) { return proc.apvts.getRawParameterValue (id)->load(); };
+        const bool on = raw ("inpOn") > 0.5f;
+        juce::String st = on ? juce::String (raw ("inpMode") > 0.5f ? "Stereo" : "Mono") : juce::String ("aus");
+        if (on)
+        {
+            const int f = juce::roundToInt (raw ("inpFollow"));
+            if (f > 0) st << juce::String::fromUTF8 (" \xc2\xb7 auf ") << prettyLabel (kStops[(size_t) juce::jlimit (0, kNumStops - 1, f - 1)].label);
+            if (std::abs (raw ("inpSpin")) > 0.05f) st << juce::String::fromUTF8 (" \xc2\xb7 kreist");
+            if (raw ("inpGate") > 0.5f) st << juce::String::fromUTF8 (" \xc2\xb7 Tasten");
+        }
+        if (inputRow.status != st || inputRow.on != on) { inputRow.status = st; inputRow.on = on; inputRow.repaint(); }
+        const float pk = proc.engine.inPeak.load();
+        inMeterShown = juce::jmax (pk, inMeterShown * 0.85f);
+        if (inputSel)
+            for (auto* r : { inLevel.get(), inSend.get(), inAz.get(), inEl.get(), inDist.get(), inWidth.get(), inSpin.get(), inRelease.get() }) r->repaint();
+    }
     if (rateRow) rateRow->repaint();
     if (depthRow) depthRow->repaint();
     for (auto* r : { ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get() }) if (r) r->repaint();
@@ -557,6 +787,11 @@ void SpaceView::paint (juce::Graphics& g)
     g.drawText ("REGISTER", stopsBox.withHeight (18), juce::Justification::centredLeft);
     g.setFont (A.monoFont (11.0f));
     g.drawText ("Bewegung", stopsBox.withHeight (18), juce::Justification::centredRight);
+    if (inputSel)
+    {
+        paintInput (g);
+        return;
+    }
     drawSectionTitle (g, layoutBox, "Anordnung " + juce::String (juce::CharPointer_UTF8 ("\xc2\xb7 ")) + prettyLabel (kStops[(size_t) selected].label));
     const char* names[] { "Breite", "Mitte", "H\xc3\xb6he", "Streuung", "Abstand" };
     juce::Slider* sl[] { &width, &centre, &elevation, &spread, &distance };
@@ -616,5 +851,63 @@ void SpaceView::paint (juce::Graphics& g)
         g.drawText (proc.readParams().room.on ? juce::String::fromUTF8 ("pausiert \xe2\x80\x93 der Saal ist an") : proc.getIrStatus(),
                     juce::Rectangle<int> (tabBox.getX() + 70, tabBox.getY() + 9, tabMotion.getX() - 8 - tabBox.getX() - 70, 20), juce::Justification::centredRight);
     }
+}
+} // namespace rysum::ui
+
+namespace rysum::ui
+{
+void SpaceView::paintInput (juce::Graphics& g)
+{
+    auto& A = Assets::get();
+    const bool on = proc.apvts.getRawParameterValue ("inpOn")->load() > 0.5f;
+    drawSectionTitle (g, inputBox, juce::String::fromUTF8 ("Eingang \xc2\xb7 Audio"), on ? juce::String() : juce::String ("aus"));
+
+    // input meter (raw, before the level): -60 .. 0 dBFS
+    {
+        auto m = inMeter;
+        g.setFont (A.romanFont (11.5f));
+        g.setColour (col::dim);
+        g.drawText (juce::String::fromUTF8 ("Am Eingang"), m.removeFromLeft (84), juce::Justification::centredLeft);
+        const float dB = inMeterShown > 1.0e-6f ? 20.0f * std::log10 (inMeterShown) : -100.0f;
+        auto txt = m.removeFromRight (64);
+        g.setFont (A.monoFont (10.0f));
+        g.setColour (dB > -0.5f ? col::rubric.brighter (0.5f) : col::dim);
+        g.drawText (dB < -59.0f ? juce::String::fromUTF8 ("\xe2\x80\x93") : juce::String (dB, 1) + " dB", txt, juce::Justification::centredRight);
+        auto bar = m.withSizeKeepingCentre (m.getWidth(), 6).toFloat();
+        g.setColour (col::line);
+        g.fillRect (bar);
+        const float f = juce::jlimit (0.0f, 1.0f, (dB + 60.0f) / 60.0f);
+        g.setColour (on ? col::ink.withAlpha (0.85f) : col::faint);
+        g.fillRect (bar.withWidth (bar.getWidth() * f));
+        g.setColour (col::bg);
+        for (float t : { -48.0f, -36.0f, -24.0f, -12.0f, -6.0f })
+            g.fillRect (bar.getX() + bar.getWidth() * (t + 60.0f) / 60.0f, bar.getY(), 1.0f, bar.getHeight());
+    }
+
+    // what it does and how audio gets in
+    juce::AttributedString as;
+    as.setJustification (juce::Justification::topLeft);
+    as.setLineSpacing (2.0f);
+    auto body = [&] (const char* t) { as.append (juce::String::fromUTF8 (t), A.sansFont (12.5f), col::dim); };
+    auto head = [&] (const char* t) { as.append (juce::String::fromUTF8 (t), A.sansFont (12.5f), col::ink); };
+    body ("Live-Audio im selben Raum wie die Pfeifen: Ort, Abstand (mit Laufzeit, Luft und Doppler), Saal oder Impulsantwort, "
+          "Effekte, Verfall und Lucier wirken auch auf den Eingang. Sein Pegel ist au\xc3\x9f" "erdem die Modulationsquelle "
+          "\xe2\x80\x9e" "Eingang (Pegel)\xe2\x80\x9c \xe2\x80\x93 auch wenn er aus ist.\n\n");
+#if RYSUM_FX
+    head ("Rysum FX ");
+    body ("liegt auf einer Audiospur: ihr Audio ist der Eingang. Die Orgel spielt, wenn eine MIDI-Spur hierher geschickt wird "
+          "(Ableton: \xe2\x80\x9eMIDI To\xe2\x80\x9c \xe2\x86\x92 diese Spur \xc2\xb7 Reaper: Send mit MIDI).\n");
+#else
+    head ("Reaper: ");
+    body ("Audio auf der Rysum-Spur geht direkt hinein; andere Spuren per Send auf die Kan\xc3\xa4le 3/4 (Sidechain).\n");
+    head ("Ableton Live: ");
+    body ("\xe2\x80\x9eRysum FX\xe2\x80\x9c auf die Audiospur legen (Mikrofon: Monitor \xe2\x80\x9eIn\xe2\x80\x9c) und eine MIDI-Spur "
+          "mit \xe2\x80\x9eMIDI To\xe2\x80\x9c dorthin schicken. Das Instrument hat au\xc3\x9f" "erdem einen Sidechain-Eingang.\n");
+    head ("Standalone: ");
+    body ("Audio-Einstellungen \xe2\x86\x92 Eingang w\xc3\xa4hlen und \xe2\x80\x9eMute audio input\xe2\x80\x9c ausschalten (Kopfh\xc3\xb6rer: R\xc3\xbc" "ckkopplung).\n");
+#endif
+    juce::TextLayout tl;
+    tl.createLayout (as, (float) inHelp.getWidth());
+    tl.draw (g, inHelp.toFloat());
 }
 } // namespace rysum::ui

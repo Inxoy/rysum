@@ -8,6 +8,7 @@
 #include "RoomTail.h"
 #include "Scala.h"
 #include "Lucier.h"
+#include "Speakers.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
 #include <complex>
@@ -630,17 +631,261 @@ static void testLucier (std::shared_ptr<const SampleLibrary> lib)
         tmp.deleteFile();
     }
 
+// ---------------------------------------------------------------------------
+// the audio input: placed like a pipe (direction, distance delay, gate, its loudness as a modulation source)
+// ---------------------------------------------------------------------------
+static void testInput (std::shared_ptr<const SampleLibrary> lib)
+{
+    const double sr = 48000.0;
+    const int B = 256;
+    auto makeEngine = [&] (int outMode)
+    {
+        auto e = std::make_unique<OrganEngine>();
+        e->prepare (sr, B); e->setLibrary (lib);
+        (void) outMode;
+        return e;
+    };
+    auto quiet = [] (EngineParams& p) { p.stopOn = {}; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0; };
+    XorShift rng (99);
+    // render 'secs' of noise (left, right or both) through the input; returns per-channel energy of the last half
+    auto run = [&] (EngineParams p, int chans, bool feedL, bool feedR, double secs, std::vector<double>& energy, std::function<void (int, juce::MidiBuffer&)> midi = {},
+                    OrganEngine* keep = nullptr, float* srcOut = nullptr)
+    {
+        std::unique_ptr<OrganEngine> own;
+        OrganEngine* e = keep;
+        if (e == nullptr) { own = makeEngine (p.outputMode); e = own.get(); }
+        juce::AudioBuffer<float> out (chans, B), in (2, B);
+        energy.assign ((size_t) chans, 0.0);
+        const int blocks = (int) (secs * sr / B);
+        for (int k = 0; k < blocks; ++k)
+        {
+            for (int i = 0; i < B; ++i)
+            {
+                in.setSample (0, i, feedL ? 0.3f * rng.bi() : 0.0f);
+                in.setSample (1, i, feedR ? 0.3f * rng.bi() : 0.0f);
+            }
+            juce::MidiBuffer mb;
+            if (midi) midi (k, mb);
+            e->setInput (in.getReadPointer (0), in.getReadPointer (1), B);
+            e->process (out, mb, p);
+            e->setInput (nullptr, nullptr, 0);
+            if (k >= blocks / 2)
+                for (int c = 0; c < chans; ++c) { const double r = out.getRMSLevel (c, 0, B); energy[(size_t) c] += r * r; }
+            if (srcOut != nullptr) *srcOut = e->sourceOut[(size_t) srcInput].load();
+        }
+    };
+    auto db = [] (double e) { return 10.0 * std::log10 (e + 1e-20); };
+    std::vector<double> en;
+
+    EngineParams p; quiet (p);
+    run (p, 2, true, true, 0.5, en);
+    check (db (en[0] + en[1]) < -150.0, "input: off by default - silent");
+
+    p.input.on = true; p.input.stereo = false; p.input.az = 90.0f;      // left
+    run (p, 2, true, true, 0.5, en);
+    const double l1 = db (en[0]), r1 = db (en[1]);
+    p.input.az = -90.0f;                                                // right
+    run (p, 2, true, true, 0.5, en);
+    const double l2 = db (en[0]), r2 = db (en[1]);
+    std::cout << "input mono at +90 deg: L " << l1 << " R " << r1 << " dB; at -90 deg: L " << l2 << " R " << r2 << " dB" << std::endl;
+    check (l1 > r1 + 10.0 && r2 > l2 + 10.0, "input: placed left / right");
+
+    // stereo input, 180 deg wide: the left input channel comes from the left
+    p.input.stereo = true; p.input.az = 0.0f; p.input.width = 180.0f;
+    run (p, 2, true, false, 0.5, en);
+    std::cout << "input stereo, only left fed: L " << db (en[0]) << " R " << db (en[1]) << " dB" << std::endl;
+    check (db (en[0]) > db (en[1]) + 10.0, "input: stereo - left channel on the left");
+
+    // Ambisonics (1st order): a source at +90 deg (left) shows up in Y with the sign of W
+    {
+        EngineParams pa = p; pa.outputMode = 1; pa.input.stereo = false; pa.input.az = 90.0f; pa.input.el = 0.0f;
+        auto e = makeEngine (1);
+        juce::AudioBuffer<float> out (4, B), in (2, B);
+        double wy = 0, ww = 0, wx = 0;
+        for (int k = 0; k < 100; ++k)
+        {
+            for (int i = 0; i < B; ++i) { const float v = 0.3f * rng.bi(); in.setSample (0, i, v); in.setSample (1, i, v); }
+            e->setInput (in.getReadPointer (0), in.getReadPointer (1), B);
+            e->process (out, {}, pa);
+            if (k > 50)
+                for (int i = 0; i < B; ++i)
+                {
+                    ww += out.getSample (0, i) * out.getSample (0, i);
+                    wy += out.getSample (0, i) * out.getSample (1, i);
+                    wx += out.getSample (0, i) * out.getSample (3, i);
+                }
+        }
+        std::cout << "input in ambisonics at +90 deg: <W,Y>/<W,W> " << wy / ww << ", <W,X>/<W,W> " << wx / ww << std::endl;
+        check (wy / ww > 0.8 && std::abs (wx / ww) < 0.1, "input: encoded in Ambisonics from the left");
+    }
+
+    // distance takes time: 10 m with Doppler = 1 -> (10 - 0.5) / 343 s
+    {
+        EngineParams pd = p; pd.input.stereo = false; pd.input.az = 0.0f; pd.input.dist = 10.0f; pd.doppler = 1.0f;
+        auto e = makeEngine (0);
+        juce::AudioBuffer<float> out (2, B), in (2, B);
+        int first = -1;
+        for (int k = 0; k < 40 && first < 0; ++k)
+        {
+            in.clear();
+            if (k == 4) { in.setSample (0, 0, 1.0f); in.setSample (1, 0, 1.0f); }      // a click at block 4
+            e->setInput (in.getReadPointer (0), in.getReadPointer (1), B);
+            e->process (out, {}, pd);
+            for (int i = 0; i < B && first < 0; ++i) if (std::abs (out.getSample (0, i)) > 1.0e-3f) first = k * B + i - 4 * B;
+        }
+        const int expect = (int) ((10.0 - 0.5) / 343.0 * sr);
+        std::cout << "input at 10 m: arrives after " << first << " samples (expected ~" << expect << ")" << std::endl;
+        check (std::abs (first - expect) < 8, "input: distance delays the sound (Doppler when it moves)");
+    }
+
+    // gate: keys open the input
+    {
+        EngineParams pg = p; pg.input.stereo = false; pg.input.gate = true; pg.input.release = 0.05f;
+        run (pg, 2, true, true, 0.5, en);
+        const double closed = db (en[0] + en[1]);
+        run (pg, 2, true, true, 0.5, en, [] (int k, juce::MidiBuffer& mb) { if (k == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0); });
+        const double open = db (en[0] + en[1]);
+        std::cout << "input with gate: no keys " << closed << " dB, key held " << open << " dB" << std::endl;
+        check (closed < -100.0 && open > -40.0, "input: keys open the gate");
+    }
+
+    // its loudness is a modulation source (also when it is not heard)
+    {
+        EngineParams pm = p; pm.input.on = false;
+        float loud = 0, silent = 0;
+        run (pm, 2, true, true, 0.3, en, {}, nullptr, &loud);
+        run (pm, 2, false, false, 0.3, en, {}, nullptr, &silent);
+        std::cout << "input as modulation source: noise " << loud << ", silence " << silent << std::endl;
+        check (loud > 0.6f && silent < 0.01f, "input: loudness as a modulation source");
+    }
+
+    // riding on a stop (Praestant, rotating) and in the simulated room; then Lucier: finite and not silent
+    {
+        EngineParams pr = p; pr.input.follow = 1; pr.motionMode[1] = (int) Motion::Rotation; pr.motionRate[1] = 0.5f;
+        pr.room.on = true; pr.lucierOn = false;
+        run (pr, 2, true, true, 1.0, en);
+        std::cout << "input on the Praestant in the simulated room: " << db (en[0] + en[1]) << " dB" << std::endl;
+        check (std::isfinite (en[0]) && db (en[0] + en[1]) > -40.0, "input: follows a stop, in the simulated room");
+        RoomParams rp;
+        auto base = lucierFromRoom (rp, 0.5f, sr);
+        auto e = makeEngine (0);
+        e->setLucierIR (buildLucier (*base, 8.0f, 0.3f, 1).ir);
+        EngineParams pl = p; pl.lucierOn = true; pl.lucierMix = 1.0f;
+        run (pl, 2, true, true, 3.0, en, {}, e.get());
+        std::cout << "input through Lucier (gen 8, all wet): " << db (en[0] + en[1]) << " dB" << std::endl;
+        check (std::isfinite (en[0]) && db (en[0] + en[1]) > -40.0 && db (en[0] + en[1]) < 40.0, "input: through the Lucier passes");
+    }
+    // switched off: silent again after the delay line ran out
+    {
+        auto e = makeEngine (0);
+        EngineParams po = p; po.input.dist = 20.0f;
+        run (po, 2, true, true, 0.5, en, {}, e.get());
+        po.input.on = false;
+        run (po, 2, true, true, 2.0, en, {}, e.get());
+        check (db (en[0] + en[1]) < -150.0, "input: switched off - silent");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// loudspeaker decoding (AllRAD)
+// ---------------------------------------------------------------------------
+static void testSpeakers()
+{
+    for (const auto& L : speakerPresets())
+    {
+        for (int order : { 1, 3, 5 })
+        {
+            auto t0 = std::chrono::high_resolution_clock::now();
+            auto D = buildAllRad (L, order, true, 1);
+            const double ms = std::chrono::duration<double, std::milli> (std::chrono::high_resolution_clock::now() - t0).count();
+            if (order == 3 || ! D->error.isEmpty())
+                std::cout << "allrad " << L.name << " order " << order << ": " << (D->error.isEmpty() ? juce::String ("ok") : D->error) << ", "
+                          << D->triangles.size() << " triangles, +" << D->addedImaginary << " imaginary, energy " << D->energyMinDb << " .. " << D->energyMaxDb
+                          << " dB, rE error mean " << D->angleErrMean << " max " << D->angleErrMax << " deg, " << ms << " ms" << std::endl;
+            check (D->error.isEmpty() && D->matrix.size() == L.speakers.size(), "allrad: " + L.name + " builds");
+        }
+    }
+    // the cube at 1st order: a regular layout - flat energy, small localisation error
+    {
+        auto presets = speakerPresets();
+        const SpeakerLayout* cube = nullptr;
+        for (auto& L : presets) if (L.speakers.size() == 8 && L.speakers[0].el > 30.0f) cube = &L;
+        auto D = buildAllRad (*cube, 1, false, 1);
+        check (D->energyMaxDb - D->energyMinDb < 1.5f && D->angleErrMax < 15.0f, "allrad: cube, 1st order: even energy, rE towards the source");
+        // a source exactly at loudspeaker 1: that one is the loudest
+        float y[kMaxAmbiChannels]; encodeAmbiX (cube->speakers[0].az, cube->speakers[0].el, 1, y);
+        int best = -1; float bestV = 0;
+        for (size_t r = 0; r < D->matrix.size(); ++r)
+        {
+            float v = 0; for (int k = 0; k < 4; ++k) v += D->matrix[r][(size_t) k] * y[k];
+            if (std::abs (v) > bestV) { bestV = std::abs (v); best = (int) r; }
+        }
+        check (best == 0, "allrad: a source at a loudspeaker comes mostly from it");
+    }
+    // 7.1.4 at 3rd order: the renderer puts a source at +30 deg (L, channel 1) out of channel 1, the LFE channel stays silent
+    {
+        auto presets = speakerPresets();
+        const SpeakerLayout* l714 = nullptr;
+        for (auto& L : presets) if (L.speakers.size() == 11) l714 = &L;
+        auto D = buildAllRad (*l714, 3, true, 2);
+        SpeakerRenderer R; R.prepare (48000.0, 256);
+        R.setDecoder (D);
+        juce::AudioBuffer<float> ambi (16, 256), out (12, 256);
+        float y[kMaxAmbiChannels]; encodeAmbiX (30.0f, 0.0f, 3, y);
+        XorShift rng (3);
+        double e[12] {};
+        for (int b = 0; b < 20; ++b)
+        {
+            for (int i = 0; i < 256; ++i) { const float v = 0.2f * rng.bi(); for (int k = 0; k < 16; ++k) ambi.setSample (k, i, v * y[k]); }
+            R.process (ambi.getArrayOfReadPointers(), 16, out.getArrayOfWritePointers(), 12, 256);
+            for (int c = 0; c < 12; ++c) e[c] += out.getRMSLevel (c, 0, 256);
+        }
+        int loud = 0; for (int c = 1; c < 12; ++c) if (e[c] > e[loud]) loud = c;
+        std::cout << "allrad 7.1.4 renderer, source at +30 deg: loudest channel " << loud + 1 << ", LFE " << e[3] << std::endl;
+        check (loud == 0 && e[3] == 0.0, "allrad: renderer routes to the right channels");
+    }
+    // ring of 8 at ear level: imaginary poles are added, nothing comes from above
+    {
+        SpeakerLayout ringL;
+        for (int i = 0; i < 8; ++i) { Speaker s; s.az = -180.0f + 45.0f * i; s.channel = i + 1; ringL.speakers.push_back (s); }
+        auto D = buildAllRad (ringL, 3, false, 3);
+        check (D->error.isEmpty() && D->addedImaginary == 2, "allrad: ring - imaginary loudspeakers above and below");
+    }
+    // IEM JSON round trip
+    {
+        auto L = speakerPresets()[3];
+        L.speakers[2].radius = 3.5f; L.speakers[4].gainDb = -3.0f; L.speakers[1].imaginary = true;
+        SpeakerLayout back; juce::String err;
+        const bool ok = speakerLayoutFromJson (speakerLayoutToJson (L), back, err);
+        check (ok && back.speakers.size() == L.speakers.size() && std::abs (back.speakers[2].radius - 3.5f) < 1e-4f
+               && std::abs (back.speakers[4].gainDb + 3.0f) < 0.01f && back.speakers[1].imaginary && back.speakers[6].channel == L.speakers[6].channel,
+               "allrad: IEM JSON layout round trip");
+        // a real IEM file looks like this
+        const char* iem = R"({"Name":"t","Description":"x","LoudspeakerLayout":{"Name":"t","Loudspeakers":[
+            {"Azimuth":0.0,"Elevation":0.0,"Radius":1.0,"IsImaginary":false,"Channel":1,"Gain":1.0},
+            {"Azimuth":120.0,"Elevation":0.0,"Radius":1.0,"IsImaginary":false,"Channel":2,"Gain":1.0},
+            {"Azimuth":-120.0,"Elevation":0.0,"Radius":1.0,"IsImaginary":false,"Channel":3,"Gain":1.0},
+            {"Azimuth":0.0,"Elevation":-90.0,"Radius":1.0,"IsImaginary":true,"Channel":4,"Gain":1.0}]}})";
+        SpeakerLayout t;
+        check (speakerLayoutFromJson (iem, t, err) && t.speakers.size() == 4 && t.speakers[3].imaginary && buildAllRad (t, 1, true, 4)->error.isEmpty(),
+               "allrad: reads IEM AllRADecoder files");
+    }
+}
+
 int main (int argc, char** argv)
 {
     const bool onlyRoom = std::getenv ("RYSUM_ONLY_ROOM") != nullptr;       // quick run: just the room tests
     const bool onlyWind = onlyRoom || std::getenv ("RYSUM_ONLY_WIND") != nullptr;   // quick run: just the wind model tests
     const bool onlyLucier = std::getenv ("RYSUM_ONLY_LUCIER") != nullptr;
-    if (! onlyWind && ! onlyLucier)
+    const bool onlyInput = std::getenv ("RYSUM_ONLY_INPUT") != nullptr;
+    if (std::getenv ("RYSUM_ONLY_SPEAKERS") != nullptr) { testSpeakers(); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
+    if (! onlyWind && ! onlyLucier && ! onlyInput)
     {
         testEncoder();
         testConvolver();
         testMotion();
         testBinaural (argc > 3 ? juce::File (argv[3]) : juce::File());      // optional 3rd argument: a SOFA file to test with
+        testSpeakers();
     }
     if (argc < 3) { std::cout << "usage: RysumRenderTest <samples> <outdir> [hrtf.sofa]" << std::endl; return failures; }
 
@@ -693,6 +938,7 @@ int main (int argc, char** argv)
         std::cout << "wrote " << f.getFullPathName() << std::endl;
         return 0;
     }
+    if (onlyInput) { testInput (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (onlyLucier) { testLucier (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     std::cout << "  " << lib->loadedPipes << " pipes, " << lib->substitutedPipes << " substituted, "
               << lib->clicksDown.size() << "/" << lib->clicksUp.size() << "/" << lib->clicksOther.size() << " clicks, "
@@ -1246,6 +1492,7 @@ int main (int argc, char** argv)
         }
 
         testLucier (lib);
+        testInput (lib);
 
         // ---------------- motion: ellipse shape, drawn paths, hard jumps ----------------
         {

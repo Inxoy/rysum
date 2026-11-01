@@ -35,8 +35,12 @@ static std::shared_ptr<const Sample> readMono (juce::AudioFormatManager& fm, con
 
 std::vector<NoiseSample> SampleLibrary::loadCustom (const juce::File& sampleFolder, std::function<bool()> shouldExit)
 {
+    return loadCustomDir (customFolder (sampleFolder), std::move (shouldExit));
+}
+
+std::vector<NoiseSample> SampleLibrary::loadCustomDir (const juce::File& dir, std::function<bool()> shouldExit)
+{
     std::vector<NoiseSample> out;
-    const auto dir = customFolder (sampleFolder);
     if (! dir.isDirectory()) return out;
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();

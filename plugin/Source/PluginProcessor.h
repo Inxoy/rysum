@@ -5,7 +5,15 @@
 #include "Binaural.h"
 #include "Scala.h"
 #include "Lucier.h"
+#include "Speakers.h"
 #include <map>
+
+// the effect version ("Rysum FX", for audio tracks) is the same code built with IsSynth = 0
+#if defined (JucePlugin_IsSynth) && ! JucePlugin_IsSynth
+ #define RYSUM_FX 1
+#else
+ #define RYSUM_FX 0
+#endif
 #include <deque>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -122,6 +130,9 @@ public:
     juce::File getSamplesFolder() const { return samplesFolder; }
     /** own sounds: <samples>/noise/eigene (empty File when no samples are loaded) */
     juce::File getCustomFolder() const;
+    /** own sounds from any folder (empty = the standard one, samples/noise/eigene); saved in the project and in patches */
+    void setCustomFolder (const juce::File& dir);
+    bool hasOwnCustomFolder() const { return customOverride != juce::File(); }
     int getNumCustomSounds() const;
     /** re-reads the own sounds folder in the background, keeps everything else */
     void reloadCustomSounds();
@@ -149,7 +160,7 @@ public:
     int getSceneVersion() const { return sceneVersion; }
 
     // dice (message thread): random settings within the chosen groups, gently or wildly; one step undo
-    enum DiceGroup { dgRegister, dgRaum, dgSaal, dgKlang, dgSpieltisch, dgEffekte, dgModulation, dgLucier, kNumDiceGroups };
+    enum DiceGroup { dgRegister, dgRaum, dgSaal, dgKlang, dgSpieltisch, dgEffekte, dgModulation, dgLucier, dgEingang, kNumDiceGroups };
     static juce::StringArray diceGroupNames();
     bool isDiceGroupOn (int g) const { return g >= 0 && g < kNumDiceGroups && diceGroups[(size_t) g]; }
     void setDiceGroupOn (int g, bool on) { if (g >= 0 && g < kNumDiceGroups) diceGroups[(size_t) g] = on; }
@@ -176,6 +187,16 @@ public:
 
     // binaural / headphones (message thread)
     static constexpr int kBinauralOutput = 6;                 // index of "Binaural" in the output choice
+    static constexpr int kSpeakerOutput = 7;                  // "Lautsprecher": AllRAD decoding to a loudspeaker layout
+    bool isSpeakers() const { return juce::roundToInt (output->load()) == kSpeakerOutput; }
+    // ---- loudspeakers (message thread)
+    const rysum::SpeakerLayout& getSpeakerLayout() const { return spkLayout; }
+    void setSpeakerLayout (const rysum::SpeakerLayout& l, bool rememberAsDefault = true);
+    std::shared_ptr<const rysum::AllRadDecoder> getSpeakerDecoder() const { return spkUi; }
+    int speakerVersion() const { return spkVersion; }
+    /** test noise: -1 = off, else the index of a loudspeaker in the layout */
+    std::atomic<int> speakerTest { -1 };
+    static juce::File speakerDefaultFile();
     bool isBinaural() const { return juce::roundToInt (output->load()) == kBinauralOutput; }
     /** own HRTF set (SOFA); an empty File = the built-in FABIAN */
     void setSofaFile (const juce::File& f);
@@ -219,6 +240,7 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    static BusesProperties makeBuses();
     void timerCallback() override;
     void handleAsyncUpdate() override;
     void applyCcOverrides (rysum::EngineParams&) const;
@@ -241,7 +263,11 @@ private:
         std::array<int, rysum::kNumRoutes> modAmt {};
         std::array<int, 32> fx {};
         std::array<int, 16> sim {};
+        std::array<int, 16> inp {};
     } ix;
+    enum InpIndex { inpOn, inpLevel, inpMode, inpAz, inpEl, inpDist, inpWidth, inpSpin, inpFollow, inpGate, inpRelease, inpSend, kNumInp };
+    static constexpr const char* kInpIds[kNumInp] { "inpOn", "inpLevel", "inpMode", "inpAz", "inpEl", "inpDist", "inpWidth", "inpSpin",
+                                                    "inpFollow", "inpGate", "inpRelease", "inpSend" };
     enum SimIndex { simOn, simW, simL, simH, simSize, simLx, simLy, simAbs, simAbsFloor, simHigh, simScatter, simOrder, simEr, simTail, simTailModel, kNumSim };
     static constexpr const char* kSimIds[kNumSim] { "simOn", "simW", "simL", "simH", "simSize", "simLx", "simLy", "simAbs", "simAbsFloor",
                                                     "simHigh", "simScatter", "simOrder", "simEr", "simTail", "simTailModel" };
@@ -305,6 +331,8 @@ private:
     void setIrStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); irStatus = s; }
 
     juce::File irFile;
+    juce::File customOverride;           // chosen folder for own sounds (empty = samples/noise/eigene)
+    bool customReloading = false;
     juce::String irStatus { juce::String::fromUTF8 ("keine \xe2\x80\x93 nur trocken") };
     juce::ThreadPool irPool { 1 };
     // scenes: per slot (param index, normalised value); empty = not stored
@@ -322,7 +350,7 @@ private:
         RysumProcessor& proc;
     } morphTimer { *this };
     // dice
-    std::array<bool, kNumDiceGroups> diceGroups { true, true, false, true, true, true, true, false };
+    std::array<bool, kNumDiceGroups> diceGroups { true, true, false, true, true, true, true, false, false };
     juce::ValueTree diceUndo;
     juce::Random diceRng;
     int diceGroupOf (const juce::String& id) const;
@@ -377,9 +405,23 @@ private:
     juce::File sofaFile;
     std::shared_ptr<const rysum::HrirSet> hrirSet;               // message thread: the loaded set (FABIAN or SOFA)
     juce::File hrirSetFile;                                       // which file hrirSet came from (empty = FABIAN)
+    // loudspeakers
+    rysum::SpeakerLayout spkLayout;
+    std::shared_ptr<const rysum::AllRadDecoder> spkUi, pendingSpk;
+    std::deque<std::shared_ptr<const rysum::AllRadDecoder>> spkKeepAlive;
+    rysum::SpeakerRenderer spkRenderer;                           // audio thread
+    juce::String spkBuiltKey;
+    uint32_t spkSerial = 0;
+    int spkVersion = 0;
+    std::atomic<int> spkOrderNow { 3 };
+    rysum::XorShift testNoise { 17 };
+    float testLp1 = 0.0f, testLp2 = 0.0f;
+    void rebuildSpeakers (bool force);
+    juce::ValueTree speakersState() const;
     std::shared_ptr<rysum::BinauralDecoder> binActive;           // audio thread
     std::shared_ptr<rysum::BinauralDecoder> pendingBin;          // handed over (atomic_store / exchange)
     std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin;   // message thread keeps them alive
+    juce::AudioBuffer<float> inBuf;                               // the audio input of the block (main input + side chain)
     juce::AudioBuffer<float> binBuf;                              // Ambisonics render buffer in binaural mode
     juce::String binStatus { juce::String::fromUTF8 ("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e" "Binaural\xe2\x80\x9c stellen") };
     juce::String builtBinKey, pendingBinKey;

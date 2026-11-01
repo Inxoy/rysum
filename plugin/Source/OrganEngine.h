@@ -39,6 +39,21 @@ struct FxParams
     int   echoDiv = 4, echoRepeats = 4;
 };
 
+/** the audio input ("Eingang"): live sound placed and moved in the same space as the pipes */
+struct InputParams
+{
+    bool  on = false;
+    float level = 1.0f;                  // linear
+    bool  stereo = true;                 // two sources (left / right) or one (the sum)
+    float az = 0.0f, el = 10.0f, dist = 4.0f;   // deg, deg, m (own place; following a stop: a turn on top of it)
+    float width = 60.0f;                 // deg between left and right
+    float spin = 0.0f;                   // deg per second, turning around the listener
+    int   follow = -1;                   // -1 = own place, else: rides on the pipes of this stop (and its motion)
+    bool  gate = false;                  // only sounds while keys are held
+    float release = 0.3f;                // s, gate closing
+    float send = 1.0f;                   // room send, linear (1 = like a pipe)
+};
+
 /** free tuning (Scala file, MTS-ESP / MIDI Tuning Standard): the frequency of every MIDI note on every channel */
 struct NoteTable
 {
@@ -112,6 +127,8 @@ struct EngineParams
 
     FxParams fx;
 
+    InputParams input;
+
     // simulated room ("Saal"): early reflections per pipe + late reverb
     RoomParams room;
 
@@ -173,6 +190,14 @@ public:
     std::array<std::atomic<uint64_t>, kNumStops> soundingMask {};   // bit k = pipe k of that stop sounds
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
+
+    /** audio thread, before process(): the input of this block (left / right; right may be null = mono, both null = silence).
+        The pointers must stay valid until process() returns. */
+    void setInput (const float* l, const float* r, int numSamples) noexcept { inPtr[0] = l; inPtr[1] = r; inLen = numSamples; }
+    // the input as placed right now, for the UI
+    std::array<std::atomic<float>, 2> inShowAz {}, inShowEl {}, inShowDist {};
+    std::atomic<int>   inShowCount { 0 };
+    std::atomic<float> inPeak { 0.0f };          // raw input peak (before the level)
 
     // modulation state for the UI
     std::array<std::atomic<double>, kNumLfos> lfoPhaseOut {};
@@ -291,6 +316,7 @@ private:
     {
         bool active = false, fresh = true;
         int voice = -1, noiseVoice = -1;      // owner (or both -1: the owner is gone, the reflections ring out)
+        int input = -1;                       // ... or one of the input sources
         int drain = 0;
         int numTaps = 0;
         std::array<ErTap, kMaxTaps> taps {};
@@ -365,6 +391,8 @@ private:
     void releaseSlot (int& slot) noexcept;
     void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p) noexcept;
     void renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
+    void renderInput (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept;
+    void followInput (int start, int len, const EngineParams& p) noexcept;
     const std::vector<NoiseSample>& customPool() const noexcept;
     static float clickCurve (float v) noexcept { return 0.04f + 0.96f * v * std::sqrt (v); }          // velocity -> level
     float clickTone (float v) const noexcept                                                          // velocity -> one-pole coefficient
@@ -398,6 +426,26 @@ private:
     std::array<EnvState, kNumEnvs> globalEnv {};
     std::array<float, kNumSources> globalSrc {};
     bool globalTrig = false;
+    // audio input
+    const float* inPtr[2] {};
+    int inLen = 0;
+    static constexpr int kInRingBits = 17, kInRing = 1 << kInRingBits;   // delay by distance (Doppler), up to ~1.4 s
+    std::vector<float> inRing;                                           // [2][kInRing]
+    uint32_t inClock = 0;
+    struct InSrc
+    {
+        std::array<float, kMaxAmbiChannels> g0 {}, g1 {};
+        float send0 = 0.0f, send1 = 0.0f, sendAz0 = 0.0f, sendAz1 = 0.0f;
+        float d0 = 0.0f, d1 = 0.0f, lp = 0.0f, airA = 1.0f;
+        Pos pos;
+        int erSlot = -1;
+        bool fresh = true;
+    };
+    std::array<InSrc, 2> inSrc {};
+    float inGate = 0.0f, inLevelSm = 0.0f, inEnv = 0.0f, inFollowVal = 0.0f;
+    double inSpin = 0.0;
+    bool inRunning = false;
+    int inDrain = -1;
     // Lucier mode
     TailConvolver lucier;
     std::vector<float> lucIn, lucWet;

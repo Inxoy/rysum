@@ -84,6 +84,9 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     sofaReset.setTooltip (u8 ("Eingebaute HRTF: FABIAN-Kunstkopf der TU Berlin (Brinkmann et al. 2017, CC BY 4.0)"));
     sofaReset.onClick = [this] { proc.setSofaFile ({}); };
     addAndMakeVisible (sofaLoad);
+    speakersButton.setTooltip (u8 ("Ausgabe auf ein Lautsprecher-Layout (AllRAD wie im IEM AllRADecoder): Layout, Ordnung, Test"));
+    speakersButton.onClick = [this] { if (onOpenSpeakers) onOpenSpeakers(); };
+    addAndMakeVisible (speakersButton);
     addAndMakeVisible (sofaReset);
     yaw = &row ("binYaw", "Kopfdrehung");
     yaw->slider.setTooltip (u8 ("Dreht die ganze Szene um den H\xc3\xb6rer, als ob du den Kopf drehst (modulierbar)"));
@@ -178,6 +181,8 @@ void KlangView::resized()
         doppler->setBounds (b.removeFromTop (38));
         distAmount->setBounds (b.removeFromTop (38));
         air->setBounds (b.removeFromTop (38));
+        b.removeFromTop (16);
+        speakersButton.setBounds (b.removeFromTop (28).withWidth (230));
     }
     {
         auto b = body (binBox);

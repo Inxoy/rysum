@@ -31,7 +31,9 @@ private:
     std::vector<std::unique_ptr<juce::ComboBox>> combos;
     std::vector<std::unique_ptr<ComboAtt>> comboAtts;
 
-    juce::TextButton openFolder { juce::String::fromUTF8 ("Ordner \xc3\xb6" "ffnen") }, rescan { "Neu einlesen" };
+    juce::TextButton chooseFolder { juce::String::fromUTF8 ("Ordner w\xc3\xa4hlen \xe2\x80\xa6") }, openFolder { juce::String::fromUTF8 ("\xc3\x96" "ffnen") },
+                     rescan { "Neu einlesen" }, resetFolder { "x" };
+    std::unique_ptr<juce::FileChooser> chooser;
     juce::ComboBox* custPlace = nullptr;
     juce::ComboBox* echoDiv = nullptr;
     juce::TextButton *pathWait = nullptr, *windRound = nullptr, *echoSync = nullptr;

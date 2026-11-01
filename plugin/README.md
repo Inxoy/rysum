@@ -25,6 +25,10 @@ The build itself takes a few minutes too. When it is done you have:
 |---|---|
 | VST3 plugin | `build\Rysum_artefacts\Release\VST3\Rysum.vst3` |
 | Standalone app | `build\Rysum_artefacts\Release\Standalone\Rysum.exe` |
+| effect version (for audio tracks) | `build\RysumFX_artefacts\Release\VST3\Rysum FX.vst3` |
+
+The effect version **Rysum FX** is the same plugin as an audio effect (see *Eingang* below).
+To build only the instrument (faster), configure once with `-DRYSUM_BUILD_FX=OFF`.
 
 After changing code, only the second command (`cmake --build build --config Release`) is needed.
 
@@ -93,6 +97,39 @@ the diffuse-field energy is matched. This takes about half a second in the backg
 the order, the HRTF or the sample rate changes. The built-in HRTF is the **FABIAN** head and
 torso simulator of the TU Berlin (2000 of the 11 950 measured directions). Latency of the
 binaural decoder: 128 samples.
+
+### Loudspeakers (AllRAD) – a speaker array straight from the plugin or the standalone app
+Output "Lautsprecher". The plugin decodes its Ambisonics to your loudspeaker layout, the
+approach of the IEM *AllRADecoder* (Zotter & Frank 2012): a dense virtual sphere (5000
+directions) is decoded with max-rE weighting and every virtual loudspeaker is panned to the real
+ones with VBAP (triangulated convex hull). Where there are no loudspeakers (below a dome, behind
+a frontal setup) imaginary loudspeakers fill the gap; their signal is dropped. The decoder output
+is normalised to the same loudness as stereo / binaural.
+
+Set it up on the page **Lautsprecher** – click the channel display next to the output menu
+(top right), or *Lautsprecher (AllRAD) …* on the Klang page:
+- *Vorlage*: stereo, quad, 5.1, 7.1.4, octagon, cube, octagon + 4, a 19-speaker dome;
+  *IEM-Datei laden / Speichern*: layouts in the JSON format of the IEM Plug-in Suite (files
+  from the AllRADecoder work directly, and the other way round).
+- The list: output channel, azimuth (0° = front, +90° = left), elevation, distance, gain,
+  imaginary – double-click a value to type a new one. *+ Lautsprecher*, *Entfernen*. In the map
+  loudspeakers can be dragged.
+- *Ordnung* 1–5, *Abstand ausgleichen* (closer loudspeakers quieter and delayed, as if all stood
+  as far away as the farthest).
+- *Test* puts noise (about −20 dBFS) on the selected loudspeaker's channel; *Rundgang* moves
+  it to the next one every second – to check the wiring.
+- The map shows the triangulation and the decoder's energy (red = quieter, white = louder than
+  the mean); below it the energy spread and the localisation (rE) error.
+
+The layout belongs to the project (not to patches) and the last one is remembered for new
+instances (`Documents\Rysum\Lautsprecher.json`). In Reaper give the track as many channels as
+the highest loudspeaker channel.
+
+### ASIO (standalone app, Windows)
+The standalone app is built with ASIO (JUCE 8 brings Steinberg's ASIO headers): *Options →
+Audio/MIDI settings → Audio device type: ASIO*, choose the driver and the output channels –
+with *Lautsprecher* this plays a speaker array directly. (Build without it: configure once with
+`-DRYSUM_ASIO=OFF`.)
 
 ## 3. The pages
 
@@ -356,8 +393,10 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
 **Effekte** – sounds that are easy to locate (short, bright, full of transients) and that
 follow the pipes. Everything is off in older patches.
 - *Eigene Geräusche*: your own recordings, played by the keys. Put WAV/AIFF/FLAC files
-  (up to 20 s, up to 64 files) into `samples\noise\eigene` – *Ordner öffnen* creates the folder
-  and opens it, *Neu einlesen* reads it again without reloading the pipes. Each file is trimmed
+  (up to 20 s, up to 64 files, subfolders too) into `samples\noise\eigene`, **or** pick any
+  folder with *Ordner wählen …* (saved in the project and in patches; *x* goes back to the
+  standard folder). *Öffnen* shows the folder in Explorer, *Neu einlesen* reads it again
+  without reloading the pipes. Each file is trimmed
   to its first transient and set to the same peak level. With an empty folder the recorded key
   clicks are used. *Ort*: at a pipe of a pulled stop, anywhere in the room, at the
   console, or circling. *Beim Anschlag / Loslassen* = probability per key, *Tonhöhe folgt der
@@ -429,9 +468,43 @@ loaded impulse response (by file path). It does **not** change the output format
 (stereo / AmbiX order belongs to the track) or the samples folder.
 
 Patches are plain files in `Documents\Rysum\Patches\*.rysum` – copy, rename, back up or
-share them. On first start six example patches are written there (Init, Plenum, Welle durch
-die Pfeifen, Atmende Wolke, Verfall, Gläserne Sprünge); deleted ones are not re-created.
+share them. Example patches are written there on first start, and new ones with each new
+set (deleted ones are not re-created). Set 9 (59–79) shows the newer features:
+59–63 Lucier, 64–67 expression (MPE pressure / slide – polyphonic or channel aftertouch
+work as pressure too), 68–71 scenes (move *Überblenden* on the Spieltisch; 70 moves by itself
+with an LFO), 72–79 the audio input (they switch it on).
+
+A patch made with the input on switches the input on when it loads; every other patch leaves
+the input as it is (on or off belongs to your setup, like MPE).
 The project in Reaper still remembers everything on its own, patches are extra.
+
+### Eingang – audio input (page Raum, last row of the list)
+
+Live audio – a voice, an instrument, another track – placed and moved in the same space as the
+pipes. Switch it on with the square left of **Eingang (Audio)**; click the row for its panel:
+*Mono / Stereo* (two sources, *Breite* apart), *Pegel*, *Richtung*, *Höhe*, *Abstand* (level,
+air and travel time like a pipe: moving sources get Doppler), *Kreisen* (turns around you, °/s),
+*Hall-Anteil*, and **Ort**: *eigener Ort*, or *auf <Register>* – the input rides on the pipes of
+that stop and makes its motion (left on the low, right on the high side). **Tasten öffnen**:
+the input only sounds while keys are held (*Ausklang* = how fast it closes). Drag the input
+in the top view to place it.
+
+Everything after the pipes works on it too: simulated room (Saal) or impulse response, echoes,
+Verfall on the sum, Lucier, the output (stereo / AmbiX / binaural). Its loudness is also the
+modulation source **Eingang (Pegel)** – even with the input off, so a voice can open the
+organ's wind or brightness without being heard.
+
+How the audio gets in:
+
+- **Reaper:** the instrument has inputs. Audio on Rysum's own track goes in directly
+  (record or route it to the track); other tracks: a send to channels 3/4 (side chain).
+- **Ableton Live:** put **Rysum FX** on the audio track (for a microphone: monitoring *In*).
+  To play the organ as well, set a MIDI track's *MIDI To* to that track / Rysum FX. The
+  instrument also has a side-chain input for hosts that offer it.
+- **Standalone app:** *Options → Audio/MIDI settings*, choose the input, and untick *Mute audio
+  input* (use headphones – speakers feed back).
+- **Rysum FX** works the same in every host: its input is the track's audio, MIDI routed to it
+  plays the organ. The input is on by default there.
 
 ## 4. MIDI
 

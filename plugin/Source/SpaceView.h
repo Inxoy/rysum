@@ -9,7 +9,7 @@ namespace rysum::ui
 class SpaceCircle : public juce::Component
 {
 public:
-    SpaceCircle (RysumProcessor& p, int& selectedStop) : proc (p), selected (selectedStop) {}
+    SpaceCircle (RysumProcessor& p, int& selectedStop, bool& inputSelected) : proc (p), selected (selectedStop), inputSel (inputSelected) {}
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -31,10 +31,53 @@ private:
 
     RysumProcessor& proc;
     int& selected;
+    bool& inputSel;
     int dragKey = -1;
+    // the audio input: where its sources are drawn, dragging them
+    int inputPositions (std::array<Pos, 2>& out) const;
+    bool draggingInput = false;
+    float inDragAngle = 0.0f, inDragAz = 0.0f, inGrabOffset = 0.0f;
     bool rotating = false;
     float rotateStartAngle = 0.0f;
     std::array<Pos, kNumKeys> rotateStart {};
+};
+
+/** the symbol of the audio input: a ring with a dot (a microphone seen from above) */
+inline void drawInputGlyph (juce::Graphics& g, juce::Point<float> c, float size, bool on, const juce::String& label = {})
+{
+    const auto colr = on ? col::rubric.brighter (0.45f) : col::faint;
+    g.setColour (colr);
+    g.drawEllipse (juce::Rectangle<float> (size, size).withCentre (c), 1.4f);
+    g.fillEllipse (juce::Rectangle<float> (size * 0.36f, size * 0.36f).withCentre (c));
+    if (label.isNotEmpty())
+    {
+        g.setFont (Assets::get().monoFont (9.5f));
+        g.drawText (label, juce::Rectangle<float> (12.0f, 10.0f).withCentre (c.translated (size * 0.5f + 6.0f, -size * 0.5f - 2.0f)), juce::Justification::centred);
+    }
+}
+
+/** the input's row in the list (under the stops) */
+class InputRow : public juce::Button
+{
+public:
+    InputRow() : juce::Button ("Eingang") {}
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        auto& A = Assets::get();
+        auto r = getLocalBounds();
+        const bool sel = getToggleState();
+        if (sel) { g.setColour (col::ink); g.fillRect (r.withTrimmedLeft (18)); }
+        else if (over) { g.setColour (col::line); g.fillRect (r.withTrimmedLeft (18)); }
+        drawInputGlyph (g, { 5.0f, (float) r.getCentreY() }, 9.0f, on);
+        g.setColour (sel ? col::bg : (on ? col::ink : col::faint));
+        g.setFont (A.sansFont (14.0f));
+        g.drawText (juce::String::fromUTF8 ("Eingang (Audio)"), r.withTrimmedLeft (28), juce::Justification::centredLeft);
+        g.setColour (sel ? col::bg : col::mute);
+        g.setFont (A.monoFont (11.0f));
+        g.drawText (status, r.withTrimmedRight (8), juce::Justification::centredRight);
+    }
+    juce::String status;
+    bool on = false;
 };
 
 /** small square that pulls / pushes a stop (same look as on the Spieltisch) */
@@ -87,15 +130,30 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void refresh();
+    void selectStop (int s);
+    void selectInput();
 
 private:
-    void selectStop (int s);
+    void updateVisibility();
+    void paintInput (juce::Graphics&);
     void layoutChanged();
     void syncLayoutControls();
 
     RysumProcessor& proc;
     int selected = 6;
+    bool inputSel = false;
     SpaceCircle circle;
+    // the audio input
+    InputRow inputRow;
+    PullToggle inputPull;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> inputPullAttachment, inGateAttachment;
+    juce::TextButton inMono { "Mono" }, inStereo { "Stereo" }, inGate { juce::String::fromUTF8 ("Tasten \xc3\xb6" "ffnen") };
+    std::unique_ptr<juce::ParameterAttachment> inModeAttachment;
+    juce::ComboBox inFollow;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> inFollowAttachment;
+    std::unique_ptr<ParamRow> inLevel, inSend, inAz, inEl, inDist, inWidth, inSpin, inRelease;
+    juce::Rectangle<int> inputBox, inMeter, inHelp;
+    float inMeterShown = 0.0f;
     std::vector<std::unique_ptr<StopRow>> stopButtons;
     std::vector<std::unique_ptr<PullToggle>> pullButtons;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> pullAttachments;

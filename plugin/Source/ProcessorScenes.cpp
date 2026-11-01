@@ -12,7 +12,7 @@ bool RysumProcessor::takesPartInScenes (const juce::String& id) const
 {
     // the player's setup and the output stay as they are; switching the tuning would cut the notes
     static const juce::StringArray never { "sceneMorph", "output", "master", "binOrder", "binYaw", "binDfEq", "irFuma", "irN3D", "irOrder",
-                                           "temperament", "mtsContinuous", "midiCC", "mpe", "mpeBend" };
+                                           "temperament", "mtsContinuous", "midiCC", "mpe", "mpeBend", "inpOn", "spkOrder", "spkDistComp" };
     return ! never.contains (id);
 }
 
@@ -138,7 +138,7 @@ juce::StringArray RysumProcessor::diceGroupNames()
 {
     juce::StringArray a;
     for (auto* n : { "Register", "Raum (Bewegung, Entfernung)", "Saal", "Klang (Tremulant, Freeze, Wind)", "Traktur und Verfall",
-                     "Effekte", "Modulation (LFOs, H\xc3\xbcllkurven, Mengen)", "Lucier" })
+                     "Effekte", "Modulation (LFOs, H\xc3\xbcllkurven, Mengen)", "Lucier", "Eingang (Ort, Bewegung)" })
         a.add (juce::String::fromUTF8 (n));
     return a;
 }
@@ -156,6 +156,7 @@ int RysumProcessor::diceGroupOf (const juce::String& id) const
     if (id.startsWith ("fx")) return dgEffekte;
     if (id.startsWith ("lfo") || id.startsWith ("env") || (id.startsWith ("mod") && id.endsWith ("Amt"))) return dgModulation;
     if (id.startsWith ("luc") && id != "lucSource") return dgLucier;
+    for (auto* p : { "inpAz", "inpEl", "inpDist", "inpWidth", "inpSpin", "inpFollow", "inpSend" }) if (id == p) return dgEingang;
     return -1;      // never: master, output, tuning, freeze, MIDI, scenes ...
 }
 
@@ -208,6 +209,9 @@ void RysumProcessor::dice (bool wild)
             continue;
         }
         if (id == "detune") { setNorm (prm, 0.35f * rng.nextFloat()); continue; }
+        if (id == "inpSpin") { setReal (prm, (rng.nextBool() ? 1.0f : -1.0f) * 90.0f * std::pow (rng.nextFloat(), 2.0f)); continue; }
+        if (id == "inpDist") { setReal (prm, 1.5f + 12.0f * rng.nextFloat()); continue; }
+        if (id == "inpSend") { setReal (prm, -12.0f + 12.0f * rng.nextFloat()); continue; }
         if (id == "windModel" || id == "tremOn" || id == "fxPathWait" || id == "fxWindRound" || id == "fxEchoSync") { setNorm (prm, rng.nextFloat() < 0.3f ? 1.0f : 0.0f); continue; }
         if (id == "simOn" || id == "lucOn") { setNorm (prm, rng.nextBool() ? 1.0f : 0.0f); continue; }
         if (id == "lucGen") { setReal (prm, 1.0f + 19.0f * rng.nextFloat()); continue; }
