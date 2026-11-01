@@ -265,6 +265,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                       return t.getFloatValue();
                                                   })));
     l.add (std::make_unique<AudioParameterBool> (ParameterID { "lucOn", 1 }, "Lucier an", false));
+    // "Stueck": record, then the recording goes through the room again and again by itself (Lucier's piece);
+    // "Live": everything that sounds goes through n passes at once
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lucMode", 1 }, "Lucier Art", StringArray { String::fromUTF8 ("St\xc3\xbc" "ck (Aufnahme)"), "Live" }, 0));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lucGap", 1 }, "Lucier Pause", NormalisableRange<float> (0.0f, 10.0f, 0.01f, 0.6f), 1.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " s"; })
+                                                                                 .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lucRecSrc", 1 }, "Lucier Aufnahme von", StringArray { "alles (Orgel + Eingang)", "nur Eingang" }, 0));
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lucSource", 1 }, "Lucier Raum", StringArray { "Saal (simuliert)", "Impulsantwort (Seite Raum)" }, 0));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lucGen", 1 }, "Lucier Generation", NormalisableRange<float> (1.0f, 40.0f, 0.01f, 0.6f), 6.0f,
                                                   AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, v < 10.0f ? 2 : 1); })
@@ -444,7 +451,7 @@ RysumProcessor::RysumProcessor()
     ix.degAmount = I ("degAmount"); ix.degGrain = I ("degGrain"); ix.degBits = I ("degBits"); ix.degRate = I ("degRate");
     ix.degWobble = I ("degWobble"); ix.degDropouts = I ("degDropouts"); ix.degMode = I ("degMode");
     ix.irDry = I ("irDry"); ix.irWet = I ("irWet"); ix.binYaw = I ("binYaw"); ix.windModel = I ("windModel"); ix.mtsCont = I ("mtsContinuous");
-    ix.mpe = I ("mpe"); ix.mpeBend = I ("mpeBend"); ix.lucOn = I ("lucOn"); ix.lucMix = I ("lucMix");
+    ix.mpe = I ("mpe"); ix.mpeBend = I ("mpeBend"); ix.lucOn = I ("lucOn"); ix.lucMix = I ("lucMix"); ix.lucMode = I ("lucMode");
     for (int i = 0; i < kNumLfos; ++i)
     {
         const juce::String id = "lfo" + juce::String (i + 1);
@@ -491,6 +498,8 @@ RysumProcessor::~RysumProcessor()
     morphTimer.stopTimer();
     loader.reset();
     irPool.removeAllJobs (true, 10000);
+    lucPiece.cancelAll();
+    piecePool.removeAllJobs (true, 10000);
     lucPool.removeAllJobs (true, 10000);
 }
 
@@ -515,6 +524,8 @@ void RysumProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     if (irActive != nullptr) irActive->reset();
     binBuf.setSize (kMaxAmbiChannels, juce::jmax (512, samplesPerBlock), false, true, false);   // reserved once (see processBlock)
     spkRenderer.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
+    lucPiece.prepare (sampleRate);
+    lucRecScratch.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
     inBuf.setSize (2, juce::jmax (512, samplesPerBlock), false, true, false);
     if (binActive != nullptr) binActive->reset();
     if (rateChanged && irFile.existsAsFile())
@@ -551,7 +562,7 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         p.notesContinuous = V (ix.mtsCont) > 0.5f;
         p.mpe = V (ix.mpe) > 0.5f;
         p.mpeBendRange = V (ix.mpeBend);
-        p.lucierOn = V (ix.lucOn) > 0.5f;
+        p.lucierOn = V (ix.lucOn) > 0.5f && V (ix.lucMode) > 0.5f;          // the piece is played by the processor (lucPiece)
         p.lucierMix = V (ix.lucMix);
     }
     p.pitchCents = V (ix.pitch);
@@ -878,6 +889,7 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
                 }
             }
         }
+        inputThisBlock = any;
         if (! any) engine.setInput (nullptr, nullptr, 0);
         else engine.setInput (inBuf.getReadPointer (0), inBuf.getReadPointer (1), n);
     }
@@ -927,6 +939,24 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     }
     drySmoothed = dryTarget;
     wetSmoothed = wetTarget;
+
+    // ---- Lucier as a piece: recording, and the generations played back (mono: W / the middle of L+R)
+    if (used > 0 && n <= (int) lucRecScratch.size())
+    {
+        const bool fromInput = juce::roundToInt (apvts.getRawParameterValue ("lucRecSrc")->load()) == 1;
+        float* rec = lucRecScratch.data();
+        if (fromInput)
+        {
+            if (inputThisBlock) for (int i = 0; i < n; ++i) rec[i] = 0.5f * (inBuf.getSample (0, i) + inBuf.getSample (1, i));
+            else std::fill_n (rec, n, 0.0f);
+        }
+        else if (stereo && used > 1) for (int i = 0; i < n; ++i) rec[i] = 0.5f * (work.getSample (0, i) + work.getSample (1, i));
+        else std::copy_n (work.getReadPointer (0), n, rec);
+        float gains[rysum::kMaxOutChannels] {};
+        if (stereo) { gains[0] = used > 1 ? 0.7071f : 1.0f; if (used > 1) gains[1] = 0.7071f; }
+        else gains[0] = 1.0f;
+        lucPiece.process (rec, work.getArrayOfWritePointers(), gains, used, n, apvts.getRawParameterValue ("lucMix")->load());
+    }
 
     // ---- binaural decoding (head rotation + HRTF filters)
     if (binaural)
@@ -1211,6 +1241,76 @@ void RysumProcessor::buildTailNow (const juce::String& key)
 // Lucier mode: the response of n passes through the room, rebuilt in the background whenever the
 // generation (growing by itself, or modulated), the room or the damping changes
 // ---------------------------------------------------------------------------
+void RysumProcessor::lucierRecord()
+{
+    if (auto* p = apvts.getParameter ("lucMode")) p->setValueNotifyingHost (0.0f);
+    if (auto* p = apvts.getParameter ("lucOn")) p->setValueNotifyingHost (1.0f);
+    lucPiece.startRecording (300.0);
+}
+
+void RysumProcessor::lucierStopRecording()
+{
+    lucPiece.stopRecording (true);
+    saveLucierRecording();
+}
+
+void RysumProcessor::saveLucierRecording()
+{
+    // every new recording is kept as a file (Documents/Rysum/Lucier), so the project can play it again later
+    const auto& r = lucPiece.getRecording();
+    if (lucPiece.recordingVersion == savedRecordingVersion) return;
+    savedRecordingVersion = lucPiece.recordingVersion;
+    if (r.empty() || savedFromFile) { savedFromFile = false; return; }
+    auto dir = getPatchFolder().getParentDirectory().getChildFile ("Lucier");
+    dir.createDirectory();
+    auto f = dir.getChildFile ("Aufnahme " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S") + ".wav");
+    juce::WavAudioFormat wav;
+    if (auto* os = new juce::FileOutputStream (f); os->openedOk())
+    {
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os, lucPiece.recordingRate(), 1, 24, {}, 0));
+        if (w != nullptr)
+        {
+            const float* ch[] { r.data() };
+            w->writeFromFloatArrays (ch, 1, (int) r.size());
+            lucPiece.recordingFile = f.getFullPathName();
+        }
+    }
+    else delete os;
+}
+
+bool RysumProcessor::loadLucierRecording (const juce::File& f, juce::String& error)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (f));
+    if (rd == nullptr) { error = juce::String::fromUTF8 ("keine lesbare Audiodatei"); return false; }
+    if (rd->lengthInSamples > (juce::int64) (rd->sampleRate * 1200.0)) { error = juce::String::fromUTF8 ("l\xc3\xa4nger als 20 Minuten"); return false; }
+    juce::AudioBuffer<float> b ((int) rd->numChannels, (int) rd->lengthInSamples);
+    rd->read (&b, 0, b.getNumSamples(), 0, true, true);
+    std::vector<float> mono ((size_t) b.getNumSamples(), 0.0f);
+    for (int c = 0; c < b.getNumChannels(); ++c)
+        juce::FloatVectorOperations::addWithMultiply (mono.data(), b.getReadPointer (c), 1.0f / (float) b.getNumChannels(), b.getNumSamples());
+    const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    if (std::abs (rd->sampleRate - rate) > 0.5)
+    {
+        // to the host's rate
+        std::vector<float> out ((size_t) ((double) mono.size() * rate / rd->sampleRate), 0.0f);
+        juce::LagrangeInterpolator li;
+        li.process (rd->sampleRate / rate, mono.data(), out.data(), (int) out.size());
+        mono = std::move (out);
+    }
+    lucPiece.stop();
+    lucPiece.setRecording (std::move (mono), rate);
+    lucPiece.recordingFile = f.getFullPathName();
+    savedFromFile = true;
+    return true;
+}
+
+void RysumProcessor::exportLucierPiece (const juce::File& f)
+{
+    lucPiece.exportPiece (f, lucBase, juce::roundToInt (apvts.getRawParameterValue ("lucGen")->load()), apvts.getRawParameterValue ("lucGap")->load(), piecePool);
+}
+
 void RysumProcessor::updateLucier (double dt)
 {
     auto raw = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
@@ -1222,7 +1322,9 @@ void RysumProcessor::updateLucier (double dt)
         const float mn = getModulatedNorm (idx);
         if (! std::isnan (mn)) gen = prmList[(size_t) idx]->convertFrom0to1 (mn);
     }
-    if (on) lucGrown += (float) (raw ("lucGrow") / 60.0 * dt);
+    const bool piece = raw ("lucMode") < 0.5f;
+    if (piece) { gen = (float) juce::jmax (1, lucPiece.playingGen.load()); lucGrown = 0.0f; }     // the display follows the piece
+    else if (on) lucGrown += (float) (raw ("lucGrow") / 60.0 * dt);
     lucEffective = juce::jlimit (1.0f, 40.0f, gen + lucGrown);
     if (gen + lucGrown > 40.0f) lucGrown = juce::jmax (0.0f, 40.0f - gen);
     if (! on || lucBuilding) return;
@@ -1473,6 +1575,10 @@ void RysumProcessor::timerCallback()
         while (lucKeepAlive.size() > 1 && lucKeepAlive.front()->serial < lucInUse) lucKeepAlive.pop_front();
     }
     if (autoLoadDone) updateLucier (getTimerInterval() * 0.001);
+    lucPiece.tick (lucBase, juce::roundToInt (apvts.getRawParameterValue ("lucGen")->load()), apvts.getRawParameterValue ("lucGap")->load(),
+                   piecePool, aliveFlag);
+    if (lucPiece.state.load() != rysum::LucierPiece::stRecording && lucPiece.recordingVersion != savedRecordingVersion)
+        saveLucierRecording();
     // binaural: (re)design the decoder when the mode is on and its settings changed (~0.5 s debounce)
     if (autoLoadDone && isBinaural())
     {
@@ -1600,6 +1706,7 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
     }
     if (! forPatch) extra.appendChild (midiMapState(), nullptr);       // controller assignments belong to the setup, not to the sound
     if (! forPatch) extra.appendChild (speakersState(), nullptr);      // so does the loudspeaker layout
+    if (! forPatch && lucPiece.recordingFile.isNotEmpty()) extra.setProperty ("lucRecording", lucPiece.recordingFile, nullptr);
     extra.appendChild (scenesState(), nullptr);
     if (! forPatch)
     {
@@ -1754,6 +1861,11 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         {
             const auto mm = extra.getChildWithName ("MIDIMAP");
             if (mm.isValid()) applyMidiMapState (mm);
+            {
+                const juce::File lr (extra["lucRecording"].toString());
+                juce::String err;
+                if (lr.existsAsFile() && lr.getFullPathName() != lucPiece.recordingFile) loadLucierRecording (lr, err);
+            }
             const auto sp = extra.getChildWithName ("SPEAKERS");
             rysum::SpeakerLayout sl; juce::String err;
             if (sp.isValid() && rysum::speakerLayoutFromJson (sp["json"].toString(), sl, err)) setSpeakerLayout (sl, false);
@@ -2106,7 +2218,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 9;
+    constexpr int kFactoryVersion = 10;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -2498,6 +2610,38 @@ void RysumProcessor::writeFactoryPatches()
     makeFull (u8 ("79 Eingang zerf\xc3\xa4llt"),
               { { "stop0", 0 }, { "stop7", 1 }, { "vol7", -10.0f }, { "degMode", 1 }, { "degAmount", 0.6f }, { "degBits", 6.0f }, { "degRate", 6000.0f },
                 { "degDropouts", 0.3f }, { "inpWidth", 150.0f } }, {}, {}, true);
+
+    // ---- set 10: Lucier now has two ways - the patches made for the live way say so; 74 is the piece itself
+    currentSet = 10;
+    make (u8 ("59 Lucier \xe2\x80\x93 Ich sitze in einem Raum"),
+          { { "stop1", 1 }, { "lucOn", 1 }, { "lucMode", 1 }, { "lucGen", 8.0f }, { "lucMix", 0.6f }, { "lucTime", 0.4f },
+            { "simW", 9.0f }, { "simL", 12.0f }, { "simH", 4.0f } }, {});
+    make (u8 ("60 Lucier \xe2\x80\x93 Wachsende Generationen"),
+          { { "stop0", 0 }, { "stop1", 1 }, { "stop2", 1 }, { "lucOn", 1 }, { "lucMode", 1 }, { "lucGen", 1.0f }, { "lucGrow", 1.5f }, { "lucMix", 0.75f } }, {});
+    make (u8 ("61 Lucier \xe2\x80\x93 Kammer aus Glas"),
+          { { "stop0", 0 }, { "stop3", 1 }, { "stop5", 1 }, { "lucOn", 1 }, { "lucMode", 1 }, { "lucGen", 22.0f }, { "lucMix", 0.85f }, { "lucTime", 0.8f },
+            { "simW", 3.2f }, { "simL", 4.1f }, { "simH", 2.6f }, { "simAbs", 0.02f }, { "simAbsFloor", 0.02f } }, {});
+    make ("62 Lucier atmet",
+          { { "stop1", 1 }, { "stop7", 1 }, { "lucOn", 1 }, { "lucMode", 1 }, { "lucGen", 10.0f }, { "lucMix", 0.5f },
+            { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.05f } },
+          { { srcLfo1, "lucMix", 0.35f } });
+    make ("63 Lucier im Dom",
+          { { "stop7", 1 }, { "stop1", 1 }, { "simOn", 1 }, { "simW", 30.0f }, { "simL", 90.0f }, { "simH", 32.0f }, { "simAbs", 0.04f },
+            { "lucOn", 1 }, { "lucMode", 1 }, { "lucGen", 5.0f }, { "lucMix", 0.45f } }, {});
+    makeFull (u8 ("69 Szenen \xe2\x80\x93 Der Raum \xc3\xb6" "ffnet sich"),
+              { { "stop1", 1 }, { "stop2", 1 }, { "simOn", 1 }, { "simW", 3.0f }, { "simL", 4.0f }, { "simH", 2.5f }, { "simAbs", 0.3f }, { "master", -21.0f },
+                { "lucMode", 1 } }, {},
+              { {},
+                { { "simW", 10.0f }, { "simL", 16.0f }, { "simH", 6.0f }, { "simAbs", 0.1f } },
+                { { "simW", 22.0f }, { "simL", 45.0f }, { "simH", 15.0f }, { "simAbs", 0.05f } },
+                { { "simW", 30.0f }, { "simL", 90.0f }, { "simH", 32.0f }, { "simAbs", 0.03f }, { "lucOn", 1 }, { "lucGen", 4.0f }, { "lucMix", 0.4f } } }, false);
+    // the piece: press "Aufnehmen" on the Saal page, speak about a minute, press again - 32 generations follow by themselves
+    makeFull (u8 ("74 Eingang \xe2\x80\x93 Ich sitze in einem Raum"),
+              { { "stop0", 0 }, { "inpMode", 0 }, { "inpDist", 2.0f }, { "lucOn", 1 }, { "lucMode", 0 }, { "lucGen", 32.0f }, { "lucGap", 1.5f },
+                { "lucMix", 0.85f }, { "lucRecSrc", 1 }, { "simW", 6.0f }, { "simL", 8.0f }, { "simH", 3.0f } }, {}, {}, true);
+    makeFull (u8 ("80 Lucier \xe2\x80\x93 St\xc3\xbc" "ck f\xc3\xbcr Orgel"),
+              { { "stop1", 1 }, { "stop2", 1 }, { "lucOn", 1 }, { "lucMode", 0 }, { "lucGen", 24.0f }, { "lucGap", 2.0f }, { "lucMix", 0.7f },
+                { "simW", 12.0f }, { "simL", 26.0f }, { "simH", 10.0f }, { "simAbs", 0.05f } }, {}, {}, false);
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

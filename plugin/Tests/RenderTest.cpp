@@ -8,6 +8,7 @@
 #include "RoomTail.h"
 #include "Scala.h"
 #include "Lucier.h"
+#include "LucierPiece.h"
 #include "Speakers.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
@@ -629,6 +630,55 @@ static void testLucier (std::shared_ptr<const SampleLibrary> lib)
         std::cout << "lucier from a file (44.1 kHz, 100 ms silence before): " << (fb != nullptr ? fb->what : err) << ", starts at the direct sound: " << fileOk << std::endl;
         check (fileOk, "lucier: impulse response file read, resampled and trimmed");
         tmp.deleteFile();
+
+        // the piece: whole recordings through the room, generation after generation
+        {
+            RoomParams rp2; rp2.width = 6.0f; rp2.length = 8.0f; rp2.height = 3.0f;
+            auto b2 = lucierFromRoom (rp2, 0.5f, 48000.0);
+            const auto pass = lucierPassResponse (*b2);
+            std::vector<float> imp (4800, 0.0f); imp[0] = 1.0f;
+            const auto y1 = lucierPass (imp, pass, 1 << 22);
+            double err = 0.0, ref = 0.0;
+            for (size_t i = 0; i < pass.size() && i < y1.size(); ++i) { err += std::pow (y1[i] - pass[i], 2.0); ref += (double) pass[i] * pass[i]; }
+            std::cout << "lucier piece: impulse through one pass, error " << 10.0 * std::log10 (err / ref + 1e-30) << " dB, pass " << pass.size() / 48000.0 << " s" << std::endl;
+            check (y1.size() == imp.size() + pass.size() - 1 && err < 1.0e-8 * ref, "lucier piece: one pass = convolution with the room");
+            // 10 s of noise through 12 generations: the spectrum becomes a few lines (contrast grows), the level stays
+            XorShift rr (5);
+            std::vector<float> x (480000);
+            for (auto& v : x) v = 0.2f * rr.bi();
+            double rms0 = 0; for (auto v : x) rms0 += (double) v * v; rms0 = std::sqrt (rms0 / (double) x.size());
+            auto contrast = [] (const std::vector<float>& v)
+            {
+                juce::dsp::FFT fft (16);
+                std::vector<float> buf (1 << 17, 0.0f);
+                std::vector<double> mag (1 << 15, 0.0);
+                for (size_t st = 48000; st + 65536 < v.size(); st += 65536)
+                {
+                    std::fill (buf.begin(), buf.end(), 0.0f);
+                    std::copy_n (v.begin() + (std::ptrdiff_t) st, 65536, buf.begin());
+                    fft.performFrequencyOnlyForwardTransform (buf.data());
+                    for (size_t k = 0; k < mag.size(); ++k) mag[k] += buf[k];
+                }
+                std::vector<double> band (mag.begin() + 82, mag.begin() + 13650);         // 60 Hz .. 10 kHz
+                std::sort (band.begin(), band.end());
+                return 20.0 * std::log10 (band.back() / band[band.size() / 2]);
+            };
+            std::vector<double> c;
+            c.push_back (contrast (x));
+            auto t0 = std::chrono::high_resolution_clock::now();
+            for (int gnr = 1; gnr <= 12; ++gnr)
+            {
+                x = lucierPass (x, pass, 480000 + 144000);
+                lucierLevelMatch (x, rms0);
+                if (gnr == 1 || gnr == 4 || gnr == 12) c.push_back (contrast (x));
+            }
+            const double ms = std::chrono::duration<double, std::milli> (std::chrono::high_resolution_clock::now() - t0).count();
+            double rms = 0; float pk = 0; for (auto v : x) { rms += (double) v * v; pk = std::max (pk, std::abs (v)); } rms = std::sqrt (rms / (double) x.size());
+            std::cout << "lucier piece: contrast gen 0/1/4/12: " << c[0] << " / " << c[1] << " / " << c[2] << " / " << c[3] << " dB; rms "
+                      << 20 * std::log10 (rms / rms0) << " dB re recording, peak " << pk << "; 12 generations of 10 s in " << ms << " ms" << std::endl;
+            check (c[3] > c[2] && c[2] > c[1] && c[1] > c[0] + 3.0, "lucier piece: every generation more of the room's resonances");
+            check (pk <= 0.9f && std::isfinite (rms), "lucier piece: level held, no clipping");
+        }
     }
 
 // ---------------------------------------------------------------------------

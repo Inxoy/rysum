@@ -270,4 +270,65 @@ LucierResult buildLucier (const LucierBase& base, float generation, float tau, u
     res.ir = TailIR::fromResponses (one, sr, serial);
     return res;
 }
+
+// ---------------------------------------------------------------------------
+// the piece: whole recordings through the room, pass after pass
+// ---------------------------------------------------------------------------
+std::vector<float> lucierPassResponse (const LucierBase& base)
+{
+    const double sr = base.sampleRate;
+    std::vector<float> h (base.h);
+    const int maxLen = TailIR::maxLength (sr);
+    if ((int) h.size() > maxLen) { h.resize ((size_t) maxLen); fadeOut (h, 0.05f); }
+    const int len = (int) h.size();
+    const int order = orderFor (2 * juce::jmax (64, len)), N = 1 << order;
+    const double df = sr / N;
+    auto H = spectrum (h, order);
+    const int kLo = (int) (60.0 / df), kHi = juce::jmin ((int) H.size() - 1, (int) (10000.0 / df));
+    double e = 0.0;
+    for (size_t i = 0; i < H.size(); ++i)
+    {
+        H[i] *= transducers (juce::jmax (1.0, (double) i * df));
+        if ((int) i >= kLo && (int) i <= kHi) e += std::norm (H[i]);
+    }
+    const double rms = std::sqrt (e / juce::jmax (1, kHi - kLo + 1));
+    if (rms > 0.0) for (auto& v : H) v /= rms;
+    auto out = signal (H, order, len);
+    fadeOut (out, 0.03f);
+    return out;
+}
+
+std::vector<float> lucierPass (const std::vector<float>& x, const std::vector<float>& pass, int maxLen, std::function<bool()> shouldStop)
+{
+    const int lx = (int) x.size(), lh = (int) pass.size();
+    if (lx == 0 || lh == 0) return {};
+    const int outLen = juce::jmin (maxLen, lx + lh - 1);
+    const int order = juce::jmax (15, orderFor (2 * lh)), N = 1 << order;
+    const int B = N - lh + 1;                                   // input samples per block
+    juce::dsp::FFT fft (order);
+    std::vector<float> Hb ((size_t) (2 * N), 0.0f), buf ((size_t) (2 * N), 0.0f);
+    std::copy (pass.begin(), pass.end(), Hb.begin());
+    fft.performRealOnlyForwardTransform (Hb.data(), true);
+    std::vector<float> y ((size_t) outLen, 0.0f);
+    const float scale = 1.0f;                                   // (JUCE's inverse transform is normalised)
+    for (int start = 0; start < lx && start < outLen; start += B)
+    {
+        if (shouldStop && shouldStop()) return {};
+        std::fill (buf.begin(), buf.end(), 0.0f);
+        const int m = juce::jmin (B, lx - start);
+        std::copy_n (x.begin() + start, m, buf.begin());
+        fft.performRealOnlyForwardTransform (buf.data(), true);
+        for (int k = 0; k <= N / 2; ++k)
+        {
+            const float ar = buf[(size_t) (2 * k)], ai = buf[(size_t) (2 * k + 1)];
+            const float br = Hb[(size_t) (2 * k)], bi = Hb[(size_t) (2 * k + 1)];
+            buf[(size_t) (2 * k)] = ar * br - ai * bi;
+            buf[(size_t) (2 * k + 1)] = ar * bi + ai * br;
+        }
+        fft.performRealOnlyInverseTransform (buf.data());
+        const int n = juce::jmin (N, outLen - start);
+        for (int i = 0; i < n; ++i) y[(size_t) (start + i)] += buf[(size_t) i] * scale;
+    }
+    return y;
+}
 } // namespace rysum

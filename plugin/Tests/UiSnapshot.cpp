@@ -642,6 +642,7 @@ public:
                       << (proc->engine.erActive.load() > 0 && proc->engine.tailSerialInUse.load() != 0xffffffffu ? "  ok" : "  FAIL") << std::endl;
             // Lucier mode on: the response of 12 passes is built in the background, the engine takes it
             auto* L = proc->apvts.getParameter ("lucOn");
+            if (auto* md = proc->apvts.getParameter ("lucMode")) md->setValueNotifyingHost (1.0f);      // live
             L->setValueNotifyingHost (1.0f);
             if (auto* g = proc->apvts.getParameter ("lucGen")) g->setValueNotifyingHost (g->convertTo0to1 (12.0f));
             for (int i = 0; i < 60 && proc->getLucierView().curve.empty(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
@@ -651,6 +652,45 @@ public:
                       << (lv.peaks.empty() ? 0.0f : lv.peaks[0]) << " Hz, engine level " << proc->engine.lucierLevel.load()
                       << (lv.curve.size() > 10 && proc->engine.lucierSerialInUse.load() != 0xffffffffu ? "  ok" : "  FAIL") << std::endl;
             shoot (2, "ui_saal.png");
+            {
+                // the piece: record 3 s of the organ, then it plays: the recording, generation 1, 2 - by itself, then it ends
+                auto setReal = [&] (const char* id, float v) { if (auto* q = proc->apvts.getParameter (id)) q->setValueNotifyingHost (q->convertTo0to1 (v)); };
+                setReal ("lucGen", 2.0f); setReal ("lucGap", 0.5f); setReal ("lucMix", 0.5f); setReal ("lucRecSrc", 0.0f);
+                proc->lucierRecord();
+                auto& pc = proc->getLucierPiece();
+                const bool modeOk = proc->isLucierPieceMode();
+                for (int b = 0; b < 280; ++b)        // 3 s
+                {
+                    juce::MidiBuffer mb;
+                    if (b == 10) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+                    if (b == 200) mb.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+                    st.clear(), proc->processBlock (st, mb);
+                }
+                for (int i = 0; i < 20 && proc->getLucierView().curve.empty(); ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+                proc->lucierStopRecording();
+                const double recSec = (double) pc.getRecording().size() / pc.recordingRate();
+                const bool saved = juce::File (pc.recordingFile).existsAsFile();
+                // play it through: blocks of audio, the message thread computing the generations in between
+                int maxGen = 0; float peak1 = 0.0f; bool ended = false;
+                for (int b = 0; b < 4000 && ! ended; ++b)
+                {
+                    juce::MidiBuffer mb;
+                    st.clear(), proc->processBlock (st, mb);
+                    if (b % 8 == 0) juce::MessageManager::getInstance()->runDispatchLoopUntil (2);
+                    maxGen = std::max (maxGen, pc.playingGen.load());
+                    if (pc.playingGen.load() >= 1) peak1 = std::max (peak1, st.getMagnitude (0, 0, 512));
+                    ended = pc.state.load() == rysum::LucierPiece::stFinished;
+                }
+                std::cout << "Lucier piece: mode " << modeOk << ", recorded " << recSec << " s, saved " << saved << ", reached generation " << maxGen
+                          << ", level from gen 1 " << peak1 << ", ended " << ended
+                          << ((modeOk && recSec > 1.0 && saved && maxGen == 2 && peak1 > 0.01f && ended) ? "  ok" : "  FAIL") << std::endl;
+                proc->lucierPlay();
+                for (int b = 0; b < 300; ++b) { juce::MidiBuffer mb; st.clear(), proc->processBlock (st, mb); if (b % 8 == 0) juce::MessageManager::getInstance()->runDispatchLoopUntil (2); }
+                shoot (2, "ui_saal_stueck.png");
+                proc->lucierStop();
+                juce::File (pc.recordingFile).deleteFile();
+                if (auto* md = proc->apvts.getParameter ("lucMode")) md->setValueNotifyingHost (1.0f);
+            }
             L->setValueNotifyingHost (0.0f);
             { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 64), 0); st.clear(), proc->processBlock (st, mb); }
             P->setValueNotifyingHost (0.0f);

@@ -252,9 +252,28 @@ outside the circle = below the horizon). Select a stop on the right, then
 
 **Lucier** (Saal page, middle column) – after Alvin Lucier's *I am sitting in a room* (1969):
 a recording is played into a room and recorded again, over and over, until only the room's
-resonances are left. Here the whole output goes through a room *n* times (*Generation*): every
+resonances are left. Two ways (buttons under *Lucier an*):
+
+**Stück (Aufnahme)** – the piece as it is performed. *Aufnehmen*, speak / sing / play (up to
+5 minutes), *Aufnahme fertig*: the recording is played back, then generation 1 – the recording
+played into the room and recorded again – then generation 2, 3 … each one as long as the recording,
+all by itself, until *Generationen* is reached (1 minute × 32 generations ≈ 33 minutes).
+- Every generation is a real pass: the whole previous generation convolved with the room
+  (undamped, the full reverberation, with loudspeaker and microphone), brought back to the level
+  of the recording like Lucier re-recording at full level. The next one is computed in the
+  background while the current one plays (about a second per minute of recording).
+- *Aufnahme von*: everything Rysum plays (organ + input) or only the audio input.
+- *Pause zwischen den Generationen*, *Anteil* (live sound vs. the playback while the piece runs).
+- *Abspielen* starts the piece again from the recording, ■ stops. Every recording is saved in
+  `Documents\Rysum\Lucier` and the project remembers it; *Aufnahme laden …* takes any audio file
+  (e.g. a recording of your voice). *Stück als WAV …* computes the whole piece into one file in
+  the background, faster than real time.
+- The playback comes out of the middle (W in Ambisonics); the display shows the room's response
+  for the generation playing and how long the piece still runs.
+
+**Live** – everything that sounds goes through the room *n* times at once (*Generation*): every
 pass multiplies the spectrum by the room's response once more, so its strongest resonances rise
-above everything else.
+above everything else; it rings out when you stop. (Factory patches 59–63 use this.)
 - *Raum*: the simulated hall (its eigenmodes, computed from the dimensions up to about twice the
   Schroeder frequency, with a diffuse field above) or the impulse response loaded on the Raum page –
   e.g. a recording from the church in Rysum itself. Loudspeaker and microphone are part of every
@@ -470,7 +489,7 @@ loaded impulse response (by file path). It does **not** change the output format
 Patches are plain files in `Documents\Rysum\Patches\*.rysum` – copy, rename, back up or
 share them. Example patches are written there on first start, and new ones with each new
 set (deleted ones are not re-created). Set 9 (59–79) shows the newer features:
-59–63 Lucier, 64–67 expression (MPE pressure / slide – polyphonic or channel aftertouch
+59–63 Lucier (live), 80 Lucier as a piece (74 too, with the input), 64–67 expression (MPE pressure / slide – polyphonic or channel aftertouch
 work as pressure too), 68–71 scenes (move *Überblenden* on the Spieltisch; 70 moves by itself
 with an LFO), 72–79 the audio input (they switch it on).
 

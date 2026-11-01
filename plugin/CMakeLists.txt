@@ -127,6 +127,7 @@ set(RYSUM_PLUGIN_SOURCES
     Source/Binaural.cpp
     Source/RoomTail.cpp
     Source/Lucier.cpp
+    Source/LucierPiece.cpp
     Source/Speakers.cpp
     Source/SofaGunzip.cpp
     Source/PluginProcessor.cpp
@@ -211,6 +212,7 @@ if(RYSUM_BUILD_TESTS)
         Source/Binaural.cpp
         Source/RoomTail.cpp
         Source/Lucier.cpp
+        Source/LucierPiece.cpp
         Source/Speakers.cpp
         Source/SofaGunzip.cpp)
     target_include_directories(RysumRenderTest PRIVATE Source)
@@ -222,7 +224,7 @@ if(RYSUM_BUILD_TESTS)
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
-        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/Lucier.cpp Source/Speakers.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/ProcessorScenes.cpp Source/PluginEditor.cpp
+        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/Lucier.cpp Source/LucierPiece.cpp Source/Speakers.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/ProcessorScenes.cpp Source/PluginEditor.cpp
         Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp Source/SaalView.cpp Source/MidiMapView.cpp Source/OrganView.cpp Source/SpeakerView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0

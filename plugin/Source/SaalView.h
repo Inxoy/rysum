@@ -64,5 +64,20 @@ private:
     int shownLucVersion = -1;
     float shownLucGen = -1.0f, shownLucLevel = -1.0f;
     void paintLucier (juce::Graphics&);
+    // ... as a piece: record, then it plays by itself
+    juce::TextButton lucModePiece { juce::String::fromUTF8 ("St\xc3\xbc" "ck (Aufnahme)") }, lucModeLive { "Live" };
+    std::unique_ptr<juce::ParameterAttachment> lucModeAtt;
+    juce::TextButton lucRec { "Aufnehmen" }, lucPlay { juce::String::fromUTF8 ("\xe2\x96\xb6 Abspielen") },
+                     lucStop { juce::String::fromUTF8 ("\xe2\x96\xa0") }, lucLoad { juce::String::fromUTF8 ("Aufnahme laden \xe2\x80\xa6") },
+                     lucExport { juce::String::fromUTF8 ("St\xc3\xbc" "ck als WAV \xe2\x80\xa6") };
+    juce::ComboBox lucRecSrc;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lucRecSrcAtt;
+    std::array<ParamRow*, 3> pieceRows {};
+    std::unique_ptr<juce::FileChooser> lucChooser;
+    juce::Rectangle<int> lucStatusArea;
+    juce::String shownPieceStatus;
+    bool pieceMode() const;
+    void updateLucierMode();
+    juce::String pieceStatus() const;
 };
 } // namespace rysum::ui

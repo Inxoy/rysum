@@ -2,6 +2,7 @@
 
 #include "RoomTail.h"
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -45,4 +46,10 @@ struct LucierResult
 
 /** generation >= 1 (fractions blend two whole passes); tau = damping of every pass (s). Background thread. */
 LucierResult buildLucier (const LucierBase& base, float generation, float tau, uint32_t serial);
+
+/** the piece itself ("Stueck"): one real pass = room x loudspeaker x microphone, undamped, unit rms in the band */
+std::vector<float> lucierPassResponse (const LucierBase& base);
+/** a recording played into the room and recorded again: x convolved with one pass, at most maxLen samples long
+    (FFT overlap-add; background thread). shouldStop() may cancel (returns an empty vector). */
+std::vector<float> lucierPass (const std::vector<float>& x, const std::vector<float>& pass, int maxLen, std::function<bool()> shouldStop = {});
 } // namespace rysum

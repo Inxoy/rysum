@@ -299,6 +299,109 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
     lucRestart.setTooltip (U ("Das Gewachsene zur\xc3\xbc" "cksetzen: wieder bei der eingestellten Generation anfangen."));
     lucRestart.onClick = [this] { proc.resetLucierGrowth(); };
     addAndMakeVisible (lucRestart);
+
+    // ---- Lucier as a piece
+    if (auto* m = proc.apvts.getParameter ("lucMode"))
+    {
+        lucModeAtt = std::make_unique<juce::ParameterAttachment> (*m, [this] (float) { updateLucierMode(); });
+        lucModeAtt->sendInitialUpdate();
+    }
+    lucModePiece.onClick = [this] { if (lucModeAtt) lucModeAtt->setValueAsCompleteGesture (0.0f); };
+    lucModeLive.onClick = [this] { if (lucModeAtt) lucModeAtt->setValueAsCompleteGesture (1.0f); };
+    lucModePiece.setTooltip (U ("Wie Lucier: aufnehmen (Stimme, Orgel, beides), dann wird die Aufnahme wieder und wieder in den Raum gespielt "
+                                "und neu aufgenommen \xe2\x80\x93 Generation f\xc3\xbcr Generation, jede so lang wie die Aufnahme. Das St\xc3\xbc" "ck spielt sich selbst."));
+    lucModeLive.setTooltip (U ("Alles, was gerade klingt, geht sofort n-mal durch den Raum (zum Spielen; klingt aus, wenn du aufh\xc3\xb6rst)."));
+    addAndMakeVisible (lucModePiece);
+    addAndMakeVisible (lucModeLive);
+    lucRec.setTooltip (U ("Aufnahme starten. Nochmal klicken: Aufnahme beenden \xe2\x80\x93 dann beginnt das St\xc3\xbc" "ck: erst die Aufnahme selbst, "
+                          "dann Generation 1, 2, 3 \xe2\x80\xa6 (h\xc3\xb6" "chstens 5 Minuten Aufnahme; jede Aufnahme wird in Dokumente/Rysum/Lucier gespeichert)."));
+    lucRec.onClick = [this]
+    {
+        auto& pc = proc.getLucierPiece();
+        if (pc.state.load() == rysum::LucierPiece::stRecording) proc.lucierStopRecording();
+        else proc.lucierRecord();
+    };
+    lucPlay.setTooltip (U ("Das St\xc3\xbc" "ck mit der letzten Aufnahme von vorn spielen"));
+    lucPlay.onClick = [this] { proc.lucierPlay(); };
+    lucStop.setTooltip (U ("Anhalten (Aufnahme bzw. St\xc3\xbc" "ck)"));
+    lucStop.onClick = [this] { proc.lucierStop(); };
+    lucLoad.setTooltip (U ("Eine eigene Aufnahme (WAV/AIFF/FLAC, bis 20 Minuten) als Ausgang des St\xc3\xbc" "cks"));
+    lucLoad.onClick = [this]
+    {
+        lucChooser = std::make_unique<juce::FileChooser> (U ("Aufnahme f\xc3\xbcr das Lucier-St\xc3\xbc" "ck"),
+                                                          RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("Lucier"), "*.wav;*.aif;*.aiff;*.flac");
+        lucChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+        {
+            if (! fc.getResult().existsAsFile()) return;
+            juce::String err;
+            if (! proc.loadLucierRecording (fc.getResult(), err))
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Lucier", fc.getResult().getFileName() + ": " + err);
+            repaint (lucBox);
+        });
+    };
+    lucExport.setTooltip (U ("Das ganze St\xc3\xbc" "ck (Aufnahme und alle Generationen) in eine WAV-Datei rechnen \xe2\x80\x93 im Hintergrund, schneller als Echtzeit"));
+    lucExport.onClick = [this]
+    {
+        lucChooser = std::make_unique<juce::FileChooser> (U ("St\xc3\xbc" "ck speichern"),
+                                                          RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("Lucier").getChildFile (U ("Lucier-St\xc3\xbc" "ck.wav")), "*.wav");
+        lucChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                                 [this] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == juce::File()) return;
+            proc.exportLucierPiece (f.withFileExtension ("wav"));
+        });
+    };
+    for (auto* b : { &lucRec, &lucPlay, &lucStop, &lucLoad, &lucExport }) addAndMakeVisible (*b);
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("lucRecSrc")))
+        lucRecSrc.addItemList (choice->choices, 1);
+    lucRecSrcAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "lucRecSrc", lucRecSrc);
+    lucRecSrc.setTooltip (U ("Was aufgenommen wird: alles, was Rysum gerade spielt, oder nur der Audio-Eingang (Seite Raum)"));
+    addAndMakeVisible (lucRecSrc);
+    pieceRows = { &row ("lucGen", U ("Generationen (dann ist das St\xc3\xbc" "ck aus)")), &row ("lucGap", "Pause zwischen den Generationen"),
+                  &row ("lucMix", U ("Anteil (0 = nur live, 100 = nur Wiedergabe)")) };
+    updateLucierMode();
+}
+
+bool SaalView::pieceMode() const { return proc.isLucierPieceMode(); }
+
+void SaalView::updateLucierMode()
+{
+    const bool piece = pieceMode();
+    lucModePiece.setToggleState (piece, juce::dontSendNotification);
+    lucModeLive.setToggleState (! piece, juce::dontSendNotification);
+    for (auto* r : lucRows) if (r) r->setVisible (! piece);
+    lucRestart.setVisible (! piece);
+    for (auto* r : pieceRows) if (r) r->setVisible (piece);
+    for (auto* b : { &lucRec, &lucPlay, &lucStop, &lucLoad, &lucExport }) b->setVisible (piece);
+    lucRecSrc.setVisible (piece);
+    resized();
+    repaint (lucBox);
+}
+
+juce::String SaalView::pieceStatus() const
+{
+    auto& pc = const_cast<RysumProcessor&> (proc).getLucierPiece();
+    auto mmss = [] (double s) { const int t = juce::jmax (0, (int) s); return juce::String (t / 60) + ":" + juce::String (t % 60).paddedLeft ('0', 2); };
+    const double sr = pc.sampleRate();
+    const int st = pc.state.load();
+    const double recLen = (double) pc.getRecording().size() / juce::jmax (1.0, pc.recordingRate());
+    if (st == rysum::LucierPiece::stRecording) return U ("Aufnahme l\xc3\xa4uft  ") + mmss ((double) pc.recPos.load() / sr);
+    juce::String s;
+    if (st == rysum::LucierPiece::stPlaying)
+    {
+        const int g = pc.playingGen.load(), last = pc.lastGen.load();
+        const double pos = (double) pc.playPos.load() / sr;
+        const double gap = proc.apvts.getRawParameterValue ("lucGap")->load();
+        const double left = (recLen + gap) * (double) (last - g) + juce::jmax (0.0, recLen - pos);
+        s << mmss (pos) << " / " << mmss (recLen) << U (" \xc2\xb7 noch ") << mmss (left);
+        if (pc.computingGen.load() >= 0) s << U (" \xc2\xb7 rechne ") << pc.computingGen.load();
+    }
+    else if (st == rysum::LucierPiece::stFinished) s = U ("Das St\xc3\xbc" "ck ist zu Ende.");
+    else if (recLen > 0.0) s = U ("Aufnahme ") + mmss (recLen) + U (" \xc2\xb7 bereit");
+    else s = U ("Noch keine Aufnahme");
+    if (pc.exportProgress.load() >= 0.0f) s << U (" \xc2\xb7 WAV ") << juce::roundToInt (pc.exportProgress.load() * 100.0f) << " %";
+    return s;
 }
 
 void SaalView::resized()
@@ -317,15 +420,49 @@ void SaalView::resized()
         t.removeFromLeft (6);
         lucSource.setBounds (t);
         b.removeFromTop (6);
-        lucGenArea = b.removeFromTop (34);
-        lucCurveArea = b.removeFromTop (118);
-        lucPeakArea = b.removeFromTop (34);
-        b.removeFromTop (4);
-        for (auto* x : lucRows) x->setBounds (b.removeFromTop (30).withTrimmedBottom (2));
-        b.removeFromTop (4);
-        lucRestart.setBounds (b.removeFromTop (24).withWidth (180));
+        auto m = b.removeFromTop (24);
+        const int mw = (m.getWidth() - 6) / 2;
+        lucModePiece.setBounds (m.removeFromLeft (mw));
+        m.removeFromLeft (6);
+        lucModeLive.setBounds (m);
         b.removeFromTop (8);
-        lucNoteArea = b;
+        if (pieceMode())
+        {
+            auto t2 = b.removeFromTop (26);
+            lucRec.setBounds (t2.removeFromLeft (120));
+            t2.removeFromLeft (6);
+            lucPlay.setBounds (t2.removeFromLeft (110));
+            t2.removeFromLeft (6);
+            lucStop.setBounds (t2);
+            b.removeFromTop (4);
+            lucGenArea = b.removeFromTop (34);
+            lucStatusArea = b.removeFromTop (16);
+            lucCurveArea = b.removeFromTop (96);
+            lucPeakArea = b.removeFromTop (34);
+            for (auto* x : pieceRows) if (x) x->setBounds (b.removeFromTop (30).withTrimmedBottom (2));
+            b.removeFromTop (2);
+            lucRecSrc.setBounds (b.removeFromTop (24));
+            b.removeFromTop (6);
+            auto t3 = b.removeFromTop (24);
+            lucLoad.setBounds (t3.removeFromLeft ((t3.getWidth() - 6) / 2));
+            t3.removeFromLeft (6);
+            lucExport.setBounds (t3);
+            b.removeFromTop (8);
+            lucNoteArea = b;
+        }
+        else
+        {
+            lucGenArea = b.removeFromTop (34);
+            lucStatusArea = {};
+            lucCurveArea = b.removeFromTop (110);
+            lucPeakArea = b.removeFromTop (34);
+            b.removeFromTop (4);
+            for (auto* x : lucRows) x->setBounds (b.removeFromTop (30).withTrimmedBottom (2));
+            b.removeFromTop (4);
+            lucRestart.setBounds (b.removeFromTop (24).withWidth (180));
+            b.removeFromTop (8);
+            lucNoteArea = b;
+        }
     }
 
     constexpr int kRow = 28, kTitle = 32;
@@ -378,6 +515,18 @@ void SaalView::refresh()
     if (st != shownStatus) { shownStatus = st; repaint (saalBox); }
     const auto& lv = proc.getLucierView();
     const float lvl = proc.engine.lucierLevel.load();
+    if (lucModePiece.getToggleState() != pieceMode()) updateLucierMode();      // (changed by a patch, the record button, automation)
+    const auto ps = pieceMode() ? pieceStatus() : juce::String();
+    {
+        auto& pc = proc.getLucierPiece();
+        const bool rec = pc.state.load() == rysum::LucierPiece::stRecording;
+        lucRec.setToggleState (rec, juce::dontSendNotification);
+        lucRec.setButtonText (rec ? U ("Aufnahme fertig") : U ("Aufnehmen"));
+        lucPlay.setEnabled (! pc.getRecording().empty() && ! rec);
+        lucPlay.setToggleState (pc.state.load() == rysum::LucierPiece::stPlaying, juce::dontSendNotification);
+        lucExport.setEnabled (! pc.getRecording().empty() && pc.exportProgress.load() < 0.0f);
+    }
+    if (ps != shownPieceStatus) { shownPieceStatus = ps; repaint (lucBox); }
     if (lv.version != shownLucVersion || std::abs (proc.getLucierGeneration() - shownLucGen) > 0.004f || std::abs (lvl - shownLucLevel) > 0.01f)
     {
         shownLucVersion = lv.version; shownLucGen = proc.getLucierGeneration(); shownLucLevel = lvl;
@@ -391,7 +540,29 @@ void SaalView::paintLucier (juce::Graphics& g)
     const auto& lv = proc.getLucierView();
     const bool on = proc.apvts.getRawParameterValue ("lucOn")->load() > 0.5f;
     drawSectionTitle (g, lucBox, "Lucier", U ("\xe2\x80\x9eIch sitze in einem Raum\xe2\x80\x9c"));
+    const bool piece = pieceMode();
+    auto& pc = proc.getLucierPiece();
+    if (piece)
+    {
+        // generation, large: which one is playing, of how many
+        auto r = lucGenArea;
+        const int st = pc.state.load();
+        const bool playingNow = st == rysum::LucierPiece::stPlaying || st == rysum::LucierPiece::stFinished;
+        g.setColour (playingNow ? col::ink : col::mute);
+        g.setFont (A.romanFont (26.0f));
+        const juce::String big = st == rysum::LucierPiece::stRecording ? U ("Aufnahme")
+                               : playingNow ? juce::String (pc.playingGen.load()) + " / " + juce::String (pc.lastGen.load()) : U ("\xe2\x80\x93");
+        g.drawText (big, r.removeFromLeft (150), juce::Justification::centredLeft);
+        g.setFont (A.monoFont (11.0f));
+        g.setColour (st == rysum::LucierPiece::stRecording ? col::rubric.brighter (0.5f) : col::dim);
+        g.drawText (st == rysum::LucierPiece::stRecording ? U ("sprich, spiel \xe2\x80\xa6") : playingNow && pc.playingGen.load() == 0 ? U ("die Aufnahme selbst") : U ("Generation"),
+                    r, juce::Justification::centredLeft);
+        g.setFont (A.monoFont (10.5f));
+        g.setColour (col::mute);
+        g.drawFittedText (shownPieceStatus, lucStatusArea, juce::Justification::centredLeft, 1, 0.8f);
+    }
     // generation, large
+    if (! piece)
     {
         auto r = lucGenArea;
         g.setColour (on ? col::ink : col::mute);
@@ -438,7 +609,7 @@ void SaalView::paintLucier (juce::Graphics& g)
             }
         }
         // how loud the room sings right now
-        const float lvl = juce::jlimit (0.0f, 1.0f, proc.engine.lucierLevel.load());
+        const float lvl = juce::jlimit (0.0f, 1.0f, piece ? pc.level.load() : proc.engine.lucierLevel.load());
         g.setColour (col::ink.withAlpha (0.8f));
         g.fillRect (r.getRight() - 3.0f, r.getBottom() - r.getHeight() * lvl, 3.0f, r.getHeight() * lvl);
     }
@@ -467,7 +638,12 @@ void SaalView::paintLucier (juce::Graphics& g)
     }
     g.setFont (A.sansFont (12.0f));
     g.setColour (col::mute);
-    if (lucNoteArea.getHeight() > 20)
+    if (piece && lucNoteArea.getHeight() > 20)
+        g.drawFittedText (U ("Aufnehmen, sprechen oder spielen, nochmal klicken: die Aufnahme kommt aus dem Raum zur\xc3\xbc" "ck, wird neu aufgenommen, "
+                             "wieder abgespielt \xe2\x80\xa6 jede Generation so lang wie die Aufnahme, auf gleiche Lautst\xc3\xa4rke gebracht. "
+                             "1 Minute Aufnahme \xc3\x97 32 Generationen \xe2\x89\x88 33 Minuten."),
+                          lucNoteArea, juce::Justification::topLeft, juce::jmax (1, lucNoteArea.getHeight() / 16));
+    else if (lucNoteArea.getHeight() > 20)
         g.drawFittedText (U ("Jeder Durchgang filtert den Klang noch einmal mit dem Raum: seine st\xc3\xa4rksten Resonanzen bleiben, alles andere verschwindet. "
                              "Lautsprecher und Mikrofon sind wie bei Lucier Teil jedes Durchgangs. Die Resonanzen werden so laut gehalten wie die Orgel."),
                           lucNoteArea, juce::Justification::topLeft, juce::jmax (1, lucNoteArea.getHeight() / 16));

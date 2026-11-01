@@ -5,6 +5,7 @@
 #include "Binaural.h"
 #include "Scala.h"
 #include "Lucier.h"
+#include "LucierPiece.h"
 #include "Speakers.h"
 #include <map>
 
@@ -169,6 +170,15 @@ public:
     void undoDice();
     float getLucierGeneration() const { return lucEffective; }
     void resetLucierGrowth() { lucGrown = 0.0f; }
+    // Lucier as a piece: record, then generation after generation by itself (message thread)
+    rysum::LucierPiece& getLucierPiece() { return lucPiece; }
+    void lucierRecord();                               // starts recording (switches Lucier on, mode "Stueck")
+    void lucierStopRecording();                        // ... and the piece begins
+    void lucierPlay() { lucPiece.play(); }
+    void lucierStop() { lucPiece.stop(); }
+    bool loadLucierRecording (const juce::File& f, juce::String& error);
+    void exportLucierPiece (const juce::File& f);
+    bool isLucierPieceMode() const { return apvts.getRawParameterValue ("lucMode")->load() < 0.5f; }
 
     // room / impulse response (message thread)
     void loadIr (const juce::File& file);
@@ -257,7 +267,7 @@ private:
         int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
             freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
             releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
-            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0, mtsCont = 0, mpe = 0, mpeBend = 0, lucOn = 0, lucMix = 0;
+            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0, mtsCont = 0, mpe = 0, mpeBend = 0, lucOn = 0, lucMix = 0, lucMode = 0;
         std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
         std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
         std::array<int, rysum::kNumRoutes> modAmt {};
@@ -356,6 +366,12 @@ private:
     int diceGroupOf (const juce::String& id) const;
     // Lucier mode: responses built on their own thread
     juce::ThreadPool lucPool { 1 };
+    juce::ThreadPool piecePool { 2 };                  // generations of the piece, export
+    rysum::LucierPiece lucPiece;
+    std::vector<float> lucRecScratch;                  // audio thread: the mono signal recorded
+    int savedRecordingVersion = 0;
+    void saveLucierRecording();
+    bool savedFromFile = false;
     LucierView lucView;
     float lucGrown = 0.0f, lucEffective = 1.0f;
     bool lucBuilding = false;
@@ -421,7 +437,8 @@ private:
     std::shared_ptr<rysum::BinauralDecoder> binActive;           // audio thread
     std::shared_ptr<rysum::BinauralDecoder> pendingBin;          // handed over (atomic_store / exchange)
     std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin;   // message thread keeps them alive
-    juce::AudioBuffer<float> inBuf;                               // the audio input of the block (main input + side chain)
+    juce::AudioBuffer<float> inBuf;
+    bool inputThisBlock = false;                               // the audio input of the block (main input + side chain)
     juce::AudioBuffer<float> binBuf;                              // Ambisonics render buffer in binaural mode
     juce::String binStatus { juce::String::fromUTF8 ("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e" "Binaural\xe2\x80\x9c stellen") };
     juce::String builtBinKey, pendingBinKey;
