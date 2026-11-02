@@ -489,7 +489,9 @@ public:
             std::cout << "wrote " << f.getFullPathName() << std::endl;
         };
         shoot (0, "ui_spieltisch.png");
+        for (int k = 0; k < rysum::kNumKeys; k += 3) proc->setPipeMuted (6, k, true);      // some Trompete pipes muted
         shoot (1, "ui_raum.png");
+        for (int k = 0; k < rysum::kNumKeys; ++k) proc->setPipeMuted (6, k, false);
         {
             // the audio input: on, stereo, kreisend; some noise through the processor so the meter and the places show
             auto setN = [&] (const char* id, float v) { if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v)); };
@@ -690,6 +692,25 @@ public:
                 proc->lucierStop();
                 juce::File (pc.recordingFile).deleteFile();
                 if (auto* md = proc->apvts.getParameter ("lucMode")) md->setValueNotifyingHost (1.0f);
+            }
+            {
+                // several rooms: the Gedackt in Saal 2 (a chapel) - its own late reverb is built and used
+                auto setReal = [&] (const juce::String& id, float v) { if (auto* q = proc->apvts.getParameter (id)) q->setValueNotifyingHost (q->convertTo0to1 (v)); };
+                setReal (RysumProcessor::stopRoomParamId (1), 1.0f);
+                setReal ("stop1", 1.0f);
+                for (int b = 0; b < 40; ++b) { juce::MidiBuffer mb; if (b == 1) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0); st.clear(), proc->processBlock (st, mb); }
+                for (int i = 0; i < 80 && proc->engine.tailSerialInUseR[1].load() == 0xffffffffu; ++i)
+                {
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+                    juce::MidiBuffer mb; st.clear(), proc->processBlock (st, mb);
+                }
+                const int used = proc->engine.roomsUsed.load();
+                std::cout << "rooms: used mask " << used << ", room 2 RT " << proc->engine.heard[1].rtLow.load() << " s, tail in use "
+                          << proc->engine.tailSerialInUseR[1].load()
+                          << (((used & 2) != 0 && proc->engine.tailSerialInUseR[1].load() != 0xffffffffu && proc->engine.heard[1].rtLow.load() > 1.0f) ? "  ok" : "  FAIL") << std::endl;
+                shoot (2, "ui_saal_raeume.png");
+                { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 60), 0); st.clear(), proc->processBlock (st, mb); }
+                setReal (RysumProcessor::stopRoomParamId (1), 0.0f);
             }
             L->setValueNotifyingHost (0.0f);
             { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 64), 0); st.clear(), proc->processBlock (st, mb); }

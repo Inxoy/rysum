@@ -58,17 +58,23 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     inRing.assign ((size_t) 2 * (size_t) kInRing, 0.0f);
     for (auto& is : inSrc) { is = InSrc {}; }
     inRunning = false; inGate = inLevelSm = inEnv = inFollowVal = 0.0f;
-    tail.prepare (sr);
+    for (auto& R : rt)
+    {
+        R.tail.prepare (sr);
+        R.tailGain = 0.0f; R.tailWasOn = false;
+        R.fdnBuf.assign ((size_t) kFdnLines * (size_t) kFdnLen, 0.0f);
+        R.fdnPre.assign ((size_t) kFdnLen, 0.0f);
+        R.convRingOut = R.fdnRingOut = 0;
+        R.send.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
+        R.running = false;
+        resetFdn (R);
+    }
+    room0In.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
     lucier.prepare (sr);
     lucIn.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
     lucWet.assign (lucIn.size(), 0.0f);
     lucRunning = false; lucRing = 0; lucDry = 1.0f; lucWetGain = 0.0f;
-    tailGain = 0.0f; tailWasOn = false;
     zeroIn.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
-    fdnBuf.assign ((size_t) kFdnLines * (size_t) kFdnLen, 0.0f);
-    fdnPre.assign ((size_t) kFdnLen, 0.0f);
-    resetFdn();
-    convRingOut = fdnRingOut = 0;
     {
         // FDN mixing matrix: a fixed random orthogonal matrix (Gram-Schmidt) instead of a Hadamard matrix (that one
         // left isolated modes around 1.5-2 kHz). Together with a slow, small modulation of every delay (different
@@ -91,7 +97,7 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
         for (int j = 0; j < kFdnLines; ++j)
         {
             const double rate = 0.3 + 0.9 * r.uni(), ph = juce::MathConstants<double>::twoPi * r.uni();
-            fdnModC[(size_t) j] = (float) std::cos (ph); fdnModS[(size_t) j] = (float) std::sin (ph);
+            for (auto& R : rt) { R.fdnModC[(size_t) j] = (float) std::cos (ph); R.fdnModS[(size_t) j] = (float) std::sin (ph); }
             const double w = juce::MathConstants<double>::twoPi * rate / sr;
             fdnModStepC[(size_t) j] = (float) std::cos (w); fdnModStepS[(size_t) j] = (float) std::sin (w);
         }
@@ -686,10 +692,13 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p, int n
     trackerPath (key, velocity, p);
     const bool wait = p.fx.pathWait && p.fx.pathLevel > 0.0001f && p.fx.pathTime > 0.005f;
 
+    // notes to single pipes: only one stop sounds this note (the others still let an old one on this key go)
+    const int only = p.noteSpread > 0 ? spreadStopFor (key, p) : -2;
     for (int s = 0; s < kNumStops; ++s)
         if (p.stopOn[(size_t) s])
         {
             releaseStopKey (s, key, noteId);
+            if (only != -2 && s != only) continue;
             if (wait)
             {
                 Scheduled e; e.voice = true; e.stop = s; e.key = key; e.noteId = noteId; e.delay = (int) (p.fx.pathTime * sr);
@@ -697,6 +706,35 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p, int n
             }
             else startVoice (s, key, -1, noteId);
         }
+}
+
+int OrganEngine::spreadStopFor (int key, const EngineParams& p) noexcept
+{
+    // the pulled stops in the order of the console (left to right); a muted pipe on this key is skipped
+    std::array<int, kNumStops> list {};
+    int n = 0;
+    for (int slot = 0; slot < kNumStops; ++slot)
+    {
+        const int s = kDisplayOrder[(size_t) slot];
+        if (p.stopOn[(size_t) s] && ! muted[(size_t) s][(size_t) key].load()) list[(size_t) n++] = s;
+    }
+    if (n == 0) return -1;
+    int idx = 0;
+    if (p.noteSpread == 1) idx = (int) (spreadCounter++ % (uint32_t) n);                  // in turn
+    else if (p.noteSpread == 2)
+    {
+        // by position: the lowest of the held notes on the first stop, the next one up on the second ...
+        int rank = 0;
+        for (int k = 0; k < key; ++k) rank += keyHeld[(size_t) k] ? 1 : 0;
+        idx = rank % n;
+    }
+    else
+    {
+        idx = (int) (rng.next() % (uint32_t) n);                                              // at random (not twice the same)
+        if (n > 1 && list[(size_t) idx] == lastSpreadStop) idx = (idx + 1) % n;
+    }
+    lastSpreadStop = list[(size_t) idx];
+    return list[(size_t) idx];
 }
 
 void OrganEngine::keyUp (int key, const EngineParams& p, int noteId)
@@ -1077,6 +1115,15 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 if (std::abs (sa) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, buf, sa, n);
                 if (std::abs (sd) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, bufRamp, sd, n);
             }
+            // a stop in another simulated room: its late reverb gets the same send
+            const int vr = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop]);
+            if (vr > 0 && roomOnNow)
+            {
+                const float sa = v.send0 + (v.send1 - v.send0) * (float) start * inv, sd = (v.send1 - v.send0) * inv;
+                float* dst = rt[(size_t) vr].send.data() + roomOffset + start;
+                if (std::abs (sa) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, buf, sa, n);
+                if (std::abs (sd) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, bufRamp, sd, n);
+            }
         }
         if (v.erSlot >= 0)
         {
@@ -1187,9 +1234,8 @@ void OrganEngine::releaseSlot (int& slot) noexcept
     slot = -1;
 }
 
-void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p) noexcept
+void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r) noexcept
 {
-    const auto& r = p.room;
     const Vec3f L = listenerPos (r), S = roomPoint (r, srcPos);
     const float rd = seenFrom (L, S).dist;
     std::array<ImageSource, kMaxTaps> ims;
@@ -1235,13 +1281,31 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     roomW = r.W(); roomL = r.L(); roomH = r.H(); roomLx = r.listenerX; roomLy = r.listenerY;
     roomAbsW = r.absWalls; roomAbsF = r.absFloor; roomHighD = r.highDamp; roomScat = r.scatter; roomAir = p.air;
     roomOutOrder = order; roomOn = roomOnNow;
+    // which rooms have sources (room 0 always: clicks, effects ...)
+    int used = 1;
+    for (int st = 0; st < kNumStops; ++st) used |= 1 << juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) st]);
+    if (p.input.on) used |= 1 << juce::jlimit (0, kNumRooms - 1, p.inputRoom);
+    roomsUsed = used;
+    for (int ri = 0; ri < kNumRooms; ++ri)
+    {
+        const auto& rr = p.roomAt (ri);
+        auto& h = heard[(size_t) ri];
+        h.W = rr.W(); h.L = rr.L(); h.H = rr.H(); h.Lx = rr.listenerX; h.Ly = rr.listenerY;
+        h.absW = rr.absWalls; h.absF = rr.absFloor; h.highD = rr.highDamp; h.scat = rr.scatter;
+    }
     if (! roomOnNow || n <= 0)
     {
         erClock += (uint32_t) juce::jmax (0, n);
-        tailGain = 0.0f; tailWasOn = false;
-        resetFdn(); convRingOut = fdnRingOut = 0;
+        for (int ri = 0; ri < kNumRooms; ++ri)
+        {
+            auto& R = rt[(size_t) ri];
+            R.tailGain = 0.0f; R.tailWasOn = false;
+            resetFdn (R); R.convRingOut = R.fdnRingOut = 0;
+            R.running = false;
+            tailSerialInUseR[(size_t) ri] = R.tail.oldestSerialInUse();
+        }
         erActive = 0;
-        tailSerialInUse = tail.oldestSerialInUse();
+        tailSerialInUse = rt[0].tail.oldestSerialInUse();
         return;
     }
     const int K = juce::jmin (usedChannels, order == 0 ? 2 : (juce::jmin (order, 3) + 1) * (juce::jmin (order, 3) + 1));
@@ -1259,19 +1323,19 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
         if (s.voice >= 0)
         {
             const auto& v = voices[(size_t) s.voice];
-            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p);
+            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p, p.roomAt (p.stopRoom[(size_t) v.stop]));
             else { s.voice = -1; s.drain = kErRing; }
         }
         else if (s.noiseVoice >= 0)
         {
             const auto& nv = noise[(size_t) s.noiseVoice];
-            if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p);
+            if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p, p.room);
             else { s.noiseVoice = -1; s.drain = kErRing; }
         }
         else if (s.input >= 0)
         {
             const auto& is = inSrc[(size_t) s.input];
-            if (inRunning && is.erSlot == (int) si) updateSlotTaps (s, is.pos, 1.0f, p);
+            if (inRunning && is.erSlot == (int) si) updateSlotTaps (s, is.pos, 1.0f, p, p.roomAt (p.inputRoom));
             else { s.input = -1; s.drain = kErRing; }
         }
         else if ((s.drain -= n) <= 0) { s.active = false; continue; }
@@ -1304,56 +1368,80 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     }
     erActive = activeCount;
 
-    // ---- late reverb. The decay comes from the ray tracer (the processor builds the response in the
+    // ---- late reverb, one per room in use. The decay comes from the ray tracer (the processor builds the responses in the
     // background); two ways to make the tail: convolution with a synthesised response, or a feedback delay network.
-    const TailIR* ir = tail.current();
-    const float rtL = ir != nullptr ? ir->rtLow : eyringRt (r, false, p.air);
-    const float rtH = ir != nullptr ? ir->rtHigh : eyringRt (r, true, p.air);
-    const float V = roomVolume (r);
-    const float rc = juce::jmax (0.2f, 0.057f * std::sqrt (V / rtL));          // critical distance
-    roomRtLow = rtL; roomRtHigh = rtH; roomCritDist = rc;
-    // reverberant level from the critical distance, softly capped at +4 dB so very long, hard rooms do not drown everything
-    const float level = juce::jmin (1.6f, distanceGain (rc, distAmountNow)) * r.tailGain;
-    const bool useFdn = r.tailModel == 1;
-    if (useFdn != (lastTailModel == 1))
-    {
-        // switched: the other one keeps ringing out with a silent input
-        if (useFdn) convRingOut = TailIR::maxLength (sr);
-        else        fdnRingOut = (int) (juce::jmin (30.0f, 1.5f * juce::jmax (rtL, 0.1f)) * (float) sr);
-        lastTailModel = useFdn ? 1 : 0;
-    }
-    const float* in = roomSend[0].data() + roomOffset;
     const int tailCh = juce::jmin (usedChannels, kMaxAmbiChannels);
     std::array<float*, kMaxAmbiChannels> o {};
     for (int c = 0; c < tailCh; ++c) o[(size_t) c] = out.getWritePointer (c);
-
-    if (! useFdn || convRingOut > 0)
+    // room 0 hears everything that is not in one of the other rooms
     {
-        if (! tailWasOn) { tail.reset(); tailWasOn = true; }
-        const float g0 = tailGain, g1 = useFdn ? g0 : g0 + (level - g0) * (1.0f - std::exp (-(float) n / (0.05f * (float) sr)));
-        tailGain = g1;
-        // the response has unit energy (W)
-        tail.process (useFdn ? zeroIn.data() : in, o.data(), tailCh, n, g0, g1);
-        if (useFdn && (convRingOut -= n) <= 0) { convRingOut = 0; tailWasOn = false; tailGain = 0.0f; }
+        float* in0 = room0In.data();
+        std::copy_n (roomSend[0].data() + roomOffset, n, in0);
+        for (int ri = 1; ri < kNumRooms; ++ri)
+            if ((used >> ri) & 1) juce::FloatVectorOperations::subtract (in0, rt[(size_t) ri].send.data() + roomOffset, n);
     }
-    if (useFdn && convRingOut == 0) tail.adoptLatest();          // keeps the ray-traced decay current for the FDN
-    if (useFdn || fdnRingOut > 0)
+    for (int ri = 0; ri < kNumRooms; ++ri)
     {
-        // ringing out: the same room level as while it was on (not its own output gain - that would compound)
-        if (useFdn) fdnLevelLast = level;
-        renderFdn (o.data(), K, useFdn ? in : zeroIn.data(), n, rtL, rtH, fdnLevelLast, r);
-        if (! useFdn && (fdnRingOut -= n) <= 0) { fdnRingOut = 0; resetFdn(); }
+        auto& R = rt[(size_t) ri];
+        const auto& rm = p.roomAt (ri);
+        if (! ((used >> ri) & 1))
+        {
+            // not used (any more): rings out with a silent input, then rests
+            if (! R.running) { tailSerialInUseR[(size_t) ri] = R.tail.oldestSerialInUse(); continue; }
+        }
+        R.running = true;
+        const float* in = (used >> ri) & 1 ? (ri == 0 ? room0In.data() : R.send.data() + roomOffset) : zeroIn.data();
+        const TailIR* ir = R.tail.current();
+        const float rtL = ir != nullptr ? ir->rtLow : eyringRt (rm, false, p.air);
+        const float rtH = ir != nullptr ? ir->rtHigh : eyringRt (rm, true, p.air);
+        const float V = roomVolume (rm);
+        const float rc = juce::jmax (0.2f, 0.057f * std::sqrt (V / rtL));          // critical distance
+        heard[(size_t) ri].rtLow = rtL; heard[(size_t) ri].rtHigh = rtH;
+        if (ri == 0) { roomRtLow = rtL; roomRtHigh = rtH; roomCritDist = rc; }
+        // reverberant level from the critical distance, softly capped at +4 dB so very long, hard rooms do not drown everything
+        const float level = (used >> ri) & 1 ? juce::jmin (1.6f, distanceGain (rc, distAmountNow)) * rm.tailGain : 0.0f;
+        const bool useFdn = rm.tailModel == 1;
+        if (useFdn != (R.lastTailModel == 1))
+        {
+            // switched: the other one keeps ringing out with a silent input
+            if (useFdn) R.convRingOut = TailIR::maxLength (sr);
+            else        R.fdnRingOut = (int) (juce::jmin (30.0f, 1.5f * juce::jmax (rtL, 0.1f)) * (float) sr);
+            R.lastTailModel = useFdn ? 1 : 0;
+        }
+        if (! useFdn || R.convRingOut > 0)
+        {
+            if (! R.tailWasOn) { R.tail.reset(); R.tailWasOn = true; }
+            const float g0 = R.tailGain, g1 = useFdn ? g0 : g0 + (level - g0) * (1.0f - std::exp (-(float) n / (0.05f * (float) sr)));
+            R.tailGain = g1;
+            // the response has unit energy (W)
+            R.tail.process (useFdn ? zeroIn.data() : in, o.data(), tailCh, n, g0, g1);
+            if (useFdn && (R.convRingOut -= n) <= 0) { R.convRingOut = 0; R.tailWasOn = false; R.tailGain = 0.0f; }
+        }
+        if (useFdn && R.convRingOut == 0) R.tail.adoptLatest();          // keeps the ray-traced decay current for the FDN
+        if (useFdn || R.fdnRingOut > 0)
+        {
+            // ringing out: the same room level as while it was on (not its own output gain - that would compound)
+            if (useFdn) R.fdnLevelLast = level;
+            renderFdn (R, o.data(), K, useFdn ? in : zeroIn.data(), n, rtL, rtH, R.fdnLevelLast, rm);
+            if (! useFdn && (R.fdnRingOut -= n) <= 0) { R.fdnRingOut = 0; resetFdn (R); }
+        }
+        // an unused room stops once its tail has faded
+        if (! ((used >> ri) & 1) && R.tailGain < 1.0e-4f && R.fdnLevelLast < 1.0e-4f && R.convRingOut == 0 && R.fdnRingOut == 0)
+        {
+            R.tailGain = 0.0f; R.tailWasOn = false; resetFdn (R); R.running = false;
+        }
+        tailSerialInUseR[(size_t) ri] = R.tail.oldestSerialInUse();
     }
-    tailSerialInUse = tail.oldestSerialInUse();
+    tailSerialInUse = rt[0].tail.oldestSerialInUse();
     erClock += (uint32_t) n;
 }
 
-void OrganEngine::resetFdn() noexcept
+void OrganEngine::resetFdn (RoomTail& R) noexcept
 {
-    fdnGain = 0.0f; fdnPreDelay = -1.0f; fdnEncOrder = -1;          // the next use clears the lines
+    R.fdnGain = 0.0f; R.fdnPreDelay = -1.0f; R.fdnEncOrder = -1;          // the next use clears the lines
 }
 
-void OrganEngine::renderFdn (float* const* o, int K, const float* in, int n, float rtL, float rtH, float gainLevel, const RoomParams& r)
+void OrganEngine::renderFdn (RoomTail& R, float* const* o, int K, const float* in, int n, float rtL, float rtH, float gainLevel, const RoomParams& r)
 {
     // 16 delay lines (lengths around the mean free path), a random orthogonal mixing matrix, two-band decay
     // per line (ray-traced reverberation times), slow delay modulation, lines spread over 16 directions
@@ -1363,37 +1451,37 @@ void OrganEngine::renderFdn (float* const* o, int K, const float* in, int n, flo
     const float inv = 1.0f / (float) n;
     static const float ratios[kFdnLines] { 0.53f, 0.59f, 0.67f, 0.71f, 0.77f, 0.83f, 0.89f, 0.97f, 1.03f, 1.09f, 1.13f, 1.21f, 1.27f, 1.33f, 1.41f, 1.49f };
     const float k = 1.0f - std::exp (-(float) n / (0.08f * (float) sr));
-    std::array<float, kFdnLines> dOld = fdnDelay, dNew {};
-    const bool first = fdnPreDelay < 0.0f;
-    if (first) { std::fill (fdnBuf.begin(), fdnBuf.end(), 0.0f); std::fill (fdnPre.begin(), fdnPre.end(), 0.0f); fdnLp.fill (0.0f); }
+    std::array<float, kFdnLines> dOld = R.fdnDelay, dNew {};
+    const bool first = R.fdnPreDelay < 0.0f;
+    if (first) { std::fill (R.fdnBuf.begin(), R.fdnBuf.end(), 0.0f); std::fill (R.fdnPre.begin(), R.fdnPre.end(), 0.0f); R.fdnLp.fill (0.0f); }
     float gMean = 0.0f;
     for (int j = 0; j < kFdnLines; ++j)
     {
         const float target = juce::jlimit (64.0f, (float) (kFdnLen - 4 * kSubBlock), mfp / kSpeedOfSoundRoom * ratios[j] * (float) sr);
         if (first) dOld[(size_t) j] = target;
         dNew[(size_t) j] = dOld[(size_t) j] + (target - dOld[(size_t) j]) * k;
-        fdnGL[(size_t) j] = std::pow (10.0f, -3.0f * dNew[(size_t) j] / ((float) sr * rtL));
-        fdnGH[(size_t) j] = std::pow (10.0f, -3.0f * dNew[(size_t) j] / ((float) sr * rtH));
-        gMean += fdnGL[(size_t) j] / (float) kFdnLines;
+        R.fdnGL[(size_t) j] = std::pow (10.0f, -3.0f * dNew[(size_t) j] / ((float) sr * rtL));
+        R.fdnGH[(size_t) j] = std::pow (10.0f, -3.0f * dNew[(size_t) j] / ((float) sr * rtH));
+        gMean += R.fdnGL[(size_t) j] / (float) kFdnLines;
     }
-    fdnDelay = dNew;
+    R.fdnDelay = dNew;
     const float preTarget = juce::jlimit (0.0f, (float) (kFdnLen - 4 * kSubBlock), 0.5f * mfp / kSpeedOfSoundRoom * (float) sr);
-    const float pre0 = first ? preTarget : fdnPreDelay;
+    const float pre0 = first ? preTarget : R.fdnPreDelay;
     const float pre1 = pre0 + (preTarget - pre0) * k;
-    fdnPreDelay = pre1;
+    R.fdnPreDelay = pre1;
     const float gainTarget = std::sqrt (juce::jmax (1.0e-6f, 1.0f - gMean * gMean)) * kFdnLevel * gainLevel;
-    const float gain0 = first ? 0.0f : fdnGain, gain1 = gain0 + (gainTarget - gain0) * k;
-    fdnGain = gain1;
+    const float gain0 = first ? 0.0f : R.fdnGain, gain1 = gain0 + (gainTarget - gain0) * k;
+    R.fdnGain = gain1;
     const int encOrder = order == 0 ? 0 : juce::jmin (order, 3);
-    if (encOrder != fdnEncOrder)
+    if (encOrder != R.fdnEncOrder)
     {
-        fdnEncOrder = encOrder;
+        R.fdnEncOrder = encOrder;
         for (int j = 0; j < kFdnLines; ++j)
         {
             const float zz = 1.0f - 2.0f * ((float) j + 0.5f) / (float) kFdnLines;
             const float az = std::fmod (137.508f * (float) j, 360.0f) - 180.0f;
             const float el = juce::radiansToDegrees (std::asin (zz));
-            auto& e = fdnEnc[(size_t) j];
+            auto& e = R.fdnEnc[(size_t) j];
             std::fill (e.begin(), e.end(), 0.0f);
             if (encOrder == 0) encodeStereo (az, e.data());
             else encodeAmbiX (az, el, encOrder, e.data());
@@ -1416,39 +1504,39 @@ void OrganEngine::renderFdn (float* const* o, int K, const float* in, int n, flo
     for (int i = 0; i < n; ++i)
     {
         const float f = (float) (i + 1) * inv;
-        fdnPre[fdnPos & mask] = in[i];
-        const float x = readLine (fdnPre.data(), fdnPos, pre0 + (pre1 - pre0) * f);
+        R.fdnPre[R.fdnPos & mask] = in[i];
+        const float x = readLine (R.fdnPre.data(), R.fdnPos, pre0 + (pre1 - pre0) * f);
         for (int j = 0; j < kFdnLines; ++j)
         {
             // slow modulation of the delay (+-8 samples at 48 kHz): no fixed modes that ring
-            const float c = fdnModC[(size_t) j], sn = fdnModS[(size_t) j];
-            fdnModC[(size_t) j] = c * fdnModStepC[(size_t) j] - sn * fdnModStepS[(size_t) j];
-            fdnModS[(size_t) j] = sn * fdnModStepC[(size_t) j] + c * fdnModStepS[(size_t) j];
+            const float c = R.fdnModC[(size_t) j], sn = R.fdnModS[(size_t) j];
+            R.fdnModC[(size_t) j] = c * fdnModStepC[(size_t) j] - sn * fdnModStepS[(size_t) j];
+            R.fdnModS[(size_t) j] = sn * fdnModStepC[(size_t) j] + c * fdnModStepS[(size_t) j];
             const float d = dOld[(size_t) j] + (dNew[(size_t) j] - dOld[(size_t) j]) * f + modDepth * sn;
-            const float v = readLine (fdnBuf.data() + (size_t) j * (size_t) kFdnLen, fdnPos, d);
-            fdnLp[(size_t) j] += splitA * (v - fdnLp[(size_t) j]);
-            yl[(size_t) j] = fdnGL[(size_t) j] * fdnLp[(size_t) j] + fdnGH[(size_t) j] * (v - fdnLp[(size_t) j]);
+            const float v = readLine (R.fdnBuf.data() + (size_t) j * (size_t) kFdnLen, R.fdnPos, d);
+            R.fdnLp[(size_t) j] += splitA * (v - R.fdnLp[(size_t) j]);
+            yl[(size_t) j] = R.fdnGL[(size_t) j] * R.fdnLp[(size_t) j] + R.fdnGH[(size_t) j] * (v - R.fdnLp[(size_t) j]);
         }
         for (int j = 0; j < kFdnLines; ++j)
         {
             const auto& row = fdnMatrix[(size_t) j];
             float h = 0.0f;
             for (int k2 = 0; k2 < kFdnLines; ++k2) h += row[(size_t) k2] * yl[(size_t) k2];
-            fdnBuf[(size_t) j * (size_t) kFdnLen + (fdnPos & mask)] = h + ((j & 1) ? -0.25f : 0.25f) * x;
+            R.fdnBuf[(size_t) j * (size_t) kFdnLen + (R.fdnPos & mask)] = h + ((j & 1) ? -0.25f : 0.25f) * x;
         }
         const float g = gain0 + (gain1 - gain0) * f;
         for (int c = 0; c < K; ++c)
         {
             float s = 0.0f;
-            for (int j = 0; j < kFdnLines; ++j) s += yl[(size_t) j] * fdnEnc[(size_t) j][(size_t) c];
+            for (int j = 0; j < kFdnLines; ++j) s += yl[(size_t) j] * R.fdnEnc[(size_t) j][(size_t) c];
             o[c][i] += s * g;
         }
-        ++fdnPos;
+        ++R.fdnPos;
     }
     for (int j = 0; j < kFdnLines; ++j)       // keep the modulation phasors on the unit circle
     {
-        const float len = std::sqrt (fdnModC[(size_t) j] * fdnModC[(size_t) j] + fdnModS[(size_t) j] * fdnModS[(size_t) j]);
-        if (len > 0.0f) { fdnModC[(size_t) j] /= len; fdnModS[(size_t) j] /= len; }
+        const float len = std::sqrt (R.fdnModC[(size_t) j] * R.fdnModC[(size_t) j] + R.fdnModS[(size_t) j] * R.fdnModS[(size_t) j]);
+        if (len > 0.0f) { R.fdnModC[(size_t) j] /= len; R.fdnModS[(size_t) j] /= len; }
     }
 }
 
@@ -1973,6 +2061,12 @@ void OrganEngine::renderInput (juce::AudioBuffer<float>& out, int n, const Engin
                 float* dst = roomSend[(size_t) k].data() + roomOffset;
                 if (std::abs (g0) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, buf.data(), g0, n);
                 if (std::abs (g1 - g0) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, bufRamp.data(), (g1 - g0) * inv, n);
+                if (k == 0 && p.inputRoom > 0 && roomOnNow)
+                {
+                    float* d2 = rt[(size_t) juce::jlimit (0, kNumRooms - 1, p.inputRoom)].send.data() + roomOffset;
+                    if (std::abs (g0) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (d2, buf.data(), g0, n);
+                    if (std::abs (g1 - g0) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (d2, bufRamp.data(), (g1 - g0) * inv, n);
+                }
             }
             if (is.erSlot >= 0)
             {
@@ -2010,6 +2104,8 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     roomSends = 2 * juce::jlimit (0, kMaxOrder, p.roomHarmonics) + 1;
     for (int k = 0; k < roomSends; ++k)
         std::fill (roomSend[(size_t) k].begin() + roomOffset, roomSend[(size_t) k].begin() + roomOffset + numSamples, 0.0f);
+    for (int ri = 1; ri < kNumRooms; ++ri)
+        std::fill (rt[(size_t) ri].send.begin() + roomOffset, rt[(size_t) ri].send.begin() + roomOffset + numSamples, 0.0f);
     {
         // clicks and stop pulls come from the console (or the common direction when not following)
         const double a = juce::degreesToRadians ((double) (p.roomFollow ? p.consoleAz : p.roomBaseAz));
@@ -2081,10 +2177,10 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
             playNoise (library->stopPulls, p.stopPull * (p.stopOn[(size_t) s] ? 1.4f : 1.1f), console.data(), lastPull, 0.5f);
         for (int k = 0; k < kNumKeys; ++k)
         {
-            if (p.stopOn[(size_t) s] && keyHeld[(size_t) k] && ! freeMode) startVoice (s, k);
+            if (p.stopOn[(size_t) s] && keyHeld[(size_t) k] && ! freeMode && p.noteSpread == 0) startVoice (s, k);
             if (! p.stopOn[(size_t) s]) releaseStopKey (s, k);
         }
-        if (p.stopOn[(size_t) s] && freeMode)
+        if (p.stopOn[(size_t) s] && freeMode && p.noteSpread == 0)
             for (int id = 0; id < NoteTable::kSize; ++id)
                 if (freeNotes[(size_t) id].held) startVoice (s, freeNotes[(size_t) id].key, -1, id);
     }

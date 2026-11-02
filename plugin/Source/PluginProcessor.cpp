@@ -239,6 +239,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                    StringArray { "bis 1. Ordnung", "bis 2. Ordnung", "bis 3. Ordnung" }, 1));
     F ("simEr",      ("Saal fr" + ue + "he Reflexionen"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), 0.0f, dbOff);
     F ("simTail",    "Saal Nachhall",               NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), 0.0f, dbOff);
+    // rooms 2..4: every stop (and the input) can sound in its own room; all start in room 1, so older projects sound the same
+    {
+        struct Def { float w, l, h, abs, absF, high, scat; };
+        const Def defs[] { { 8.0f, 14.0f, 7.0f, 0.05f, 0.12f, 0.4f, 0.4f }, { 30.0f, 90.0f, 32.0f, 0.04f, 0.10f, 0.35f, 0.5f }, { 4.0f, 5.0f, 3.0f, 0.15f, 0.25f, 0.5f, 0.3f } };
+        for (int r = 1; r < rysum::kNumRooms; ++r)
+        {
+            const auto& d = defs[r - 1];
+            const String pre = "Saal " + String (r + 1) + " ";
+            F (roomParamId (r, "W").toRawUTF8(), pre + "Breite", NormalisableRange<float> (2.0f, 40.0f, 0.01f, 0.6f), d.w, metres);
+            F (roomParamId (r, "L").toRawUTF8(), pre + "L" + ae + "nge", NormalisableRange<float> (2.0f, 100.0f, 0.01f, 0.5f), d.l, metres);
+            F (roomParamId (r, "H").toRawUTF8(), pre + "H" + oe + "he", NormalisableRange<float> (2.0f, 40.0f, 0.01f, 0.6f), d.h, metres);
+            F (roomParamId (r, "Size").toRawUTF8(), pre + "Gr" + oe + String::fromUTF8 ("\xc3\x9f") + "e", NormalisableRange<float> (0.25f, 3.0f, 0.001f, 0.5f), 1.0f, times);
+            F (roomParamId (r, "Lx").toRawUTF8(), pre + "H" + oe + "rer quer", NormalisableRange<float> (0, 1), 0.5f, pct);
+            F (roomParamId (r, "Ly").toRawUTF8(), pre + "H" + oe + "rer l" + ae + "ngs", NormalisableRange<float> (0, 1), 0.4f, pct);
+            F (roomParamId (r, "Abs").toRawUTF8(), pre + "Absorption W" + ae + "nde", NormalisableRange<float> (0, 1, 0.001f, 0.5f), d.abs, pct);
+            F (roomParamId (r, "AbsFloor").toRawUTF8(), pre + "Absorption Boden/Decke", NormalisableRange<float> (0, 1, 0.001f, 0.5f), d.absF, pct);
+            F (roomParamId (r, "High").toRawUTF8(), pre + "H" + oe + "hend" + ae + "mpfung", NormalisableRange<float> (0, 1), d.high, pct);
+            F (roomParamId (r, "Scatter").toRawUTF8(), pre + "Streuung", NormalisableRange<float> (0, 1), d.scat, pct);
+        }
+        const StringArray roomNames { "Saal 1", "Saal 2", "Saal 3", "Saal 4" };
+        for (int st = 0; st < kNumStops; ++st)
+            l.add (std::make_unique<AudioParameterChoice> (ParameterID { stopRoomParamId (st), 1 }, prettyLabel (kStops[(size_t) st].label) + " im Saal", roomNames, 0));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "simRoomIn", 1 }, "Eingang im Saal", roomNames, 0));
+    }
 
     // ---- wind model of the stops (page "Klang"); classic by default, so older patches sound the same
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "windModel", 1 }, "Windmodell", StringArray { "klassisch", "instabil" }, 0));
@@ -290,6 +314,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "mpeBend", 1 }, "MPE Bend-Bereich", NormalisableRange<float> (1.0f, 96.0f, 1.0f), 48.0f,
                                                   AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + " HT"; })
                                                                                  .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
+
+    // notes to single pipes: every note only on one of the pulled stops (off by default: an organ)
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "noteSpread", 1 }, String::fromUTF8 ("T\xc3\xb6ne verteilen"),
+                                                   StringArray { String::fromUTF8 ("aus \xe2\x80\x93 alle gezogenen Register"), "der Reihe nach",
+                                                                 String::fromUTF8 ("nach Lage (tief \xe2\x86\x92 links)"), String::fromUTF8 ("zuf\xc3\xa4llig") }, 0));
 
     // ---- audio input ("Eingang", page "Raum"): live sound placed and moved like a pipe. In the instrument off by default
     // (older projects / patches sound the same); in the effect version "Rysum FX" the input is the point, so on.
@@ -468,6 +497,14 @@ RysumProcessor::RysumProcessor()
     for (int k = 0; k < kNumFx; ++k) ix.fx[(size_t) k] = I (kFxIds[k]);
     for (int k = 0; k < kNumSim; ++k) ix.sim[(size_t) k] = I (kSimIds[k]);
     for (int k = 0; k < kNumInp; ++k) ix.inp[(size_t) k] = I (kInpIds[k]);
+    {
+        const char* keys[] { "W", "L", "H", "Size", "Lx", "Ly", "Abs", "AbsFloor", "High", "Scatter" };
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+            for (int k = 0; k < 10; ++k) ix.room[(size_t) r][(size_t) k] = I (roomParamId (r, keys[k]));
+        for (int st = 0; st < kNumStops; ++st) ix.stopRoom[(size_t) st] = I (stopRoomParamId (st));
+        ix.inputRoom = I ("simRoomIn");
+        ix.noteSpread = I ("noteSpread");
+    }
     engine.setModHook (this);
 
     // MIDI controller assignments: every new instance starts with the ones saved last (Documents/Rysum/MIDI-Regler.xml);
@@ -652,6 +689,18 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     r.erGain = S (simEr) <= -59.9f ? 0.0f : dbToGain (S (simEr));
     r.tailGain = S (simTail) <= -59.9f ? 0.0f : dbToGain (S (simTail));
     r.tailModel = juce::roundToInt (S (simTailModel));
+    // the other rooms: own size, surfaces and listener; reflections order and levels as room 1
+    for (int ri = 1; ri < rysum::kNumRooms; ++ri)
+    {
+        auto R = [&] (int k) { return V (ix.room[(size_t) ri][(size_t) k]); };
+        auto& q = p.moreRooms[(size_t) (ri - 1)];
+        q = r;
+        q.width = R (0); q.length = R (1); q.height = R (2); q.size = R (3); q.listenerX = R (4); q.listenerY = R (5);
+        q.absWalls = R (6); q.absFloor = R (7); q.highDamp = R (8); q.scatter = R (9);
+    }
+    for (int st = 0; st < kNumStops; ++st) p.stopRoom[(size_t) st] = juce::roundToInt (V (ix.stopRoom[(size_t) st]));
+    p.inputRoom = juce::roundToInt (V (ix.inputRoom));
+    p.noteSpread = juce::roundToInt (V (ix.noteSpread));
     return p;
 }
 
@@ -835,8 +884,9 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
     // room: take a new impulse response before the engine runs (the sends depend on it)
     if (irClearRequest.exchange (false)) irActive.reset();          // still referenced by retiredIr
-    if (auto t = std::atomic_exchange (&pendingTail, std::shared_ptr<const rysum::TailIR>()))
-        engine.setTailIR (std::move (t));                         // still referenced by tailKeepAlive
+    for (int ri = 0; ri < rysum::kNumRooms; ++ri)
+        if (auto t = std::atomic_exchange (&pendingTail[(size_t) ri], std::shared_ptr<const rysum::TailIR>()))
+            engine.setTailIR (std::move (t), ri);                 // still referenced by tailKeepAlive
     if (auto t = std::atomic_exchange (&pendingLucier, std::shared_ptr<const rysum::TailIR>()))
         engine.setLucierIR (std::move (t));                       // still referenced by lucKeepAlive
     if (auto pending = std::atomic_exchange (&pendingIr, std::shared_ptr<rysum::Convolver>()))
@@ -1191,19 +1241,21 @@ void RysumProcessor::applyLatch (juce::MidiBuffer& midi, int numSamples)
 // ---------------------------------------------------------------------------
 // simulated room: ray tracing (message thread starts it, the pool thread runs it)
 // ---------------------------------------------------------------------------
-rysum::RoomParams RysumProcessor::heardRoom() const
+rysum::RoomParams RysumProcessor::heardRoom (int room) const
 {
     rysum::RoomParams r;
+    const auto& h = engine.heard[(size_t) juce::jlimit (0, rysum::kNumRooms - 1, room)];
     r.on = engine.roomOn.load();
-    r.width = engine.roomW.load(); r.length = engine.roomL.load(); r.height = engine.roomH.load(); r.size = 1.0f;
-    r.absWalls = engine.roomAbsW.load(); r.absFloor = engine.roomAbsF.load(); r.highDamp = engine.roomHighD.load(); r.scatter = engine.roomScat.load();
+    r.width = h.W.load(); r.length = h.L.load(); r.height = h.H.load(); r.size = 1.0f;
+    r.listenerX = h.Lx.load(); r.listenerY = h.Ly.load();
+    r.absWalls = h.absW.load(); r.absFloor = h.absF.load(); r.highDamp = h.highD.load(); r.scatter = h.scat.load();
     return r;
 }
 
-juce::String RysumProcessor::roomKey() const
+juce::String RysumProcessor::roomKey (int room) const
 {
     // rounded so that tiny modulation steps do not rebuild all the time (1.5 % in size, 0.004 in absorption)
-    const auto r = heardRoom();
+    const auto r = heardRoom (room);
     auto q = [] (float v, float step) { return juce::String (juce::roundToInt (v / step)); };
     auto ql = [] (float v) { return juce::String (juce::roundToInt (std::log (juce::jmax (0.1f, v)) / 0.015f)); };
     return ql (r.W()) + "|" + ql (r.L()) + "|" + ql (r.H()) + "|" + q (r.absWalls, 0.004f) + "|" + q (r.absFloor, 0.004f) + "|"
@@ -1211,28 +1263,29 @@ juce::String RysumProcessor::roomKey() const
          + juce::String (juce::jmin (2, engine.roomOutOrder.load())) + "|" + juce::String (hostRate.load(), 0);
 }
 
-void RysumProcessor::buildTailNow (const juce::String& key)
+void RysumProcessor::buildTailNow (int room, const juce::String& key)
 {
-    builtTailKey = key;
-    tailBuilding = true;
-    const auto r = heardRoom();
+    builtTailKey[(size_t) room] = key;
+    tailBuilding[(size_t) room] = true;
+    const auto r = heardRoom (room);
     const float air = engine.roomAir.load();
     const int ord = engine.roomOutOrder.load();
     const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
     const uint32_t serial = ++tailSerial;
-    irPool.addJob ([this, r, air, ord, rate, serial, alive = aliveFlag]
+    irPool.addJob ([this, room, r, air, ord, rate, serial, alive = aliveFlag]
     {
         auto ir = rysum::TailIR::build (r, air, ord, rate, serial);
-        juce::MessageManager::callAsync ([this, ir, alive]
+        juce::MessageManager::callAsync ([this, room, ir, alive]
         {
             if (! alive->load()) return;
-            tailBuilding = false;
-            tailKeepAlive.push_back (ir);                 // the engine's copies are never the last ones
-            std::atomic_store (&pendingTail, ir);
-            setRoomStatus ("Nachhall: " + juce::String (ir->rays) + juce::String::fromUTF8 (" Strahlen \xc2\xb7 T30 ")
-                           + juce::String (ir->rtLow, 2) + " s tief / " + juce::String (ir->rtHigh, 2) + juce::String::fromUTF8 (" s hoch \xc2\xb7 Antwort ")
-                           + juce::String ((double) ir->length / ir->sampleRate, 1) + " s, " + (ir->order == 0 ? juce::String ("Stereo") : juce::String (ir->order) + ". Ordnung")
-                           + ", " + juce::String (ir->channels) + " dekorrelierte Kan\xc3\xa4le");
+            tailBuilding[(size_t) room] = false;
+            tailKeepAlive[(size_t) room].push_back (ir);         // the engine's copies are never the last ones
+            std::atomic_store (&pendingTail[(size_t) room], ir);
+            if (room == 0)
+                setRoomStatus ("Nachhall: " + juce::String (ir->rays) + juce::String::fromUTF8 (" Strahlen \xc2\xb7 T30 ")
+                               + juce::String (ir->rtLow, 2) + " s tief / " + juce::String (ir->rtHigh, 2) + juce::String::fromUTF8 (" s hoch \xc2\xb7 Antwort ")
+                               + juce::String ((double) ir->length / ir->sampleRate, 1) + " s, " + (ir->order == 0 ? juce::String ("Stereo") : juce::String (ir->order) + ". Ordnung")
+                               + ", " + juce::String (ir->channels) + juce::String::fromUTF8 (" dekorrelierte Kan\xc3\xa4le"));
         });
     });
 }
@@ -1564,13 +1617,22 @@ void RysumProcessor::timerCallback()
     // modulated: then about four times a second, each new response crossfaded in by the engine)
     if (autoLoadDone && engine.roomOn.load())
     {
-        const auto key = roomKey();
-        if (key != builtTailKey && ! tailBuilding) buildTailNow (key);
+        const int used = engine.roomsUsed.load();
+        for (int ri = 0; ri < rysum::kNumRooms; ++ri)
+        {
+            if (! ((used >> ri) & 1)) continue;
+            const auto key = roomKey (ri);
+            if (key != builtTailKey[(size_t) ri] && ! tailBuilding[(size_t) ri]) buildTailNow (ri, key);
+        }
     }
     {
         // responses the engine no longer uses are freed here, not on the audio thread
-        const uint32_t inUse = engine.tailSerialInUse.load();
-        while (tailKeepAlive.size() > 1 && tailKeepAlive.front()->serial < inUse) tailKeepAlive.pop_front();
+        for (int ri = 0; ri < rysum::kNumRooms; ++ri)
+        {
+            const uint32_t inUse = engine.tailSerialInUseR[(size_t) ri].load();
+            auto& ka = tailKeepAlive[(size_t) ri];
+            while (ka.size() > 1 && ka.front()->serial < inUse) ka.pop_front();
+        }
         const uint32_t lucInUse = engine.lucierSerialInUse.load();
         while (lucKeepAlive.size() > 1 && lucKeepAlive.front()->serial < lucInUse) lucKeepAlive.pop_front();
     }
@@ -2218,7 +2280,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 10;
+    constexpr int kFactoryVersion = 11;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -2642,6 +2704,24 @@ void RysumProcessor::writeFactoryPatches()
     makeFull (u8 ("80 Lucier \xe2\x80\x93 St\xc3\xbc" "ck f\xc3\xbcr Orgel"),
               { { "stop1", 1 }, { "stop2", 1 }, { "lucOn", 1 }, { "lucMode", 0 }, { "lucGen", 24.0f }, { "lucGap", 2.0f }, { "lucMix", 0.7f },
                 { "simW", 12.0f }, { "simL", 26.0f }, { "simH", 10.0f }, { "simAbs", 0.05f } }, {}, {}, false);
+
+    // ---- set 11: notes to single pipes, every stop in its own room
+    currentSet = 11;
+    make ("81 Jeder Ton ein Register",
+          { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop4", 1 }, { "stop6", 1 }, { "noteSpread", 1 } }, {});
+    make (u8 ("82 Akkord \xc3\xbc" "ber die Register"),
+          { { "stop7", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "noteSpread", 2 } }, {});
+    make (u8 ("83 Vier R\xc3\xa4ume"),
+          { { "stop7", 1 }, { "stop1", 1 }, { "stop3", 1 }, { "stop6", 1 }, { "simOn", 1 }, { "master", -16.0f },
+            { "simRoom7", 2 }, { "simRoom1", 0 }, { "simRoom3", 3 }, { "simRoom6", 1 },
+            { "simW", 12.0f }, { "simL", 26.0f }, { "simH", 10.0f } }, {});
+    make (u8 ("84 Verstreute Pfeifen"),
+          { { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 }, { "noteSpread", 3 },
+            { "motion1", 5 }, { "motion2", 5 }, { "motion3", 5 }, { "motion5", 5 }, { "rate1", 0.7f }, { "rate2", 0.9f }, { "rate3", 1.1f }, { "rate5", 1.3f },
+            { "depth1", 120.0f }, { "depth2", 120.0f }, { "depth3", 120.0f }, { "depth5", 120.0f } }, {});
+    make (u8 ("85 Nah und fern"),
+          { { "stop1", 1 }, { "stop6", 1 }, { "noteSpread", 1 }, { "simOn", 1 }, { "master", -16.0f },
+            { "simRoom1", 3 }, { "simRoom6", 2 } }, {});
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

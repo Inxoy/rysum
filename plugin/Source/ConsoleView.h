@@ -79,6 +79,9 @@ private:
     int shownSceneVersion = -1;
     float shownMorph = -1.0f;
     juce::Rectangle<int> stopsArea, noiseArea, decayArea, outArea, keyboardArea, meterArea, photoArea;
+    juce::ComboBox spreadChoice;                  // notes to single pipes
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> spreadAtt;
+    juce::Rectangle<int> spreadLabel;
     float meterL = 0, meterR = 0;
 };
 } // namespace rysum::ui

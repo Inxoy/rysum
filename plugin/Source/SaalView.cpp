@@ -8,9 +8,18 @@ static juce::String U (const char* s) { return juce::String::fromUTF8 (s); }
 // ---------------------------------------------------------------------------
 // floor plan
 // ---------------------------------------------------------------------------
+RoomParams SaalPlan::heardNow() const
+{
+    RoomParams now = proc.readParams().roomAt (shownRoom);
+    const auto& h = proc.engine.heard[(size_t) shownRoom];
+    now.width = h.W.load(); now.length = h.L.load(); now.height = h.H.load(); now.size = 1.0f;
+    now.listenerX = h.Lx.load(); now.listenerY = h.Ly.load();
+    return now;
+}
+
 SaalPlan::Frame SaalPlan::frame() const
 {
-    const auto base = proc.readParams().room;           // the knobs (the plan does not jump with modulation)
+    const auto base = proc.readParams().roomAt (shownRoom);  // the knobs (the plan does not jump with modulation)
     const auto r = getLocalBounds().toFloat().reduced (30.0f, 34.0f);
     Frame f;
     f.scale = juce::jmin (r.getWidth() / (base.W() * 1.35f), r.getHeight() / (base.L() * 1.35f));
@@ -22,9 +31,7 @@ void SaalPlan::paint (juce::Graphics& g)
 {
     auto& A = Assets::get();
     const auto params = proc.readParams();
-    RoomParams now = params.room;                        // as heard (modulated), from the engine
-    now.width = proc.engine.roomW.load(); now.length = proc.engine.roomL.load(); now.height = proc.engine.roomH.load(); now.size = 1.0f;
-    now.listenerX = proc.engine.roomLx.load(); now.listenerY = proc.engine.roomLy.load();
+    RoomParams now = heardNow();                        // as heard (modulated), from the engine
     const bool on = params.room.on;
     const auto f = frame();
     const float W = now.W(), L = now.L();
@@ -75,7 +82,7 @@ void SaalPlan::paint (juce::Graphics& g)
     // pipes (top view, kept inside the walls)
     for (int s = 0; s < kNumStops; ++s)
     {
-        if (! params.stopOn[(size_t) s]) continue;
+        if (! params.stopOn[(size_t) s] || params.stopRoom[(size_t) s] != shownRoom) continue;      // only the stops in this room
         const uint64_t sounding = proc.engine.soundingMask[(size_t) s].load();
         for (int k = 0; k < kNumKeys; ++k)
         {
@@ -91,7 +98,7 @@ void SaalPlan::paint (juce::Graphics& g)
 
     // reflections of the last struck pipe: mirror images and the paths over the walls
     const int ls_ = proc.engine.lastStruckStop.load(), lk = proc.engine.lastStruckKey.load();
-    if (on && ls_ >= 0 && lk >= 0)
+    if (on && ls_ >= 0 && lk >= 0 && params.stopRoom[(size_t) ls_] == shownRoom)
     {
         const auto src = roomPoint (now, proc.engine.displayPosition (ls_, lk, params));
         std::array<ImageSource, 62> ims;
@@ -136,16 +143,24 @@ void SaalPlan::paint (juce::Graphics& g)
     g.setColour (on ? col::dim : col::faint);
     const float V = roomVolume (now);
     auto info = getLocalBounds().removeFromBottom (48).removeFromTop (32).reduced (4, 0);
-    if (on)
+    if (on && shownRoom == 0)
         g.drawFittedText ("V " + juce::String (juce::roundToInt (V)) + U (" m\xc2\xb3 \xc2\xb7 Nachhall ") + juce::String (proc.engine.roomRtLow.load(), 2)
                     + U (" s tief / ") + juce::String (proc.engine.roomRtHigh.load(), 2) + U (" s hoch \xc2\xb7 Hallradius ")
                     + juce::String (proc.engine.roomCritDist.load(), 1) + U (" m \xc2\xb7 ") + juce::String (proc.engine.erActive.load()) + U (" Kl\xc3\xa4nge mit eigenen Reflexionen"),
                     info, juce::Justification::bottomLeft, 2);
+    else if (on)
+    {
+        const bool used = (proc.engine.roomsUsed.load() >> shownRoom) & 1;
+        g.drawFittedText ("Saal " + juce::String (shownRoom + 1) + U (" \xc2\xb7 V ") + juce::String (juce::roundToInt (V)) + U (" m\xc2\xb3 \xc2\xb7 Nachhall ")
+                          + juce::String (proc.engine.heard[(size_t) shownRoom].rtLow.load(), 2) + U (" s tief / ") + juce::String (proc.engine.heard[(size_t) shownRoom].rtHigh.load(), 2)
+                          + U (" s hoch") + (used ? juce::String() : U (" \xc2\xb7 kein Register in diesem Saal")),
+                          info, juce::Justification::bottomLeft, 2);
+    }
     else
         g.drawFittedText (U ("Saal aus \xe2\x80\x93 der Hall kommt von der Impulsantwort (Seite Raum)"), info, juce::Justification::bottomLeft, 2);
     g.setFont (A.monoFont (9.5f));
     g.setColour (col::faint);
-    if (on) g.drawFittedText (proc.getRoomStatus(), getLocalBounds().removeFromBottom (15).reduced (4, 0), juce::Justification::centredLeft, 1, 0.7f);
+    if (on && shownRoom == 0) g.drawFittedText (proc.getRoomStatus(), getLocalBounds().removeFromBottom (15).reduced (4, 0), juce::Justification::centredLeft, 1, 0.7f);
     g.setFont (A.monoFont (10.5f));
     g.drawFittedText (U ("Draufsicht \xc2\xb7 H\xc3\xb6rer ziehen \xc2\xb7 rot: Reflexionen der zuletzt gespielten Pfeife"),
                       getLocalBounds().removeFromTop (30).reduced (4, 0), juce::Justification::topLeft, 2);
@@ -154,22 +169,20 @@ void SaalPlan::paint (juce::Graphics& g)
 void SaalPlan::setListener (juce::Point<float> screen)
 {
     const auto f = frame();
-    const float W = proc.engine.roomW.load(), L = proc.engine.roomL.load();
+    const auto now = heardNow();
+    const float W = now.W(), L = now.L();
     const float x = (screen.x - f.origin.x) / f.scale, y = (f.origin.y - screen.y) / f.scale;
-    for (auto [id, v] : { std::pair<const char*, float> { "simLx", x / W }, { "simLy", y / L } })
-        if (auto* prm = proc.apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (juce::jlimit (0.0f, 1.0f, v)));
+    for (auto [key, v] : { std::pair<const char*, float> { "Lx", x / W }, { "Ly", y / L } })
+        if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (shownRoom, key))) prm->setValueNotifyingHost (prm->convertTo0to1 (juce::jlimit (0.0f, 1.0f, v)));
 }
 
 void SaalPlan::mouseDown (const juce::MouseEvent& e)
 {
-    RoomParams now = proc.readParams().room;
-    now.width = proc.engine.roomW.load(); now.length = proc.engine.roomL.load(); now.height = proc.engine.roomH.load(); now.size = 1.0f;
-    now.listenerX = proc.engine.roomLx.load(); now.listenerY = proc.engine.roomLy.load();
-    const auto l = listenerPos (now);
+    const auto l = listenerPos (heardNow());
     const auto ls = toScreen (frame(), l.x, l.y);
     dragging = ls.getDistanceFrom (e.position) < 16.0f;
     if (dragging)
-        for (auto* id : { "simLx", "simLy" }) if (auto* prm = proc.apvts.getParameter (id)) prm->beginChangeGesture();
+        for (auto* key : { "Lx", "Ly" }) if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (shownRoom, key))) prm->beginChangeGesture();
 }
 
 void SaalPlan::mouseDrag (const juce::MouseEvent& e)
@@ -180,7 +193,7 @@ void SaalPlan::mouseDrag (const juce::MouseEvent& e)
 void SaalPlan::mouseUp (const juce::MouseEvent&)
 {
     if (dragging)
-        for (auto* id : { "simLx", "simLy" }) if (auto* prm = proc.apvts.getParameter (id)) prm->endChangeGesture();
+        for (auto* key : { "Lx", "Ly" }) if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (shownRoom, key))) prm->endChangeGesture();
     dragging = false;
 }
 
@@ -234,8 +247,12 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
         const Preset pr = { nullptr, r.w, r.l, r.h, r.aw, r.af, r.hi, r.sc };
         b.onClick = [this, pr]
         {
-            setParams ({ { "simW", pr.w }, { "simL", pr.l }, { "simH", pr.h }, { "simSize", 1.0f }, { "simAbs", pr.aw }, { "simAbsFloor", pr.af },
-                         { "simHigh", pr.hi }, { "simScatter", pr.sc } });
+            const int r = editRoom;
+            auto id = [r] (const char* k) { return RysumProcessor::roomParamId (r, k); };
+            const std::pair<juce::String, float> vals[] { { id ("W"), pr.w }, { id ("L"), pr.l }, { id ("H"), pr.h }, { id ("Size"), 1.0f }, { id ("Abs"), pr.aw },
+                                                          { id ("AbsFloor"), pr.af }, { id ("High"), pr.hi }, { id ("Scatter"), pr.sc } };
+            for (auto& [pid, v] : vals)
+                if (auto* prm = proc.apvts.getParameter (pid)) { prm->beginChangeGesture(); prm->setValueNotifyingHost (prm->convertTo0to1 (v)); prm->endChangeGesture(); }
         };
         addAndMakeVisible (b);
     }
@@ -251,16 +268,53 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
         materials.push_back (std::make_unique<juce::TextButton> (m.name));
         auto& b = *materials.back();
         const Mat mm = m;
-        b.onClick = [this, mm] { setParams ({ { "simAbs", mm.aw }, { "simAbsFloor", mm.af }, { "simHigh", mm.hi } }); };
+        b.onClick = [this, mm]
+        {
+            const std::pair<juce::String, float> vals[] { { RysumProcessor::roomParamId (editRoom, "Abs"), mm.aw }, { RysumProcessor::roomParamId (editRoom, "AbsFloor"), mm.af },
+                                                          { RysumProcessor::roomParamId (editRoom, "High"), mm.hi } };
+            for (auto& [pid, v] : vals)
+                if (auto* prm = proc.apvts.getParameter (pid)) { prm->beginChangeGesture(); prm->setValueNotifyingHost (prm->convertTo0to1 (v)); prm->endChangeGesture(); }
+        };
         addAndMakeVisible (b);
     }
     materials[5]->setTooltip (U ("Ein unm\xc3\xb6glicher Raum: nichts wird geschluckt (nur die Luft d\xc3\xa4mpft)"));
 
-    dims = { &row ("simW", "Breite"), &row ("simL", U ("L\xc3\xa4nge")), &row ("simH", U ("H\xc3\xb6he")), &row ("simSize", U ("Gr\xc3\xb6\xc3\x9f" "e (alle Ma\xc3\x9f" "e)")) };
-    surf = { &row ("simAbs", U ("Absorption W\xc3\xa4nde")), &row ("simAbsFloor", "Absorption Boden/Decke"),
-             &row ("simHigh", U ("H\xc3\xb6hend\xc3\xa4mpfung")), &row ("simScatter", "Streuung") };
-    levels = { &row ("simLx", U ("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")), &row ("simLy", U ("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)")),
-               &row ("simEr", U ("Fr\xc3\xbche Reflexionen")), &row ("simTail", "Nachhall") };
+    for (int r = 0; r < rysum::kNumRooms; ++r)
+    {
+        auto id = [r] (const char* k) { return RysumProcessor::roomParamId (r, k); };
+        dimsR[(size_t) r] = { &row (id ("W").toRawUTF8(), "Breite"), &row (id ("L").toRawUTF8(), U ("L\xc3\xa4nge")), &row (id ("H").toRawUTF8(), U ("H\xc3\xb6he")),
+                              &row (id ("Size").toRawUTF8(), U ("Gr\xc3\xb6\xc3\x9f" "e (alle Ma\xc3\x9f" "e)")) };
+        surfR[(size_t) r] = { &row (id ("Abs").toRawUTF8(), U ("Absorption W\xc3\xa4nde")), &row (id ("AbsFloor").toRawUTF8(), "Absorption Boden/Decke"),
+                              &row (id ("High").toRawUTF8(), U ("H\xc3\xb6hend\xc3\xa4mpfung")), &row (id ("Scatter").toRawUTF8(), "Streuung") };
+        lisR[(size_t) r] = { &row (id ("Lx").toRawUTF8(), U ("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")), &row (id ("Ly").toRawUTF8(), U ("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)")) };
+    }
+    gainRows = { &row ("simEr", U ("Fr\xc3\xbche Reflexionen")), &row ("simTail", "Nachhall") };
+    // rooms: tabs to edit one, and which stop sounds where
+    for (int r = 0; r < rysum::kNumRooms; ++r)
+    {
+        auto& b = roomTabs[(size_t) r];
+        b.setButtonText ("Saal " + juce::String (r + 1));
+        b.setTooltip (U ("Diesen Saal bearbeiten und anzeigen (Grundriss, Ma\xc3\x9f" "e, Oberfl\xc3\xa4" "chen, H\xc3\xb6rer)"));
+        b.onClick = [this, r] { selectRoom (r); };
+        addAndMakeVisible (b);
+    }
+    for (int slot = 0; slot <= kNumStops; ++slot)
+    {
+        auto& b = assign[(size_t) slot];
+        b.setTooltip (slot < kNumStops ? prettyLabel (kStops[(size_t) kDisplayOrder[(size_t) slot]].label) + U (": in welchem Saal (Klick: n\xc3\xa4" "chster, Rechtsklick: w\xc3\xa4hlen)")
+                                       : U ("Eingang (Audio): in welchem Saal"));
+        b.onClick = [this, slot]
+        {
+            if (juce::ModifierKeys::currentModifiers.isPopupMenu()) { showAssignMenu (slot); return; }
+            if (auto* prm = proc.apvts.getParameter (assignId (slot)))
+            {
+                const int cur = juce::roundToInt (prm->convertFrom0to1 (prm->getValue()));
+                prm->beginChangeGesture(); prm->setValueNotifyingHost (prm->convertTo0to1 ((float) ((cur + 1) % rysum::kNumRooms))); prm->endChangeGesture();
+            }
+        };
+        addAndMakeVisible (b);
+    }
+    selectRoom (0);
 
     if (auto* tm = proc.apvts.getParameter ("simTailModel"))
     {
@@ -411,6 +465,18 @@ void SaalView::resized()
     r.removeFromRight (24);
     lucBox = r.removeFromRight (300);
     r.removeFromRight (20);
+    {
+        // rooms: tabs, and the stops' rooms
+        roomsArea = r.removeFromTop (78);
+        auto t = roomsArea.withTrimmedTop (4).removeFromTop (24);
+        t.removeFromLeft (64);
+        const int tw = (t.getWidth() - 3 * 4) / rysum::kNumRooms;
+        for (auto& b : roomTabs) { b.setBounds (t.removeFromLeft (tw)); t.removeFromLeft (4); }
+        auto a = roomsArea.withTrimmedTop (50).removeFromTop (24);
+        a.removeFromLeft (64);
+        const int aw = (a.getWidth() - kNumStops * 3) / (kNumStops + 1);
+        for (auto& b : assign) { b.setBounds (a.removeFromLeft (aw)); a.removeFromLeft (3); }
+    }
     planBox = r;
     plan.setBounds (r);
     {
@@ -486,7 +552,7 @@ void SaalView::resized()
     }
     right.removeFromTop (8);
     dimBox = take (kTitle + 4 * kRow);
-    { auto b = dimBox.withTrimmedTop (kTitle); stack (b, dims); }
+    for (auto& d : dimsR) { auto b = dimBox.withTrimmedTop (kTitle); stack (b, d); }
     right.removeFromTop (8);
     surfBox = take (kTitle + 50 + 4 + 4 * kRow);
     {
@@ -498,17 +564,65 @@ void SaalView::resized()
             for (int c = 0; c < 3; ++c) { materials[(size_t) (rr * 3 + c)]->setBounds (line.removeFromLeft (w)); line.removeFromLeft (4); }
         }
         b.removeFromTop (6);
-        stack (b, surf);
+        for (auto& sf : surfR) { auto bb = b; stack (bb, sf); }
     }
     right.removeFromTop (8);
     levelBox = take (kTitle + 4 * kRow);
-    { auto b = levelBox.withTrimmedTop (kTitle); stack (b, levels); }
+    {
+        auto b = levelBox.withTrimmedTop (kTitle);
+        for (auto& l2 : lisR) { auto bb = b; for (auto* x : l2) x->setBounds (bb.removeFromTop (kRow).withTrimmedBottom (2)); }
+        b.removeFromTop (2 * kRow);
+        for (auto* x : gainRows) x->setBounds (b.removeFromTop (kRow).withTrimmedBottom (2));
+    }
     tailFdn.setBounds (levelBox.getRight() - 52, levelBox.getY() + 9, 52, 20);
     tailConv.setBounds (tailFdn.getX() - 4 - 66, levelBox.getY() + 9, 66, 20);
 }
 
+void SaalView::selectRoom (int r)
+{
+    editRoom = juce::jlimit (0, rysum::kNumRooms - 1, r);
+    for (int q = 0; q < rysum::kNumRooms; ++q)
+    {
+        roomTabs[(size_t) q].setToggleState (q == editRoom, juce::dontSendNotification);
+        for (auto* x : dimsR[(size_t) q]) if (x) x->setVisible (q == editRoom);
+        for (auto* x : surfR[(size_t) q]) if (x) x->setVisible (q == editRoom);
+        for (auto* x : lisR[(size_t) q]) if (x) x->setVisible (q == editRoom);
+    }
+    plan.repaint();
+    repaint();
+}
+
+juce::String SaalView::assignId (int slot) const
+{
+    return slot < kNumStops ? RysumProcessor::stopRoomParamId (kDisplayOrder[(size_t) slot]) : juce::String ("simRoomIn");
+}
+
+void SaalView::showAssignMenu (int slot)
+{
+    juce::PopupMenu m;
+    for (int r = 0; r < rysum::kNumRooms; ++r) m.addItem (r + 1, "Saal " + juce::String (r + 1));
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&assign[(size_t) slot]), [this, slot] (int res)
+    {
+        if (res <= 0) return;
+        if (auto* prm = proc.apvts.getParameter (assignId (slot)))
+        { prm->beginChangeGesture(); prm->setValueNotifyingHost (prm->convertTo0to1 ((float) (res - 1))); prm->endChangeGesture(); }
+    });
+}
+
 void SaalView::refresh()
 {
+    for (int slot = 0; slot <= kNumStops; ++slot)
+    {
+        const int r = juce::roundToInt (proc.apvts.getRawParameterValue (assignId (slot))->load());
+        if (r != shownAssign[(size_t) slot] || assign[(size_t) slot].getButtonText().isEmpty())
+        {
+            shownAssign[(size_t) slot] = r;
+            assign[(size_t) slot].setButtonText (juce::String (r + 1));
+            assign[(size_t) slot].setToggleState (r == editRoom, juce::dontSendNotification);
+            repaint (roomsArea);
+        }
+        assign[(size_t) slot].setToggleState (r == editRoom, juce::dontSendNotification);
+    }
     plan.repaint();
     for (auto& r : rows) r->repaint();
     const auto st = proc.getRoomStatus();
@@ -659,8 +773,25 @@ void SaalView::paint (juce::Graphics& g)
     }
     const bool on = proc.readParams().room.on;
     drawSectionTitle (g, saalBox, "Saal", on ? U ("simuliert \xc2\xb7 statt der Impulsantwort") : juce::String ("aus"));
-    drawSectionTitle (g, dimBox, U ("Ma\xc3\x9f" "e"), "modulierbar");
-    drawSectionTitle (g, surfBox, U ("Oberfl\xc3\xa4" "chen"), "Material setzt die Absorption");
+    drawSectionTitle (g, dimBox, U ("Ma\xc3\x9f" "e \xc2\xb7 Saal ") + juce::String (editRoom + 1), "modulierbar");
+    {
+        // the rooms strip: labels
+        g.setFont (A.monoFont (10.5f));
+        g.setColour (col::mute);
+        auto lbl = roomsArea.withTrimmedTop (4).removeFromTop (24).removeFromLeft (60);
+        g.drawText (U ("R\xc3\xa4ume"), lbl, juce::Justification::centredLeft);
+        auto lbl2 = roomsArea.withTrimmedTop (50).removeFromTop (24).removeFromLeft (60);
+        g.drawText (U ("im Saal"), lbl2, juce::Justification::centredLeft);
+        const char* shortNames[] { "P 16", "P 8", "Ged", "Okt 4", "Okt 2", "Sesq", "Mix", "Tr", "Ein" };
+        g.setFont (A.monoFont (9.5f));
+        g.setColour (col::faint);
+        for (int slot = 0; slot <= kNumStops; ++slot)
+        {
+            const auto b = assign[(size_t) slot].getBounds();
+            g.drawText (shortNames[slot], b.withY (b.getY() - 16).withHeight (14), juce::Justification::centred);
+        }
+    }
+    drawSectionTitle (g, surfBox, U ("Oberfl\xc3\xa4" "chen \xc2\xb7 Saal ") + juce::String (editRoom + 1), "Material setzt die Absorption");
     drawSectionTitle (g, levelBox, U ("H\xc3\xb6rer \xc2\xb7 Pegel"));
     g.setColour (col::mute);
     g.setFont (A.monoFont (11.0f));

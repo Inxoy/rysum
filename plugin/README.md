@@ -292,6 +292,13 @@ above everything else; it rings out when you stop. (Factory patches 59–63 use 
 
 **Saal** – a simulated room instead of the impulse response, made to be played. *Saal an*
 switches it on (the IR on the Raum page pauses meanwhile and comes back when it is off).
+- **Four rooms** (*Räume*, above the plan): every stop and the audio input sound in one of
+  *Saal 1–4* – row *im Saal*: click a stop's number for the next room, right-click to choose.
+  Each room has its own size, surfaces and listener position (the tabs choose which one the plan
+  and the sliders show); reflection order and the two levels are shared. Every room in use gets
+  its own early reflections and its own late reverb (built in the background like room 1), so
+  the cost grows with the number of rooms used. Clicks, own sounds and effects stay in room 1.
+  Everything starts in room 1, so older projects sound as before.
 - How it works:
   - *Early reflections*, per sound: every sounding pipe (and every click / own sound) gets its own
     mirror-image sources in the shoebox room, up to the 1st, 2nd or 3rd order (6, 24 or 62
@@ -491,7 +498,8 @@ share them. Example patches are written there on first start, and new ones with 
 set (deleted ones are not re-created). Set 9 (59–79) shows the newer features:
 59–63 Lucier (live), 80 Lucier as a piece (74 too, with the input), 64–67 expression (MPE pressure / slide – polyphonic or channel aftertouch
 work as pressure too), 68–71 scenes (move *Überblenden* on the Spieltisch; 70 moves by itself
-with an LFO), 72–79 the audio input (they switch it on).
+with an LFO), 72–79 the audio input (they switch it on); set 11 (81–85): notes spread to single
+pipes and stops in different rooms.
 
 A patch made with the input on switches the input on when it loads; every other patch leaves
 the input as it is (on or off belongs to your setup, like MPE).
@@ -524,6 +532,22 @@ How the audio gets in:
   input* (use headphones – speakers feed back).
 - **Rysum FX** works the same in every host: its input is the track's audio, MIDI routed to it
   plays the organ. The input is on by default there.
+
+### Pipes on / off, notes to single pipes
+
+- **Pipes** (Raum page, under *Anordnung*): the 41 pipes of the selected stop; click to mute
+  one, drag across several, right-click for patterns (all on, all off, every other one, lower /
+  upper half, half at random, invert). Muted pipes do not speak; in the top view they are faint
+  rings. Saved with the project and in patches.
+- **Töne verteilen** (Spieltisch, Traktur): instead of every pulled stop sounding each note,
+  every note goes to a single pipe of one stop:
+  - *der Reihe nach*: 1st note on the first pulled stop (console order, left to right), 2nd note
+    on the next, …;
+  - *nach Lage*: by position in the chord at the moment it is played – the lowest held note on
+    the first stop, the next one up on the second …;
+  - *zufällig*: a random stop, never twice the same in a row.
+  Muted pipes are skipped (the note goes to the next stop that has that pipe). Pulling a stop
+  while notes are held does not add them to it.
 
 ## 4. MIDI
 

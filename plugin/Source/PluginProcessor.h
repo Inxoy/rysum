@@ -274,6 +274,9 @@ private:
         std::array<int, 32> fx {};
         std::array<int, 16> sim {};
         std::array<int, 16> inp {};
+        std::array<std::array<int, 10>, rysum::kNumRooms> room {};
+        std::array<int, rysum::kNumStops> stopRoom {};
+        int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex { inpOn, inpLevel, inpMode, inpAz, inpEl, inpDist, inpWidth, inpSpin, inpFollow, inpGate, inpRelease, inpSend, kNumInp };
     static constexpr const char* kInpIds[kNumInp] { "inpOn", "inpLevel", "inpMode", "inpAz", "inpEl", "inpDist", "inpWidth", "inpSpin",
@@ -282,14 +285,24 @@ private:
     static constexpr const char* kSimIds[kNumSim] { "simOn", "simW", "simL", "simH", "simSize", "simLx", "simLy", "simAbs", "simAbsFloor",
                                                     "simHigh", "simScatter", "simOrder", "simEr", "simTail", "simTailModel" };
     // late reverb of the simulated room: built in the background from the room as heard
-    juce::String builtTailKey, roomStatus;
-    bool tailBuilding = false;
+    juce::String roomStatus;
+    std::array<juce::String, rysum::kNumRooms> builtTailKey;
+    std::array<bool, rysum::kNumRooms> tailBuilding {};
     uint32_t tailSerial = 0;
-    std::deque<std::shared_ptr<const rysum::TailIR>> tailKeepAlive;     // message thread owns the last references
-    std::shared_ptr<const rysum::TailIR> pendingTail;                  // handed to the audio thread
-    rysum::RoomParams heardRoom() const;
-    juce::String roomKey() const;
-    void buildTailNow (const juce::String& key);
+    std::array<std::deque<std::shared_ptr<const rysum::TailIR>>, rysum::kNumRooms> tailKeepAlive;   // message thread owns the last references
+    std::array<std::shared_ptr<const rysum::TailIR>, rysum::kNumRooms> pendingTail;                // handed to the audio thread
+    rysum::RoomParams heardRoom (int room) const;
+    juce::String roomKey (int room) const;
+    void buildTailNow (int room, const juce::String& key);
+public:
+    /** parameter ids of the simulated rooms: room 0 = the original "simW" ..., rooms 1..3 = "sim2W" ...
+        keys: W L H Size Lx Ly Abs AbsFloor High Scatter */
+    static juce::String roomParamId (int room, const char* key) { return room <= 0 ? juce::String ("sim") + key : "sim" + juce::String (room + 1) + key; }
+    static juce::String stopRoomParamId (int s) { return "simRoom" + juce::String (s); }
+    /** pipes on / off (muted) per stop and key (message thread) */
+    void setPipeMuted (int stop, int key, bool mutedNow) { if (stop >= 0 && stop < rysum::kNumStops && key >= 0 && key < rysum::kNumKeys) { engine.muted[(size_t) stop][(size_t) key] = mutedNow; ++changeCounter; } }
+    bool isPipeMuted (int stop, int key) const { return engine.muted[(size_t) stop][(size_t) key].load(); }
+private:
     void setRoomStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); roomStatus = s; }
     enum FxIndex
     {

@@ -922,6 +922,75 @@ static void testSpeakers()
     }
 }
 
+// ---------------------------------------------------------------------------
+// several simulated rooms (one per stop) and notes spread to single pipes
+// ---------------------------------------------------------------------------
+static void testRoomsAndSpread (std::shared_ptr<const SampleLibrary> lib)
+{
+    const double sr = 48000.0;
+    const int B = 256;
+    // the Praestant in a small dry room or in a cathedral (room 2): the cathedral rings much longer after the note
+    auto tailAfter = [&] (int roomOfStop) -> double
+    {
+        OrganEngine e; e.prepare (sr, B); e.setLibrary (lib);
+        EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+        p.room.on = true; p.room.width = 4; p.room.length = 5; p.room.height = 3; p.room.absWalls = 0.4f; p.room.absFloor = 0.4f;
+        p.moreRooms[0] = p.room;
+        p.moreRooms[0].width = 30; p.moreRooms[0].length = 90; p.moreRooms[0].height = 32; p.moreRooms[0].absWalls = 0.03f; p.moreRooms[0].absFloor = 0.05f;
+        p.stopRoom[0] = roomOfStop;
+        e.setTailIR (TailIR::build (p.room, p.air, 0, sr, 1), 0);
+        e.setTailIR (TailIR::build (p.moreRooms[0], p.air, 0, sr, 2), 1);
+        juce::AudioBuffer<float> b (2, B);
+        double after = 0.0;
+        for (int k = 0; k < (int) (6.0 * sr / B); ++k)
+        {
+            juce::MidiBuffer mb;
+            if (k == 2) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            if (k == (int) (1.5 * sr / B)) mb.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+            e.process (b, mb, p);
+            const double t = k * B / sr;
+            if (t > 3.0 && t < 5.0) after += b.getRMSLevel (0, 0, B) * b.getRMSLevel (0, 0, B);
+        }
+        return 10.0 * std::log10 (after + 1e-20);
+    };
+    const double small = tailAfter (0), cath = tailAfter (1);
+    std::cout << "rooms: 1.5-3.5 s after the note, Praestant in the small room " << small << " dB, in room 2 (cathedral) " << cath << " dB" << std::endl;
+    check (cath > small + 15.0, "rooms: a stop sounds in its own simulated room");
+
+    // notes to single pipes
+    auto spread = [&] (int mode, std::vector<int> notes, std::array<uint64_t, kNumStops>& mask, int mutedStop = -1, int mutedKey = -1)
+    {
+        OrganEngine e; e.prepare (sr, B); e.setLibrary (lib);
+        if (mutedStop >= 0) e.muted[(size_t) mutedStop][(size_t) mutedKey] = true;
+        EngineParams p; p.stopOn = {}; for (int s2 : { 0, 1, 2, 6 }) p.stopOn[(size_t) s2] = true;
+        p.clickLevel = 0; p.noteSpread = mode;
+        juce::AudioBuffer<float> b (2, B);
+        for (int k = 0; k < 8; ++k)
+        {
+            juce::MidiBuffer mb;
+            if (k == 1) { int pos = 0; for (int n : notes) mb.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), pos++); }
+            e.process (b, mb, p);
+        }
+        for (int s2 = 0; s2 < kNumStops; ++s2) mask[(size_t) s2] = e.soundingMask[(size_t) s2].load();
+    };
+    auto count = [] (const std::array<uint64_t, kNumStops>& m) { int c = 0; for (auto v : m) c += __builtin_popcountll (v); return c; };
+    std::array<uint64_t, kNumStops> m0 {}, m1 {}, m2 {}, m3 {};
+    spread (0, { 48, 52, 55, 60 }, m0);
+    spread (1, { 48, 52, 55, 60 }, m1);
+    spread (2, { 60, 55, 52, 48 }, m2);           // played from the top: still the lowest note on the first stop? (by position at note-on)
+    int stopsUsed = 0; for (auto v : m1) stopsUsed += v != 0 ? 1 : 0;
+    std::cout << "spread: all stops " << count (m0) << " pipes, in turn " << count (m1) << " pipes on " << stopsUsed << " stops" << std::endl;
+    check (count (m0) == 16 && count (m1) == 4 && stopsUsed == 4, "spread: one pipe per note, every note on another stop");
+    // by position, played from below: lowest note -> first stop on the console (Praestant 8', then Gedackt, Octave 4', Trompete)
+    spread (2, { 48, 52, 55, 60 }, m3);
+    const int k48 = keyIndexForMidi (48);
+    check (k48 >= 0 && ((m3[0] >> k48) & 1) == 1, "spread: by position, the lowest note on the first stop");
+    // a muted pipe is skipped: in turn, the first note would go to the Praestant - muted there, it goes to the Gedackt
+    std::array<uint64_t, kNumStops> m4 {};
+    spread (1, { 48 }, m4, 0, k48);
+    check (((m4[0] >> k48) & 1) == 0 && ((m4[1] >> k48) & 1) == 1, "spread: muted pipes are skipped");
+}
+
 int main (int argc, char** argv)
 {
     const bool onlyRoom = std::getenv ("RYSUM_ONLY_ROOM") != nullptr;       // quick run: just the room tests
@@ -988,6 +1057,7 @@ int main (int argc, char** argv)
         std::cout << "wrote " << f.getFullPathName() << std::endl;
         return 0;
     }
+    if (std::getenv ("RYSUM_ONLY_ROOMS") != nullptr) { testRoomsAndSpread (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (onlyInput) { testInput (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (onlyLucier) { testLucier (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     std::cout << "  " << lib->loadedPipes << " pipes, " << lib->substitutedPipes << " substituted, "
@@ -1543,6 +1613,7 @@ int main (int argc, char** argv)
 
         testLucier (lib);
         testInput (lib);
+        testRoomsAndSpread (lib);
 
         // ---------------- motion: ellipse shape, drawn paths, hard jumps ----------------
         {

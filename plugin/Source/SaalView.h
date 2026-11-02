@@ -10,7 +10,7 @@ namespace rysum::ui
 class SaalPlan : public juce::Component
 {
 public:
-    explicit SaalPlan (RysumProcessor& p) : proc (p) {}
+    SaalPlan (RysumProcessor& p, int& editRoom) : proc (p), shownRoom (editRoom) {}
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -23,7 +23,9 @@ private:
     void setListener (juce::Point<float> screen);
 
     RysumProcessor& proc;
+    int& shownRoom;                              // the room shown (0..3)
     bool dragging = false;
+    RoomParams heardNow() const;
 };
 
 /** sixth page: the simulated, playable room */
@@ -41,7 +43,19 @@ private:
     void setParams (std::initializer_list<std::pair<const char*, float>> values);
 
     RysumProcessor& proc;
-    SaalPlan plan { proc };
+    int editRoom = 0;
+    SaalPlan plan { proc, editRoom };
+    // several rooms: which one is edited / shown, and which stop sounds in which room
+    std::array<juce::TextButton, rysum::kNumRooms> roomTabs;
+    std::array<juce::TextButton, rysum::kNumStops + 1> assign;          // stops in console order, then the input
+    std::array<std::array<ParamRow*, 4>, rysum::kNumRooms> dimsR {}, surfR {};
+    std::array<std::array<ParamRow*, 2>, rysum::kNumRooms> lisR {};
+    std::array<ParamRow*, 2> gainRows {};
+    juce::Rectangle<int> roomsArea;
+    std::array<int, rysum::kNumStops + 1> shownAssign {};
+    void selectRoom (int r);
+    juce::String assignId (int slot) const;
+    void showAssignMenu (int slot);
     juce::TextButton onButton { "Saal an" };
     std::unique_ptr<ButtonAtt> onAtt;
     juce::ComboBox order;

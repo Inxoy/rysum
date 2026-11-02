@@ -129,8 +129,16 @@ struct EngineParams
 
     InputParams input;
 
-    // simulated room ("Saal"): early reflections per pipe + late reverb
+    // simulated room ("Saal"): early reflections per pipe + late reverb. Up to four rooms: every stop and the input
+    // sound in one of them (room 0 = "Saal 1", everything else - clicks, effects - is in it too)
     RoomParams room;
+    std::array<RoomParams, kNumRooms - 1> moreRooms {};
+    std::array<int, kNumStops> stopRoom {};
+    int inputRoom = 0;
+    const RoomParams& roomAt (int i) const noexcept { return i <= 0 ? room : moreRooms[(size_t) juce::jmin (kNumRooms - 2, i - 1)]; }
+    /** notes to single pipes: 0 = every pulled stop sounds (as an organ), 1 = one stop per note in turn,
+        2 = by position among the held notes (lowest -> first stop), 3 = random */
+    int noteSpread = 0;
 
     // room sends: circular harmonics of every pipe's direction (see Convolver)
     int   roomHarmonics = 0;          // 0 = only the plain sum
@@ -181,8 +189,13 @@ public:
     std::atomic<int>   roomOutOrder { 0 };
     std::atomic<bool>  roomOn { false };
     std::atomic<uint32_t> tailSerialInUse { 0xffffffffu };
-    /** audio thread: the late reverb for the current room (built in the background) */
-    void setTailIR (std::shared_ptr<const TailIR> ir) noexcept { tail.setIR (std::move (ir)); }
+    /** audio thread: the late reverb for a room (built in the background) */
+    void setTailIR (std::shared_ptr<const TailIR> ir, int roomIndex = 0) noexcept { rt[(size_t) juce::jlimit (0, kNumRooms - 1, roomIndex)].tail.setIR (std::move (ir)); }
+    // the other rooms as heard (rooms 1..3; room 0 = the atomics above), for building their tails and the display
+    struct HeardRoom { std::atomic<float> W { 14 }, L { 28 }, H { 11 }, Lx { 0.5f }, Ly { 0.4f }, absW { 0 }, absF { 0 }, highD { 0 }, scat { 0 }, rtLow { 0 }, rtHigh { 0 }; };
+    std::array<HeardRoom, kNumRooms> heard;
+    std::atomic<int> roomsUsed { 1 };                       // bit r = room r has sources
+    std::array<std::atomic<uint32_t>, kNumRooms> tailSerialInUseR {};
     /** audio thread: the response of the Lucier passes (built in the background) */
     void setLucierIR (std::shared_ptr<const TailIR> ir) noexcept { lucier.setIR (std::move (ir)); }
     std::atomic<uint32_t> lucierSerialInUse { 0xffffffffu };
@@ -385,11 +398,12 @@ private:
     void placedGains (NoiseVoice& nv) noexcept;
     void renderLeaks (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
     void renderRoom (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
-    void renderFdn (float* const* out, int K, const float* in, int n, float rtL, float rtH, float gainTarget, const RoomParams& r);
-    void resetFdn() noexcept;
+    struct RoomTail;
+    void renderFdn (RoomTail& R, float* const* out, int K, const float* in, int n, float rtL, float rtH, float gainTarget, const RoomParams& r);
+    void resetFdn (RoomTail& R) noexcept;
     int  allocSlot (int voice, int noiseVoice) noexcept;
     void releaseSlot (int& slot) noexcept;
-    void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p) noexcept;
+    void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room) noexcept;
     void renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
     void renderInput (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept;
     void followInput (int start, int len, const EngineParams& p) noexcept;
@@ -485,23 +499,36 @@ private:
     const std::vector<NoiseSample> noSounds;
     int lastCustom = -1;
 
-    // simulated room
-    TailConvolver tail;                              // late reverb (ray-traced, synthesised, convolved)
-    float tailGain = 0.0f;
-    bool tailWasOn = false;
-    // the other late reverb: a 16-line feedback delay network (decay from the ray tracer)
+    // simulated rooms: the late reverb of every room (convolution with a ray-traced response, or a feedback delay network)
     static constexpr int kFdnLines = 16, kFdnBits = 16, kFdnLen = 1 << kFdnBits;
-    std::vector<float> fdnBuf, fdnPre;               // [line][kFdnLen], input pre-delay
-    uint32_t fdnPos = 0;
-    std::array<float, kFdnLines> fdnDelay {}, fdnLp {}, fdnGL {}, fdnGH {};
-    std::array<std::array<float, kMaxAmbiChannels>, kFdnLines> fdnEnc {};
-    float fdnPreDelay = -1.0f, fdnGain = 0.0f, fdnLevelLast = 0.0f;
+    struct RoomTail
+    {
+        TailConvolver tail;                          // late reverb (ray-traced, synthesised, convolved)
+        float tailGain = 0.0f;
+        bool tailWasOn = false;
+        // the other late reverb: a 16-line feedback delay network (decay from the ray tracer)
+        std::vector<float> fdnBuf, fdnPre;           // [line][kFdnLen], input pre-delay
+        uint32_t fdnPos = 0;
+        std::array<float, kFdnLines> fdnDelay {}, fdnLp {}, fdnGL {}, fdnGH {};
+        std::array<std::array<float, kMaxAmbiChannels>, kFdnLines> fdnEnc {};
+        float fdnPreDelay = -1.0f, fdnGain = 0.0f, fdnLevelLast = 0.0f;
+        std::array<float, kFdnLines> fdnModC {}, fdnModS {};
+        int fdnEncOrder = -1;
+        // switching between the two: the one switched off rings out on its own (input silent)
+        int convRingOut = 0, fdnRingOut = 0, lastTailModel = 0;
+        std::vector<float> send;                     // rooms 1..3: the sources in this room (room 0 = all others)
+        bool running = false;
+    };
+    std::array<RoomTail, kNumRooms> rt;
     std::array<std::array<float, kFdnLines>, kFdnLines> fdnMatrix {};      // random orthogonal mixing matrix
-    std::array<float, kFdnLines> fdnModC {}, fdnModS {}, fdnModStepC {}, fdnModStepS {};   // slow delay modulation (phasors)
-    int fdnEncOrder = -1;
-    // switching between the two: the one switched off rings out on its own (input silent)
-    int convRingOut = 0, fdnRingOut = 0, lastTailModel = 0;
-    std::vector<float> zeroIn;
+    std::array<float, kFdnLines> fdnModStepC {}, fdnModStepS {};           // slow delay modulation (phasor steps)
+    std::vector<float> zeroIn, room0In;
+    std::array<int, kNumStops> stopRoomNow {};
+    int inputRoomNow = 0;
+    // notes to single pipes
+    uint32_t spreadCounter = 0;
+    int lastSpreadStop = -1;
+    int spreadStopFor (int key, const EngineParams& p) noexcept;
     std::vector<ErSlot> erSlots;
     std::vector<float> erRing;                       // [slot][kErRing]
     uint32_t erClock = 0;

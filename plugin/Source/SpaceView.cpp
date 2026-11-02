@@ -143,6 +143,13 @@ void SpaceCircle::paint (juce::Graphics& g)
                     g.setColour (col::white.withAlpha (0.8f));
                     g.drawEllipse (juce::Rectangle<float> (11.0f, 11.0f).withCentre (p), 1.0f);
                 }
+                if (proc.isPipeMuted (s, k))
+                {
+                    // muted: only a faint ring
+                    g.setColour (col::faint);
+                    g.drawEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (p), 0.8f);
+                    continue;
+                }
                 // nearer pipes are drawn bigger
                 const float near = juce::jlimit (0.55f, 1.6f, std::sqrt (6.0f / pos.dist));
                 drawStopDot (g, s, p, (isSel ? 5.0f : 3.6f) * near, isSel && snd);
@@ -305,9 +312,84 @@ void SpaceCircle::mouseUp (const juce::MouseEvent&)
 }
 
 // ---------------------------------------------------------------------------
+int PipeStrip::keyAt (float x) const
+{
+    return juce::jlimit (0, kNumKeys - 1, (int) (x / (float) getWidth() * (float) kNumKeys));
+}
+
+void PipeStrip::paint (juce::Graphics& g)
+{
+    const float w = (float) getWidth() / (float) kNumKeys, h = (float) getHeight();
+    const uint64_t sounding = proc.engine.soundingMask[(size_t) stop].load();
+    for (int k = 0; k < kNumKeys; ++k)
+    {
+        auto cell = juce::Rectangle<float> ((float) k * w + 1.0f, 2.0f, w - 2.0f, h - 4.0f);
+        const bool muted = proc.isPipeMuted (stop, k);
+        const bool snd = (sounding >> k) & 1;
+        if (muted) { g.setColour (col::faint); g.drawRect (cell, 1.0f); }
+        else { g.setColour (snd ? col::white : col::ink); g.fillRect (cell); }
+        // octave marks (C)
+        if (kPhysKeys[(size_t) k] % 12 == 0) { g.setColour (col::rubric.withAlpha (0.8f)); g.fillRect (cell.getX(), h - 1.5f, cell.getWidth(), 1.5f); }
+    }
+}
+
+void PipeStrip::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "alle an");
+        m.addItem (2, "alle stumm");
+        m.addItem (3, "jede zweite");
+        m.addItem (4, juce::String::fromUTF8 ("nur die untere HÃ¤lfte"));
+        m.addItem (5, juce::String::fromUTF8 ("nur die obere HÃ¤lfte"));
+        m.addItem (6, juce::String::fromUTF8 ("zufÃ¤llig die HÃ¤lfte"));
+        m.addItem (7, "umkehren");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int r)
+        {
+            if (r <= 0) return;
+            juce::Random rnd;
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                bool mu = proc.isPipeMuted (stop, k);
+                switch (r)
+                {
+                    case 1: mu = false; break;
+                    case 2: mu = true; break;
+                    case 3: mu = (k % 2) == 1; break;
+                    case 4: mu = k >= kNumKeys / 2; break;
+                    case 5: mu = k < kNumKeys / 2; break;
+                    case 6: mu = rnd.nextBool(); break;
+                    default: mu = ! mu; break;
+                }
+                proc.setPipeMuted (stop, k, mu);
+            }
+            repaint();
+        });
+        return;
+    }
+    const int k = keyAt (e.position.x);
+    paintMuted = ! proc.isPipeMuted (stop, k);
+    proc.setPipeMuted (stop, k, paintMuted);
+    lastKey = k;
+    repaint();
+}
+
+void PipeStrip::mouseDrag (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu()) return;
+    const int k = keyAt (e.position.x);
+    if (k == lastKey) return;
+    for (int q = juce::jmin (k, lastKey); q <= juce::jmax (k, lastKey); ++q) proc.setPipeMuted (stop, q, paintMuted);
+    lastKey = k;
+    repaint();
+}
+
+// ---------------------------------------------------------------------------
 SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected, inputSel)
 {
     addAndMakeVisible (circle);
+    addAndMakeVisible (pipeStrip);
 
     // the audio input: a row under the stops, its own panel
     inputRow.onClick = [this] { selectInput(); };
@@ -516,6 +598,7 @@ void SpaceView::updateVisibility()
     for (auto& b : layoutButtons) b.setVisible (stopPanel);
     for (auto* c : { &width, &centre, &elevation, &spread, &distance }) c->setVisible (stopPanel);
     tabMotion.setVisible (stopPanel);
+    pipeStrip.setVisible (stopPanel);
     tabHall.setVisible (stopPanel);
     juce::Component* inputComps[] { &inMono, &inStereo, &inGate, &inFollow, inLevel.get(), inSend.get(), inAz.get(), inEl.get(),
                                     inDist.get(), inWidth.get(), inSpin.get(), inRelease.get() };
@@ -647,7 +730,7 @@ void SpaceView::resized()
         inHelp = ib;
     }
 
-    layoutBox = rr.removeFromTop (30 + 44 + 5 * 18);
+    layoutBox = rr.removeFromTop (30 + 44 + 5 * 18 + 24);
     auto lb = layoutBox.withTrimmedTop (30);
     auto row1 = lb.removeFromTop (22), row2 = lb.removeFromTop (22);
     const int bw1 = (row1.getWidth() - 8) / 3;
@@ -655,6 +738,9 @@ void SpaceView::resized()
     for (int i = 0; i < 3; ++i) layoutButtons[(size_t) i + 3].setBounds (row2.getX() + i * (bw1 + 4), row2.getY(), bw1, 20);
     for (auto* s : { &width, &centre, &elevation, &spread, &distance })
         s->setBounds (lb.removeFromTop (18).withTrimmedLeft (100).withTrimmedRight (52));
+    lb.removeFromTop (3);
+    pipeStripLabel = lb.removeFromTop (20);
+    pipeStrip.setBounds (pipeStripLabel.withTrimmedLeft (100).withTrimmedRight (52));
     rr.removeFromTop (4);
 
     // lower part: "Bewegung" or "Hall" (tabs in the title line)
@@ -766,6 +852,7 @@ void SpaceView::refresh()
     if (depthRow) depthRow->repaint();
     for (auto* r : { ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get() }) if (r) r->repaint();
     circle.repaint();
+    pipeStrip.repaint();
     repaint (right);
 }
 
@@ -808,6 +895,16 @@ void SpaceView::paint (juce::Graphics& g)
                     b.withX (b.getRight()).withWidth (52), juce::Justification::centredRight);
     }
 
+    {
+        g.setFont (A.sansFont (13.0f));
+        g.setColour (col::ink);
+        g.drawText ("Pfeifen", pipeStripLabel.withWidth (96), juce::Justification::centredLeft);
+        int on = 0;
+        for (int k = 0; k < kNumKeys; ++k) on += proc.isPipeMuted (selected, k) ? 0 : 1;
+        g.setFont (A.monoFont (11.0f));
+        g.setColour (col::dim);
+        g.drawText (juce::String (on) + "/" + juce::String (kNumKeys), pipeStripLabel.withX (pipeStripLabel.getRight() - 50).withWidth (50), juce::Justification::centredRight);
+    }
     if (! hallTab)
     {
         drawSectionTitle (g, tabBox, "Bewegung");

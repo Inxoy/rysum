@@ -80,6 +80,26 @@ public:
     bool on = false;
 };
 
+/** the 41 pipes of a stop: on / muted (click, drag across; right-click: patterns) */
+class PipeStrip : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    PipeStrip (RysumProcessor& p, int& selectedStop) : proc (p), stop (selectedStop)
+    {
+        setTooltip (juce::String::fromUTF8 ("Pfeifen des Registers: Klick schaltet eine Pfeife stumm / wieder an, Ã¼" "ber mehrere ziehen. "
+                                            "Rechtsklick: Muster. Stumme Pfeifen spielen nicht (beim Verteilen der TÃ¶ne werden sie Ã¼" "bersprungen)."));
+    }
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+private:
+    int keyAt (float x) const;
+    RysumProcessor& proc;
+    int& stop;
+    bool paintMuted = false;
+    int lastKey = -1;
+};
+
 /** small square that pulls / pushes a stop (same look as on the Spieltisch) */
 class PullToggle : public juce::Button
 {
@@ -143,6 +163,7 @@ private:
     int selected = 6;
     bool inputSel = false;
     SpaceCircle circle;
+    PipeStrip pipeStrip { proc, selected };
     // the audio input
     InputRow inputRow;
     PullToggle inputPull;
@@ -152,7 +173,7 @@ private:
     juce::ComboBox inFollow;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> inFollowAttachment;
     std::unique_ptr<ParamRow> inLevel, inSend, inAz, inEl, inDist, inWidth, inSpin, inRelease;
-    juce::Rectangle<int> inputBox, inMeter, inHelp;
+    juce::Rectangle<int> inputBox, inMeter, inHelp, pipeStripLabel;
     float inMeterShown = 0.0f;
     std::vector<std::unique_ptr<StopRow>> stopButtons;
     std::vector<std::unique_ptr<PullToggle>> pullButtons;

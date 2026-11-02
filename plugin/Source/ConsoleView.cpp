@@ -206,6 +206,13 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
         noiseRows.push_back (std::make_unique<ParamRow> (proc.apvts, n.first, juce::String (juce::CharPointer_UTF8 (n.second))));
         addAndMakeVisible (*noiseRows.back());
     }
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("noteSpread")))
+        spreadChoice.addItemList (choice->choices, 1);
+    spreadAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "noteSpread", spreadChoice);
+    spreadChoice.setTooltip (juce::String::fromUTF8 ("Jeder Ton nur auf einer Pfeife eines gezogenen Registers statt auf allen: der Reihe nach "
+                                                     "(1. Ton Praestant, 2. Ton Gedackt â¦), nach Lage im Akkord (tiefster Ton aufs erste Register links) "
+                                                     "oder zufÃ¤llig. Stumm geschaltete Pfeifen (Seite Raum) werden Ã¼" "bersprungen."));
+    addAndMakeVisible (spreadChoice);
     const std::pair<const char*, const char*> decay[] {
         { "degAmount", "Menge" }, { "degGrain", "K\xc3\xb6rnung" }, { "degBits", "Bittiefe" }, { "degRate", "Abtastrate" },
         { "degWobble", "Windschwankung" }, { "degDropouts", "Aussetzer" } };
@@ -288,6 +295,12 @@ void ConsoleView::resized()
 
     auto rows = noiseArea.withTrimmedTop (40);
     for (auto& row : noiseRows) { row->setBounds (rows.removeFromTop (36)); }
+    {
+        rows.removeFromTop (6);
+        auto sr = rows.removeFromTop (24);
+        spreadLabel = sr.removeFromLeft (118);
+        spreadChoice.setBounds (sr);
+    }
     rows = decayArea.withTrimmedTop (40);
     for (auto& row : decayRows) { row->setBounds (rows.removeFromTop (36)); }
     perPipe.setBounds (decayArea.getRight() - 150, decayArea.getY() + 8, 80, 20);
@@ -365,6 +378,9 @@ void ConsoleView::paint (juce::Graphics& g)
     g.drawText (juce::String (on) + " von 7 gezogen", head, juce::Justification::centredRight);
 
     drawSectionTitle (g, noiseArea, "Traktur", juce::String (juce::CharPointer_UTF8 ("Ger\xc3\xa4uschschicht")));
+    g.setFont (Assets::get().sansFont (14.0f));
+    g.setColour (col::ink);
+    g.drawText (juce::String::fromUTF8 ("T\xc3\xb6ne verteilen"), spreadLabel, juce::Justification::centredLeft);
     drawSectionTitle (g, decayArea, "Verfall");
     drawSectionTitle (g, outArea, "Ausgang");
 

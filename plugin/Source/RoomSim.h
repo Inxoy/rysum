@@ -31,6 +31,7 @@ struct RoomParams
 };
 
 constexpr float kSpeedOfSoundRoom = 343.0f;
+constexpr int kNumRooms = 4;          // simulated rooms ("Saal 1..4"): every stop (and the input) sounds in one of them
 
 struct Vec3f { float x = 0, y = 0, z = 0; };
 
