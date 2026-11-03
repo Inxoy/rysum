@@ -180,7 +180,7 @@ private:
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> pullAttachments;
     std::array<juce::TextButton, 6> layoutButtons;
     std::array<juce::TextButton, 7> motionButtons;
-    juce::TextButton drawButton { juce::String::fromUTF8 ("\xe2\x9c\x8e Bahn zeichnen") };
+    juce::TextButton drawButton { juce::String::fromUTF8 ("Bahn zeichnen") };
     juce::TextButton pathLoop { "Schleife" }, pathPing { juce::String::fromUTF8 ("Hin & zur\xc3\xbc" "ck") }, pathEven { juce::String::fromUTF8 ("gleichm\xc3\xa4\xc3\x9fig") },
                      pathDrawnT { "Zeichentempo" }, jumpHard { juce::String::fromUTF8 ("harte Spr\xc3\xbcnge") };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> jumpHardAttachment;
