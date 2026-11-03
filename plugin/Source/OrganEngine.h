@@ -333,6 +333,10 @@ private:
         int drain = 0;
         int numTaps = 0;
         std::array<ErTap, kMaxTaps> taps {};
+        // what the taps were computed from: unchanged (a pipe that does not move) = nothing to recompute
+        static constexpr int kKey = 18;
+        std::array<float, kKey> key {};
+        bool keyValid = false;
     };
 
     struct Scheduled

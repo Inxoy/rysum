@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.h"
+#include "PartConv.h"
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <memory>
@@ -26,8 +27,10 @@ namespace rysum
       stereo / low-order IRs to the full output order.
     - The direct sound of the IR can be turned down ("Direktschall"): the dry pipes are the direct sound.
 
-    Uniformly partitioned overlap-save convolution (block 512, FFT 1024), all memory allocated in
-    create() (background thread), process() is real-time safe. Wet latency: one block. */
+    Non-uniformly partitioned overlap-save convolution (PartitionedConvolution, PFFFT): the early part and the
+    first ~75 ms of the tail in blocks of 512, the tail after that in blocks of 2048 and 8192 whose work is spread
+    evenly over time (no CPU spikes). All memory allocated in create() (background thread), process() is
+    real-time safe. Wet latency: one block (512 samples), as before. */
 class Convolver
 {
 public:
@@ -71,31 +74,24 @@ public:
 
 private:
     Convolver() = default;
-    void processBlock() noexcept;
 
     struct Link { int input; int irChannel; float sign; };
 
     Info info;
     Settings settings;
     int numIn = 1, numOut = 1;
-    int partsTotal = 0;          // partitions of the whole IR
+    int partsTotal = 0;          // partitions of the whole IR (blocks of 512)
     int partsEarly = 0;          // early partitions (0 = no early part: everything is 'late')
     int lateFirst = 0;           // first partition of the late part (overlaps the last early one: crossfade)
-    juce::dsp::FFT fft { 10 };   // 2^10 = kFft
-
-    // spectra [channel][partition][bin], split re / im
-    std::vector<float> earlyRe, earlyIm, lateRe, lateIm;
     std::vector<std::array<Link, 2>> links;     // per output channel
     std::vector<int> numLinks;
 
-    // frequency-domain delay lines per input: [input][slot][bin]; input 0 holds partsTotal slots, the others partsEarly
-    std::vector<std::vector<float>> fdlRe, fdlIm;
-    std::vector<int> fdlSize, fdlPos;
-
-    std::vector<float> inBuf;            // [input][2*kBlock]
-    std::vector<float> work;             // 2*kFft scratch for the FFT
-    std::vector<float> accRe, accIm;     // kBins
-    std::vector<float> outBuf;           // [channel][kBlock]
-    int pos = 0;
+    // stage A (block 512, the early part per pipe direction + the start of the tail), B (2048) and C (8192):
+    // the rest of the tail, delayed by one block like stage A's output
+    static constexpr int kBlockB = 2048, kBlockC = 8192;
+    static constexpr int kTailA = 7;            // the tail's partitions of 512 before stage B takes over (7 * 512 = 3584)
+    PartitionedConvolution convA, convB, convC;
+    bool hasB = false, hasC = false;
+    AlignedFloats earlySpec, lateSpecA, lateSpecB, lateSpecC;    // [channel][partition][2 * block]
 };
 } // namespace rysum

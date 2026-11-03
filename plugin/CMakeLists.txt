@@ -120,7 +120,36 @@ else()
     target_link_libraries(rysum_mtsesp PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
+# PFFFT (FFTPACK licence, BSD-like): fast SIMD FFT for all real-time convolutions (IR, binaural, simulated room, Lucier).
+# JUCE's own FFT is a plain scalar one on Windows.
+set(PFFFT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/pffft)
+add_library(rysum_pffft STATIC ${PFFFT_DIR}/pffft.c)
+set_target_properties(rysum_pffft PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+target_include_directories(rysum_pffft PUBLIC ${PFFFT_DIR})
+if(MSVC)
+    target_compile_definitions(rysum_pffft PRIVATE _USE_MATH_DEFINES)
+    target_compile_options(rysum_pffft PRIVATE /W0)
+else()
+    target_compile_options(rysum_pffft PRIVATE -w)
+    target_link_libraries(rysum_pffft PRIVATE m)
+endif()
+
+# The innermost loops (Source/Kernels.h), a second time compiled for AVX2 + FMA; the CPU decides at start-up which
+# version runs, so the plugin still works on any x86-64 CPU. (That file is compiled without link-time optimisation,
+# so none of its AVX2 code can be merged into the rest.)
+set(RYSUM_KERNEL_SOURCES Source/Kernels.cpp)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64|x64)$" AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    list(APPEND RYSUM_KERNEL_SOURCES Source/KernelsAVX2.cpp)
+    set_source_files_properties(Source/Kernels.cpp PROPERTIES COMPILE_DEFINITIONS RYSUM_HAVE_AVX2_KERNELS=1)
+    if(MSVC)
+        set_source_files_properties(Source/KernelsAVX2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/GL-")
+    else()
+        set_source_files_properties(Source/KernelsAVX2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-fno-lto")
+    endif()
+endif()
+
 set(RYSUM_PLUGIN_SOURCES
+    ${RYSUM_KERNEL_SOURCES}
     Source/SampleLibrary.cpp
     Source/OrganEngine.cpp
     Source/Convolver.cpp
@@ -156,6 +185,7 @@ function(rysum_setup_plugin target)
             RysumData
             rysum_mysofa
             rysum_mtsesp
+            rysum_pffft
             juce::juce_audio_utils
             juce::juce_audio_processors
             juce::juce_audio_formats
@@ -206,6 +236,7 @@ if(RYSUM_BUILD_TESTS)
     juce_add_console_app(RysumRenderTest PRODUCT_NAME "RysumRenderTest")
     target_sources(RysumRenderTest PRIVATE
         Tests/RenderTest.cpp
+        ${RYSUM_KERNEL_SOURCES}
         Source/SampleLibrary.cpp
         Source/OrganEngine.cpp
         Source/Convolver.cpp
@@ -217,20 +248,42 @@ if(RYSUM_BUILD_TESTS)
         Source/SofaGunzip.cpp)
     target_include_directories(RysumRenderTest PRIVATE Source)
     target_compile_definitions(RysumRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-    target_link_libraries(RysumRenderTest PRIVATE RysumData rysum_mysofa
+    target_link_libraries(RysumRenderTest PRIVATE RysumData rysum_mysofa rysum_pffft
         juce::juce_audio_basics juce::juce_audio_formats juce::juce_core juce::juce_events juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
         Tests/UiSnapshot.cpp
+        ${RYSUM_KERNEL_SOURCES}
         Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/Lucier.cpp Source/LucierPiece.cpp Source/Speakers.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/ProcessorScenes.cpp Source/PluginEditor.cpp
         Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp Source/SaalView.cpp Source/MidiMapView.cpp Source/OrganView.cpp Source/SpeakerView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE Source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
-    target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa rysum_mtsesp
+    target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
         juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+endif()
+
+# ---------------------------------------------------------------------------
+# Optional: CPU benchmark of the whole plugin (no host needed)
+#   cmake -B build-bench -DRYSUM_BUILD_BENCH=ON  then  cmake --build build-bench --config Release --target RysumBench
+#   RysumBench <samples folder> [block size] [seconds per scenario] [scenario filter]
+# ---------------------------------------------------------------------------
+option(RYSUM_BUILD_BENCH "Build the CPU benchmark" OFF)
+if(RYSUM_BUILD_BENCH)
+    juce_add_gui_app(RysumBench PRODUCT_NAME "RysumBench")
+    target_sources(RysumBench PRIVATE Tests/Bench.cpp ${RYSUM_PLUGIN_SOURCES})
+    target_include_directories(RysumBench PRIVATE Source)
+    target_compile_definitions(RysumBench PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
+        JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
+        JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
+    target_link_libraries(RysumBench PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
+        juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
+        juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+    if(MSVC)
+        target_compile_options(RysumBench PRIVATE /MP /utf-8)
+    endif()
 endif()

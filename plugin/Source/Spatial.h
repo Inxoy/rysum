@@ -21,15 +21,71 @@ inline float wrapAz (float a) noexcept
 // Encoder: real spherical harmonics, ACN channel order, SN3D normalisation,
 // no Condon-Shortley phase  (= AmbiX, as used by the IEM suite / Reaper).
 // --------------------------------------------------------------------------
+namespace detail
+{
+    /** SN3D normalisation sqrt ((2 - delta_m) (l - m)! / (l + m)!), [l][m], m >= 0 */
+    struct Sn3dTable
+    {
+        double n[kMaxOrder + 1][kMaxOrder + 1] {};
+        Sn3dTable() noexcept
+        {
+            double fact[2 * kMaxOrder + 2] {};
+            fact[0] = 1.0;
+            for (int i = 1; i < 2 * kMaxOrder + 2; ++i) fact[i] = fact[i - 1] * i;
+            for (int l = 0; l <= kMaxOrder; ++l)
+                for (int m = 0; m <= l; ++m)
+                    n[l][m] = std::sqrt ((m == 0 ? 1.0 : 2.0) * fact[l - m] / fact[l + m]);
+        }
+    };
+    inline const Sn3dTable& sn3d() noexcept { static const Sn3dTable t; return t; }
+}
+
+/** the same encoder for a direction given by its cos / sin of azimuth and elevation (no trigonometry at all) */
+inline void encodeAmbiXDir (double cosAz, double sinAz, double sinEl, double cosEl, int order, float* out) noexcept
+{
+    const double x = sinEl, c = cosEl;
+    double P[kMaxOrder + 1][kMaxOrder + 1];
+    P[0][0] = 1.0;
+    for (int m = 1; m <= order; ++m)
+        P[m][m] = (2 * m - 1) * c * P[m - 1][m - 1];
+    for (int m = 0; m < order; ++m)
+        P[m + 1][m] = x * (2 * m + 1) * P[m][m];
+    for (int m = 0; m <= order; ++m)
+        for (int l = m + 2; l <= order; ++l)
+            P[l][m] = ((2 * l - 1) * x * P[l - 1][m] - (l + m - 1) * P[l - 2][m]) / (double) (l - m);
+    double cm[kMaxOrder + 1], sm[kMaxOrder + 1];
+    cm[0] = 1.0; sm[0] = 0.0;
+    if (order >= 1) { cm[1] = cosAz; sm[1] = sinAz; }
+    for (int m = 2; m <= order; ++m)
+    {
+        cm[m] = cm[m - 1] * cm[1] - sm[m - 1] * sm[1];
+        sm[m] = sm[m - 1] * cm[1] + cm[m - 1] * sm[1];
+    }
+    const auto& N = detail::sn3d().n;
+    for (int l = 0; l <= order; ++l)
+    {
+        float* o = out + l * l + l;
+        o[0] = (float) (N[l][0] * P[l][0]);
+        for (int m = 1; m <= l; ++m)
+        {
+            const double a = N[l][m] * P[l][m];
+            o[m]  = (float) (a * cm[m]);
+            o[-m] = (float) (a * sm[m]);
+        }
+    }
+}
+
 inline void encodeAmbiX (float azDeg, float elDeg, int order, float* out) noexcept
 {
+    // (called for every pipe every 64 samples and for every image source of the simulated room: two sincos,
+    // the rest are recurrences and a table)
     const double az = azDeg * juce::MathConstants<double>::pi / 180.0;
     const double el = elDeg * juce::MathConstants<double>::pi / 180.0;
     const double x  = std::sin (el);                 // argument of the Legendre functions
     const double c  = std::cos (el);                 // sqrt(1 - x^2)
 
     // associated Legendre P[l][m] without CS phase
-    double P[kMaxOrder + 1][kMaxOrder + 1] {};
+    double P[kMaxOrder + 1][kMaxOrder + 1];
     P[0][0] = 1.0;
     for (int m = 1; m <= order; ++m)
         P[m][m] = (2 * m - 1) * c * P[m - 1][m - 1];
@@ -39,16 +95,26 @@ inline void encodeAmbiX (float azDeg, float elDeg, int order, float* out) noexce
         for (int l = m + 2; l <= order; ++l)
             P[l][m] = ((2 * l - 1) * x * P[l - 1][m] - (l + m - 1) * P[l - 2][m]) / (double) (l - m);
 
-    static const double fact[] { 1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800 };
+    // cos (m az), sin (m az) by the angle-addition recurrence
+    double cm[kMaxOrder + 1], sm[kMaxOrder + 1];
+    cm[0] = 1.0; sm[0] = 0.0;
+    if (order >= 1) { cm[1] = std::cos (az); sm[1] = std::sin (az); }
+    for (int m = 2; m <= order; ++m)
+    {
+        cm[m] = cm[m - 1] * cm[1] - sm[m - 1] * sm[1];
+        sm[m] = sm[m - 1] * cm[1] + cm[m - 1] * sm[1];
+    }
 
+    const auto& N = detail::sn3d().n;
     for (int l = 0; l <= order; ++l)
     {
-        for (int m = -l; m <= l; ++m)
+        float* o = out + l * l + l;                  // channel of m = 0
+        o[0] = (float) (N[l][0] * P[l][0]);
+        for (int m = 1; m <= l; ++m)
         {
-            const int am = std::abs (m);
-            const double n = std::sqrt ((am == 0 ? 1.0 : 2.0) * fact[l - am] / fact[l + am]);
-            const double trig = m > 0 ? std::cos (am * az) : (m < 0 ? std::sin (am * az) : 1.0);
-            out[l * l + l + m] = (float) (n * P[l][am] * trig);
+            const double a = N[l][m] * P[l][m];
+            o[m]  = (float) (a * cm[m]);
+            o[-m] = (float) (a * sm[m]);
         }
     }
 }

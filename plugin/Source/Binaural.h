@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.h"
+#include "PartConv.h"
 #include <juce_dsp/juce_dsp.h>
 #include <functional>
 #include <memory>
@@ -48,8 +49,9 @@ struct BinauralFilters
                                                     std::function<bool()> shouldAbort = {});
 };
 
-/** real-time part: uniformly partitioned convolution (block 128) of up to 36 Ambisonics channels into
-    two ears, plus a rotation about the vertical axis (head turned). Latency: 128 samples. */
+/** real-time part: uniformly partitioned convolution (block 128, PFFFT, the older partitions computed spread
+    over the block) of up to 36 Ambisonics channels into two ears, plus a rotation about the vertical axis
+    (head turned). Latency: 128 samples. */
 class BinauralDecoder
 {
 public:
@@ -69,19 +71,13 @@ public:
     void reset() noexcept;
 
 private:
-    void processBlock() noexcept;
     void rotate (float* const* in, int n, float yawDeg) noexcept;
 
     int order = 1, numCh = 4, parts = 1;
     juce::String description;
-    juce::dsp::FFT fft { 8 };               // 2^8 = kFft
-    std::vector<float> hRe, hIm;            // [ear][ch][part][bin]
-    std::vector<float> fdlRe, fdlIm;        // [ch][slot][bin]
-    int fdlPos = 0;
-    std::vector<float> inBuf;               // [ch][2 * kBlock]
-    std::vector<float> outBuf;              // [ear][kBlock]
-    std::vector<float> work, accRe, accIm;
-    int pos = 0;
+    AlignedFloats spectra;                  // [ear][ch][part][2 * kBlock]
+    PartitionedConvolution conv;            // (the filters delayed by one block: latency 128 as before)
+    AlignedFloats scratch;                  // [ear][kBlock]: the output is written after the input is read (in-place hosts)
     float lastYaw = 0.0f;
 };
 } // namespace rysum

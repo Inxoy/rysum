@@ -1,10 +1,79 @@
 #include "OrganEngine.h"
+#include "Kernels.h"
 
 namespace rysum
 {
 static constexpr float kSpeedOfSound = 343.0f;
 static constexpr float kChaosLevel = 0.009f;     // wind model 2: level of the whistles / hiss against the pipe samples
 static constexpr float kFdnLevel = 6.03f;      // late reverb FDN: level against the convolution tail (same room, same energy)
+
+// ---------------------------------------------------------------------------
+// mixing: one signal into many channels with per-channel gains (the inner loop of every pipe). Four channels
+// per pass, so the signal is read once for four outputs (Kernels.h: AVX2 / FMA where the CPU has it).
+// ---------------------------------------------------------------------------
+#if defined(_MSC_VER)
+ #define RYSUM_RESTRICT __restrict
+#else
+ #define RYSUM_RESTRICT __restrict__
+#endif
+
+static inline void mix1 (float* RYSUM_RESTRICT o, const float* RYSUM_RESTRICT x, const float* RYSUM_RESTRICT r, float a, float d, int n) noexcept
+{
+    if (r != nullptr) for (int i = 0; i < n; ++i) o[i] += x[i] * a + r[i] * d;
+    else                           for (int i = 0; i < n; ++i) o[i] += x[i] * a;
+}
+
+/** dst_c[i] += sum_j y_j[i] * e_j[c] for four signals y_j (e_j: their channel gains) */
+static void mixGroup4 (float* const* dst, int numCh, float* const* y, const float* const* e, int n) noexcept
+{
+    static const kern::Table& K = kern::get();
+    int c = 0;
+    for (; c + 4 <= numCh; c += 4)
+    {
+        float g[16];
+        for (int j = 0; j < 4; ++j) for (int k = 0; k < 4; ++k) g[4 * j + k] = e[j][c + k];
+        K.mix4x4 (dst[c], dst[c + 1], dst[c + 2], dst[c + 3], y[0], y[1], y[2], y[3], g, n);
+    }
+    for (; c < numCh; ++c)
+    {
+        float* RYSUM_RESTRICT o = dst[c];
+        const float* RYSUM_RESTRICT y0 = y[0]; const float* RYSUM_RESTRICT y1 = y[1];
+        const float* RYSUM_RESTRICT y2 = y[2]; const float* RYSUM_RESTRICT y3 = y[3];
+        const float a = e[0][c], b = e[1][c], cc = e[2][c], d = e[3][c];
+        for (int i = 0; i < n; ++i) o[i] += y0[i] * a + y1[i] * b + y2[i] * cc + y3[i] * d;
+    }
+}
+
+/** dst_c[off + i] += x[i] * a_c + ramp[i] * d_c   (ramp may be null = constant gains; d may be null too).
+    Channels with negligible gains are left out. */
+static void mixInto (float* const* dst, int off, int numCh, const float* x, const float* ramp,
+                     const float* a, const float* d, int n, float eps = 1.0e-9f) noexcept
+{
+    if (n <= 0) return;
+    static const kern::Table& K = kern::get();
+    bool useRamp = ramp != nullptr && d != nullptr;
+    if (useRamp)
+    {
+        bool any = false;
+        for (int c = 0; c < numCh; ++c) any = any || std::abs (d[c]) > 1.0e-12f;
+        useRamp = any;
+    }
+    int c = 0;
+    while (c + 4 <= numCh)
+    {
+        const bool live = std::abs (a[c]) > eps || std::abs (a[c + 1]) > eps || std::abs (a[c + 2]) > eps || std::abs (a[c + 3]) > eps
+                          || (useRamp && (std::abs (d[c]) > 1.0e-12f || std::abs (d[c + 1]) > 1.0e-12f || std::abs (d[c + 2]) > 1.0e-12f || std::abs (d[c + 3]) > 1.0e-12f));
+        if (live)
+        {
+            if (useRamp) K.mix4 (dst[c] + off, dst[c + 1] + off, dst[c + 2] + off, dst[c + 3] + off, x, ramp, a + c, d + c, n);
+            else         K.mix4c (dst[c] + off, dst[c + 1] + off, dst[c + 2] + off, dst[c + 3] + off, x, a + c, n);
+        }
+        c += 4;
+    }
+    for (; c < numCh; ++c)
+        if (std::abs (a[c]) > eps || (useRamp && std::abs (d[c]) > 1.0e-12f))
+            mix1 (dst[c] + off, x, useRamp && std::abs (d[c]) > 1.0e-12f ? ramp : nullptr, a[c], useRamp ? d[c] : 0.0f, n);
+}
 
 OrganEngine::OrganEngine()
 {
@@ -419,8 +488,13 @@ float OrganEngine::readSample (const float* d, int len, double pos) const noexce
     // 4-point cubic Hermite
     const int i = (int) pos;
     const float f = (float) (pos - i);
-    auto at = [d, len] (int j) { return (j >= 0 && j < len) ? d[j] : 0.0f; };
-    const float xm1 = at (i - 1), x0 = at (i), x1 = at (i + 1), x2 = at (i + 2);
+    float xm1, x0, x1, x2;
+    if (i >= 1 && i + 2 < len) { xm1 = d[i - 1]; x0 = d[i]; x1 = d[i + 1]; x2 = d[i + 2]; }     // (almost always)
+    else
+    {
+        auto at = [d, len] (int j) { return (j >= 0 && j < len) ? d[j] : 0.0f; };
+        xm1 = at (i - 1); x0 = at (i); x1 = at (i + 1); x2 = at (i + 2);
+    }
     const float c1 = 0.5f * (x1 - xm1);
     const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
     const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
@@ -865,6 +939,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
     tremPhase = std::fmod (tremPhase + n * dt * p.tremRate, 1.0);
 
     const float inv = 1.0f / (float) blockLen;
+    float* const* outs = out.getArrayOfWritePointers();
 
     for (auto& v : voices)
     {
@@ -1046,12 +1121,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 else if (dph < -1.0e-12) j = (int) std::floor ((cell - off - ph0) * (double) blockLen / dph) + 1;
                 j = juce::jlimit (i + 1, end, j);
                 hardJumpGains (v, p, cell + 0.5 - off, g.data(), split ? gh.data() : nullptr);
-                for (int c = 0; c < usedChannels; ++c)
-                {
-                    float* o = out.getWritePointer (c);
-                    if (std::abs (g[(size_t) c]) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o + i, buf + (i - start), g[(size_t) c], j - i);
-                    if (split && std::abs (gh[(size_t) c]) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o + i, bufH + (i - start), gh[(size_t) c], j - i);
-                }
+                mixInto (outs, i, usedChannels, buf + (i - start), nullptr, g.data(), nullptr, j - i);
+                if (split) mixInto (outs, i, usedChannels, bufH + (i - start), nullptr, gh.data(), nullptr, j - i);
                 i = j;
             }
             if (split) juce::FloatVectorOperations::add (buf, bufH, n);
@@ -1062,15 +1133,14 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             // add to the output with the gain ramp of this block:
             // o += buf * (ga + d*i)  ==  o += ga*buf + d*(buf*i)   (two vectorised passes per channel)
             for (int i = 0; i < n; ++i) bufRamp[i] = buf[i] * (float) i;
+            float ga[kMaxAmbiChannels], dg[kMaxAmbiChannels];
             for (int c = 0; c < usedChannels; ++c)
             {
                 const float a = v.g0[(size_t) c], b = v.g1[(size_t) c];
-                float* o = out.getWritePointer (c) + start;
-                const float ga = a + (b - a) * (float) start * inv;
-                const float dg = (b - a) * inv;
-                if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf, ga, n);
-                if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufRamp, dg, n);
+                ga[c] = a + (b - a) * (float) start * inv;
+                dg[c] = (b - a) * inv;
             }
+            mixInto (outs, start, usedChannels, buf, bufRamp, ga, dg, n);
             if (split)
             {
                 // upper partials with their own direction; afterwards both parts go to the room together
@@ -1079,12 +1149,10 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 for (int c = 0; c < usedChannels; ++c)
                 {
                     const float a = v.gh0[(size_t) c], b = v.gh1[(size_t) c];
-                    float* o = out.getWritePointer (c) + start;
-                    const float ga = a + (b - a) * (float) start * inv;
-                    const float dg = (b - a) * inv;
-                    if (std::abs (ga) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, bufH, ga, n);
-                    if (std::abs (dg) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, bufHRamp, dg, n);
+                    ga[c] = a + (b - a) * (float) start * inv;
+                    dg[c] = (b - a) * inv;
                 }
+                mixInto (outs, start, usedChannels, bufH, bufHRamp, ga, dg, n);
                 juce::FloatVectorOperations::add (buf, bufH, n);
                 juce::FloatVectorOperations::add (bufRamp, bufHRamp, n);
             }
@@ -1094,6 +1162,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             const double a0 = juce::degreesToRadians ((double) v.sendAz0), a1 = juce::degreesToRadians ((double) v.sendAz1);
             const double c0 = std::cos (a0), s0 = std::sin (a0), c1 = std::cos (a1), s1 = std::sin (a1);
             double cm0 = 1.0, sm0 = 0.0, cm1 = 1.0, sm1 = 0.0;          // cos / sin (m * angle), m = 0
+            float sendA[kMaxRoomSends], sendD[kMaxRoomSends];
+            float* sendDst[kMaxRoomSends];
             for (int k = 0; k < roomSends; ++k)
             {
                 float w0 = 1.0f, w1 = 1.0f;
@@ -1109,12 +1179,11 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                     else { w0 = (float) sm0; w1 = (float) sm1; }
                 }
                 const float g0 = v.send0 * w0, g1 = v.send1 * w1;
-                const float sa = g0 + (g1 - g0) * (float) start * inv;
-                const float sd = (g1 - g0) * inv;
-                float* dst = roomSend[(size_t) k].data() + roomOffset + start;
-                if (std::abs (sa) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, buf, sa, n);
-                if (std::abs (sd) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (dst, bufRamp, sd, n);
+                sendA[k] = g0 + (g1 - g0) * (float) start * inv;
+                sendD[k] = (g1 - g0) * inv;
+                sendDst[k] = roomSend[(size_t) k].data() + roomOffset;
             }
+            mixInto (sendDst, start, roomSends, buf, bufRamp, sendA, sendD, n, 1.0e-12f);
             // a stop in another simulated room: its late reverb gets the same send
             const int vr = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop]);
             if (vr > 0 && roomOnNow)
@@ -1138,18 +1207,27 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
     for (auto& nv : noise)
     {
         if (! nv.active) continue;
-        for (int i = 0; i < n; ++i)
+        float* buf = scratch.data();
+        int m = 0;
+        bool ended = false;
+        for (; m < n; ++m)
         {
-            if (nv.pos >= nv.length - 2) { nv.active = false; releaseSlot (nv.erSlot); break; }
+            if (nv.pos >= nv.length - 2) { ended = true; break; }
             nv.lp += nv.lpA * (readSample (nv.data, nv.length, nv.pos) - nv.lp);
-            const float x = nv.lp * nv.gain;
+            buf[m] = nv.lp * nv.gain;
             nv.pos += nv.rate;
-            if (nv.erSlot >= 0) erRing[(size_t) nv.erSlot * (size_t) kErRing + ((erClock + (uint32_t) (start + i)) & (kErRing - 1))] += x;
-            for (int c = 0; c < usedChannels; ++c)
-                if (std::abs (nv.g[(size_t) c]) > 1.0e-9f) out.getWritePointer (c)[start + i] += x * nv.g[(size_t) c];
-            for (int k = 0; k < roomSends; ++k)
-                roomSend[(size_t) k][(size_t) (roomOffset + start + i)] += x * nv.send * nv.sendW[(size_t) k];
         }
+        if (nv.erSlot >= 0)
+        {
+            float* ring = erRing.data() + (size_t) nv.erSlot * (size_t) kErRing;
+            for (int i = 0; i < m; ++i) ring[(erClock + (uint32_t) (start + i)) & (kErRing - 1)] += buf[i];
+        }
+        mixInto (outs, start, usedChannels, buf, nullptr, nv.g.data(), nullptr, m);
+        float sendW[kMaxRoomSends], sendZero[kMaxRoomSends] {};
+        float* sendDst[kMaxRoomSends];
+        for (int k = 0; k < roomSends; ++k) { sendW[k] = nv.send * nv.sendW[(size_t) k]; sendDst[k] = roomSend[(size_t) k].data() + roomOffset; }
+        mixInto (sendDst, start, roomSends, buf, nullptr, sendW, sendZero, m, 0.0f);
+        if (ended) { nv.active = false; releaseSlot (nv.erSlot); }
     }
 
     // wind: omnidirectional (W) in Ambisonics, centre in stereo
@@ -1236,6 +1314,14 @@ void OrganEngine::releaseSlot (int& slot) noexcept
 
 void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r) noexcept
 {
+    {
+        // a source that has not moved in an unchanged room: the taps are still right
+        const std::array<float, ErSlot::kKey> key { srcPos.az, srcPos.el, srcPos.dist, base, r.W(), r.L(), r.H(), r.listenerX, r.listenerY,
+                                                    r.absWalls, r.absFloor, r.highDamp, r.scatter, (float) r.order, r.erGain,
+                                                    distAmountNow, p.air, (float) order };
+        if (! s.fresh && s.keyValid && key == s.key) return;
+        s.key = key; s.keyValid = true;
+    }
     const Vec3f L = listenerPos (r), S = roomPoint (r, srcPos);
     const float rd = seenFrom (L, S).dist;
     std::array<ImageSource, kMaxTaps> ims;
@@ -1249,24 +1335,39 @@ void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const Engin
     const int encOrder = order == 0 ? 0 : juce::jmin (order, 3);
     const float maxDelay = (float) (kErRing - 4 * kSubBlock);
     float tmp[kMaxAmbiChannels];
+    // (reflection counts are 0..3: the powers once per slot instead of per image source)
+    float powW[4], powF[4], powSW[4], powSF[4];
+    for (int k = 0; k < 4; ++k)
+    {
+        powW[k] = std::pow (Rw * spec, (float) k); powF[k] = std::pow (Rf * spec, (float) k);
+        powSW[k] = std::pow (shW, (float) k);      powSF[k] = std::pow (shF, (float) k);
+    }
     for (int i = 0; i < n; ++i)
     {
         const auto& im = ims[(size_t) i];
-        const Pos seen = seenFrom (L, im.pos);
+        // direction and distance seen from the listener (as seenFrom, without the angles: the encoder only
+        // needs their cos / sin)
+        const float dx = im.pos.x - L.x, dy = im.pos.y - L.y, dz = im.pos.z - L.z;
+        const float rh = std::sqrt (dx * dx + dy * dy);
+        Pos seen;
+        seen.dist = std::sqrt (dx * dx + dy * dy + dz * dz);
+        const int hw = juce::jlimit (0, 3, im.hitsWalls), hf = juce::jlimit (0, 3, im.hitsFloor);
         float delay = (seen.dist - rd) / kSpeedOfSoundRoom * (float) sr;
-        float gain = base * distanceGain (seen.dist, distAmountNow) * r.erGain
-                   * std::pow (Rw * spec, (float) im.hitsWalls) * std::pow (Rf * spec, (float) im.hitsFloor);
+        float gain = base * distanceGain (seen.dist, distAmountNow) * r.erGain * powW[hw] * powF[hf];
         if (delay > maxDelay) { delay = maxDelay; gain = 0.0f; }       // longer than the buffer: left to the tail
         auto& t = s.taps[(size_t) i];
         t.d1 = juce::jmax (0.0f, delay);
         t.g1 = gain;
-        t.r1 = std::pow (shW, (float) im.hitsWalls) * std::pow (shF, (float) im.hitsFloor) * std::exp (-airDiff * seen.dist);
+        t.r1 = powSW[hw] * powSF[hf] * std::exp (-airDiff * seen.dist);
         std::fill (tmp, tmp + kMaxAmbiChannels, 0.0f);
         // first reflections sharp (up to 3rd order), the later ones at first order: they are many, quieter and
         // more diffuse anyway, and this keeps the cost down
         const int o = (im.hitsWalls + im.hitsFloor == 1) ? encOrder : juce::jmin (encOrder, 1);
-        if (encOrder == 0) { encodeStereo (seen.az, tmp); t.ch = 2; }
-        else { encodeAmbiX (seen.az, seen.el, o, tmp); t.ch = (o + 1) * (o + 1); }
+        const double cosAz = rh > 1.0e-6f ? dy / rh : 1.0, sinAz = rh > 1.0e-6f ? -dx / rh : 0.0;
+        const double sinEl = seen.dist > 1.0e-6f ? juce::jlimit (-1.0, 1.0, (double) (dz / seen.dist)) : 0.0;
+        const double cosEl = seen.dist > 1.0e-6f ? (double) (rh / seen.dist) : 1.0;
+        if (encOrder == 0) { encodeStereo (juce::radiansToDegrees (std::atan2 (-dx, dy)), tmp); t.ch = 2; }
+        else { encodeAmbiXDir (cosAz, sinAz, sinEl, cosEl, o, tmp); t.ch = (o + 1) * (o + 1); }
         std::copy (tmp, tmp + kErCh, t.enc.begin());
         if (s.fresh || i >= s.numTaps) { t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1; t.lp = 0.0f; }
     }
@@ -1341,29 +1442,84 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
         else if ((s.drain -= n) <= 0) { s.active = false; continue; }
 
         const float* ring = erRing.data() + si * (size_t) kErRing;
+        // the audible taps, sorted by how many channels they are encoded to (first reflections up to 3rd order,
+        // later ones at 1st order), then rendered four at a time: four independent filters per sample, and the
+        // four results mixed into the channels in one pass
+        int hi[kMaxTaps], lo[kMaxTaps], nHi = 0, nLo = 0;
         for (int ti = 0; ti < s.numTaps; ++ti)
         {
             auto& t = s.taps[(size_t) ti];
             if (t.g0 < 3.0e-5f && t.g1 < 3.0e-5f) { t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1; continue; }     // below -90 dB
-            for (int i = 0; i < n; ++i)
+            if (t.ch > 4) hi[nHi++] = ti; else lo[nLo++] = ti;
+        }
+        for (int list = 0; list < 2; ++list)
+        {
+            const int* idx = list == 0 ? hi : lo;
+            const int cnt = list == 0 ? nHi : nLo;
+            for (int g0i = 0; g0i < cnt; g0i += 4)
             {
-                const float f = (float) (i + 1) * inv;
-                const float d = t.d0 + (t.d1 - t.d0) * f;
-                // integer and fractional part of the delay kept apart: the clock itself grows without end, and
-                // as a float it would lose the fraction after a few minutes (aliasing, a high ringing)
-                const int di = (int) d;
-                const float fd = d - (float) di;
-                const uint32_t at = erClock + (uint32_t) i - (uint32_t) di;          // read position + fd samples earlier
-                const float a = ring[(at - 1u) & (kErRing - 1)], b = ring[at & (kErRing - 1)];
-                const float x = b + fd * (a - b);
-                t.lp += shelfA * (x - t.lp);
-                const float rr = t.r0 + (t.r1 - t.r0) * f;
-                y[i] = (t.lp + rr * (x - t.lp)) * (t.g0 + (t.g1 - t.g0) * f);
+                const int J = juce::jmin (4, cnt - g0i);
+                ErTap* tp[4] { nullptr, nullptr, nullptr, nullptr };
+                float* xs[4]; float* ys[4];
+                for (int j = 0; j < 4; ++j) { xs[j] = y + (size_t) j * (size_t) n; ys[j] = y + (size_t) (4 + j) * (size_t) n; }
+                int kc = 0;
+                for (int j = 0; j < J; ++j)
+                {
+                    auto& t = s.taps[(size_t) idx[g0i + j]];
+                    tp[j] = &t;
+                    kc = juce::jmax (kc, juce::jmin (K, t.ch));
+                    // the delayed signal (fractional delay ramped over the slice). Integer and fractional part of the
+                    // delay kept apart: the clock itself grows without end, and as a float it would lose the fraction
+                    // after a few minutes (aliasing, a high ringing)
+                    float* x = xs[j];
+                    const float dd = (t.d1 - t.d0) * inv;
+                    for (int i = 0; i < n; ++i)
+                    {
+                        const float d = t.d0 + dd * (float) (i + 1);
+                        const int di = (int) d;
+                        const float fd = d - (float) di;
+                        const uint32_t at = erClock + (uint32_t) i - (uint32_t) di;          // read position + fd samples earlier
+                        const float a = ring[(at - 1u) & (kErRing - 1)], b = ring[at & (kErRing - 1)];
+                        x[i] = b + fd * (a - b);
+                    }
+                }
+                for (int j = J; j < 4; ++j) std::fill_n (xs[j], n, 0.0f);
+                // high shelf (one-pole low part), four filters side by side
+                {
+                    const float k1 = 1.0f - shelfA;
+                    float l0 = tp[0]->lp, l1 = J > 1 ? tp[1]->lp : 0.0f, l2 = J > 2 ? tp[2]->lp : 0.0f, l3 = J > 3 ? tp[3]->lp : 0.0f;
+                    const float* x0 = xs[0]; const float* x1 = xs[1]; const float* x2 = xs[2]; const float* x3 = xs[3];
+                    float* y0 = ys[0]; float* y1 = ys[1]; float* y2 = ys[2]; float* y3 = ys[3];
+                    for (int i = 0; i < n; ++i)
+                    {
+                        l0 = l0 * k1 + shelfA * x0[i]; y0[i] = l0;
+                        l1 = l1 * k1 + shelfA * x1[i]; y1[i] = l1;
+                        l2 = l2 * k1 + shelfA * x2[i]; y2[i] = l2;
+                        l3 = l3 * k1 + shelfA * x3[i]; y3[i] = l3;
+                    }
+                    tp[0]->lp = l0; if (J > 1) tp[1]->lp = l1; if (J > 2) tp[2]->lp = l2; if (J > 3) tp[3]->lp = l3;
+                }
+                // shelf gain and level, ramped
+                for (int j = 0; j < J; ++j)
+                {
+                    auto& t = *tp[j];
+                    const float* x = xs[j];
+                    float* yy = ys[j];
+                    const float dr = (t.r1 - t.r0) * inv, dgn = (t.g1 - t.g0) * inv;
+                    for (int i = 0; i < n; ++i)
+                    {
+                        const float f = (float) (i + 1);
+                        const float l = yy[i];
+                        yy[i] = (l + (t.r0 + dr * f) * (x[i] - l)) * (t.g0 + dgn * f);
+                    }
+                }
+                for (int j = J; j < 4; ++j) std::fill_n (ys[j], n, 0.0f);
+                static const float zeroEnc[kErCh] {};
+                const float* e[4];
+                for (int j = 0; j < 4; ++j) e[j] = j < J ? tp[j]->enc.data() : zeroEnc;
+                mixGroup4 (out.getArrayOfWritePointers(), kc, ys, e, n);
+                for (int j = 0; j < J; ++j) { auto& t = *tp[j]; t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1; }
             }
-            const int kc = juce::jmin (K, t.ch);
-            for (int c = 0; c < kc; ++c)
-                if (std::abs (t.enc[(size_t) c]) > 1.0e-6f) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), y, t.enc[(size_t) c], n);
-            t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1;
         }
     }
     erActive = activeCount;
@@ -1590,12 +1746,10 @@ void OrganEngine::renderLeaks (juce::AudioBuffer<float>& out, int n, const Engin
             buf[i] = v1 * k * L.amp * lvl;
             ramp[i] = buf[i] * (float) i;
         }
-        for (int c = 0; c < usedChannels; ++c)
         {
-            const float a = L.g0[(size_t) c], b = L.g1[(size_t) c];
-            float* o = out.getWritePointer (c);
-            if (std::abs (a) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (o, buf, a, n);
-            if (std::abs (b - a) > 1.0e-12f) juce::FloatVectorOperations::addWithMultiply (o, ramp, (b - a) * inv, n);
+            float d[kMaxAmbiChannels];
+            for (int c = 0; c < usedChannels; ++c) d[c] = (L.g1[(size_t) c] - L.g0[(size_t) c]) * inv;
+            mixInto (out.getArrayOfWritePointers(), 0, usedChannels, buf, ramp, L.g0.data(), d, n);
         }
         // a little of it into the room, from its own direction
         const double az = juce::degreesToRadians ((double) (roomFollowNow ? L.pos.az : roomBaseAzNow));
@@ -1652,8 +1806,7 @@ void OrganEngine::renderEchoes (juce::AudioBuffer<float>& out, int n, const Engi
                 lp += a * (x0 + f * (x1 - x0) - lp);
                 y[i] = lp * gain;
             }
-            for (int c = 0; c < usedChannels; ++c)
-                if (std::abs (tg[(size_t) c]) > 1.0e-9f) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), y, tg[(size_t) c], n);
+            mixInto (out.getArrayOfWritePointers(), 0, usedChannels, y, nullptr, tg.data(), nullptr, n);
             const double az = juce::degreesToRadians ((double) (roomFollowNow ? dir.az : roomBaseAzNow));
             for (int kk = 0; kk < roomSends; ++kk)
             {

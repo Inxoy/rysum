@@ -280,41 +280,99 @@ std::unique_ptr<Convolver> Convolver::create (const juce::File& file, const Sett
     cv->numIn = in.numInputs;
     cv->numOut = outCh;
 
-    // ---- partition + FFT
-    std::vector<float> tmp ((size_t) kFft * 2, 0.0f);
-    auto partition = [&] (const juce::AudioBuffer<float>& b, int p0, int p1, std::vector<float>& re, std::vector<float>& im)
+    // ---- partition + FFT (PFFFT order, scaled by 1 / N)
+    // stage A (block 512): partition p = IR samples [512 p, 512 p + 512). It runs one block late (as before: the
+    // wet latency is one block), i.e. a lag-1 stage of the response delayed by 512.
+    // stages B / C: the tail after 7 * 512 samples, delayed by the same block: g(t) = late(t - 512), partition q of
+    // a stage with block b covers g[(q + 2) b, (q + 3) b) - stage B from 4096 (= late from 3584), stage C from 16384.
+    auto partitionInto = [&] (const juce::AudioBuffer<float>& b, int B, int segStart, int numParts, AlignedFloats& dst)
     {
-        const int np = juce::jmax (0, p1 - p0);
-        re.assign ((size_t) outCh * (size_t) np * kBins, 0.0f);
-        im.assign ((size_t) outCh * (size_t) np * kBins, 0.0f);
+        // segment q of channel c: b[segStart + q B, segStart + (q + 1) B)
+        const int N = 2 * B;
+        RealFFT f (N);
+        AlignedFloats tmp ((size_t) N);
+        dst.assign ((size_t) outCh * (size_t) juce::jmax (1, numParts) * (size_t) N);
         for (int c = 0; c < outCh; ++c)
-            for (int p = p0; p < p1; ++p)
+            for (int q = 0; q < numParts; ++q)
             {
-                std::fill (tmp.begin(), tmp.end(), 0.0f);
-                const int start = p * kBlock, n = juce::jmin (kBlock, len - start);
-                for (int i = 0; i < n; ++i) tmp[(size_t) i] = b.getSample (c, start + i);
-                cv->fft.performRealOnlyForwardTransform (tmp.data(), true);
-                const size_t base = ((size_t) c * (size_t) np + (size_t) (p - p0)) * kBins;
-                for (int k = 0; k < kBins; ++k) { re[base + (size_t) k] = tmp[(size_t) (2 * k)]; im[base + (size_t) k] = tmp[(size_t) (2 * k + 1)]; }
+                tmp.clear();
+                const int start = segStart + q * B;
+                for (int i = 0; i < B; ++i)
+                {
+                    const int t = start + i;
+                    if (t >= 0 && t < len) tmp[(size_t) i] = b.getSample (c, t);
+                }
+                f.forwardScaled (tmp.data(), dst.data() + ((size_t) c * (size_t) numParts + (size_t) q) * (size_t) N);
             }
     };
-    if (cv->partsEarly > 0) partition (early, 0, cv->partsEarly, cv->earlyRe, cv->earlyIm);
-    partition (late, cv->lateFirst, P, cv->lateRe, cv->lateIm);
-
-    cv->fdlRe.resize ((size_t) cv->numIn); cv->fdlIm.resize ((size_t) cv->numIn);
-    cv->fdlSize.assign ((size_t) cv->numIn, 0); cv->fdlPos.assign ((size_t) cv->numIn, 0);
-    for (int k = 0; k < cv->numIn; ++k)
+    const int lateStart = cv->lateFirst * kBlock;                 // the late buffer is silent before this
+    const bool anyLate = cv->partsEarly < P;
+    // stage A: early part, and the tail's partitions before 7 * 512
+    if (cv->partsEarly > 0) partitionInto (early, kBlock, 0, cv->partsEarly, cv->earlySpec);
+    const int nA = anyLate ? juce::jmax (0, juce::jmin (P, kTailA) - cv->lateFirst) : 0;
+    if (nA > 0) partitionInto (late, kBlock, lateStart, nA, cv->lateSpecA);
+    // stages B and C (partitions that are entirely before the late part starts are left out)
+    const int bStart = kTailA * kBlock;                                       // 3584 = 2 * 2048 - 512
+    const int cStart = 2 * kBlockC - kBlock;                                  // 15872
+    int qB0 = 0, nB = 0, qC0 = 0, nC = 0;
+    if (anyLate && len > bStart)
     {
-        const int slots = k == 0 ? P : juce::jmax (1, cv->partsEarly);
-        cv->fdlSize[(size_t) k] = slots;
-        cv->fdlRe[(size_t) k].assign ((size_t) slots * kBins, 0.0f);
-        cv->fdlIm[(size_t) k].assign ((size_t) slots * kBins, 0.0f);
+        qB0 = juce::jmax (0, (lateStart - bStart) / kBlockB);
+        const int qEnd = juce::jmin ((cStart - bStart) / kBlockB, (len - bStart + kBlockB - 1) / kBlockB);
+        nB = juce::jmax (0, qEnd - qB0);
+        if (nB > 0) partitionInto (late, kBlockB, bStart + qB0 * kBlockB, nB, cv->lateSpecB);
     }
-    cv->inBuf.assign ((size_t) cv->numIn * kFft, 0.0f);
-    cv->work.assign ((size_t) kFft * 2, 0.0f);
-    cv->accRe.assign ((size_t) kBins, 0.0f);
-    cv->accIm.assign ((size_t) kBins, 0.0f);
-    cv->outBuf.assign ((size_t) outCh * kBlock, 0.0f);
+    if (anyLate && len > cStart)
+    {
+        qC0 = juce::jmax (0, (lateStart - cStart) / kBlockC);
+        const int qEnd = (len - cStart + kBlockC - 1) / kBlockC;
+        nC = juce::jmax (0, qEnd - qC0);
+        if (nC > 0) partitionInto (late, kBlockC, cStart + qC0 * kBlockC, nC, cv->lateSpecC);
+    }
+
+    // ---- the convolution stages and their terms
+    using Term = PartitionedConvolution::Term;
+    const int depthA = juce::jmax (1, juce::jmax (cv->partsEarly, nA > 0 ? cv->lateFirst + nA : 0));
+    cv->convA.prepare (kBlock, 1, cv->numIn, depthA, outCh, 3);
+    cv->hasB = nB > 0;
+    cv->hasC = nC > 0;
+    if (cv->hasB) cv->convB.prepare (kBlockB, 2, 1, qB0 + nB, outCh, 1);
+    if (cv->hasC) cv->convC.prepare (kBlockC, 2, 1, qC0 + nC, outCh, 1);
+    for (int c = 0; c < outCh; ++c)
+    {
+        Term t[3];
+        int nt = 0;
+        if (cv->partsEarly > 0 && ! cv->links.empty())
+            for (int li = 0; li < cv->numLinks[(size_t) c]; ++li)
+            {
+                const auto& L = cv->links[(size_t) c][(size_t) li];
+                t[nt].input = L.input;
+                t[nt].spectra = cv->earlySpec.data() + (size_t) L.irChannel * (size_t) cv->partsEarly * (size_t) kFft;
+                t[nt].first = 0; t[nt].parts = cv->partsEarly; t[nt].negate = L.sign < 0.0f;
+                ++nt;
+            }
+        if (nA > 0)
+        {
+            t[nt].input = 0;
+            t[nt].spectra = cv->lateSpecA.data() + (size_t) c * (size_t) nA * (size_t) kFft;
+            t[nt].first = cv->lateFirst; t[nt].parts = nA; t[nt].negate = false;
+            ++nt;
+        }
+        cv->convA.setTerms (c, t, nt);
+        if (cv->hasB)
+        {
+            Term tb; tb.input = 0; tb.first = qB0; tb.parts = nB;
+            tb.spectra = cv->lateSpecB.data() + (size_t) c * (size_t) nB * (size_t) (2 * kBlockB);
+            cv->convB.setTerms (c, &tb, 1);
+        }
+        if (cv->hasC)
+        {
+            Term tc; tc.input = 0; tc.first = qC0; tc.parts = nC;
+            tc.spectra = cv->lateSpecC.data() + (size_t) c * (size_t) nC * (size_t) (2 * kBlockC);
+            cv->convC.setTerms (c, &tc, 1);
+        }
+    }
+    cv->reset();                // (also applies the terms)
 
     if (order >= 0) in.description << "AmbiX " << order << ". Ord." << (s.format == Format::FuMa && order == 1 ? " (aus FuMa)" : (s.format == Format::N3D ? " (N3D)" : ""));
     else in.description << (keep == 1 ? "Mono" : "Stereo");
@@ -324,100 +382,68 @@ std::unique_ptr<Convolver> Convolver::create (const juce::File& file, const Sett
 
 void Convolver::reset() noexcept
 {
-    for (auto& v : fdlRe) std::fill (v.begin(), v.end(), 0.0f);
-    for (auto& v : fdlIm) std::fill (v.begin(), v.end(), 0.0f);
-    std::fill (inBuf.begin(), inBuf.end(), 0.0f);
-    std::fill (outBuf.begin(), outBuf.end(), 0.0f);
-    pos = 0;
-}
-
-void Convolver::processBlock() noexcept
-{
-    // input spectra of [previous block | current block] for every send
-    for (int k = 0; k < numIn; ++k)
-    {
-        float* ib = inBuf.data() + (size_t) k * kFft;
-        std::copy (ib, ib + kFft, work.begin());
-        std::fill (work.begin() + kFft, work.end(), 0.0f);
-        fft.performRealOnlyForwardTransform (work.data(), true);
-        auto& p = fdlPos[(size_t) k];
-        const int size = fdlSize[(size_t) k];
-        p = (p + size - 1) % size;
-        float* xr = fdlRe[(size_t) k].data() + (size_t) p * kBins;
-        float* xi = fdlIm[(size_t) k].data() + (size_t) p * kBins;
-        for (int b = 0; b < kBins; ++b) { xr[b] = work[(size_t) (2 * b)]; xi[b] = work[(size_t) (2 * b + 1)]; }
-        std::copy (ib + kBlock, ib + kFft, ib);           // current block becomes "previous"
-    }
-
-    const int nLate = partsTotal - lateFirst;
-    for (int c = 0; c < numOut; ++c)
-    {
-        std::fill (accRe.begin(), accRe.end(), 0.0f);
-        std::fill (accIm.begin(), accIm.end(), 0.0f);
-        float* ar = accRe.data();
-        float* ai = accIm.data();
-        auto mac = [&] (int input, int part, const float* hr, const float* hi, float sign)
-        {
-            const int size = fdlSize[(size_t) input];
-            const int slot = (fdlPos[(size_t) input] + part) % size;
-            const float* sr = fdlRe[(size_t) input].data() + (size_t) slot * kBins;
-            const float* si = fdlIm[(size_t) input].data() + (size_t) slot * kBins;
-            if (sign > 0)
-                for (int b = 0; b < kBins; ++b) { ar[b] += sr[b] * hr[b] - si[b] * hi[b]; ai[b] += sr[b] * hi[b] + si[b] * hr[b]; }
-            else
-                for (int b = 0; b < kBins; ++b) { ar[b] -= sr[b] * hr[b] - si[b] * hi[b]; ai[b] -= sr[b] * hi[b] + si[b] * hr[b]; }
-        };
-        // early: rotated per pipe (1 or 2 sends)
-        if (partsEarly > 0 && ! links.empty())
-            for (int li = 0; li < numLinks[(size_t) c]; ++li)
-            {
-                const auto& L = links[(size_t) c][(size_t) li];
-                for (int p = 0; p < partsEarly; ++p)
-                {
-                    const size_t base = ((size_t) L.irChannel * (size_t) partsEarly + (size_t) p) * kBins;
-                    mac (L.input, p, earlyRe.data() + base, earlyIm.data() + base, L.sign);
-                }
-            }
-        // late: all pipes together
-        for (int p = 0; p < nLate; ++p)
-        {
-            const size_t base = ((size_t) c * (size_t) nLate + (size_t) p) * kBins;
-            mac (0, lateFirst + p, lateRe.data() + base, lateIm.data() + base, 1.0f);
-        }
-        for (int b = 0; b < kBins; ++b) { work[(size_t) (2 * b)] = ar[b]; work[(size_t) (2 * b + 1)] = ai[b]; }
-        std::fill (work.begin() + 2 * kBins, work.end(), 0.0f);
-        fft.performRealOnlyInverseTransform (work.data());
-        std::copy (work.begin() + kBlock, work.begin() + kFft, outBuf.begin() + (size_t) c * kBlock);
-    }
+    convA.reset();
+    if (hasB) convB.reset();
+    if (hasC) convC.reset();
 }
 
 void Convolver::process (const float* const* inputs, int n, float* const* out, int nOut, float wetGain) noexcept
 {
     const bool stereo = settings.stereoOut;
-    for (int i = 0; i < n; ++i)
+    int done = 0;
+    while (done < n)
     {
-        for (int k = 0; k < numIn; ++k) inBuf[(size_t) k * kFft + (size_t) (kBlock + pos)] = inputs[k][i];
+        int len = juce::jmin (n - done, convA.toBoundary());
+        if (hasB) len = juce::jmin (len, convB.toBoundary());
+        if (hasC) len = juce::jmin (len, convC.toBoundary());
+        const int pA = convA.position(), pB = hasB ? convB.position() : 0, pC = hasC ? convC.position() : 0;
 
-        auto y = [this] (int c) { return outBuf[(size_t) c * kBlock + (size_t) pos]; };
+        // dst += g * (output of channel c), the three stages summed
+        auto addOut = [&] (int c, float* dst, float g)
+        {
+            const float* a = convA.output (c) + pA;
+            if (hasB && hasC)
+            {
+                const float* b = convB.output (c) + pB; const float* d = convC.output (c) + pC;
+                for (int i = 0; i < len; ++i) dst[i] += g * (a[i] + b[i] + d[i]);
+            }
+            else if (hasB)
+            {
+                const float* b = convB.output (c) + pB;
+                for (int i = 0; i < len; ++i) dst[i] += g * (a[i] + b[i]);
+            }
+            else for (int i = 0; i < len; ++i) dst[i] += g * a[i];
+        };
+
         if (info.legacyStereo)
         {
-            out[0][i] += y (0) * wetGain;
-            if (nOut > 1) out[1][i] += y (1) * wetGain;
+            addOut (0, out[0] + done, wetGain);
+            if (nOut > 1) addOut (1, out[1] + done, wetGain);
         }
         else if (stereo)
         {
             // first-order field to stereo: two virtual cardioids pointing left / right
-            const float w = y (0), l = numOut > 1 ? y (1) : 0.0f;
-            out[0][i] += 0.5f * (w + l) * wetGain;
-            if (nOut > 1) out[1][i] += 0.5f * (w - l) * wetGain;
+            const float h = 0.5f * wetGain;
+            addOut (0, out[0] + done, h);
+            if (numOut > 1) addOut (1, out[0] + done, h);
+            if (nOut > 1)
+            {
+                addOut (0, out[1] + done, h);
+                if (numOut > 1) addOut (1, out[1] + done, -h);
+            }
         }
         else
         {
             const int m = juce::jmin (numOut, nOut);
-            for (int c = 0; c < m; ++c) out[c][i] += y (c) * wetGain;
+            for (int c = 0; c < m; ++c) addOut (c, out[c] + done, wetGain);
         }
 
-        if (++pos == kBlock) { pos = 0; processBlock(); }
+        const float* ins[2 * kMaxOrder + 1] {};
+        for (int k = 0; k < numIn; ++k) ins[k] = inputs[k] + done;
+        convA.push (ins, len);
+        if (hasB) convB.push (ins, len);
+        if (hasC) convC.push (ins, len);
+        done += len;
     }
 }
 } // namespace rysum

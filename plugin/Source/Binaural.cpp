@@ -475,37 +475,42 @@ BinauralDecoder::BinauralDecoder (const BinauralFilters& f)
     : order (f.order), numCh (f.numChannels), description (f.description)
 {
     parts = juce::jmax (1, (f.length + kBlock - 1) / kBlock);
-    hRe.assign ((size_t) 2 * (size_t) numCh * (size_t) parts * kBins, 0.0f);
-    hIm.assign (hRe.size(), 0.0f);
-    std::vector<float> tmp ((size_t) (2 * kFft));
+    spectra.assign ((size_t) 2 * (size_t) numCh * (size_t) parts * (size_t) kFft);
+    RealFFT fft (kFft);
+    AlignedFloats tmp ((size_t) kFft);
     for (int e = 0; e < 2; ++e)
         for (int c = 0; c < numCh; ++c)
             for (int p = 0; p < parts; ++p)
             {
-                std::fill (tmp.begin(), tmp.end(), 0.0f);
+                tmp.clear();
                 const int start = p * kBlock, n = juce::jmin (kBlock, f.length - start);
                 const float* src = f.get (e, c);
                 for (int i = 0; i < n; ++i) tmp[(size_t) i] = src[start + i];
-                fft.performRealOnlyForwardTransform (tmp.data(), true);
-                const size_t base = (((size_t) e * (size_t) numCh + (size_t) c) * (size_t) parts + (size_t) p) * kBins;
-                for (int b = 0; b < kBins; ++b) { hRe[base + (size_t) b] = tmp[(size_t) (2 * b)]; hIm[base + (size_t) b] = tmp[(size_t) (2 * b + 1)]; }
+                const size_t base = (((size_t) e * (size_t) numCh + (size_t) c) * (size_t) parts + (size_t) p) * (size_t) kFft;
+                fft.forwardScaled (tmp.data(), spectra.data() + base);
             }
-    fdlRe.assign ((size_t) numCh * (size_t) parts * kBins, 0.0f);
-    fdlIm.assign (fdlRe.size(), 0.0f);
-    inBuf.assign ((size_t) numCh * kFft, 0.0f);
-    outBuf.assign ((size_t) 2 * kBlock, 0.0f);
-    work.assign ((size_t) (2 * kFft), 0.0f);
-    accRe.assign (kBins, 0.0f);
-    accIm.assign (kBins, 0.0f);
+    // inputs = the Ambisonics channels, outputs = the two ears; partition p = filter samples [128 p, 128 p + 128)
+    // as a lag-1 stage of the filters delayed by one block
+    conv.prepare (kBlock, 1, numCh, parts, 2, numCh);
+    std::vector<PartitionedConvolution::Term> t ((size_t) numCh);
+    for (int e = 0; e < 2; ++e)
+    {
+        for (int c = 0; c < numCh; ++c)
+        {
+            t[(size_t) c].input = c;
+            t[(size_t) c].spectra = spectra.data() + ((size_t) e * (size_t) numCh + (size_t) c) * (size_t) parts * (size_t) kFft;
+            t[(size_t) c].first = 0;
+            t[(size_t) c].parts = parts;
+        }
+        conv.setTerms (e, t.data(), numCh);
+    }
+    conv.reset();
+    scratch.assign ((size_t) 2 * kBlock);
 }
 
 void BinauralDecoder::reset() noexcept
 {
-    std::fill (fdlRe.begin(), fdlRe.end(), 0.0f);
-    std::fill (fdlIm.begin(), fdlIm.end(), 0.0f);
-    std::fill (inBuf.begin(), inBuf.end(), 0.0f);
-    std::fill (outBuf.begin(), outBuf.end(), 0.0f);
-    pos = 0;
+    conv.reset();
 }
 
 void BinauralDecoder::rotate (float* const* in, int n, float yawDeg) noexcept
@@ -538,50 +543,20 @@ void BinauralDecoder::rotate (float* const* in, int n, float yawDeg) noexcept
 void BinauralDecoder::process (float* const* in, int n, float* left, float* right, float yawDeg) noexcept
 {
     rotate (in, n, yawDeg);
-    for (int i = 0; i < n; ++i)
+    int done = 0;
+    while (done < n)
     {
-        for (int c = 0; c < numCh; ++c) inBuf[(size_t) c * kFft + (size_t) (kBlock + pos)] = in[c][i];
-        left[i] = outBuf[(size_t) pos];
-        right[i] = outBuf[(size_t) (kBlock + pos)];
-        if (++pos == kBlock) { pos = 0; processBlock(); }
-    }
-}
-
-void BinauralDecoder::processBlock() noexcept
-{
-    fdlPos = (fdlPos + parts - 1) % parts;
-    for (int c = 0; c < numCh; ++c)
-    {
-        float* ib = inBuf.data() + (size_t) c * kFft;
-        std::copy (ib, ib + kFft, work.begin());
-        std::fill (work.begin() + kFft, work.end(), 0.0f);
-        fft.performRealOnlyForwardTransform (work.data(), true);
-        float* xr = fdlRe.data() + ((size_t) c * (size_t) parts + (size_t) fdlPos) * kBins;
-        float* xi = fdlIm.data() + ((size_t) c * (size_t) parts + (size_t) fdlPos) * kBins;
-        for (int b = 0; b < kBins; ++b) { xr[b] = work[(size_t) (2 * b)]; xi[b] = work[(size_t) (2 * b + 1)]; }
-        std::copy (ib + kBlock, ib + kFft, ib);
-    }
-    for (int e = 0; e < 2; ++e)
-    {
-        std::fill (accRe.begin(), accRe.end(), 0.0f);
-        std::fill (accIm.begin(), accIm.end(), 0.0f);
-        float* ar = accRe.data();
-        float* ai = accIm.data();
-        for (int c = 0; c < numCh; ++c)
-            for (int p = 0; p < parts; ++p)
-            {
-                const int slot = (fdlPos + p) % parts;
-                const float* sr = fdlRe.data() + ((size_t) c * (size_t) parts + (size_t) slot) * kBins;
-                const float* si = fdlIm.data() + ((size_t) c * (size_t) parts + (size_t) slot) * kBins;
-                const size_t base = (((size_t) e * (size_t) numCh + (size_t) c) * (size_t) parts + (size_t) p) * kBins;
-                const float* hr = hRe.data() + base;
-                const float* hi = hIm.data() + base;
-                for (int b = 0; b < kBins; ++b) { ar[b] += sr[b] * hr[b] - si[b] * hi[b]; ai[b] += sr[b] * hi[b] + si[b] * hr[b]; }
-            }
-        for (int b = 0; b < kBins; ++b) { work[(size_t) (2 * b)] = ar[b]; work[(size_t) (2 * b + 1)] = ai[b]; }
-        std::fill (work.begin() + 2 * kBins, work.end(), 0.0f);
-        fft.performRealOnlyInverseTransform (work.data());
-        std::copy (work.begin() + kBlock, work.begin() + kFft, outBuf.begin() + (std::ptrdiff_t) ((size_t) e * kBlock));
+        const int len = juce::jmin (n - done, conv.toBoundary());
+        const int p = conv.position();
+        std::copy_n (conv.output (0) + p, len, scratch.data());
+        std::copy_n (conv.output (1) + p, len, scratch.data() + kBlock);
+        const float* ins[kMaxAmbiChannels] {};
+        for (int c = 0; c < numCh; ++c) ins[c] = in[c] + done;
+        conv.push (ins, len);
+        // (written only now: a mono host passes one of the input channels as 'right')
+        std::copy_n (scratch.data(), len, left + done);
+        std::copy_n (scratch.data() + kBlock, len, right + done);
+        done += len;
     }
 }
 } // namespace rysum

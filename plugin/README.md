@@ -636,6 +636,9 @@ plugin/
     Degrade.h           "Verfall"
     PluginProcessor.*   parameters, state, sample loading
     Convolver.*         impulse-response reverb (stereo / AmbiX)
+    PartConv.h          partitioned convolution with its work spread over time (used by all convolutions)
+    FastFFT.h           PFFFT wrapper (real FFT, spectra products), aligned buffers
+    Kernels.*           innermost loops, plain + AVX2/FMA (chosen at start-up)
     Binaural.*          HRTF sets (built-in FABIAN, SOFA via libmysofa), MagLS design, binaural decoder
     SofaGunzip.cpp      zlib inflate for libmysofa (JUCE's zlib)
     Modulation.h        LFOs, envelopes, routing definitions
@@ -648,6 +651,7 @@ plugin/
   Resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
   ThirdParty/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
   ThirdParty/MTS-ESP/   MTS-ESP client by ODDSound (0BSD, see its LICENSE and README_RYSUM.txt)
+  ThirdParty/pffft/     PFFFT by Julien Pommier (FFTPACK licence, BSD-like, see its LICENSE and README_RYSUM.txt)
   tools/make_fabian.py  rebuilds Resources/fabian_hrir.bin from the FABIAN SOFA file
   Tests/                offline render test + UI snapshot tool (optional)
 ```
@@ -655,6 +659,38 @@ plugin/
 Optional tests (not needed for normal use):
 `cmake -B build -DRYSUM_BUILD_TESTS=ON` builds `RysumRenderTest` (renders MIDI scenes
 to WAV and checks the encoder maths) and `RysumUiSnapshot`.
+
+CPU benchmark (optional): `cmake -B build-bench -G "Visual Studio 17 2022" -A x64 -DRYSUM_BUILD_BENCH=ON`,
+then `cmake --build build-bench --config Release --target RysumBench`, and run
+`build-bench\RysumBench_artefacts\Release\RysumBench.exe D:\RYSUM_plugin\rysum_plugin\samples 128 8`
+(samples folder, block size, seconds per scenario, optionally a filter such as `saal`). It plays all
+eight stops with a ten-note chord and moving pipes through the whole plugin in several set-ups
+(stereo, AmbiX 3 / 5 with an impulse response, binaural, Saal) and prints for each the average load
+and the worst blocks in % of one core's real-time budget. The worst blocks are what cause dropouts.
+
+## 6. CPU
+
+What costs the most, roughly in this order: the simulated room (*Saal*, every sounding pipe has its
+own early reflections - up to 48 sounds × 24 or 62 mirror images), a long impulse response at a high
+Ambisonics order, the number of sounding pipes × output channels (8 stops × 10 notes = 80 pipes, each
+into 36 channels at 5th order), binaural / loudspeaker decoding. How the plugin keeps it down:
+
+- **Convolutions without spikes.** All real-time convolutions (impulse response, binaural decoder,
+  the Saal tail, Lucier) use PFFFT (SIMD) instead of JUCE's FFT, which on Windows is a plain scalar
+  one. The impulse response is partitioned non-uniformly: the early part and the first 75 ms of the
+  tail in blocks of 512, the rest in blocks of 2048 and 8192 - about 12× fewer operations for a 3 s
+  response. The large blocks spread their work evenly over the time they cover instead of computing
+  everything in the one audio block where a partition is complete (before, every 512 / 8192 samples
+  a single block had to do the whole convolution - the CPU meter's peaks). Latency unchanged.
+- **AVX2.** The innermost loops (`Source/Kernels.*`) exist twice; on CPUs with AVX2 + FMA (Intel
+  since 2013, AMD since 2015) the faster version runs, otherwise the plain one - decided at start-up.
+- **Early reflections** four mirror images at a time; the Ambisonics encoder without per-channel
+  trigonometry; the mixing of every pipe into the output channels in one pass per four channels.
+
+If it is still too much: the reflection order of the Saal (1st order = 6 instead of 24 / 62 mirror
+images per sound), the Ambisonics / binaural order (3rd instead of 5th: 16 instead of 36 channels),
+and fewer stops or shorter impulse responses help the most. A larger audio buffer in the host
+(256 or 512 instead of 64 / 128) lowers the overhead per block.
 
 Fonts: "Rysum Fell" = IM FELL DW Pica by Igino Marini with a few symbols (arrows, primes, ♯ …)
 added from DejaVu Serif and renamed as the OFL requires (built by `tools/make_fell.py`);
@@ -667,3 +703,5 @@ Database for Different Head-Above-Torso Orientations", JAES 65(10), 2017, data D
 10.14279/depositonce-5718, licence CC BY 4.0 (see `Resources/FABIAN_LICENSE.txt`).
 SOFA files are read with libmysofa by Christian Hoene / Symonics (BSD 3-clause).
 Microtuning via the MTS-ESP client library by ODDSound Ltd. (0BSD).
+FFTs: PFFFT by Julien Pommier, based on FFTPACKv4 by Paul N. Swarztrauber, NCAR (FFTPACK licence,
+see `ThirdParty/pffft/LICENSE` - its copyright notice has to go with binary distributions too).

@@ -966,12 +966,13 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         {
             const int m = juce::jmin (chunk, n - start);
             const float* ins[rysum::OrganEngine::kMaxRoomSends] {};
+            const float wStep = (wetTarget - wetSmoothed) / (float) n;
             for (int k = 0; k < numIn; ++k)
             {
                 const float* a = engine.getRoomSend (k) + start;
                 float* dst = irInputs[(size_t) k].data();
                 for (int i = 0; i < m; ++i)
-                    dst[i] = a[i] * (wetSmoothed + (wetTarget - wetSmoothed) * (float) (start + i) / (float) n);
+                    dst[i] = a[i] * (wetSmoothed + wStep * (float) (start + i));
                 ins[k] = dst;
             }
             // apply the dry level to this chunk before the wet signal is added

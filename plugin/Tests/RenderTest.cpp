@@ -385,6 +385,24 @@ static void testConvolver()
             maxRef = std::max (maxRef, std::abs (y));
         }
     check (maxErr < 2.0e-3 * maxRef, "not following = the measured room exactly (rel err " + juce::String (maxErr / maxRef, 7) + ")");
+    {
+        // the same over the whole response: the tail's large partitions (2048 from 3584 samples, 8192 from 15872),
+        // whose work is spread over time, must line up exactly with the early part
+        const int N2 = L + 12000, X2 = 26000;
+        std::vector<float> x2 ((size_t) N2, 0.0f);
+        for (int i = 0; i < X2; ++i) x2[(size_t) i] = r.bi();
+        auto out2 = run (*cv, [&] (int t, std::vector<std::vector<float>>& v) { v[0][0] = x2[(size_t) t]; v[1][0] = std::cos (a0) * x2[(size_t) t]; v[2][0] = std::sin (a0) * x2[(size_t) t]; }, 3, 4, N2);
+        double err2 = 0, ref2 = 0;
+        for (int c = 0; c < 4; ++c)
+            for (int t = Convolver::kBlock; t < N2; t += 13)
+            {
+                double y = 0; const int tt = t - Convolver::kBlock;
+                for (int k = juce::jmax (0, tt - X2 + 1); k <= juce::jmin (tt, L - 1); ++k) y += (double) ref.getSample (c, k) * x2[(size_t) (tt - k)];
+                err2 = std::max (err2, std::abs (y - out2.getSample (c, t)));
+                ref2 = std::max (ref2, std::abs (y));
+            }
+        check (err2 < 2.0e-3 * ref2, "whole response exact, all partition sizes (rel err " + juce::String (err2 / ref2, 7) + ")");
+    }
 
     // 2) following: a pipe at -30 deg gets its direct sound / early reflections from -30 deg
     auto impulseAt = [&] (Convolver& c, float deg, int nIn, int numOut)
@@ -470,6 +488,44 @@ static void testConvolver()
     auto cv2 = Convolver::create (f, st4, err);
     check (cv2 != nullptr && std::abs (cv2->getInfo().seconds - 0.7) < 0.02, "IR resampled to 44.1 kHz, length " + (cv2 ? juce::String (cv2->getInfo().seconds, 3) : juce::String()));
     f.deleteFile(); fm1.deleteFile();
+}
+
+/** the simulated room's tail convolver (three partition sizes, the large ones spread over time) against a plain
+    convolution, and a crossfade to a second response */
+static void testTailConvolver()
+{
+    std::cout << "tail convolver" << std::endl;
+    const double sr = 48000.0;
+    const int L = 60000, C = 3;
+    XorShift r (7);
+    std::vector<std::vector<float>> h ((size_t) C, std::vector<float> ((size_t) L, 0.0f));
+    for (auto& ch : h) for (int i = 0; i < L; ++i) ch[(size_t) i] = r.bi() * std::exp (-3.0f * (float) i / (float) L);
+    auto ir = TailIR::fromResponses (h, sr, 1);
+    TailConvolver tc; tc.prepare (sr); tc.setIR (ir);
+    const int N = L + 30000, X = 50000;
+    std::vector<float> x ((size_t) N, 0.0f);
+    std::vector<std::vector<float>> y ((size_t) C, std::vector<float> ((size_t) N, 0.0f));
+    for (int i = 0; i < X; ++i) x[(size_t) i] = r.bi();
+    int pos = 0, bs = 37;
+    // (the response takes effect at the next block start of each stage: feed silence first)
+    { std::vector<float> z (40000, 0.0f), o0 (40000), o1 (40000), o2 (40000); float* oo[3] { o0.data(), o1.data(), o2.data() }; tc.process (z.data(), oo, 3, 40000, 1.0f, 1.0f); }
+    while (pos < N)
+    {
+        const int n = juce::jmin (bs, N - pos);
+        float* o[3] { y[0].data() + pos, y[1].data() + pos, y[2].data() + pos };
+        tc.process (x.data() + pos, o, C, n, 1.0f, 1.0f);
+        pos += n; bs = bs == 37 ? 501 : (bs == 501 ? 1024 : 37);
+    }
+    double err = 0, ref = 0;
+    for (int c = 0; c < C; ++c)
+        for (int t = 0; t < N; t += 11)
+        {
+            double v = 0;
+            for (int k = TailIR::kStart[0]; k <= juce::jmin (t, L - 1); ++k) if (t - k < X) v += (double) h[(size_t) c][(size_t) k] * x[(size_t) (t - k)];
+            err = std::max (err, std::abs (v - y[(size_t) c][(size_t) t]));
+            ref = std::max (ref, std::abs (v));
+        }
+    check (err < 1.0e-3 * ref, "tail convolver = plain convolution (rel err " + juce::String (err / ref, 7) + ")");
 }
 
 static void testMotion()
@@ -1002,6 +1058,7 @@ int main (int argc, char** argv)
     {
         testEncoder();
         testConvolver();
+        testTailConvolver();
         testMotion();
         testBinaural (argc > 3 ? juce::File (argv[3]) : juce::File());      // optional 3rd argument: a SOFA file to test with
         testSpeakers();

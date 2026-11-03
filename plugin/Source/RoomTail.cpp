@@ -86,31 +86,29 @@ void TailIR::partition (const std::vector<std::vector<float>>& h)
 {
     const double sr = sampleRate;
     const int len = length;
-    // ---- partitions per stage: segment p of a stage is h[(p+1)B, (p+2)B) (the stage runs one block late)
+    // ---- partitions per stage: partition q of a stage is h[(first + q + lag) B, ... + B), from kStart up to the
+    // next stage (or the end of the response)
     for (int s = 0; s < kStages; ++s)
     {
-        const int B = kBlock[s];
-        const int nb = bins (s);
-        int q0 = kStart[s] / B - 1, q1 = stageEnd (s, sr) / B - 1;
-        q1 = juce::jmin (q1, (len + B - 1) / B - 1);         // nothing after the end
+        const int B = kBlock[s], N = 2 * B, L = kLag[s];
+        const int q0 = kStart[s] / B - L;
+        int q1 = stageEnd (s, sr) / B - L;
+        q1 = juce::jmin (q1, (len + B - 1) / B - L);         // nothing after the end
         if (q1 < q0) q1 = q0;
-        p0[(size_t) s] = q0; p1[(size_t) s] = q1;
+        first[(size_t) s] = q0;
+        parts[(size_t) s] = q1 - q0;
         const int np = q1 - q0;
-        re[(size_t) s].assign ((size_t) channels * (size_t) juce::jmax (1, np) * (size_t) nb, 0.0f);
-        im[(size_t) s].assign (re[(size_t) s].size(), 0.0f);
-        int fftOrder = 0; while ((1 << fftOrder) < 2 * B) ++fftOrder;
-        juce::dsp::FFT fft (fftOrder);
-        std::vector<float> buf ((size_t) (4 * B));
+        spec[(size_t) s].assign ((size_t) channels * (size_t) juce::jmax (1, np) * (size_t) N);
+        RealFFT fft (N);
+        AlignedFloats buf ((size_t) N);
         for (int c = 0; c < channels; ++c)
-            for (int p = q0; p < q1; ++p)
+            for (int q = q0; q < q1; ++q)
             {
-                std::fill (buf.begin(), buf.end(), 0.0f);
-                const int a = (p + 1) * B;
+                buf.clear();
+                const int a = (q + L) * B;
                 const auto& x = h[(size_t) c];
                 for (int i = 0; i < B && a + i < len && a + i < (int) x.size(); ++i) buf[(size_t) i] = x[(size_t) (a + i)];
-                fft.performRealOnlyForwardTransform (buf.data(), true);
-                const size_t base = ((size_t) c * (size_t) np + (size_t) (p - q0)) * (size_t) nb;
-                for (int k = 0; k < nb; ++k) { re[(size_t) s][base + (size_t) k] = buf[(size_t) (2 * k)]; im[(size_t) s][base + (size_t) k] = buf[(size_t) (2 * k + 1)]; }
+                fft.forwardScaled (buf.data(), spec[(size_t) s].data() + ((size_t) c * (size_t) np + (size_t) (q - q0)) * (size_t) N);
             }
     }
 }
@@ -121,45 +119,71 @@ void TailConvolver::prepare (double sampleRate)
     sr = sampleRate;
     for (int s = 0; s < TailIR::kStages; ++s)
     {
-        auto& st = stages[(size_t) s];
-        st.B = TailIR::kBlock[s];
-        st.P = juce::jmax (1, TailIR::stageEnd (s, sr) / st.B - 1);
-        int order = 0; while ((1 << order) < 2 * st.B) ++order;
-        st.fft = std::make_unique<juce::dsp::FFT> (order);
-        const int nb = TailIR::bins (s);
-        st.inBuf.assign ((size_t) (2 * st.B), 0.0f);
-        st.work.assign ((size_t) (4 * st.B), 0.0f);
-        st.fdlRe.assign ((size_t) st.P * (size_t) nb, 0.0f);
-        st.fdlIm.assign (st.fdlRe.size(), 0.0f);
-        st.accRe.assign ((size_t) nb, 0.0f);
-        st.accIm.assign ((size_t) nb, 0.0f);
-        st.outA.assign ((size_t) kMaxCh * (size_t) st.B, 0.0f);
-        st.outB.assign (st.outA.size(), 0.0f);
+        const int B = TailIR::kBlock[s], L = TailIR::kLag[s];
+        const int depth = juce::jmax (1, TailIR::stageEnd (s, sr) / B - L);
+        stages[(size_t) s].prepare (B, L, 1, depth, 2 * kMaxCh, 1);
     }
+    for (auto& a : appliedSerial) a.fill (kNone);
+    for (auto& a : pendingSerial) a.fill (kNone);
+    for (auto& a : isPending) a.fill (false);
+    // (a response set before prepare: give it to the new stages)
+    if (cur != nullptr) assign (curSet, cur.get());
+    if (next != nullptr) assign (1 - curSet, next.get());
     reset();
 }
 
 void TailConvolver::reset() noexcept
 {
-    for (auto& st : stages)
+    for (auto& st : stages) st.reset();
+    trackApplied();
+}
+
+void TailConvolver::assign (int set, const TailIR* ir) noexcept
+{
+    for (int s = 0; s < TailIR::kStages; ++s)
     {
-        std::fill (st.inBuf.begin(), st.inBuf.end(), 0.0f);
-        std::fill (st.fdlRe.begin(), st.fdlRe.end(), 0.0f);
-        std::fill (st.fdlIm.begin(), st.fdlIm.end(), 0.0f);
-        std::fill (st.outA.begin(), st.outA.end(), 0.0f);
-        std::fill (st.outB.begin(), st.outB.end(), 0.0f);
-        st.pos = 0; st.fdlPos = 0; st.readyB = false;
+        auto& st = stages[(size_t) s];
+        if (st.numOutputs() < 2 * kMaxCh) continue;           // (not prepared yet)
+        const int np = ir != nullptr ? ir->parts[(size_t) s] : 0;
+        const int chans = ir != nullptr ? juce::jmin (ir->channels, kMaxCh) : 0;
+        for (int c = 0; c < kMaxCh; ++c)
+        {
+            const int o = set * kMaxCh + c;
+            if (c < chans && np > 0)
+            {
+                PartitionedConvolution::Term t;
+                t.input = 0;
+                t.first = ir->first[(size_t) s];
+                t.parts = np;
+                t.spectra = ir->spec[(size_t) s].data() + (size_t) c * (size_t) np * (size_t) (2 * TailIR::kBlock[s]);
+                st.setTerms (o, &t, 1);
+            }
+            else st.clearTerms (o);
+        }
+        isPending[(size_t) s][(size_t) set] = true;
+        pendingSerial[(size_t) s][(size_t) set] = ir != nullptr ? ir->serial : kNone;
     }
+}
+
+void TailConvolver::trackApplied() noexcept
+{
+    for (int s = 0; s < TailIR::kStages; ++s)
+        for (int set = 0; set < 2; ++set)
+            if (isPending[(size_t) s][(size_t) set] && ! stages[(size_t) s].termsPending (set * kMaxCh))
+            {
+                isPending[(size_t) s][(size_t) set] = false;
+                appliedSerial[(size_t) s][(size_t) set] = pendingSerial[(size_t) s][(size_t) set];
+            }
 }
 
 void TailConvolver::setIR (std::shared_ptr<const TailIR> ir) noexcept
 {
     if (ir == nullptr) return;
-    if (cur == nullptr) { cur = std::move (ir); return; }
+    if (cur == nullptr) { cur = std::move (ir); assign (curSet, cur.get()); return; }
     if (next == nullptr && fade < 0)
     {
         next = std::move (ir);
-        for (auto& st : stages) st.readyB = false;
+        assign (1 - curSet, next.get());
     }
     else queued = std::move (ir);          // a newer one while fading: it follows right after
 }
@@ -167,104 +191,91 @@ void TailConvolver::setIR (std::shared_ptr<const TailIR> ir) noexcept
 void TailConvolver::adoptLatest() noexcept
 {
     // not sounding: take the newest response directly, no crossfade needed (the processor keeps the old one alive)
+    if (queued == nullptr && next == nullptr) return;
     if (queued != nullptr) { cur = std::move (queued); next.reset(); }
-    else if (next != nullptr) cur = std::move (next);
+    else cur = std::move (next);
     fade = -1;
-    for (auto& st : stages) st.readyB = false;
+    assign (curSet, cur.get());
+    assign (1 - curSet, nullptr);
 }
 
 uint32_t TailConvolver::oldestSerialInUse() const noexcept
 {
-    uint32_t s = 0xffffffffu;
+    uint32_t s = kNone;
     for (auto* p : { cur.get(), next.get(), queued.get() }) if (p != nullptr) s = juce::jmin (s, p->serial);
-    return s;
-}
-
-void TailConvolver::convolve (Stage& st, int s, const TailIR& ir, std::vector<float>& out) noexcept
-{
-    const int nb = TailIR::bins (s);
-    const int p0 = ir.p0[(size_t) s], p1 = ir.p1[(size_t) s], np = p1 - p0;
-    const int chans = juce::jmin (ir.channels, kMaxCh);
-    for (int c = 0; c < chans; ++c)
-    {
-        float* ar = st.accRe.data();
-        float* ai = st.accIm.data();
-        std::fill (st.accRe.begin(), st.accRe.end(), 0.0f);
-        std::fill (st.accIm.begin(), st.accIm.end(), 0.0f);
-        for (int p = p0; p < p1; ++p)
+    for (int st = 0; st < TailIR::kStages; ++st)
+        for (int set = 0; set < 2; ++set)
         {
-            const int slot = (st.fdlPos + p) % st.P;
-            const float* xr = st.fdlRe.data() + (size_t) slot * (size_t) nb;
-            const float* xi = st.fdlIm.data() + (size_t) slot * (size_t) nb;
-            const size_t base = ((size_t) c * (size_t) np + (size_t) (p - p0)) * (size_t) nb;
-            const float* hr = ir.re[(size_t) s].data() + base;
-            const float* hi = ir.im[(size_t) s].data() + base;
-            for (int k = 0; k < nb; ++k) { ar[k] += xr[k] * hr[k] - xi[k] * hi[k]; ai[k] += xr[k] * hi[k] + xi[k] * hr[k]; }
+            s = juce::jmin (s, appliedSerial[(size_t) st][(size_t) set]);
+            if (isPending[(size_t) st][(size_t) set]) s = juce::jmin (s, pendingSerial[(size_t) st][(size_t) set]);
         }
-        for (int k = 0; k < nb; ++k) { st.work[(size_t) (2 * k)] = ar[k]; st.work[(size_t) (2 * k + 1)] = ai[k]; }
-        std::fill (st.work.begin() + 2 * nb, st.work.end(), 0.0f);
-        st.fft->performRealOnlyInverseTransform (st.work.data());
-        std::copy (st.work.begin() + st.B, st.work.begin() + 2 * st.B, out.begin() + (std::ptrdiff_t) ((size_t) c * (size_t) st.B));
-    }
-    for (int c = chans; c < kMaxCh; ++c) std::fill_n (out.begin() + (std::ptrdiff_t) ((size_t) c * (size_t) st.B), st.B, 0.0f);
-}
-
-void TailConvolver::runStage (int s) noexcept
-{
-    auto& st = stages[(size_t) s];
-    const int nb = TailIR::bins (s);
-    std::copy (st.inBuf.begin(), st.inBuf.end(), st.work.begin());
-    std::fill (st.work.begin() + 2 * st.B, st.work.end(), 0.0f);
-    st.fft->performRealOnlyForwardTransform (st.work.data(), true);
-    st.fdlPos = (st.fdlPos + st.P - 1) % st.P;
-    float* xr = st.fdlRe.data() + (size_t) st.fdlPos * (size_t) nb;
-    float* xi = st.fdlIm.data() + (size_t) st.fdlPos * (size_t) nb;
-    for (int k = 0; k < nb; ++k) { xr[k] = st.work[(size_t) (2 * k)]; xi[k] = st.work[(size_t) (2 * k + 1)]; }
-    std::copy (st.inBuf.begin() + st.B, st.inBuf.end(), st.inBuf.begin());
-
-    if (cur != nullptr) convolve (st, s, *cur, st.outA);
-    else std::fill (st.outA.begin(), st.outA.end(), 0.0f);
-    if (next != nullptr) { convolve (st, s, *next, st.outB); st.readyB = true; }
+    return s;
 }
 
 void TailConvolver::process (const float* in, float* const* out, int numOut, int n, float g0, float g1) noexcept
 {
     const int chans = juce::jmin (numOut, kMaxCh);
     const float inv = n > 0 ? 1.0f / (float) n : 0.0f;
-    for (int i = 0; i < n; ++i)
+    int done = 0;
+    while (done < n)
     {
-        for (auto& st : stages) st.inBuf[(size_t) (st.B + st.pos)] = in[i];
-        const float g = g0 + (g1 - g0) * (float) (i + 1) * inv;
-        const float f = fade >= 0 ? (float) fade / (float) kFade : 0.0f;
+        int len = n - done;
+        for (auto& st : stages) len = juce::jmin (len, st.toBoundary());
+        if (fade >= 0) len = juce::jmin (len, kFade - fade);
+        const int oc = curSet * kMaxCh, on = (1 - curSet) * kMaxCh;
+        const int p0 = stages[0].position(), p1 = stages[1].position(), p2 = stages[2].position();
         for (int c = 0; c < chans; ++c)
         {
-            float a = 0.0f, b = 0.0f;
-            for (auto& st : stages)
+            const float* a0 = stages[0].output (oc + c) + p0;
+            const float* a1 = stages[1].output (oc + c) + p1;
+            const float* a2 = stages[2].output (oc + c) + p2;
+            float* o = out[c] + done;
+            if (fade >= 0)
             {
-                a += st.outA[(size_t) c * (size_t) st.B + (size_t) st.pos];
-                if (fade >= 0) b += st.outB[(size_t) c * (size_t) st.B + (size_t) st.pos];
+                const float* b0 = stages[0].output (on + c) + p0;
+                const float* b1 = stages[1].output (on + c) + p1;
+                const float* b2 = stages[2].output (on + c) + p2;
+                for (int i = 0; i < len; ++i)
+                {
+                    const float g = g0 + (g1 - g0) * (float) (done + i + 1) * inv;
+                    const float f = (float) (fade + i) / (float) kFade;
+                    const float a = a0[i] + a1[i] + a2[i], b = b0[i] + b1[i] + b2[i];
+                    o[i] += (a + (b - a) * f) * g;
+                }
             }
-            out[c][i] += (fade >= 0 ? a + (b - a) * f : a) * g;
+            else
+                for (int i = 0; i < len; ++i)
+                {
+                    const float g = g0 + (g1 - g0) * (float) (done + i + 1) * inv;
+                    o[i] += (a0[i] + a1[i] + a2[i]) * g;
+                }
         }
-        for (int s = 0; s < TailIR::kStages; ++s)
+        const float* ins[1] { in + done };
+        for (auto& st : stages) st.push (ins, len);
+        trackApplied();
+        done += len;
+
+        if (fade >= 0)
         {
-            auto& st = stages[(size_t) s];
-            if (++st.pos == st.B) { st.pos = 0; runStage (s); }
+            fade += len;
+            if (fade >= kFade)
+            {
+                // the next response is the sounding one now; the old one's set is free (its spectra are kept alive
+                // until no stage reads them any more: oldestSerialInUse)
+                curSet = 1 - curSet;
+                cur = next;                     // the old one is released here: the processor keeps a copy (freed on its thread)
+                next = queued;
+                queued = nullptr;
+                fade = -1;
+                assign (1 - curSet, next.get());
+            }
         }
-        // crossfade to the new response once every stage has it
-        if (next != nullptr && fade < 0)
+        else if (next != nullptr)
         {
+            // crossfade to the new response once every stage has computed it once
             bool ready = true;
-            for (auto& st : stages) ready = ready && st.readyB;
+            for (auto& st : stages) ready = ready && st.blocksWithTerms ((1 - curSet) * kMaxCh) >= 1;
             if (ready) fade = 0;
-        }
-        if (fade >= 0 && ++fade >= kFade)
-        {
-            for (auto& st : stages) { std::swap (st.outA, st.outB); st.readyB = false; }
-            cur = next;                     // the old one is released here: the processor keeps a copy (freed on its thread)
-            next = queued;
-            queued = nullptr;
-            fade = -1;
         }
     }
 }
