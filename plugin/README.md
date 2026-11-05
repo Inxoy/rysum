@@ -466,8 +466,20 @@ follow the pipes. Everything is off in older patches.
   - *Pfeife: Richtung / Höhe / Abstand / Lautstärke / Tonhöhe / Helligkeit / Hall-Anteil* –
     act on every pipe separately (at 100 %: ±180°, ±90°, ×8 distance, ±36 dB, ±12 semitones,
     ±6 octaves of brightness, ±24 dB room send);
+  - *Pfeife: Wind / Verfall / Windschwankung / Knistern* – also per pipe: the pipe's own stop wind
+    (added to the stop's *Wind* slider, ±100 %; 0 % = the pipe falls silent, low wind = flatter,
+    duller, unsteady – with wind model *instabil* also its edge tone), its amount of *Verfall*
+    (mode *pro Pfeife*, using the Verfall section's grain / bits / rate / dropouts), its
+    *Windschwankung* and its crackle (*Knistern*, Effekte page). Example: *Hüllkurve 1 pro Pfeife*
+    → *Pfeife: Wind* −80 % with a slow attack lets every note start full and sag on its own;
+    *Tastenlage* → *Pfeife: Verfall* wears out only the high pipes;
   - every continuous parameter of the plugin (stop volume, motion speed, wind, Verfall,
     Doppler, Hall, even the LFO speeds themselves …), amount = share of the slider's range.
+    **These are global:** one value for the whole instrument. There the per-pipe sources act
+    as one: an envelope *pro Pfeife* behaves like the global one (every key restarts it), the
+    LFOs' *Versatz* does nothing, *Tastenlage* / *Anschlag* are those of the last note. For
+    something to differ from pipe to pipe, use a *Pfeife:* target (the target menu lists them
+    first, the tooltip on a routing's target says which kind it is).
 - **At the slider itself:** a modulated slider shows each routing's range as a red bar with a
   small red lozenge at the full-amount end – drag the lozenge to set the amount right there
   (Shift = 5 % steps); the white tick shows where the modulation is right now.

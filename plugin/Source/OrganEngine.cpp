@@ -433,6 +433,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     modEl[(size_t) v.stop][(size_t) v.key] = 90.0f * pm[tgtEl];
     modDistMul[(size_t) v.stop][(size_t) v.key] = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
     v.modCents1 = 1200.0f * juce::jlimit (-4.0f, 4.0f, pm[tgtPitch]);
+    v.pmWind = pm[tgtWind]; v.pmDeg = pm[tgtDegrade]; v.pmWob = pm[tgtWobble]; v.pmCrk = pm[tgtCrackle];
 
     gainsFor (pos, v.g1.data());
     const float sg = p.stopGain[(size_t) v.stop];
@@ -909,12 +910,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
 {
     const int n = end - start;
     if (n <= 0) return;
-    const bool perPipeDeg = p.deg.perPipe && p.deg.amount > 0.0001f;
-    const float wobAmt = p.deg.amount * p.deg.wobble;
-    // "Windschwankung" gets disproportionately wilder towards 100 %
-    const float wobCents = 30.0f * wobAmt + 320.0f * wobAmt * wobAmt * wobAmt * wobAmt;
-    const float wobLevel = 0.3f * wobAmt + 0.6f * wobAmt * wobAmt * wobAmt * wobAmt;
-    const float wobSpeed = 1.0f + 5.0f * wobAmt * wobAmt * wobAmt;
+    // (Verfall / Windschwankung per pipe: see the voice loop - they can be modulated pipe by pipe)
     // global wind: above ~35 % the wind supply starts to shake – shared by all pipes (same wind chest)
     const float turbLin = juce::jlimit (0.0f, 1.0f, (p.wind - 0.35f) / 0.65f);
     const float turb = turbLin * turbLin;
@@ -950,7 +946,17 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         const int loopLen = pipe.loopEnd - pipe.loopStart;
         float* buf = scratch.data();
         bool finished = false;
-        const float windTarget = juce::jlimit (0.0f, 1.0f, p.stopWind[(size_t) v.stop]);
+        const float windTarget = juce::jlimit (0.0f, 1.0f, p.stopWind[(size_t) v.stop] + v.pmWind);
+        // Verfall and Windschwankung of this pipe (the global settings, plus its own modulation)
+        DegradeParams degV = p.deg;
+        degV.amount = juce::jlimit (0.0f, 1.0f, p.deg.amount + v.pmDeg);
+        degV.wobble = juce::jlimit (0.0f, 1.0f, p.deg.wobble + v.pmWob);
+        const bool perPipeDeg = p.deg.perPipe && degV.amount > 0.0001f;
+        const float wobAmt = degV.amount * degV.wobble;
+        // "Windschwankung" gets disproportionately wilder towards 100 %
+        const float wobCents = 30.0f * wobAmt + 320.0f * wobAmt * wobAmt * wobAmt * wobAmt;
+        const float wobLevel = 0.3f * wobAmt + 0.6f * wobAmt * wobAmt * wobAmt * wobAmt;
+        const float wobSpeed = 1.0f + 5.0f * wobAmt * wobAmt * wobAmt;
         const float tuneCents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t) v.key]) + p.pitchCents + p.detune * v.detuneRnd;
 
         double rate = v.baseRate;
@@ -960,10 +966,11 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         float* bufH = fxScratch.data();
         const float splitA = split ? 1.0f - std::exp (-twoPiOverSr * juce::jmin (0.45f * (float) sr,
                                          (float) juce::jmax (20.0, pipe.nominalHz) * p.fx.partSplit)) : 1.0f;
-        const bool crackle = p.fx.crackLevel > 0.0001f && v.crkEnv > 0.001f;
+        const float crkLevel = juce::jlimit (0.0f, 1.0f, p.fx.crackLevel + v.pmCrk);
+        const bool crackle = crkLevel > 0.0001f && v.crkEnv > 0.001f;
         const float crkDecay = std::exp (-1.0f / juce::jmax (1.0f, p.fx.crackLen * 0.001f * (float) sr));
         const float crkMean = (float) sr / juce::jmax (0.05f, p.fx.crackRate);
-        const float crkGain = 0.25f * p.fx.crackLevel * v.crkEnv;
+        const float crkGain = 0.25f * crkLevel * v.crkEnv;
         const bool chaosModel = p.windModel == 1;
         for (int i = 0; i < n; ++i)
         {
@@ -1071,8 +1078,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
 
             if (perPipeDeg)
             {
-                const auto f = v.deg.frame (p.deg, sr);
-                x = DegradeState::process (x, v.held1, v.env, f, p.deg);
+                const auto f = v.deg.frame (degV, sr);
+                x = DegradeState::process (x, v.held1, v.env, f, degV);
             }
 
             if (split)

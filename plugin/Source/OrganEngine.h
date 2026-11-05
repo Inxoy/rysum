@@ -283,6 +283,7 @@ private:
         // hard jumps: gains switched sample-accurately at every jump (no ramp)
         bool hard = false;
         float pmAz = 0.0f, pmEl = 0.0f, pmDist = 1.0f, gainLin = 1.0f;
+        float pmWind = 0.0f, pmDeg = 0.0f, pmWob = 0.0f, pmCrk = 0.0f;   // per-pipe modulation of stop wind, Verfall, Windschwankung, crackle
         float noteCents = 0.0f;          // free tuning: shift from the pipe's own pitch
         float modCents0 = 0.0f, modCents1 = 0.0f;
         // crackle

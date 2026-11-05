@@ -981,6 +981,53 @@ static void testSpeakers()
 // ---------------------------------------------------------------------------
 // several simulated rooms (one per stop) and notes spread to single pipes
 // ---------------------------------------------------------------------------
+/** per-pipe modulation: "Pfeife: Wind" driven by the key position / a per-pipe envelope / an LFO with "Versatz"
+    must give every pipe its own value (two notes, rendered on their own, compared) */
+static void testPipeTargets (std::shared_ptr<const SampleLibrary> lib)
+{
+    std::cout << "per-pipe modulation" << std::endl;
+    const double sr = 48000.0;
+    const int B = 256;
+    // level (dB) of one note after 'secs', with a route on Pfeife: Wind; the second note struck 'lateBy' s after the first
+    auto level = [&] (int note, std::function<void (EngineParams&)> setup, int otherNote = -1, double otherAt = 0.0) -> double
+    {
+        OrganEngine e; e.prepare (sr, B); e.setLibrary (lib);
+        EngineParams p; p.stopOn = {}; p.stopOn[1] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+        p.doppler = 0; setup (p);
+        juce::AudioBuffer<float> b (2, B);
+        double en = 0; int cnt = 0;
+        for (int k = 0; k < (int) (2.0 * sr / B); ++k)
+        {
+            juce::MidiBuffer mb;
+            if (k == 1) mb.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+            if (otherNote >= 0 && k == 1 + (int) (otherAt * sr / B)) mb.addEvent (juce::MidiMessage::noteOn (1, otherNote, (juce::uint8) 100), 0);
+            e.process (b, mb, p);
+            if (k * B > (int) (1.5 * sr)) { en += (double) b.getRMSLevel (0, 0, B) * b.getRMSLevel (0, 0, B); ++cnt; }
+        }
+        return 10.0 * std::log10 (en / juce::jmax (1, cnt) + 1e-20);
+    };
+    // key position -> wind: low keys keep their wind, high keys lose most of it
+    auto keyRoute = [] (EngineParams& p) { p.mod.routes[0] = { srcKey, tgtWind, -0.4f, false }; };
+    const double low = level (41, keyRoute), high = level (77, keyRoute), lowRef = level (41, [] (EngineParams&) {}), highRef = level (77, [] (EngineParams&) {});
+    std::cout << "  Tastenlage -> Pfeife: Wind: low note " << (low - lowRef) << " dB, high note " << (high - highRef) << " dB (against no modulation)" << std::endl;
+    check (high - highRef < -3.0 && low - lowRef > -1.0 && low - lowRef < 3.0, "per-pipe wind follows the key position");
+    // LFO with Versatz along the keyboard (a whole cycle): the lowest pipe is at the start of the square wave (+1: less
+    // wind), the highest near its end (-1: full wind)
+    auto lfoRoute = [] (EngineParams& p)
+    {
+        p.mod.lfo[0].shape = shSquare; p.mod.lfo[0].rate = 0.01f; p.mod.lfo[0].spread = 1.0f; p.mod.lfo[0].spreadMode = 0;
+        p.mod.routes[0] = { srcLfo1, tgtWind, -0.5f, false };
+    };
+    const double a = level (41, lfoRoute), c = level (77, lfoRoute);
+    std::cout << "  LFO Versatz entlang der Tastatur -> Pfeife: Wind: " << (a - lowRef) << " dB / " << (c - highRef) << " dB" << std::endl;
+    check (std::abs ((a - lowRef) - (c - highRef)) > 3.0, "LFO Versatz gives the pipes different values");
+    // Pfeife: Verfall on one note only (key position): the low note stays clean
+    auto degRoute = [] (EngineParams& p) { p.deg.perPipe = true; p.deg.amount = 0.0f; p.deg.bits = 3.0f; p.mod.routes[0] = { srcKey, tgtDegrade, 1.0f, true }; };
+    const double dLow = level (41, degRoute), dHigh = level (77, degRoute);
+    std::cout << "  Pfeife: Verfall (3 bit) by key position: low " << (dLow - lowRef) << " dB, high " << (dHigh - highRef) << " dB" << std::endl;
+    check (std::abs (dLow - lowRef) < 0.5 && std::abs (dHigh - highRef) > 0.5, "per-pipe Verfall");
+}
+
 static void testRoomsAndSpread (std::shared_ptr<const SampleLibrary> lib)
 {
     const double sr = 48000.0;
@@ -1114,6 +1161,7 @@ int main (int argc, char** argv)
         std::cout << "wrote " << f.getFullPathName() << std::endl;
         return 0;
     }
+    if (std::getenv ("RYSUM_ONLY_PIPEMOD") != nullptr) { testPipeTargets (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (std::getenv ("RYSUM_ONLY_ROOMS") != nullptr) { testRoomsAndSpread (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (onlyInput) { testInput (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (onlyLucier) { testLucier (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
@@ -1671,6 +1719,7 @@ int main (int argc, char** argv)
         testLucier (lib);
         testInput (lib);
         testRoomsAndSpread (lib);
+        testPipeTargets (lib);
 
         // ---------------- motion: ellipse shape, drawn paths, hard jumps ----------------
         {
