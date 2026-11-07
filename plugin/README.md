@@ -328,9 +328,36 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
     sounding simply turns into the new room's, without a gap; the noise is the same for every
     rebuild, so held tones do not jump. The tail follows the room ~¼–½ s late, the early
     reflections immediately. Responses are at most 6 s long.
+- **Grundriss** (floor plan, the row of small pictures above the plan, per room): *Quader* (the
+  shoebox, exactly as before and the default), *L-Form* (a corner missing front right: the
+  reflections go round the corner, some paths are hidden), *Fächer* (narrow at the organ, wide at
+  the back), *Sechseck*, *Achteck* (a central building), *Rund* (twelve walls around an ellipse:
+  concave, it gathers the sound), *Kreuz* (nave with a transept), *Apsis* (nave ending in a round
+  apse) and *Gezeichnet* (your own plan). *Form (Grundriss)* below the pictures sets how far the
+  plan departs from the rectangle (modulatable: the room changes shape while you play).
+  Width and length are the plan's bounding box; the walls are vertical, floor and ceiling flat.
+  - *Gezeichnet*: 3–12 corners. Drag the corners in the plan, double-click on a wall for a new
+    corner, right-click a corner to remove it; a plan that would cross itself is refused. Right-
+    click into the plan: *Diesen Grundriss zum Zeichnen übernehmen* (start from the shape you see)
+    or reset. The drawn plan is saved in the project and in patches.
+  - How it works: the mirror images of a polygon are found by reflecting over every sequence of
+    walls (up to the chosen order) and keeping only the paths that really hit the walls – in
+    non-convex rooms (L, Kreuz, Apsis, drawn ones) also only those not blocked by another wall.
+    Floor and ceiling images combine with them as in the shoebox. At most the 62 nearest are
+    played. This search is expensive, so it runs only when a pipe has moved ~12 cm, the room
+    changed or a sound starts – and spread so each sound searches at most every 6th block;
+    in between the known paths simply move with the pipe. Paths that appear or vanish (a
+    reflection sliding past the end of a wall) fade in / out over 25 ms, so nothing clicks.
+    The ray tracer follows the same walls, so the reverb's decay belongs to the plan. Pipes and
+    the listener are kept inside the plan (a pipe stops 0.3 m before the wall along its line to
+    the listener, so its direct sound always reaches you). Lucier's room modes use a shoebox of
+    the same floor area (the exact modes of an arbitrary plan would need a wave solver).
+  - CPU: about the same as the shoebox (worst case 48 moving pipes at 3rd order: ~10–20 % more
+    in non-convex plans).
 - The plan shows the room from above, the pipes of the pulled stops inside it (pipes outside
   the walls are pushed in), the listener (drag it), the four mirrored rooms and, in red, the
-  reflections of the last pipe you played: its mirror images and the paths over the walls.
+  reflections of the last pipe you played: its mirror images and the paths over the walls
+  (other floor plans: the plan mirrored at every wall, and the real paths up to 2nd order).
 - *Maße*: width, length, height and *Größe* (scales all three – the easiest knob to modulate).
   Room buttons: Kapelle, Dorfkirche, Kathedrale, Flur (flutter echo), Würfel (a small, almost
   lossless box that rings like an instrument), Halle.
@@ -466,8 +493,20 @@ follow the pipes. Everything is off in older patches.
   - *Pfeife: Richtung / Höhe / Abstand / Lautstärke / Tonhöhe / Helligkeit / Hall-Anteil* –
     act on every pipe separately (at 100 %: ±180°, ±90°, ×8 distance, ±36 dB, ±12 semitones,
     ±6 octaves of brightness, ±24 dB room send);
+  - *Pfeife: Wind / Verfall / Windschwankung / Knistern* – also per pipe: the pipe's own stop wind
+    (added to the stop's *Wind* slider, ±100 %; 0 % = the pipe falls silent, low wind = flatter,
+    duller, unsteady – with wind model *instabil* also its edge tone), its amount of *Verfall*
+    (mode *pro Pfeife*, using the Verfall section's grain / bits / rate / dropouts), its
+    *Windschwankung* and its crackle (*Knistern*, Effekte page). Example: *Hüllkurve 1 pro Pfeife*
+    → *Pfeife: Wind* −80 % with a slow attack lets every note start full and sag on its own;
+    *Tastenlage* → *Pfeife: Verfall* wears out only the high pipes;
   - every continuous parameter of the plugin (stop volume, motion speed, wind, Verfall,
     Doppler, Hall, even the LFO speeds themselves …), amount = share of the slider's range.
+    **These are global:** one value for the whole instrument. There the per-pipe sources act
+    as one: an envelope *pro Pfeife* behaves like the global one (every key restarts it), the
+    LFOs' *Versatz* does nothing, *Tastenlage* / *Anschlag* are those of the last note. For
+    something to differ from pipe to pipe, use a *Pfeife:* target (the target menu lists them
+    first, the tooltip on a routing's target says which kind it is).
 - **At the slider itself:** a modulated slider shows each routing's range as a red bar with a
   small red lozenge at the full-amount end – drag the lozenge to set the amount right there
   (Shift = 5 % steps); the white tick shows where the modulation is right now.

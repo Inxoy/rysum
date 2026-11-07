@@ -15,7 +15,54 @@ RoomParams SaalPlan::heardNow() const
     const auto& h = proc.engine.heard[(size_t) shownRoom];
     now.width = h.W.load(); now.length = h.L.load(); now.height = h.H.load(); now.size = 1.0f;
     now.listenerX = h.Lx.load(); now.listenerY = h.Ly.load();
+    now.shape = h.shape.load(); now.shapeAmt = h.shapeAmt.load();
+    finishPlan (now, proc.getDrawnPlan (shownRoom));
     return now;
+}
+
+bool SaalPlan::drawing() const
+{
+    return juce::roundToInt (proc.apvts.getRawParameterValue (RysumProcessor::roomParamId (shownRoom, "Shape"))->load()) == shapeDrawn;
+}
+
+juce::Point<float> SaalPlan::toPlan (juce::Point<float> screen) const
+{
+    const auto f = frame();
+    const auto now = heardNow();
+    return { (screen.x - f.origin.x) / f.scale / now.W(), (f.origin.y - screen.y) / f.scale / now.L() };
+}
+
+int SaalPlan::vertexAt (juce::Point<float> screen) const
+{
+    if (! drawing()) return -1;
+    const auto f = frame();
+    const auto now = heardNow();
+    const auto& d = proc.getDrawnPlan (shownRoom);
+    int best = -1; float bd = 9.0f;
+    for (int i = 0; i < d.n; ++i)
+    {
+        const float dist = toScreen (f, d.x[(size_t) i] * now.W(), d.y[(size_t) i] * now.L()).getDistanceFrom (screen);
+        if (dist < bd) { bd = dist; best = i; }
+    }
+    return best;
+}
+
+void SaalPlan::setShape (int shape)
+{
+    if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (shownRoom, "Shape")))
+    {
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost (prm->convertTo0to1 ((float) shape));
+        prm->endChangeGesture();
+    }
+}
+
+void SaalPlan::takeOverPlan()
+{
+    const auto now = heardNow();
+    proc.setDrawnPlan (shownRoom, now.plan);          // (the shoebox: its four corners)
+    setShape (shapeDrawn);
+    repaint();
 }
 
 SaalPlan::Frame SaalPlan::frame() const
@@ -53,29 +100,110 @@ void SaalPlan::paint (juce::Graphics& g)
     auto P = [&] (float x, float y) { return toScreen (f, x, y); };
     const auto room = juce::Rectangle<float>::leftTopRightBottom (P (0, L).x, P (0, L).y, P (W, 0).x, P (W, 0).y);
 
-    // mirror rooms (the image-source method: every reflection is a source in a mirrored room)
+    const bool poly = ! now.box();
+    const auto geo = planGeo (now);
+    if (poly)
     {
+        // mirror rooms: the plan mirrored at every wall (the image-source method)
         const float dash[] { 3.0f, 4.0f };
         g.setColour (col::border.withAlpha (on ? 0.8f : 0.4f));
-        for (auto off : { juce::Point<float> (-room.getWidth(), 0), juce::Point<float> (room.getWidth(), 0),
-                          juce::Point<float> (0, -room.getHeight()), juce::Point<float> (0, room.getHeight()) })
+        for (int wi = 0; wi < geo.n; ++wi)
         {
-            const auto rr = room.translated (off.x, off.y);
-            juce::Path p; p.addRectangle (rr);
-            juce::Path d; juce::PathStrokeType (0.8f).createDashedStroke (d, p, dash, 2);
+            juce::Path mp;
+            for (int i = 0; i < now.plan.n; ++i)
+            {
+                float x = now.plan.x[(size_t) i] * W, y = now.plan.y[(size_t) i] * L;
+                reflectOver (geo.w[(size_t) wi], x, y);
+                if (i == 0) mp.startNewSubPath (P (x, y)); else mp.lineTo (P (x, y));
+            }
+            mp.closeSubPath();
+            juce::Path d; juce::PathStrokeType (0.8f).createDashedStroke (d, mp, dash, 2);
             g.fillPath (d);
         }
+        // walls: a double line like an engraved plan (the outer one 4 px outside, mitred)
+        juce::Path wall, outer;
+        const int n = now.plan.n;
+        const float off = 4.0f / f.scale;
+        for (int i = 0; i < n; ++i)
+        {
+            const float x = now.plan.x[(size_t) i] * W, y = now.plan.y[(size_t) i] * L;
+            const int ip = (i + n - 1) % n, in = (i + 1) % n;
+            const float px = now.plan.x[(size_t) ip] * W, py = now.plan.y[(size_t) ip] * L, nx = now.plan.x[(size_t) in] * W, ny = now.plan.y[(size_t) in] * L;
+            auto outN = [] (float ax, float ay, float bx, float by)
+            {
+                const float ex = bx - ax, ey = by - ay, l = juce::jmax (1.0e-6f, std::sqrt (ex * ex + ey * ey));
+                return juce::Point<float> (ey / l, -ex / l);                   // outward for a counter-clockwise plan
+            };
+            const auto n1 = outN (px, py, x, y), n2 = outN (x, y, nx, ny);
+            auto m = n1 + n2;
+            const float ml = m.getDistanceFromOrigin();
+            m = ml > 1.0e-6f ? m / ml : n2;
+            const float len = juce::jmin (3.0f * off, off / juce::jmax (0.2f, m.x * n2.x + m.y * n2.y));
+            if (i == 0) { wall.startNewSubPath (P (x, y)); outer.startNewSubPath (P (x + m.x * len, y + m.y * len)); }
+            else        { wall.lineTo (P (x, y));          outer.lineTo (P (x + m.x * len, y + m.y * len)); }
+        }
+        wall.closeSubPath(); outer.closeSubPath();
+        g.setColour (col::ink.withAlpha (on ? 0.95f : 0.45f));
+        g.strokePath (wall, juce::PathStrokeType (2.0f, juce::PathStrokeType::mitered));
+        g.setColour (col::ink.withAlpha (on ? 0.35f : 0.15f));
+        g.strokePath (outer, juce::PathStrokeType (0.8f, juce::PathStrokeType::mitered));
+        // the bounding box (width x length), faint
+        {
+            const float dash2[] { 1.5f, 5.0f };
+            g.setColour (col::faint.withAlpha (0.35f));
+            juce::Path bb; bb.addRectangle (room);
+            juce::Path d; juce::PathStrokeType (0.6f).createDashedStroke (d, bb, dash2, 2);
+            g.fillPath (d);
+        }
+        g.setFont (A.monoFont (10.0f));
+        g.setColour (col::mute);
+        g.drawText ("vorn", juce::Rectangle<float> (60, 12).withCentre ({ room.getCentreX(), room.getY() - 14 }), juce::Justification::centred);
+        g.drawText (RysumProcessor::roomShapeNames()[now.shape] + U (" \xc2\xb7 ") + juce::String (W, 1) + U (" \xc3\x97 ") + juce::String (L, 1) + U (" \xc3\x97 ")
+                    + juce::String (now.H(), 1) + U (" m \xc2\xb7 ") + juce::String (juce::roundToInt (geo.area)) + U (" m\xc2\xb2"),
+                    juce::Rectangle<float> (320, 12).withCentre ({ room.getCentreX(), room.getBottom() + 14 }), juce::Justification::centred);
+        // the corners of a drawn plan: handles
+        if (drawing())
+        {
+            const auto& d = proc.getDrawnPlan (shownRoom);
+            for (int i = 0; i < d.n; ++i)
+            {
+                const auto c = P (d.x[(size_t) i] * W, d.y[(size_t) i] * L);
+                juce::Path dia;
+                const float rr = (i == hoverVertex || i == dragVertex) ? 6.0f : 4.5f;
+                dia.addQuadrilateral (c.x, c.y - rr, c.x + rr, c.y, c.x, c.y + rr, c.x - rr, c.y);
+                g.setColour (i == dragVertex ? col::rubric.brighter (0.4f) : col::bg);
+                g.fillPath (dia);
+                g.setColour (i == hoverVertex || i == dragVertex ? col::rubric.brighter (0.4f) : col::ink.withAlpha (0.8f));
+                g.strokePath (dia, juce::PathStrokeType (1.0f));
+            }
+        }
     }
-    // walls: a double line like an engraved plan
-    g.setColour (col::ink.withAlpha (on ? 0.95f : 0.45f));
-    g.drawRect (room, 2.0f);
-    g.setColour (col::ink.withAlpha (on ? 0.35f : 0.15f));
-    g.drawRect (room.expanded (4.0f), 0.8f);
-    g.setFont (A.monoFont (10.0f));
-    g.setColour (col::mute);
-    g.drawText ("vorn", juce::Rectangle<float> (60, 12).withCentre ({ room.getCentreX(), room.getY() - 14 }), juce::Justification::centred);
-    g.drawText (juce::String (W, 1) + U (" \xc3\x97 ") + juce::String (L, 1) + U (" \xc3\x97 ") + juce::String (now.H(), 1) + " m",
-                juce::Rectangle<float> (200, 12).withCentre ({ room.getCentreX(), room.getBottom() + 14 }), juce::Justification::centred);
+    else
+    {
+        // mirror rooms (the image-source method: every reflection is a source in a mirrored room)
+        {
+            const float dash[] { 3.0f, 4.0f };
+            g.setColour (col::border.withAlpha (on ? 0.8f : 0.4f));
+            for (auto off : { juce::Point<float> (-room.getWidth(), 0), juce::Point<float> (room.getWidth(), 0),
+                              juce::Point<float> (0, -room.getHeight()), juce::Point<float> (0, room.getHeight()) })
+            {
+                const auto rr = room.translated (off.x, off.y);
+                juce::Path p; p.addRectangle (rr);
+                juce::Path d; juce::PathStrokeType (0.8f).createDashedStroke (d, p, dash, 2);
+                g.fillPath (d);
+            }
+        }
+        // walls: a double line like an engraved plan
+        g.setColour (col::ink.withAlpha (on ? 0.95f : 0.45f));
+        g.drawRect (room, 2.0f);
+        g.setColour (col::ink.withAlpha (on ? 0.35f : 0.15f));
+        g.drawRect (room.expanded (4.0f), 0.8f);
+        g.setFont (A.monoFont (10.0f));
+        g.setColour (col::mute);
+        g.drawText ("vorn", juce::Rectangle<float> (60, 12).withCentre ({ room.getCentreX(), room.getY() - 14 }), juce::Justification::centred);
+        g.drawText (juce::String (W, 1) + U (" \xc3\x97 ") + juce::String (L, 1) + U (" \xc3\x97 ") + juce::String (now.H(), 1) + " m",
+                    juce::Rectangle<float> (200, 12).withCentre ({ room.getCentreX(), room.getBottom() + 14 }), juce::Justification::centred);
+    }
 
     const Vec3f lis = listenerPos (now);
     const auto ls = P (lis.x, lis.y);
@@ -102,6 +230,40 @@ void SaalPlan::paint (juce::Graphics& g)
     if (on && ls_ >= 0 && lk >= 0 && params.stopRoom[(size_t) ls_] == shownRoom)
     {
         const auto src = roomPoint (now, proc.engine.displayPosition (ls_, lk, params));
+        if (poly)
+        {
+            // the visible paths over the walls of the plan (from above: floor / ceiling images left out)
+            const int n = planImageSources (now, geo, src, lis, juce::jmin (2, now.order), paths.data(), (int) paths.size(), cand.data(), (int) cand.size(), (int) cand.size());
+            const auto ab = BandAbsorption::from (now);
+            const auto sp = P (src.x, src.y);
+            for (int i = 0; i < n; ++i)
+            {
+                const auto& im = cand[(size_t) i];
+                if (im.mz != 0 || im.k == 0) continue;
+                const auto ip = P (im.pos.x, im.pos.y);
+                const int hits = im.k;
+                const float gain = std::pow (1.0f - ab.wallLow, 0.5f * (float) hits) * std::pow (1.0f - now.scatter, 0.5f * (float) hits);
+                g.setColour (col::rubric.brighter (0.3f).withAlpha (juce::jlimit (0.15f, 0.9f, gain * (hits == 1 ? 0.9f : 0.45f))));
+                g.drawEllipse (juce::Rectangle<float> (hits == 1 ? 7.0f : 5.0f, hits == 1 ? 7.0f : 5.0f).withCentre (ip), 1.0f);
+                PlanPath pp; pp.k = im.k; pp.w = im.w;
+                float qx[3], qy[3];
+                if (! planPathPoints (geo, pp, src.x, src.y, lis.x, lis.y, qx, qy)) continue;
+                g.setColour (col::rubric.brighter (0.2f).withAlpha (juce::jlimit (0.1f, 0.8f, gain * (hits == 1 ? 0.8f : 0.35f))));
+                auto prev = sp;
+                for (int j = 0; j < hits; ++j) { const auto q = P (qx[j], qy[j]); g.drawLine ({ prev, q }, hits == 1 ? 1.0f : 0.7f); prev = q; }
+                g.drawLine ({ prev, ls }, hits == 1 ? 1.0f : 0.7f);
+                if (hits == 1)
+                {
+                    const float dash[] { 2.0f, 3.0f };
+                    g.setColour (col::rubric.withAlpha (0.25f));
+                    g.drawDashedLine ({ P (qx[0], qy[0]), ip }, dash, 2, 0.8f);
+                }
+            }
+            g.setColour (col::ink.withAlpha (0.5f));
+            g.drawLine ({ sp, ls }, 0.8f);
+        }
+        else
+        {
         std::array<ImageSource, 62> ims;
         const int n = imageSources (now, src, juce::jmin (2, now.order), ims.data(), 62);
         const auto ab = BandAbsorption::from (now);
@@ -130,6 +292,7 @@ void SaalPlan::paint (juce::Graphics& g)
         }
         g.setColour (col::ink.withAlpha (0.5f));
         g.drawLine ({ sp, ls }, 0.8f);
+        }
     }
 
     // listener: a head seen from above, facing the front
@@ -163,7 +326,8 @@ void SaalPlan::paint (juce::Graphics& g)
     g.setColour (col::faint);
     if (on && shownRoom == 0) g.drawFittedText (proc.getRoomStatus(), getLocalBounds().removeFromBottom (15).reduced (4, 0), juce::Justification::centredLeft, 1, 0.7f);
     g.setFont (A.monoFont (10.5f));
-    g.drawFittedText (U ("Draufsicht \xc2\xb7 H\xc3\xb6rer ziehen \xc2\xb7 rot: Reflexionen der zuletzt gespielten Pfeife"),
+    g.drawFittedText (drawing() ? U ("Gezeichnet \xc2\xb7 Ecken ziehen \xc2\xb7 Doppelklick auf eine Wand: neue Ecke \xc2\xb7 Rechtsklick auf eine Ecke: weg")
+                                : U ("Draufsicht \xc2\xb7 H\xc3\xb6rer ziehen \xc2\xb7 rot: Reflexionen der zuletzt gespielten Pfeife \xc2\xb7 Rechtsklick: Grundriss zeichnen"),
                       getLocalBounds().removeFromTop (30).reduced (4, 0), juce::Justification::topLeft, 2);
 }
 
@@ -182,13 +346,53 @@ void SaalPlan::mouseDown (const juce::MouseEvent& e)
     const auto l = listenerPos (heardNow());
     const auto ls = toScreen (frame(), l.x, l.y);
     dragging = ls.getDistanceFrom (e.position) < 16.0f;
+    dragVertex = -1;
+    if (e.mods.isPopupMenu())
+    {
+        dragging = false;
+        const int v = vertexAt (e.position);
+        if (v >= 0)
+        {
+            // a corner away (at least a triangle stays)
+            auto d = proc.getDrawnPlan (shownRoom);
+            if (d.n <= 3) return;
+            for (int i = v; i + 1 < d.n; ++i) { d.x[(size_t) i] = d.x[(size_t) i + 1]; d.y[(size_t) i] = d.y[(size_t) i + 1]; }
+            --d.n;
+            if (! planSelfIntersects (d)) proc.setDrawnPlan (shownRoom, d);
+            hoverVertex = -1;
+            repaint();
+            return;
+        }
+        juce::PopupMenu m;
+        m.addItem (1, U ("Diesen Grundriss zum Zeichnen \xc3\xbc" "bernehmen"), ! drawing());
+        m.addItem (2, U ("Gezeichneten Grundriss zur\xc3\xbc" "cksetzen"));
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition(), [this] (int res)
+        {
+            if (res == 1) takeOverPlan();
+            if (res == 2) { proc.setDrawnPlan (shownRoom, defaultDrawnPlan()); repaint(); }
+        });
+        return;
+    }
+    if (! dragging) dragVertex = vertexAt (e.position);
     if (dragging)
         for (auto* key : { "Lx", "Ly" }) if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (shownRoom, key))) prm->beginChangeGesture();
 }
 
 void SaalPlan::mouseDrag (const juce::MouseEvent& e)
 {
-    if (dragging) { setListener (e.position); repaint(); }
+    if (dragging) { setListener (e.position); repaint(); return; }
+    if (dragVertex >= 0)
+    {
+        auto d = proc.getDrawnPlan (shownRoom);
+        if (dragVertex >= d.n) { dragVertex = -1; return; }
+        const auto q = toPlan (e.position);
+        // a little snapping to the outline of the box, so walls can be made straight
+        auto snap = [] (float v) { return v < 0.015f ? 0.0f : (v > 0.985f ? 1.0f : v); };
+        d.x[(size_t) dragVertex] = snap (juce::jlimit (0.0f, 1.0f, q.x));
+        d.y[(size_t) dragVertex] = snap (juce::jlimit (0.0f, 1.0f, q.y));
+        if (! planSelfIntersects (d)) proc.setDrawnPlan (shownRoom, d);         // a plan that crosses itself is refused
+        repaint();
+    }
 }
 
 void SaalPlan::mouseUp (const juce::MouseEvent&)
@@ -196,6 +400,148 @@ void SaalPlan::mouseUp (const juce::MouseEvent&)
     if (dragging)
         for (auto* key : { "Lx", "Ly" }) if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (shownRoom, key))) prm->endChangeGesture();
     dragging = false;
+    dragVertex = -1;
+    repaint();
+}
+
+void SaalPlan::mouseMove (const juce::MouseEvent& e)
+{
+    const int v = vertexAt (e.position);
+    if (v != hoverVertex) { hoverVertex = v; repaint(); }
+}
+
+void SaalPlan::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // a new corner on the wall next to the click
+    if (! drawing()) return;
+    auto d = proc.getDrawnPlan (shownRoom);
+    if (d.n >= kMaxPlanVerts) return;
+    const auto f = frame();
+    const auto now = heardNow();
+    int best = -1; float bd = 10.0f, bu = 0.5f;
+    for (int i = 0; i < d.n; ++i)
+    {
+        const int j = (i + 1) % d.n;
+        const auto a = toScreen (f, d.x[(size_t) i] * now.W(), d.y[(size_t) i] * now.L()), b = toScreen (f, d.x[(size_t) j] * now.W(), d.y[(size_t) j] * now.L());
+        const auto ab = b - a;
+        const float len2 = ab.x * ab.x + ab.y * ab.y;
+        if (len2 < 1.0f) continue;
+        const float u = juce::jlimit (0.0f, 1.0f, ((e.position - a).x * ab.x + (e.position - a).y * ab.y) / len2);
+        const float dist = (a + ab * u).getDistanceFrom (e.position);
+        if (dist < bd) { bd = dist; best = i; bu = u; }
+    }
+    if (best < 0) return;
+    const int j = (best + 1) % d.n;
+    const float nx = d.x[(size_t) best] + bu * (d.x[(size_t) j] - d.x[(size_t) best]), ny = d.y[(size_t) best] + bu * (d.y[(size_t) j] - d.y[(size_t) best]);
+    for (int i = d.n; i > best + 1; --i) { d.x[(size_t) i] = d.x[(size_t) i - 1]; d.y[(size_t) i] = d.y[(size_t) i - 1]; }
+    d.x[(size_t) best + 1] = nx; d.y[(size_t) best + 1] = ny;
+    ++d.n;
+    proc.setDrawnPlan (shownRoom, d);
+    hoverVertex = best + 1;
+    repaint();
+}
+
+// ---------------------------------------------------------------------------
+// the floor plans to choose from
+// ---------------------------------------------------------------------------
+static juce::String shapeTip (int s)
+{
+    switch (s)
+    {
+        case shapeBox:   return U ("Quader \xe2\x80\x93 der Schuhkarton: exakte Spiegelquellen (wie bisher)");
+        case shapeL:     return U ("L-Form \xe2\x80\x93 vorn rechts fehlt eine Ecke: Reflexionen um die Ecke, manche Wege sind verdeckt. Form = Gr\xc3\xb6\xc3\x9f" "e der fehlenden Ecke");
+        case shapeFan:   return U ("F\xc3\xa4" "cher \xe2\x80\x93 vorn (bei der Orgel) schmal, hinten breit: die schr\xc3\xa4gen W\xc3\xa4nde lenken den Schall nach hinten. Form = wie stark");
+        case shapeHex:   return U ("Sechseck \xe2\x80\x93 Form = wie spitz die Seiten zulaufen");
+        case shapeOct:   return U ("Achteck \xe2\x80\x93 ein Zentralbau mit abgeschr\xc3\xa4gten Ecken. Form = Gr\xc3\xb6\xc3\x9f" "e der Schr\xc3\xa4gen");
+        case shapeRound: return U ("Rund \xe2\x80\x93 zw\xc3\xb6lf W\xc3\xa4nde um eine Ellipse: konkav, sammelt den Schall (Fl\xc3\xbcstergalerie). Form = vom gerundeten Rechteck bis zur Ellipse");
+        case shapeCross: return U ("Kreuz \xe2\x80\x93 Langhaus mit Querschiff vor dem H\xc3\xb6rer (Kreuzkirche). Form = schmaleres Schiff");
+        case shapeApse:  return U ("Apsis \xe2\x80\x93 das Schiff endet vorn in einer runden Apsis. Form = Breite der Apsis");
+        case shapeDrawn: return U ("Gezeichnet \xe2\x80\x93 ein eigener Grundriss (3 bis 12 Ecken): in der Draufsicht Ecken ziehen, Doppelklick auf eine Wand f\xc3\xbcgt eine Ecke ein, "
+                                   "Rechtsklick auf eine Ecke l\xc3\xb6scht sie. Rechtsklick in die Draufsicht \xc3\xbc" "bernimmt den gerade gew\xc3\xa4hlten Grundriss zum Weiterzeichnen.");
+        default: return {};
+    }
+}
+
+ShapeStrip::ShapeStrip (RysumProcessor& p, int& editRoom) : proc (p), shownRoom (editRoom)
+{
+    for (int s = 0; s < kNumRoomShapes; ++s)
+    {
+        icons.push_back (std::make_unique<Icon> (*this, s));
+        auto& b = *icons.back();
+        b.setTooltip (shapeTip (s));
+        b.onClick = [this, s]
+        {
+            if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (shownRoom, "Shape")))
+            {
+                prm->beginChangeGesture();
+                prm->setValueNotifyingHost (prm->convertTo0to1 ((float) s));
+                prm->endChangeGesture();
+            }
+        };
+        addAndMakeVisible (b);
+    }
+}
+
+int ShapeStrip::currentShape() const
+{
+    return juce::roundToInt (proc.apvts.getRawParameterValue (RysumProcessor::roomParamId (shownRoom, "Shape"))->load());
+}
+
+void ShapeStrip::resized()
+{
+    auto r = getLocalBounds();
+    r.removeFromLeft (64);
+    const int n = (int) icons.size();
+    const int w = juce::jmin (46, (r.getWidth() - (n - 1) * 4) / n);
+    for (auto& b : icons) { b->setBounds (r.removeFromLeft (w)); r.removeFromLeft (4); }
+}
+
+void ShapeStrip::paint (juce::Graphics& g)
+{
+    g.setFont (Assets::get().monoFont (10.5f));
+    g.setColour (col::mute);
+    g.drawText ("Grundriss", getLocalBounds().removeFromLeft (62), juce::Justification::centredLeft);
+}
+
+void ShapeStrip::refresh()
+{
+    const int s = currentShape();
+    const float a = proc.apvts.getRawParameterValue (RysumProcessor::roomParamId (shownRoom, "ShapeAmt"))->load();
+    if (s != shownShape || shownRoom != shownRoomIdx || std::abs (a - shownAmt) > 0.004f)
+    {
+        shownShape = s; shownRoomIdx = shownRoom; shownAmt = a;
+        repaint();
+    }
+}
+
+void ShapeStrip::Icon::paintButton (juce::Graphics& g, bool over, bool)
+{
+    const bool sel = owner.currentShape() == shape;
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (sel ? col::panel.brighter (0.15f) : col::panel);
+    g.fillRect (r);
+    g.setColour (sel ? col::rubric.brighter (0.3f) : (over ? col::dim : col::border));
+    g.drawRect (r, sel ? 1.4f : 0.8f);
+    // the plan, in its own proportions (a little longer than wide, like a church)
+    const float amt = owner.proc.apvts.getRawParameterValue (RysumProcessor::roomParamId (owner.shownRoom, "ShapeAmt"))->load();
+    const auto f = makeFloorPlan (shape, shape == shapeBox ? 0.0f : amt, owner.proc.getDrawnPlan (owner.shownRoom));
+    const auto box = r.reduced (6.0f, 4.0f);
+    const float h = box.getHeight(), w = juce::jmin (box.getWidth(), h * 0.7f);
+    const auto pb = juce::Rectangle<float> (w, h).withCentre (box.getCentre());
+    juce::Path p;
+    for (int i = 0; i < f.n; ++i)
+    {
+        const juce::Point<float> q (pb.getX() + f.x[(size_t) i] * pb.getWidth(), pb.getBottom() - f.y[(size_t) i] * pb.getHeight());
+        if (i == 0) p.startNewSubPath (q); else p.lineTo (q);
+    }
+    p.closeSubPath();
+    g.setColour ((sel ? col::ink : col::mute).withAlpha (0.12f));
+    g.fillPath (p);
+    g.setColour (sel ? col::ink : (over ? col::dim : col::mute));
+    g.strokePath (p, juce::PathStrokeType (sel ? 1.4f : 1.0f));
+    if (shape == shapeDrawn)
+        for (int i = 0; i < f.n; ++i)
+            g.fillEllipse (juce::Rectangle<float> (2.5f, 2.5f).withCentre ({ pb.getX() + f.x[(size_t) i] * pb.getWidth(), pb.getBottom() - f.y[(size_t) i] * pb.getHeight() }));
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +568,7 @@ void SaalView::setParams (std::initializer_list<std::pair<const char*, float>> v
 SaalView::SaalView (RysumProcessor& p) : proc (p)
 {
     addAndMakeVisible (plan);
+    addAndMakeVisible (shapes);
     onButton.setClickingTogglesState (true);
     onButton.setTooltip (U ("Simulierter Saal statt Impulsantwort: fr\xc3\xbche Reflexionen jeder Pfeife (Spiegelquellen) und Nachhall (Strahlenverfolgung). "
                             "Alles modulierbar \xe2\x80\x93 der Raum ist spielbar."));
@@ -230,7 +577,8 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
     if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("simOrder")))
         order.addItemList (choice->choices, 1);
     orderAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "simOrder", order);
-    order.setTooltip (U ("Fr\xc3\xbche Reflexionen bis zu dieser Ordnung (1: 6 Spiegelquellen, 2: 24, 3: 62 \xe2\x80\x93 rechenintensiv)"));
+    order.setTooltip (U ("Fr\xc3\xbche Reflexionen bis zu dieser Ordnung (Quader 1: 6 Spiegelquellen, 2: 24, 3: 62 \xe2\x80\x93 rechenintensiv; "
+                         "andere Grundrisse: nur die sichtbaren Wege, h\xc3\xb6" "chstens 62)"));
     addAndMakeVisible (order);
 
     struct Preset { const char* name; float w, l, h, aw, af, hi, sc; };
@@ -287,6 +635,8 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
                               &row (id ("Size").toRawUTF8(), U ("Gr\xc3\xb6\xc3\x9f" "e (alle Ma\xc3\x9f" "e)")) };
         surfR[(size_t) r] = { &row (id ("Abs").toRawUTF8(), U ("Absorption W\xc3\xa4nde")), &row (id ("AbsFloor").toRawUTF8(), "Absorption Boden/Decke"),
                               &row (id ("High").toRawUTF8(), U ("H\xc3\xb6hend\xc3\xa4mpfung")), &row (id ("Scatter").toRawUTF8(), "Streuung") };
+        formR[(size_t) r] = &row (id ("ShapeAmt").toRawUTF8(), U ("Form (Grundriss)"));
+        formR[(size_t) r]->setTooltip (U ("Wie stark der Grundriss vom Quader abweicht (beim Quader und beim gezeichneten Grundriss ohne Wirkung). Modulierbar: der Raum verformt sich."));
         lisR[(size_t) r] = { &row (id ("Lx").toRawUTF8(), U ("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")), &row (id ("Ly").toRawUTF8(), U ("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)")) };
     }
     gainRows = { &row ("simEr", U ("Fr\xc3\xbche Reflexionen")), &row ("simTail", "Nachhall") };
@@ -478,6 +828,11 @@ void SaalView::resized()
         const int aw = (a.getWidth() - kNumStops * 3) / (kNumStops + 1);
         for (auto& b : assign) { b.setBounds (a.removeFromLeft (aw)); a.removeFromLeft (3); }
     }
+    shapes.setBounds (r.removeFromTop (34).withTrimmedBottom (4));
+    {
+        auto fr = r.removeFromTop (30).withTrimmedLeft (64).withTrimmedBottom (2);
+        for (auto* x : formR) if (x) x->setBounds (fr);
+    }
     planBox = r;
     plan.setBounds (r);
     {
@@ -588,7 +943,10 @@ void SaalView::selectRoom (int r)
         for (auto* x : dimsR[(size_t) q]) if (x) x->setVisible (q == editRoom);
         for (auto* x : surfR[(size_t) q]) if (x) x->setVisible (q == editRoom);
         for (auto* x : lisR[(size_t) q]) if (x) x->setVisible (q == editRoom);
+        if (formR[(size_t) q]) formR[(size_t) q]->setVisible (q == editRoom);
     }
+    shapes.refresh();
+    shapes.repaint();
     plan.repaint();
     repaint();
 }
@@ -625,6 +983,7 @@ void SaalView::refresh()
         assign[(size_t) slot].setToggleState (r == editRoom, juce::dontSendNotification);
     }
     plan.repaint();
+    shapes.refresh();
     for (auto& r : rows) r->repaint();
     const auto st = proc.getRoomStatus();
     if (st != shownStatus) { shownStatus = st; repaint (saalBox); }

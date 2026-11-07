@@ -26,9 +26,10 @@ namespace
 void ModView::fillTargetMenu (juce::PopupMenu& menu, RysumProcessor& proc, int idOffset)
 {
     const auto pipeNames = pipeTargetNames();
-    menu.addSectionHeader (juce::String::fromUTF8 ("Je Pfeife (Versatz, H\xc3\xbcllkurve pro Pfeife)"));
+    menu.addSectionHeader (juce::String::fromUTF8 ("Je Pfeife (Versatz, H\xc3\xbcllkurve pro Pfeife, Tastenlage, Zufall, Anschlag wirken einzeln)"));
     for (int t = 0; t < kNumPipeTargets; ++t) menu.addItem (idOffset + t + 1, pipeNames[t]);
     menu.addSeparator();
+    menu.addSectionHeader (juce::String::fromUTF8 ("Global (ein Wert f\xc3\xbcr alle Pfeifen)"));
     const juce::StringArray groups { "Register", juce::String::fromUTF8 ("Traktur \xc2\xb7 Ausgang"), "Verfall", "Klang", "Hall", "Saal", "Eingang", "Effekte", "Modulation" };
     for (auto& grp : groups)
     {
@@ -58,7 +59,7 @@ ModView::ModView (RysumProcessor& p) : proc (p)
         L.syncAtt = std::make_unique<ButtonAtt> (st, id + "Sync", L.sync);
         L.rate = std::make_unique<ParamRow> (st, id + "Rate", "Tempo");
         L.spread = std::make_unique<ParamRow> (st, id + "Spread", "Versatz je Pfeife");
-        L.spread->slider.setTooltip (juce::String::fromUTF8 ("0 % = alle Pfeifen gleich, 100 % = ein ganzer Durchlauf \xc3\xbc" "ber die Pfeifen verteilt (nur f\xc3\xbcr Pfeifen-Ziele)"));
+        L.spread->slider.setTooltip (juce::String::fromUTF8 ("0 % = alle Pfeifen gleich, 100 % = ein ganzer Durchlauf \xc3\xbc" "ber die Pfeifen verteilt (nur f\xc3\xbcr die Ziele \xe2\x80\x9ePfeife: \xe2\x80\xa6\xe2\x80\x9c)"));
         for (juce::Component* c : { (juce::Component*) &L.shape, (juce::Component*) &L.div, (juce::Component*) &L.spreadMode,
                                     (juce::Component*) &L.sync, (juce::Component*) L.rate.get(), (juce::Component*) L.spread.get() })
             addAndMakeVisible (c);
@@ -69,6 +70,8 @@ ModView::ModView (RysumProcessor& p) : proc (p)
         const juce::String id = "env" + juce::String (j + 1);
         E.mode.addItemList ({ juce::String::fromUTF8 ("Pro Pfeife (jeder Ton eigene H\xc3\xbcllkurve)"), "Global (jede Taste startet neu)" }, 1);
         E.modeAtt = std::make_unique<ComboAtt> (st, id + "Mode", E.mode);
+        E.mode.setTooltip (juce::String::fromUTF8 ("Pro Pfeife wirkt nur auf die Ziele \xe2\x80\x9ePfeife: \xe2\x80\xa6\xe2\x80\x9c (z. B. Pfeife: Wind). "
+                                                   "Auf globale Ziele (Regler des Plugins) wirkt sie wie eine globale H\xc3\xbcllkurve."));
         E.delay   = std::make_unique<ParamRow> (st, id + "Delay", juce::String::fromUTF8 ("Verz\xc3\xb6gerung"), true);
         E.attack  = std::make_unique<ParamRow> (st, id + "Attack", "Anstieg", true);
         E.decay   = std::make_unique<ParamRow> (st, id + "Decay", "Abfall", true);
@@ -151,6 +154,10 @@ void ModView::syncRoutes()
         const int s = proc.getRouteSrc (r), t = proc.getRouteTgt (r);
         R.src.setSelectedId (s >= 0 ? s + 1 : 0, juce::dontSendNotification);
         R.tgt.setSelectedId (comboIdFromTarget (t), juce::dontSendNotification);
+        R.tgt.setTooltip (t < 0 ? juce::String()
+                          : t < kNumPipeTargets ? juce::String::fromUTF8 ("Je Pfeife: jede Pfeife bekommt ihren eigenen Wert (Versatz, H\xc3\xbcllkurve pro Pfeife, Tastenlage \xe2\x80\xa6)")
+                                                : juce::String::fromUTF8 ("Global: ein Wert f\xc3\xbcr alle Pfeifen \xe2\x80\x93 Versatz und H\xc3\xbcllkurve pro Pfeife wirken hier nicht einzeln. "
+                                                                          "F\xc3\xbcr einzelne Pfeifen die Ziele \xe2\x80\x9ePfeife: \xe2\x80\xa6\xe2\x80\x9c nehmen."));
         R.uni.setButtonText (proc.getRouteUni (r) ? "+" : juce::String::fromUTF8 ("\xc2\xb1"));
         R.uni.setToggleState (proc.getRouteUni (r), juce::dontSendNotification);
     }

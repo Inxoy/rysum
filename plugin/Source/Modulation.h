@@ -33,8 +33,11 @@ inline juce::StringArray modSourceNames()
              "Druck (MPE)", "Gleiten (MPE, CC 74)", "Eingang (Pegel)" };
 }
 
-/** targets 0..kNumPipeTargets-1 act on every pipe separately (LFO spread, per-pipe envelopes);
-    targets >= kGlobalTargetBase are plugin parameters (index into the processor's parameter list) */
+/** targets 0..kNumPipeTargets-1 act on every pipe separately: only here do the per-pipe sources differ from pipe to
+    pipe (LFO "Versatz", envelopes "pro Pfeife", key position, random per note, velocity, MPE pressure / slide).
+    targets >= kGlobalTargetBase are plugin parameters (index into the processor's parameter list): one value for the
+    whole instrument - an envelope "pro Pfeife" acts there like a global one (triggered by every key), the LFO's
+    "Versatz" does nothing, key position / velocity are those of the last note. */
 enum PipeTarget
 {
     tgtAz = 0,        // direction, +-180 deg at full amount
@@ -44,6 +47,11 @@ enum PipeTarget
     tgtPitch,         // pitch, +-12 semitones
     tgtBright,        // brightness (low-pass), +-6 octaves
     tgtSend,          // room send, +-24 dB
+    // (new targets only at the end: projects and patches store "pipe:<index>")
+    tgtWind,          // the pipe's own stop wind ("Registerwind"), +-100 % (0 % = the pipe falls silent)
+    tgtDegrade,       // the pipe's amount of "Verfall" (per-pipe mode), +-100 %
+    tgtWobble,        // the pipe's "Windschwankung", +-100 %
+    tgtCrackle,       // the pipe's crackle ("Knistern", Effekte page), +-100 %
     kNumPipeTargets
 };
 constexpr int kGlobalTargetBase = 100;
@@ -51,7 +59,8 @@ constexpr int kGlobalTargetBase = 100;
 inline juce::StringArray pipeTargetNames()
 {
     return { "Pfeife: Richtung", juce::String::fromUTF8 ("Pfeife: H\xc3\xb6he"), "Pfeife: Abstand", juce::String::fromUTF8 ("Pfeife: Lautst\xc3\xa4rke"),
-             juce::String::fromUTF8 ("Pfeife: Tonh\xc3\xb6he"), "Pfeife: Helligkeit", "Pfeife: Hall-Anteil" };
+             juce::String::fromUTF8 ("Pfeife: Tonh\xc3\xb6he"), "Pfeife: Helligkeit", "Pfeife: Hall-Anteil",
+             "Pfeife: Wind", "Pfeife: Verfall", "Pfeife: Windschwankung", "Pfeife: Knistern" };
 }
 inline juce::String pipeTargetId (int t) { return "pipe:" + juce::String (t); }
 
