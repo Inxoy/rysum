@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rysum:pitch-metadata:v1",
+  "title": "Rysum pitch metadata v1 (draft; not implemented by loader)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "rysum-pitch-metadata/v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "library_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/asset"
+      }
+    },
+    "pipes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/pipe"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "schema_version",
+    "library_id",
+    "revision",
+    "base_manifest_sha256",
+    "assets",
+    "pipes"
+  ],
+  "$defs": {
+    "ratio": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator"
+      ]
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_frame": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "start_frame",
+        "end_frame"
+      ]
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "reviewer",
+        "date",
+        "notes"
+      ]
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frequency_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "status": {
+          "enum": [
+            "candidate",
+            "review",
+            "approved",
+            "rejected"
+          ]
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "regions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/region"
+          }
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "window_spread_cents": {
+              "type": "number",
+              "minimum": 0
+            },
+            "median_periodicity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "median_method_difference_cents": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": []
+        },
+        "approval": {
+          "$ref": "#/$defs/approval"
+        }
+      },
+      "required": [
+        "frequency_hz",
+        "status",
+        "method",
+        "method_version",
+        "regions",
+        "flags"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "approved"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "approval"
+            ]
+          }
+        }
+      ]
+    },
+    "rank": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measurement": {
+          "$ref": "#/$defs/measurement"
+        }
+      },
+      "required": [
+        "id",
+        "measurement"
+      ]
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*\\.\\.)[^\\\\]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sample_rate_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "frames": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "channels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pitch": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "single_rank"
+                },
+                "measurement": {
+                  "$ref": "#/$defs/measurement"
+                }
+              },
+              "required": [
+                "kind",
+                "measurement"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "compound"
+                },
+                "ranks": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/rank"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "ranks"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "unpitched"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "file",
+        "sha256",
+        "sample_rate_hz",
+        "frames",
+        "channels",
+        "pitch"
+      ]
+    },
+    "substitute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stop_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_midi": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "stop_id",
+        "key_midi",
+        "reason"
+      ]
+    },
+    "compound_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rank_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_reference_ratio": {
+          "$ref": "#/$defs/ratio"
+        }
+      },
+      "required": [
+        "rank_id",
+        "target_reference_ratio"
+      ]
+    },
+    "pipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stop_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_midi": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "asset_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_playback_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "target_reference_ratio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ratio"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "compound_targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/compound_target"
+          }
+        },
+        "substituted_from": {
+          "$ref": "#/$defs/substitute"
+        }
+      },
+      "required": [
+        "stop_id",
+        "key_midi",
+        "asset_id",
+        "source_playback_ratio",
+        "target_reference_ratio"
+      ]
+    }
+  }
+}

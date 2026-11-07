@@ -1,0 +1,3 @@
+# Offline analysis only; no plugin/runtime dependencies.
+numpy>=2,<3
+jsonschema>=4,<5

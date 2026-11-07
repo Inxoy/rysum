@@ -12,7 +12,7 @@ A single note can activate eight stop voices. A pipe voice, a logical note and t
 
 ## Current release behaviour
 
-- `Pipe` stores one full recording plus attack, release and loop markers (`plugin/Source/SampleLibrary.h:19`).
+- `Pipe` stores one full recording plus attack, release and loop markers (`plugin/source/SampleLibrary.h:19`).
 - `releaseVoice` (`OrganEngine.cpp:611`) crossfades from the current reader to about 40 ms before the stored release marker, then plays the existing recording to its end. No separately identified release sample is loaded.
 - `keyUp` (`OrganEngine.cpp:814`) plays a mechanical release click selected from a noise pool. Its gain and brightness use `keyVelocity[key]`, the attack velocity. That comment explicitly assumes the key comes up as hard as it went down.
 - `handleMidi` and `noteOffFree` receive a complete MIDI message, but do not pass note-off velocity into `keyUp` or `releaseVoice`.
@@ -61,7 +61,7 @@ Phase and level matching matter: a periodic sustain and a release preroll can ca
 
 ### 3. Prepare release assets reproducibly
 
-`rysum_preprocess.py:246` estimates key release as the last frame within 3 dB of the sustain plateau. This is a starting estimate, not a precisely measured valve event. Review offsets around the release before treating them as edit points.
+`scripts/rysum_preprocess.py:246` estimates key release as the last frame within 3 dB of the sustain plateau. This is a starting estimate, not a precisely measured valve event. Review offsets around the release before treating them as edit points.
 
 Add a separate, non-destructive release preparation pass that:
 
