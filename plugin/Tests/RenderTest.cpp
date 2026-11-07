@@ -2121,6 +2121,148 @@ int main (int argc, char** argv)
             return all;
         };
 
+        // ---------------- polygon rooms (floor plans) ----------------
+        {
+            // 1) a rectangle given as a polygon must give exactly the shoebox's mirror images
+            RoomParams bx; bx.on = true; bx.width = 14; bx.length = 26; bx.height = 9;
+            RoomParams pr = bx; pr.shape = shapeFan; pr.shapeAmt = 0.0f; finishPlan (pr, defaultDrawnPlan());
+            std::vector<PlanPath> paths (2048); std::vector<PlanImage> cand (1024);
+            const Vec3f S { 5.0f, 19.0f, 3.0f }, Lp = listenerPos (bx);
+            bool same = true;
+            for (int ord = 1; ord <= 3; ++ord)
+            {
+                std::array<ImageSource, 62> ims;
+                const int nb = imageSources (bx, S, ord, ims.data(), 62);
+                const auto g = planGeo (pr);
+                const int np = planImageSources (pr, g, S, Lp, ord, paths.data(), 2048, cand.data(), 1024, 1024);
+                int matched = 0;
+                for (int i = 0; i < nb; ++i)
+                    for (int j = 0; j < np; ++j)
+                    {
+                        const auto& a = ims[(size_t) i].pos; const auto& b = cand[(size_t) j].pos;
+                        if (std::abs (a.x - b.x) + std::abs (a.y - b.y) + std::abs (a.z - b.z) < 1.0e-3f) { ++matched; break; }
+                    }
+                std::cout << "plan: rectangle as polygon, order " << ord << ": " << np << " images, shoebox " << nb << ", matched " << matched << std::endl;
+                same = same && np == nb && matched == nb;
+            }
+            check (same, "plan: a rectangular polygon gives the shoebox's mirror images");
+            check (! planSelfIntersects (makeFloorPlan (shapeCross, 0.5f, defaultDrawnPlan())) && ! planSelfIntersects (defaultDrawnPlan()), "plan: presets are simple polygons");
+            {
+                FloorPlan bow; bow.n = 4; bow.x = { 0, 1, 0, 1 }; bow.y = { 0, 1, 1, 0 };
+                check (planSelfIntersects (bow), "plan: a crossed polygon is detected");
+            }
+
+            // 2) L-shaped room: no reflection path passes through the inner corner; every path is geometrically right
+            RoomParams lr = bx; lr.shape = shapeL; lr.shapeAmt = 1.0f; finishPlan (lr, defaultDrawnPlan());
+            {
+                const auto g = planGeo (lr);
+                check (! g.convex && g.n == 6, "plan: the L is non-convex with 6 walls");
+                const Vec3f Ls = listenerPos (lr);
+                const Vec3f Ss = roomPoint (lr, { -20.0f, 0.0f, 12.0f });
+                const int n3 = planImageSources (lr, g, Ss, Ls, 3, paths.data(), 2048, cand.data(), 1024, 1024);
+                int bad = 0;
+                for (int i = 0; i < n3; ++i)
+                {
+                    const auto& c = cand[(size_t) i];
+                    // walk the path again: it must stay inside the room at every step
+                    PlanPath pp; pp.k = c.k; pp.w = c.w;
+                    float qx[3], qy[3];
+                    if (! planPathPoints (g, pp, Ss.x, Ss.y, Ls.x, Ls.y, qx, qy)) { ++bad; continue; }
+                    float px = Ls.x, py = Ls.y;
+                    for (int j = c.k - 1; j >= -1; --j)
+                    {
+                        const float tx = j >= 0 ? qx[j] : Ss.x, ty = j >= 0 ? qy[j] : Ss.y;
+                        for (int m = 1; m < 10; ++m)
+                        {
+                            const float f = (float) m / 10.0f;
+                            if (! insidePlan (g, px + f * (tx - px), py + f * (ty - py))) { ++bad; j = -2; break; }
+                        }
+                        px = tx; py = ty;
+                    }
+                    // and the path length equals the distance to the image
+                    float len = 0, ax = Ls.x, ay = Ls.y;
+                    for (int j = c.k - 1; j >= 0; --j) { len += std::hypot (qx[j] - ax, qy[j] - ay); ax = qx[j]; ay = qy[j]; }
+                    len += std::hypot (Ss.x - ax, Ss.y - ay);
+                    if (std::abs (len - std::hypot (c.pos.x - Ls.x, c.pos.y - Ls.y)) > 1.0e-2f) ++bad;
+                }
+                const auto inSrc = insidePlan (g, Ss.x, Ss.y);
+                std::cout << "plan: L-shape, 3rd order: " << n3 << " visible images, " << bad << " wrong" << std::endl;
+                check (inSrc && bad == 0 && n3 > 10, "plan: L-shape reflection paths are valid and stay inside");
+            }
+            // 3) listener / sources always inside, also where the shoebox position would be outside
+            {
+                RoomParams q = lr; q.listenerX = 0.95f; q.listenerY = 0.95f;     // in the cut-out corner
+                const auto g = planGeo (q);
+                const auto l = listenerPos (q);
+                bool ok = insidePlan (g, l.x, l.y) && planEdgeDist (g, l.x, l.y) > 0.25f;
+                for (int a = -180; a < 180; a += 7)
+                    for (float d : { 1.0f, 8.0f, 60.0f })
+                    {
+                        const auto pnt = roomPoint (q, { (float) a, 10.0f, d });
+                        ok = ok && insidePlan (g, pnt.x, pnt.y);
+                    }
+                check (ok, "plan: listener and sources are kept inside the plan");
+            }
+            // 4) ray tracer: a rectangle as polygon agrees with the shoebox tracer; a hexagon agrees with Eyring
+            {
+                RoomParams c; c.width = 12; c.length = 12; c.height = 12; c.absWalls = c.absFloor = 0.2f; c.scatter = 0.5f; c.highDamp = 0.0f;
+                RoomParams cp = c; cp.shape = shapeFan; cp.shapeAmt = 0.0f; finishPlan (cp, defaultDrawnPlan());
+                RoomParams hx = c; hx.shape = shapeOct; hx.shapeAmt = 0.5f; finishPlan (hx, defaultDrawnPlan());
+                const auto a = traceRoom (c, 0.5f), b = traceRoom (cp, 0.5f), h = traceRoom (hx, 0.5f);
+                std::cout << "plan: ray tracer cube " << a.rtLow << " s, cube as polygon " << b.rtLow << " s; octagon " << h.rtLow
+                          << " s (Eyring " << eyringRt (hx, false, 0.5f) << " s, V " << roomVolume (hx) << " m3)" << std::endl;
+                check (std::abs (b.rtLow / a.rtLow - 1.0f) < 0.05f, "plan: polygon ray tracer = shoebox ray tracer for a rectangle");
+                check (std::abs (h.rtLow / eyringRt (hx, false, 0.5f) - 1.0f) < 0.15f, "plan: octagon ray tracing agrees with Eyring");
+                RoomParams lr2 = lr; lr2.absWalls = 0.1f; lr2.scatter = 0.3f;
+                const auto rl = traceRoom (lr2, 0.5f);
+                check (rl.valid && rl.rtLow > 0.1f && rl.rtLow < 30.0f, "plan: L-shape ray tracing gives a decay");
+            }
+        }
+        {   // 5) the engine: a rectangle-as-polygon sounds like the shoebox; moving sources in an L-shape stay smooth
+            auto setupRect = [] (int shape) { return [shape] (EngineParams& p)
+            {
+                p.room.on = true; p.room.width = 14; p.room.length = 24; p.room.height = 9; p.room.order = 2; p.room.tailGain = 0.0f;
+                p.room.shape = shape; p.room.shapeAmt = 0.0f;
+            }; };
+            auto a = run (setupRect (shapeBox), 1.5, -1, "", 4);
+            auto b = run (setupRect (shapeFan), 1.5, -1, "42_plan_rect_as_polygon", 4);
+            double e = 0, d = 0;
+            for (int i = 0; i < a.getNumSamples(); ++i) { const double x = a.getSample (0, i), y = b.getSample (0, i); e += x * x; d += (x - y) * (x - y); }
+            const double db = 10.0 * std::log10 (d / juce::jmax (1e-30, e) + 1e-30);
+            std::cout << "plan: shoebox vs the same rectangle as polygon (engine): difference " << db << " dB" << std::endl;
+            check (db < -60.0, "plan: the polygon engine matches the shoebox for a rectangle");
+
+            // a fast rotating stop in an L-shaped room, 3rd order: no clicks when paths appear / disappear
+            OrganEngine e1, e2;
+            auto setupL = [] (bool erOn) { return [erOn] (EngineParams& p)
+            {
+                p.room.on = true; p.room.width = 16; p.room.length = 22; p.room.height = 8; p.room.order = 3; p.room.tailGain = 0.0f;
+                p.room.shape = shapeL; p.room.shapeAmt = 1.0f; p.room.absWalls = 0.02f; p.room.erGain = erOn ? 1.0f : 0.0f;
+                p.motionMode[0] = (int) Motion::Rotation; p.motionRate[0] = 0.15f;
+            }; };
+            for (auto* e : { &e1, &e2 }) { e->baseAz[0][(size_t) keyA] = 0.0f; e->baseEl[0][(size_t) keyA] = 0.0f; e->baseDist[0][(size_t) keyA] = 7.0f; }
+            auto t0 = std::chrono::high_resolution_clock::now();
+            auto on = run (setupL (true), 4.0, -1, "43_plan_L_rotating", 4, &e1);
+            const double rtf = 4.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+            auto off = run (setupL (false), 4.0, -1, "", 4, &e2);
+            // the reflections alone (W): the largest sample-to-sample jump relative to their level
+            bool finite = true; double maxStep = 0, rms = 0;
+            int ns = on.getNumSamples();
+            for (int i = 1; i < ns; ++i)
+            {
+                const double x = on.getSample (0, i) - off.getSample (0, i), xp = on.getSample (0, i - 1) - off.getSample (0, i - 1);
+                finite = finite && std::isfinite (x);
+                // second difference: a click shows up as a spike far above the smooth signal
+                if (i > 1) { const double xpp = on.getSample (0, i - 2) - off.getSample (0, i - 2); maxStep = juce::jmax (maxStep, std::abs (x - 2 * xp + xpp)); }
+                rms += x * x;
+            }
+            rms = std::sqrt (rms / ns);
+            std::cout << "plan: L-shape rotating source, 3rd order: reflections rms " << rms << ", max 2nd difference " << maxStep
+                      << " (" << maxStep / juce::jmax (1e-12, rms) << " x rms), " << rtf << " x real time" << std::endl;
+            check (finite && rms > 1.0e-4, "plan: L-shape reflections are there and finite");
+            check (maxStep < 2.0 * rms, "plan: no clicks when reflection paths come and go");
+        }
+
         {   // long sessions: the reflections must sound the same after the plugin has run for a long time
             // (the read position of the delay lines once lost its fraction after ~6 minutes -> aliasing, high ringing)
             auto setup = [] (EngineParams& p) { p.room.on = true; p.room.tailGain = 0.0f; p.room.order = 2; };
@@ -2367,6 +2509,31 @@ int main (int argc, char** argv)
             }
             std::cout << "room: response swapped while playing: largest level difference to no swap " << worst << " dB (in use: " << s2 << ")" << std::endl;
             check (worst < 1.0 && s2 == 2 && s1 == 1, "room change: the reverb turns into the new room without a gap");
+        }
+        {   // CPU, worst case for floor plans: 48 moving pipes with their own reflections, 3rd order, shoebox vs polygons
+            double rts[3] {};
+            const int shapesB[] { shapeBox, shapeCross, shapeRound };
+            for (int si = 0; si < 3; ++si)
+            {
+                OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = p.stopOn[1] = true;
+                p.motionMode.fill ((int) Motion::Rotation); p.motionRate.fill (0.3f);
+                p.outputMode = 3; p.room.on = true; p.room.order = 3; p.room.shape = shapesB[si]; p.room.shapeAmt = 0.5f;
+                e.setTailIR (TailIR::build (p.room, p.air, 3, fsr, 1));
+                juce::AudioBuffer<float> b (16, B);
+                const int blocks = (int) (6.0 * fsr / B);
+                auto t0 = std::chrono::high_resolution_clock::now();
+                for (int i = 0; i < blocks; ++i)
+                {
+                    juce::MidiBuffer mb;
+                    if (i == 0) for (int m = 48; m < 72; ++m) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 90), 0);
+                    e.process (b, mb, p);
+                }
+                rts[si] = 6.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+                std::cout << "plan CPU: " << (si == 0 ? "shoebox" : si == 1 ? "cross" : "round") << ", 48 rotating pipes (" << e.erActive.load()
+                          << " with own reflections), 3rd order: " << rts[si] << " x real time" << std::endl;
+            }
+            check (rts[1] > 0.6 * rts[0] && rts[2] > 0.6 * rts[0], "plan: polygon rooms cost about as much as the shoebox");
         }
         {   // CPU: a chord on 3 stops (18 pipes) and on all 8 stops (48 pipes), reflections up to 2nd / 3rd order, 3rd-order output
             for (int stops : { 3, 8 })

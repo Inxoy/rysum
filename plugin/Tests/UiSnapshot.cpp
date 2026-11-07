@@ -712,6 +712,43 @@ public:
                 { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 60), 0); st.clear(), proc->processBlock (st, mb); }
                 setReal (RysumProcessor::stopRoomParamId (1), 0.0f);
             }
+            {
+                // floor plans: L-shape, cross, drawn - the late reverb is rebuilt for each, the page shows the plan
+                L->setValueNotifyingHost (0.0f);
+                auto setReal = [&] (const juce::String& id, float v) { if (auto* q = proc->apvts.getParameter (id)) q->setValueNotifyingHost (q->convertTo0to1 (v)); };
+                auto settle = [&]
+                {
+                    for (int b = 0; b < 30; ++b) { juce::MidiBuffer mb; st.clear(), proc->processBlock (st, mb); }
+                    for (int i = 0; i < 40; ++i) { juce::MessageManager::getInstance()->runDispatchLoopUntil (60); juce::MidiBuffer mb; st.clear(), proc->processBlock (st, mb); }
+                };
+                const float rtBox = proc->engine.roomRtLow.load();
+                const juce::String names[] { "l", "kreuz", "rund", "gezeichnet" };
+                const int shapes[] { rysum::shapeL, rysum::shapeCross, rysum::shapeRound, rysum::shapeDrawn };
+                for (int i = 0; i < 4; ++i)
+                {
+                    setReal ("simShape", (float) shapes[i]);
+                    setReal ("simShapeAmt", 0.7f);
+                    { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100), 0); st.clear(), proc->processBlock (st, mb); }
+                    settle();
+                    std::cout << "Saal plan " << names[i] << ": RT " << proc->engine.roomRtLow.load() << " s (shoebox " << rtBox << " s), "
+                              << proc->engine.erActive.load() << " sounds with reflections, " << proc->getRoomStatus() << std::endl;
+                    shoot (2, "ui_saal_plan_" + names[i] + ".png");
+                }
+                // the drawn plan goes through the project state
+                rysum::FloorPlan d; d.n = 5;
+                const float xs[] { 0.0f, 1.0f, 0.8f, 0.3f, 0.1f }, ys[] { 0.1f, 0.0f, 1.0f, 0.85f, 0.6f };
+                for (int k = 0; k < 5; ++k) { d.x[(size_t) k] = xs[k]; d.y[(size_t) k] = ys[k]; }
+                proc->setDrawnPlan (2, d);
+                juce::MemoryBlock mb2; proc->getStateInformation (mb2);
+                proc->setDrawnPlan (2, rysum::defaultDrawnPlan());
+                proc->setStateInformation (mb2.getData(), (int) mb2.getSize());
+                const auto& back = proc->getDrawnPlan (2);
+                std::cout << "drawn floor plan: " << back.n << " corners after the state round trip"
+                          << ((back.n == 5 && std::abs (back.x[2] - 0.8f) < 1e-3f && proc->engine.getDrawnPlan (2).n == 5) ? "  ok" : "  FAIL") << std::endl;
+                setReal ("simShape", 0.0f);
+                setReal ("simShapeAmt", 0.5f);
+                L->setValueNotifyingHost (1.0f);
+            }
             L->setValueNotifyingHost (0.0f);
             { juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::noteOff (1, 64), 0); st.clear(), proc->processBlock (st, mb); }
             P->setValueNotifyingHost (0.0f);

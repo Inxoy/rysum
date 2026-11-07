@@ -15,6 +15,10 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    /** copy the shown plan into the drawn one and switch to it */
+    void takeOverPlan();
 
 private:
     struct Frame { float scale = 10.0f; juce::Point<float> origin; };          // room metres -> screen
@@ -25,7 +29,39 @@ private:
     RysumProcessor& proc;
     int& shownRoom;                              // the room shown (0..3)
     bool dragging = false;
+    int dragVertex = -1, hoverVertex = -1;
     RoomParams heardNow() const;
+    bool drawing() const;                        // the shown room has the drawn plan: its corners can be edited
+    int vertexAt (juce::Point<float> screen) const;
+    juce::Point<float> toPlan (juce::Point<float> screen) const;   // screen -> fractions of width / length
+    void setShape (int shape);
+    std::vector<PlanPath> paths = std::vector<PlanPath> (1024);
+    std::vector<PlanImage> cand = std::vector<PlanImage> (512);
+};
+
+/** the floor plans as small pictures to choose from */
+class ShapeStrip : public juce::Component
+{
+public:
+    ShapeStrip (RysumProcessor& p, int& editRoom);
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    void refresh();
+
+private:
+    struct Icon : public juce::Button
+    {
+        Icon (ShapeStrip& o, int s) : juce::Button ({}), owner (o), shape (s) {}
+        void paintButton (juce::Graphics&, bool over, bool down) override;
+        ShapeStrip& owner;
+        int shape;
+    };
+    RysumProcessor& proc;
+    int& shownRoom;
+    std::vector<std::unique_ptr<Icon>> icons;
+    int shownShape = -1, shownRoomIdx = -1;
+    float shownAmt = -1.0f;
+    int currentShape() const;
 };
 
 /** sixth page: the simulated, playable room */
@@ -45,6 +81,8 @@ private:
     RysumProcessor& proc;
     int editRoom = 0;
     SaalPlan plan { proc, editRoom };
+    ShapeStrip shapes { proc, editRoom };
+    std::array<ParamRow*, rysum::kNumRooms> formR {};
     // several rooms: which one is edited / shown, and which stop sounds in which room
     std::array<juce::TextButton, rysum::kNumRooms> roomTabs;
     std::array<juce::TextButton, rysum::kNumStops + 1> assign;          // stops in console order, then the input

@@ -354,6 +354,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { "inpSend", 1 }, "Eingang Hall-Anteil", NormalisableRange<float> (-60.0f, 12.0f, 0.1f), 0.0f, dbIn));
     }
 
+    // ---- floor plans of the simulated rooms (page "Saal"): shoebox by default, so older projects sound the same
+    for (int r = 0; r < rysum::kNumRooms; ++r)
+    {
+        const String pre = r == 0 ? String ("Saal ") : "Saal " + String (r + 1) + " ";
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { roomParamId (r, "Shape"), 1 }, pre + "Grundriss", roomShapeNames(), 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { roomParamId (r, "ShapeAmt"), 1 }, pre + "Grundriss Form",
+                                                      NormalisableRange<float> (0.0f, 1.0f), 0.5f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (juce::roundToInt (v * 100)) + " %"; })));
+    }
+
     // ---- shape of the motion per stop (page "Raum"): ellipse direction / tilt / form, drawn path, hard jumps
     for (int s = 0; s < kNumStops; ++s)
     {
@@ -498,9 +508,10 @@ RysumProcessor::RysumProcessor()
     for (int k = 0; k < kNumSim; ++k) ix.sim[(size_t) k] = I (kSimIds[k]);
     for (int k = 0; k < kNumInp; ++k) ix.inp[(size_t) k] = I (kInpIds[k]);
     {
-        const char* keys[] { "W", "L", "H", "Size", "Lx", "Ly", "Abs", "AbsFloor", "High", "Scatter" };
+        const char* keys[] { "W", "L", "H", "Size", "Lx", "Ly", "Abs", "AbsFloor", "High", "Scatter", "Shape", "ShapeAmt" };
         for (int r = 0; r < rysum::kNumRooms; ++r)
-            for (int k = 0; k < 10; ++k) ix.room[(size_t) r][(size_t) k] = I (roomParamId (r, keys[k]));
+            for (int k = 0; k < 12; ++k) ix.room[(size_t) r][(size_t) k] = I (roomParamId (r, keys[k]));
+        for (int r = 0; r < rysum::kNumRooms; ++r) { drawnPlans[(size_t) r] = rysum::defaultDrawnPlan(); engine.setDrawnPlan (r, drawnPlans[(size_t) r]); }
         for (int st = 0; st < kNumStops; ++st) ix.stopRoom[(size_t) st] = I (stopRoomParamId (st));
         ix.inputRoom = I ("simRoomIn");
         ix.noteSpread = I ("noteSpread");
@@ -689,6 +700,8 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     r.erGain = S (simEr) <= -59.9f ? 0.0f : dbToGain (S (simEr));
     r.tailGain = S (simTail) <= -59.9f ? 0.0f : dbToGain (S (simTail));
     r.tailModel = juce::roundToInt (S (simTailModel));
+    r.shape = juce::jlimit (0, rysum::kNumRoomShapes - 1, juce::roundToInt (V (ix.room[0][10])));
+    r.shapeAmt = V (ix.room[0][11]);
     // the other rooms: own size, surfaces and listener; reflections order and levels as room 1
     for (int ri = 1; ri < rysum::kNumRooms; ++ri)
     {
@@ -697,6 +710,7 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         q = r;
         q.width = R (0); q.length = R (1); q.height = R (2); q.size = R (3); q.listenerX = R (4); q.listenerY = R (5);
         q.absWalls = R (6); q.absFloor = R (7); q.highDamp = R (8); q.scatter = R (9);
+        q.shape = juce::jlimit (0, rysum::kNumRoomShapes - 1, juce::roundToInt (R (10))); q.shapeAmt = R (11);
     }
     for (int st = 0; st < kNumStops; ++st) p.stopRoom[(size_t) st] = juce::roundToInt (V (ix.stopRoom[(size_t) st]));
     p.inputRoom = juce::roundToInt (V (ix.inputRoom));
@@ -1250,7 +1264,50 @@ rysum::RoomParams RysumProcessor::heardRoom (int room) const
     r.width = h.W.load(); r.length = h.L.load(); r.height = h.H.load(); r.size = 1.0f;
     r.listenerX = h.Lx.load(); r.listenerY = h.Ly.load();
     r.absWalls = h.absW.load(); r.absFloor = h.absF.load(); r.highDamp = h.highD.load(); r.scatter = h.scat.load();
+    r.shape = h.shape.load(); r.shapeAmt = h.shapeAmt.load();
+    rysum::finishPlan (r, drawnPlans[(size_t) juce::jlimit (0, rysum::kNumRooms - 1, room)]);
     return r;
+}
+
+juce::StringArray RysumProcessor::roomShapeNames()
+{
+    // (new shapes only at the end: the index is stored)
+    return { "Quader", "L-Form", juce::String::fromUTF8 ("FÃ¤" "cher"), "Sechseck", "Achteck", "Rund", "Kreuz", "Apsis", "Gezeichnet" };
+}
+
+void RysumProcessor::setDrawnPlan (int room, const rysum::FloorPlan& f)
+{
+    if (room < 0 || room >= rysum::kNumRooms) return;
+    drawnPlans[(size_t) room] = f;
+    engine.setDrawnPlan (room, f);
+    ++changeCounter;
+}
+
+static juce::String planString (const rysum::FloorPlan& f)
+{
+    juce::StringArray pts;
+    for (int i = 0; i < f.n; ++i) pts.add (juce::String (f.x[(size_t) i], 4) + " " + juce::String (f.y[(size_t) i], 4));
+    return pts.joinIntoString (",");
+}
+
+static rysum::FloorPlan planFromString (const juce::String& s)
+{
+    rysum::FloorPlan f;
+    f.n = 0;
+    juce::StringArray pts;
+    pts.addTokens (s, ",", {});
+    for (auto& t : pts)
+    {
+        juce::StringArray v; v.addTokens (t, " ", {});
+        if (v.size() >= 2 && f.n < rysum::kMaxPlanVerts)
+        {
+            f.x[(size_t) f.n] = juce::jlimit (0.0f, 1.0f, v[0].getFloatValue());
+            f.y[(size_t) f.n] = juce::jlimit (0.0f, 1.0f, v[1].getFloatValue());
+            ++f.n;
+        }
+    }
+    if (f.n < 3 || rysum::planSelfIntersects (f)) return rysum::defaultDrawnPlan();
+    return f;
 }
 
 juce::String RysumProcessor::roomKey (int room) const
@@ -1261,7 +1318,8 @@ juce::String RysumProcessor::roomKey (int room) const
     auto ql = [] (float v) { return juce::String (juce::roundToInt (std::log (juce::jmax (0.1f, v)) / 0.015f)); };
     return ql (r.W()) + "|" + ql (r.L()) + "|" + ql (r.H()) + "|" + q (r.absWalls, 0.004f) + "|" + q (r.absFloor, 0.004f) + "|"
          + q (r.highDamp, 0.01f) + "|" + q (r.scatter, 0.02f) + "|" + q (engine.roomAir.load(), 0.02f) + "|"
-         + juce::String (juce::jmin (2, engine.roomOutOrder.load())) + "|" + juce::String (hostRate.load(), 0);
+         + juce::String (juce::jmin (2, engine.roomOutOrder.load())) + "|" + juce::String (hostRate.load(), 0)
+         + (r.box() ? juce::String() : "|" + juce::String (r.shape) + "|" + planString (r.plan));
 }
 
 void RysumProcessor::buildTailNow (int room, const juce::String& key)
@@ -1389,12 +1447,15 @@ void RysumProcessor::updateLucier (double dt)
     r.width = raw ("simW"); r.length = raw ("simL"); r.height = raw ("simH"); r.size = raw ("simSize");
     r.listenerX = raw ("simLx"); r.listenerY = raw ("simLy");
     r.absWalls = raw ("simAbs"); r.absFloor = raw ("simAbsFloor"); r.highDamp = raw ("simHigh"); r.scatter = raw ("simScatter");
+    r.shape = juce::jlimit (0, rysum::kNumRoomShapes - 1, juce::roundToInt (raw ("simShape"))); r.shapeAmt = raw ("simShapeAmt");
+    rysum::finishPlan (r, drawnPlans[0]);
     const float air = raw ("air");
     auto q = [] (float v, float step) { return juce::String (juce::roundToInt (v / step)); };
     const juce::String baseKey = source == 1 ? "ir|" + irFile.getFullPathName() + "|" + juce::String (rate, 0)
                                              : "saal|" + q (r.W(), 0.05f) + "|" + q (r.L(), 0.05f) + "|" + q (r.H(), 0.05f) + "|" + q (r.listenerX, 0.01f) + "|"
                                                + q (r.listenerY, 0.01f) + "|" + q (r.absWalls, 0.004f) + "|" + q (r.absFloor, 0.004f) + "|" + q (r.highDamp, 0.01f)
-                                               + "|" + q (air, 0.02f) + "|" + juce::String (rate, 0);
+                                               + "|" + q (air, 0.02f) + "|" + juce::String (rate, 0)
+                                               + (r.box() ? juce::String() : "|" + juce::String (r.shape) + "|" + planString (r.plan));
     const float tau = raw ("lucTime");
     const juce::String key = baseKey + "#" + q (lucEffective, 0.02f) + "|" + q (tau, 0.005f);
     if (key == builtLucKey) return;
@@ -1771,6 +1832,13 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
     if (! forPatch) extra.appendChild (speakersState(), nullptr);      // so does the loudspeaker layout
     if (! forPatch && lucPiece.recordingFile.isNotEmpty()) extra.setProperty ("lucRecording", lucPiece.recordingFile, nullptr);
     extra.appendChild (scenesState(), nullptr);
+    {
+        // the drawn floor plans (only the ones that were drawn)
+        juce::ValueTree plans ("SAALPLAN");
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+            if (! (drawnPlans[(size_t) r] == rysum::defaultDrawnPlan())) plans.setProperty ("room" + juce::String (r), planString (drawnPlans[(size_t) r]), nullptr);
+        extra.appendChild (plans, nullptr);
+    }
     if (! forPatch)
     {
         juce::String dg;
@@ -1843,6 +1911,14 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
         }
     }
     patchName = extra["patch"].toString();
+    {
+        const auto plans = extra.getChildWithName ("SAALPLAN");
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+        {
+            const auto key = "room" + juce::String (r);
+            setDrawnPlan (r, plans.isValid() && plans.hasProperty (key) ? planFromString (plans[key].toString()) : rysum::defaultDrawnPlan());
+        }
+    }
     if (extra.hasProperty ("scl"))
         setScala (extra["scl"].toString(), extra["sclName"].toString(), extra["kbm"].toString(), extra["kbmName"].toString());
     else if (! forPatch && sclText.isNotEmpty())

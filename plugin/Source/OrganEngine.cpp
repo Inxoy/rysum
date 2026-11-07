@@ -77,6 +77,7 @@ static void mixInto (float* const* dst, int off, int numCh, const float* x, cons
 
 OrganEngine::OrganEngine()
 {
+    for (int r = 0; r < kNumRooms; ++r) { drawnPlans[(size_t) r][0] = drawnPlans[(size_t) r][1] = defaultDrawnPlan(); drawnPlanActive[(size_t) r] = 0; }
     voices.resize ((size_t) kMaxVoices);
     noise.resize ((size_t) kMaxNoiseVoices);
     for (int k = 0; k < kNumKeys; ++k) { keySource[(size_t) k] = k; slotHz[(size_t) k] = (float) meantoneHz (kPhysKeys[(size_t) k]); }
@@ -121,6 +122,8 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     fxScratch.assign ((size_t) maxBlock * 12, 0.0f);
     // simulated room (all memory here, nothing is allocated while playing)
     erSlots.assign ((size_t) kErSlots, ErSlot {});
+    planPathScratch.assign ((size_t) kPlanPaths, PlanPath {});
+    planCandScratch.assign ((size_t) kPlanCand, PlanImage {});
     erRing.assign ((size_t) kErSlots * (size_t) kErRing, 0.0f);
     for (auto& v : voices) v.erSlot = -1;
     for (auto& n : noise) n.erSlot = -1;
@@ -1303,7 +1306,8 @@ int OrganEngine::allocSlot (int voice, int noiseVoice) noexcept
     s.active = true; s.fresh = true;
     s.voice = voice; s.noiseVoice = noiseVoice; s.input = -1;
     s.drain = 0; s.numTaps = 0;
-    for (auto& t : s.taps) t.lp = 0.0f;
+    for (auto& t : s.taps) { t.lp = 0.0f; t.code = -1; t.vis = t.visT = 0.0f; t.hold = t.born = false; }
+    s.visValid = false; s.fading = false; s.visShape = -1; s.visN = -1;
     std::fill_n (erRing.data() + (size_t) best * (size_t) kErRing, kErRing, 0.0f);
     return best;
 }
@@ -1321,11 +1325,12 @@ void OrganEngine::releaseSlot (int& slot) noexcept
 
 void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r) noexcept
 {
+    if (! r.box()) { updateSlotTapsPlan (s, srcPos, base, p, r); return; }
     {
         // a source that has not moved in an unchanged room: the taps are still right
         const std::array<float, ErSlot::kKey> key { srcPos.az, srcPos.el, srcPos.dist, base, r.W(), r.L(), r.H(), r.listenerX, r.listenerY,
                                                     r.absWalls, r.absFloor, r.highDamp, r.scatter, (float) r.order, r.erGain,
-                                                    distAmountNow, p.air, (float) order };
+                                                    distAmountNow, p.air, (float) order, 0.0f, 0.0f, 0.0f };
         if (! s.fresh && s.keyValid && key == s.key) return;
         s.key = key; s.keyValid = true;
     }
@@ -1383,6 +1388,135 @@ void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const Engin
     s.fresh = false;
 }
 
+/** Early reflections in a polygon room. Finding the visible reflection paths is expensive (a search over all wall
+    sequences, with occlusion tests in non-convex rooms), so it runs only when the source has moved noticeably, the
+    room changed or a new sound starts - and at most a few times per block (the rest wait for the next block).
+    In between, every tap keeps its path and only the image position is recomputed (cheap and smooth). Paths that
+    appear or disappear fade in / out over 25 ms, like a reflection that slides past the end of a wall. */
+void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r) noexcept
+{
+    const std::array<float, ErSlot::kKey> key { srcPos.az, srcPos.el, srcPos.dist, base, r.W(), r.L(), r.H(), r.listenerX, r.listenerY,
+                                                r.absWalls, r.absFloor, r.highDamp, r.scatter, (float) r.order, r.erGain,
+                                                distAmountNow, p.air, (float) order, (float) r.shape, r.shapeAmt, (float) r.plan.n };
+    if (! s.fresh && s.keyValid && key == s.key && ! s.fading) return;
+    bool roomChanged = ! s.keyValid;
+    for (int i = 4; i < ErSlot::kKey && ! roomChanged; ++i) roomChanged = key[(size_t) i] != s.key[(size_t) i];
+    s.key = key; s.keyValid = true;
+
+    const auto g = planGeo (r);
+    const Vec3f L = listenerPos (r), S = roomPoint (r, srcPos);
+    const float rd = seenFrom (L, S).dist;
+    const bool topo = s.visShape != r.shape || s.visN != r.plan.n;          // other walls: the old paths mean nothing any more
+    const float moved = std::sqrt ((S.x - s.visSrc.x) * (S.x - s.visSrc.x) + (S.y - s.visSrc.y) * (S.y - s.visSrc.y) + (S.z - s.visSrc.z) * (S.z - s.visSrc.z));
+    const bool need = s.fresh || ! s.visValid || topo || roomChanged || moved > 0.12f;
+    // the searches are spread evenly: every slot may search in one block out of kPlanEvery (new sounds and new plans at once)
+    const bool myTurn = ((erSlotIndex + erBlockCount) % kPlanEvery) == 0;
+    if (need && (s.fresh || topo || ! s.visValid || myTurn))
+    {
+        const int nc = planImageSources (r, g, S, L, r.order, planPathScratch.data(), kPlanPaths, planCandScratch.data(), kPlanCand, kMaxTaps);
+        if (topo && ! s.fresh)
+            for (int i = 0; i < s.numTaps; ++i)
+            {
+                auto& t = s.taps[(size_t) i];
+                if (t.code == -1) continue;
+                t.code = -2; t.hold = true; t.visT = 0.0f;                    // fade out where it is
+            }
+        bool keep[kMaxTaps] {};
+        int fresh[kMaxTaps], nFresh = 0;
+        for (int c = 0; c < nc; ++c)
+        {
+            const auto& im = planCandScratch[(size_t) c];
+            int found = -1;
+            for (int i = 0; i < s.numTaps && found < 0; ++i) if (s.taps[(size_t) i].code == im.code) found = i;
+            if (found >= 0) { keep[found] = true; s.taps[(size_t) found].visT = 1.0f; }
+            else fresh[nFresh++] = c;
+        }
+        for (int i = 0; i < s.numTaps; ++i)
+        {
+            auto& t = s.taps[(size_t) i];
+            if (t.code >= 0 && ! keep[i]) t.visT = 0.0f;
+        }
+        int slot = 0;
+        for (int f = 0; f < nFresh; ++f)
+        {
+            while (slot < kMaxTaps && s.taps[(size_t) slot].code != -1) ++slot;
+            if (slot >= kMaxTaps) break;                                       // full of fading taps: the rest come at the next search
+            const auto& im = planCandScratch[(size_t) fresh[f]];
+            auto& t = s.taps[(size_t) slot];
+            t.code = im.code; t.k = im.k; t.w = im.w; t.mz = im.mz;
+            t.hw = juce::jlimit (0, 3, im.hitsWalls); t.hf = juce::jlimit (0, 3, im.hitsFloor);
+            t.hold = false; t.born = true;
+            t.vis = s.fresh ? 1.0f : 0.0f; t.visT = 1.0f;
+        }
+        s.visSrc = S; s.visValid = true; s.visShape = r.shape; s.visN = r.plan.n;
+    }
+
+    const auto ab = BandAbsorption::from (r);
+    const float Rw = std::sqrt (1.0f - ab.wallLow), Rf = std::sqrt (1.0f - ab.floorLow);
+    const float shW = std::sqrt ((1.0f - ab.wallHigh) / juce::jmax (1e-4f, 1.0f - ab.wallLow));
+    const float shF = std::sqrt ((1.0f - ab.floorHigh) / juce::jmax (1e-4f, 1.0f - ab.floorLow));
+    const float spec = std::sqrt (juce::jlimit (0.0f, 1.0f, 1.0f - r.scatter));
+    const float airDiff = 0.5f * (airHigh (p.air) - airLow());
+    const int encOrder = order == 0 ? 0 : juce::jmin (order, 3);
+    const float maxDelay = (float) (kErRing - 4 * kSubBlock);
+    const float step = (float) erBlockN / (float) (0.025 * sr);
+    float powW[4], powF[4], powSW[4], powSF[4];
+    for (int k = 0; k < 4; ++k)
+    {
+        powW[k] = std::pow (Rw * spec, (float) k); powF[k] = std::pow (Rf * spec, (float) k);
+        powSW[k] = std::pow (shW, (float) k);      powSF[k] = std::pow (shF, (float) k);
+    }
+    float tmp[kMaxAmbiChannels];
+    bool fading = false;
+    int last = -1;
+    for (int i = 0; i < kMaxTaps; ++i)
+    {
+        auto& t = s.taps[(size_t) i];
+        if (t.code == -1) { if (i < s.numTaps && (t.g0 > 0.0f || t.g1 > 0.0f)) { t.g1 = 0.0f; last = i; } continue; }
+        last = i;
+        t.vis = t.visT > t.vis ? juce::jmin (t.visT, t.vis + step) : juce::jmax (t.visT, t.vis - step);
+        if (t.vis != t.visT) fading = true;
+        float ix = 0.0f, iy = 0.0f;
+        if (! t.hold && ! planImageOf (g, t.k, t.w, S.x, S.y, ix, iy)) { t.hold = true; t.visT = 0.0f; fading = true; }
+        if (t.hold)
+        {
+            t.g1 = t.gFull * t.vis;            // where it was, only fading
+        }
+        else
+        {
+            const float iz = imageCoord (t.mz, r.H(), S.z);
+            const float dx = ix - L.x, dy = iy - L.y, dz = iz - L.z;
+            const float rh = std::sqrt (dx * dx + dy * dy);
+            const float dist = std::sqrt (dx * dx + dy * dy + dz * dz);
+            float delay = (dist - rd) / kSpeedOfSoundRoom * (float) sr;
+            float gain = base * distanceGain (dist, distAmountNow) * r.erGain * powW[t.hw] * powF[t.hf];
+            if (delay > maxDelay) { delay = maxDelay; gain = 0.0f; }
+            t.d1 = juce::jmax (0.0f, delay);
+            t.gFull = gain;
+            t.g1 = gain * t.vis;
+            t.r1 = powSW[t.hw] * powSF[t.hf] * std::exp (-airDiff * dist);
+            std::fill (tmp, tmp + kMaxAmbiChannels, 0.0f);
+            const int o = (t.hw + t.hf == 1) ? encOrder : juce::jmin (encOrder, 1);
+            const double cosAz = rh > 1.0e-6f ? dy / rh : 1.0, sinAz = rh > 1.0e-6f ? -dx / rh : 0.0;
+            const double sinEl = dist > 1.0e-6f ? juce::jlimit (-1.0, 1.0, (double) (dz / dist)) : 0.0;
+            const double cosEl = dist > 1.0e-6f ? (double) (rh / dist) : 1.0;
+            if (encOrder == 0) { encodeStereo (juce::radiansToDegrees (std::atan2 (-dx, dy)), tmp); t.ch = 2; }
+            else { encodeAmbiXDir (cosAz, sinAz, sinEl, cosEl, o, tmp); t.ch = (o + 1) * (o + 1); }
+            std::copy (tmp, tmp + kErCh, t.enc.begin());
+        }
+        if (t.born || s.fresh)
+        {
+            t.d0 = t.d1; t.r0 = t.r1; t.lp = 0.0f;
+            t.g0 = s.fresh ? t.g1 : 0.0f;
+            t.born = false;
+        }
+        if (t.vis <= 0.0f && t.visT <= 0.0f) { t.code = -1; t.hold = false; t.g1 = 0.0f; }
+    }
+    s.numTaps = last + 1;
+    s.fading = fading;
+    s.fresh = false;
+}
+
 void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const EngineParams& p)
 {
     const auto& r = p.room;
@@ -1396,11 +1530,16 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     roomsUsed = used;
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
-        const auto& rr = p.roomAt (ri);
+        auto& rr = roomsNow[(size_t) ri];
+        rr = p.roomAt (ri);
+        finishPlan (rr, getDrawnPlan (ri));            // (the shape amount may be modulated: the plan of this block)
         auto& h = heard[(size_t) ri];
         h.W = rr.W(); h.L = rr.L(); h.H = rr.H(); h.Lx = rr.listenerX; h.Ly = rr.listenerY;
         h.absW = rr.absWalls; h.absF = rr.absFloor; h.highD = rr.highDamp; h.scat = rr.scatter;
+        h.shape = rr.shape; h.shapeAmt = rr.shapeAmt;
     }
+    ++erBlockCount;
+    erBlockN = juce::jmax (1, n);
     if (! roomOnNow || n <= 0)
     {
         erClock += (uint32_t) juce::jmax (0, n);
@@ -1428,22 +1567,23 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
         auto& s = erSlots[si];
         if (! s.active) continue;
         ++activeCount;
+        erSlotIndex = (int) si;
         if (s.voice >= 0)
         {
             const auto& v = voices[(size_t) s.voice];
-            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p, p.roomAt (p.stopRoom[(size_t) v.stop]));
+            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p, roomsNow[(size_t) juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop])]);
             else { s.voice = -1; s.drain = kErRing; }
         }
         else if (s.noiseVoice >= 0)
         {
             const auto& nv = noise[(size_t) s.noiseVoice];
-            if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p, p.room);
+            if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p, roomsNow[0]);
             else { s.noiseVoice = -1; s.drain = kErRing; }
         }
         else if (s.input >= 0)
         {
             const auto& is = inSrc[(size_t) s.input];
-            if (inRunning && is.erSlot == (int) si) updateSlotTaps (s, is.pos, 1.0f, p, p.roomAt (p.inputRoom));
+            if (inRunning && is.erSlot == (int) si) updateSlotTaps (s, is.pos, 1.0f, p, roomsNow[(size_t) juce::jlimit (0, kNumRooms - 1, p.inputRoom)]);
             else { s.input = -1; s.drain = kErRing; }
         }
         else if ((s.drain -= n) <= 0) { s.active = false; continue; }
@@ -1546,7 +1686,7 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         auto& R = rt[(size_t) ri];
-        const auto& rm = p.roomAt (ri);
+        const auto& rm = roomsNow[(size_t) ri];
         if (! ((used >> ri) & 1))
         {
             // not used (any more): rings out with a silent input, then rests

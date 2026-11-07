@@ -192,7 +192,21 @@ public:
     /** audio thread: the late reverb for a room (built in the background) */
     void setTailIR (std::shared_ptr<const TailIR> ir, int roomIndex = 0) noexcept { rt[(size_t) juce::jlimit (0, kNumRooms - 1, roomIndex)].tail.setIR (std::move (ir)); }
     // the other rooms as heard (rooms 1..3; room 0 = the atomics above), for building their tails and the display
-    struct HeardRoom { std::atomic<float> W { 14 }, L { 28 }, H { 11 }, Lx { 0.5f }, Ly { 0.4f }, absW { 0 }, absF { 0 }, highD { 0 }, scat { 0 }, rtLow { 0 }, rtHigh { 0 }; };
+    struct HeardRoom { std::atomic<float> W { 14 }, L { 28 }, H { 11 }, Lx { 0.5f }, Ly { 0.4f }, absW { 0 }, absF { 0 }, highD { 0 }, scat { 0 }, rtLow { 0 }, rtHigh { 0 }, shapeAmt { 0.5f };
+                       std::atomic<int> shape { 0 }; };
+    /** the drawn floor plan of a room (message thread writes, the audio thread reads; double buffered) */
+    void setDrawnPlan (int room, const FloorPlan& f) noexcept
+    {
+        const int r = juce::jlimit (0, kNumRooms - 1, room);
+        const int next = 1 - drawnPlanActive[(size_t) r].load();
+        drawnPlans[(size_t) r][(size_t) next] = f;
+        drawnPlanActive[(size_t) r].store (next);
+    }
+    const FloorPlan& getDrawnPlan (int room) const noexcept
+    {
+        const int r = juce::jlimit (0, kNumRooms - 1, room);
+        return drawnPlans[(size_t) r][(size_t) drawnPlanActive[(size_t) r].load()];
+    }
     std::array<HeardRoom, kNumRooms> heard;
     std::atomic<int> roomsUsed { 1 };                       // bit r = room r has sources
     std::array<std::atomic<uint32_t>, kNumRooms> tailSerialInUseR {};
@@ -325,7 +339,15 @@ private:
     static constexpr int kErRingBits = 16, kErRing = 1 << kErRingBits;
     static constexpr int kMaxTaps = 62;                  // image sources up to 3rd order
     static constexpr int kErCh = 16;                     // reflections are encoded up to 3rd order
-    struct ErTap { float d0 = 0, d1 = 0, g0 = 0, g1 = 0, r0 = 1, r1 = 1, lp = 0; int ch = 4; std::array<float, kErCh> enc {}; };
+    struct ErTap
+    {
+        float d0 = 0, d1 = 0, g0 = 0, g1 = 0, r0 = 1, r1 = 1, lp = 0; int ch = 4; std::array<float, kErCh> enc {};
+        // polygon rooms: which reflection path this tap plays (-1 = free), fading in / out as it becomes (in)visible
+        int code = -1, k = 0, mz = 0, hw = 0, hf = 0;
+        std::array<uint8_t, 3> w {};
+        float vis = 0.0f, visT = 0.0f, gFull = 0.0f;
+        bool hold = false, born = false;
+    };
     struct ErSlot
     {
         bool active = false, fresh = true;
@@ -335,10 +357,23 @@ private:
         int numTaps = 0;
         std::array<ErTap, kMaxTaps> taps {};
         // what the taps were computed from: unchanged (a pipe that does not move) = nothing to recompute
-        static constexpr int kKey = 18;
+        static constexpr int kKey = 21;
         std::array<float, kKey> key {};
         bool keyValid = false;
+        // polygon rooms: where the visible paths were last found, and from which plan
+        Vec3f visSrc {};
+        bool visValid = false, fading = false;
+        int visShape = -1, visN = -1;
     };
+    // polygon rooms: scratch for the path search (audio thread), and how many searches a block may do
+    static constexpr int kPlanPaths = 2048, kPlanCand = 1024;
+    std::vector<PlanPath> planPathScratch;
+    std::vector<PlanImage> planCandScratch;
+    static constexpr int kPlanEvery = 6;                 // 48 slots / 6 = at most 8 path searches per block
+    int erSlotIndex = 0, erBlockN = 64;
+    uint32_t erBlockCount = 0;
+    // the rooms of this block with their plans filled in
+    std::array<RoomParams, kNumRooms> roomsNow {};
 
     struct Scheduled
     {
@@ -409,6 +444,7 @@ private:
     int  allocSlot (int voice, int noiseVoice) noexcept;
     void releaseSlot (int& slot) noexcept;
     void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room) noexcept;
+    void updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room) noexcept;
     void renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
     void renderInput (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept;
     void followInput (int start, int len, const EngineParams& p) noexcept;
@@ -535,6 +571,8 @@ private:
     int lastSpreadStop = -1;
     int spreadStopFor (int key, const EngineParams& p) noexcept;
     std::vector<ErSlot> erSlots;
+    std::array<std::array<FloorPlan, 2>, kNumRooms> drawnPlans {};
+    std::array<std::atomic<int>, kNumRooms> drawnPlanActive {};
     std::vector<float> erRing;                       // [slot][kErRing]
     uint32_t erClock = 0;
     // drawn paths, double-buffered (the writer fills the inactive one, then flips)

@@ -245,6 +245,11 @@ public:
     void setDrawnPath (int stop, std::vector<DrawnPath::Pt> points);
     void setPathOptions (int stop, bool pingPong, bool drawnTiming);
 
+    // ---- drawn floor plans of the simulated rooms (message thread; fractions of width / length)
+    const rysum::FloorPlan& getDrawnPlan (int room) const { return drawnPlans[(size_t) juce::jlimit (0, rysum::kNumRooms - 1, room)]; }
+    void setDrawnPlan (int room, const rysum::FloorPlan& f);
+    static juce::StringArray roomShapeNames();
+
     /** bumps whenever the library, positions or mutes change (UI repaint hint) */
     std::atomic<int> changeCounter { 0 };
 
@@ -274,7 +279,7 @@ private:
         std::array<int, 32> fx {};
         std::array<int, 16> sim {};
         std::array<int, 16> inp {};
-        std::array<std::array<int, 10>, rysum::kNumRooms> room {};
+        std::array<std::array<int, 12>, rysum::kNumRooms> room {};
         std::array<int, rysum::kNumStops> stopRoom {};
         int inputRoom = 0, noteSpread = 0;
     } ix;
@@ -296,7 +301,7 @@ private:
     void buildTailNow (int room, const juce::String& key);
 public:
     /** parameter ids of the simulated rooms: room 0 = the original "simW" ..., rooms 1..3 = "sim2W" ...
-        keys: W L H Size Lx Ly Abs AbsFloor High Scatter */
+        keys: W L H Size Lx Ly Abs AbsFloor High Scatter Shape ShapeAmt */
     static juce::String roomParamId (int room, const char* key) { return room <= 0 ? juce::String ("sim") + key : "sim" + juce::String (room + 1) + key; }
     static juce::String stopRoomParamId (int s) { return "simRoom" + juce::String (s); }
     /** pipes on / off (muted) per stop and key (message thread) */
@@ -416,6 +421,7 @@ private:
 
     std::vector<rysum::KeyTuning> tunings;                      // every entry of the tuning list, computed once
     std::array<DrawnPath, rysum::kNumStops> drawnPaths;
+    std::array<rysum::FloorPlan, rysum::kNumRooms> drawnPlans;
     void sendPath (int stop);
     // free tuning
     rysum::ScalaTuning scala;                                    // message thread

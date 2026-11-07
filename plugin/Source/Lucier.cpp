@@ -86,9 +86,17 @@ std::shared_ptr<const LucierBase> lucierFromRoom (const RoomParams& r, float air
 
     // ---- eigenmodes of the shoebox below the crossover (strongest where Lucier's room sang)
     const double c = kSpeedOfSoundRoom;
-    const double Lx = r.W(), Ly = r.L(), Lz = r.H();
-    const auto rcv = listenerPos (r);
-    const auto src = roomPoint (r, { 0.0f, 10.0f, 6.0f });                // the organ, in front of the listener
+    double Lx = r.W(), Ly = r.L(), Lz = r.H();
+    auto rcv = listenerPos (r);
+    auto src = roomPoint (r, { 0.0f, 10.0f, 6.0f });                // the organ, in front of the listener
+    if (! r.box())
+    {
+        // a polygon room: the modes of a shoebox with the same floor area (the same mode density; the exact
+        // modes of an arbitrary plan would need a wave solver)
+        const float k = std::sqrt (juce::jmax (0.05f, planGeo (r).area / (r.W() * r.L())));
+        Lx *= k; Ly *= k;
+        rcv.x *= k; rcv.y *= k; src.x *= k; src.y *= k;
+    }
     double fc = juce::jlimit (60.0, 400.0, 2.0 * 2000.0 * std::sqrt (rtL / V));
     auto countModes = [&] (double f) { return 4.19 * V * std::pow (f / c, 3.0) + 0.785 * 2.0 * (Lx * Ly + Ly * Lz + Lx * Lz) * std::pow (f / c, 2.0) / 2.0 + (Lx + Ly + Lz) * f / (2.0 * c); };
     while (fc > 40.0 && countModes (1.3 * fc) > 4000.0) fc *= 0.9;
