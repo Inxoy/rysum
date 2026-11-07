@@ -210,8 +210,8 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
         spreadChoice.addItemList (choice->choices, 1);
     spreadAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "noteSpread", spreadChoice);
     spreadChoice.setTooltip (juce::String::fromUTF8 ("Jeder Ton nur auf einer Pfeife eines gezogenen Registers statt auf allen: der Reihe nach "
-                                                     "(1. Ton Praestant, 2. Ton Gedackt â¦), nach Lage im Akkord (tiefster Ton aufs erste Register links) "
-                                                     "oder zufÃ¤llig. Stumm geschaltete Pfeifen (Seite Raum) werden Ã¼" "bersprungen."));
+                                                     "(1. Ton Praestant, 2. Ton Gedackt \xe2\x80\xa6), nach Lage im Akkord (tiefster Ton aufs erste Register links) "
+                                                     "oder zuf\xc3\xa4llig. Stumm geschaltete Pfeifen (Seite Raum) werden \xc3\xbc" "bersprungen."));
     addAndMakeVisible (spreadChoice);
     const std::pair<const char*, const char*> decay[] {
         { "degAmount", "Menge" }, { "degGrain", "K\xc3\xb6rnung" }, { "degBits", "Bittiefe" }, { "degRate", "Abtastrate" },
@@ -222,6 +222,32 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
         addAndMakeVisible (*decayRows.back());
     }
 
+    {
+        // "Raumverfall": the spatial counterpart of Körnung, Bittiefe, Abtastrate
+        const std::pair<const char*, const char*> space[] {
+            { "spcErode", "Ordnung abtragen" }, { "spcWeather", "Verwittern (bis ganz abgetragen)" }, { "spcGrid", "Richtungsraster" },
+            { "spcBits", "Raum-Bittiefe" }, { "spcRate", "Raum-Abtastrate" }, { "spcDrops", "Raum-Aussetzer" }, { "spcAlias", "Raum-Aliasing" } };
+        const char* tips[] {
+            "Die Kugel verliert Aufl\xc3\xb6sung: die h\xc3\xb6heren Ambisonics-Ordnungen verschwinden von oben her, stufenlos \xe2\x80\x93 bei 100 % klingt alles von \xc3\xbc" "berall (nur W).",
+            "Die Kugel nutzt sich ab, solange etwas klingt: nach dieser Zeit ist sie ganz abgetragen. In der Stille w\xc3\xa4" "chst sie viermal so schnell nach. Aus = 0.",
+            "Richtungen rasten auf wenige Punkte ein (bis zu 4 Richtungen): bewegte Pfeifen springen von Punkt zu Punkt. Wirkt auch in Stereo.",
+            "Bittiefe der Richtungskan\xc3\xa4le: je h\xc3\xb6her die Ordnung, desto gr\xc3\xb6" "ber (W bleibt sauber) \xe2\x80\x93 die feinen Richtungen zerfallen zuerst.",
+            "Abtastrate der Richtungskan\xc3\xa4le: je h\xc3\xb6her die Ordnung, desto tiefer.",
+            "R\xc3\xa4umliche Aussetzer: einzelne Kan\xc3\xa4le oder ganze Ordnungen fallen f\xc3\xbcr 50\xe2\x80\x93" "400 ms aus \xe2\x80\x93 der Klang kippt kurz zur Seite oder wird flach.",
+            "Das Schallfeld wird an zu wenigen Punkten abgetastet und neu kodiert: Geisterrichtungen, die langsam wandern." };
+        int i = 0;
+        for (auto& n : space)
+        {
+            spaceRows.push_back (std::make_unique<ParamRow> (proc.apvts, n.first, juce::String (juce::CharPointer_UTF8 (n.second))));
+            spaceRows.back()->setTooltip (juce::String::fromUTF8 (tips[i++]));
+            addChildComponent (*spaceRows.back());
+        }
+        for (auto* b : { &tabSound, &tabSpace }) { b->setClickingTogglesState (false); addAndMakeVisible (*b); }
+        tabSound.onClick = [this] { showDecayTab (false); };
+        tabSpace.onClick = [this] { showDecayTab (true); };
+        tabSound.setTooltip (juce::String::fromUTF8 ("Verfall des Klangs: K\xc3\xb6rnung, Bittiefe, Abtastrate, Windschwankung, Aussetzer"));
+        tabSpace.setTooltip (juce::String::fromUTF8 ("Verfall des Raumbilds: die Ambisonics-Kugel nutzt sich ab (Ambisonics, Binaural, Lautsprecher; in Stereo nur das Richtungsraster)"));
+    }
     for (auto* b : { &perPipe, &onSum })
     {
         addAndMakeVisible (*b);
@@ -229,6 +255,7 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
     }
     perPipe.onClick = [this] { if (auto* pr = proc.apvts.getParameter ("degMode")) pr->setValueNotifyingHost (0.0f); };
     onSum.onClick   = [this] { if (auto* pr = proc.apvts.getParameter ("degMode")) pr->setValueNotifyingHost (1.0f); };
+    showDecayTab (false);
 
     volume.setSliderStyle (juce::Slider::LinearVertical);
     volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -302,9 +329,16 @@ void ConsoleView::resized()
         spreadChoice.setBounds (sr);
     }
     rows = decayArea.withTrimmedTop (40);
-    for (auto& row : decayRows) { row->setBounds (rows.removeFromTop (36)); }
+    {
+        auto r2 = rows;
+        for (auto& row : decayRows) { row->setBounds (rows.removeFromTop (36)); }
+        const int rh = juce::jmin (36, r2.getHeight() / (int) spaceRows.size());
+        for (auto& row : spaceRows) row->setBounds (r2.removeFromTop (rh));
+    }
     perPipe.setBounds (decayArea.getRight() - 150, decayArea.getY() + 8, 80, 20);
     onSum.setBounds (decayArea.getRight() - 70, decayArea.getY() + 8, 70, 20);
+    tabSound.setBounds (decayArea.getX() + 112, decayArea.getY() + 8, 56, 20);
+    tabSpace.setBounds (tabSound.getRight() + 4, decayArea.getY() + 8, 52, 20);
 
     auto o = outArea.withTrimmedTop (40);
     {
@@ -330,6 +364,26 @@ void ConsoleView::resized()
     keys.setBounds (kb.reduced (20, 0).withTrimmedTop (34).withTrimmedBottom (10).withTrimmedLeft (0));
 }
 
+void ConsoleView::showDecayTab (bool space)
+{
+    spaceTab = space;
+    tabSound.setToggleState (! space, juce::dontSendNotification);
+    tabSpace.setToggleState (space, juce::dontSendNotification);
+    for (auto& r : decayRows) r->setVisible (! space);
+    for (auto& r : spaceRows) r->setVisible (space);
+    perPipe.setVisible (! space);
+    onSum.setVisible (! space);
+    repaint (decayArea);
+}
+
+juce::String ConsoleView::spaceInfo() const
+{
+    const int out = juce::roundToInt (proc.apvts.getRawParameterValue ("output")->load());
+    if (out == 0) return juce::String::fromUTF8 ("Stereo: nur das Raster");
+    const float e = proc.engine.spaceErosionNow.load();
+    return e > 0.005f ? juce::String::fromUTF8 ("abgetragen ") + juce::String (juce::roundToInt (e * 100.0f)) + " %" : juce::String();
+}
+
 void ConsoleView::refresh()
 {
     const bool sum = proc.apvts.getRawParameterValue ("degMode")->load() > 0.5f;
@@ -339,6 +393,12 @@ void ConsoleView::refresh()
     meterR = proc.engine.meterR.load();
     for (auto& r : noiseRows) r->repaint();
     for (auto& r : decayRows) r->repaint();
+    if (spaceTab)
+    {
+        for (auto& r : spaceRows) r->repaint();
+        const auto si = spaceInfo();
+        if (si != shownSpaceInfo) { shownSpaceInfo = si; repaint (decayArea.withHeight (36)); }
+    }
     for (auto& r : stopVol) r->repaint();
     for (auto& r : stopWind) r->repaint();
     keys.repaint();
@@ -381,7 +441,7 @@ void ConsoleView::paint (juce::Graphics& g)
     g.setFont (Assets::get().sansFont (14.0f));
     g.setColour (col::ink);
     g.drawText (juce::String::fromUTF8 ("T\xc3\xb6ne verteilen"), spreadLabel, juce::Justification::centredLeft);
-    drawSectionTitle (g, decayArea, "Verfall");
+    drawSectionTitle (g, decayArea, "Verfall", spaceTab ? shownSpaceInfo : juce::String());
     drawSectionTitle (g, outArea, "Ausgang");
 
     // meters + volume scale

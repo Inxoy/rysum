@@ -123,6 +123,16 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     // simulated room (all memory here, nothing is allocated while playing)
     erSlots.assign ((size_t) kErSlots, ErSlot {});
     planPathScratch.assign ((size_t) kPlanPaths, PlanPath {});
+    // spatial degradation and the grain cloud (all memory here)
+    eroder.prepare (sr);
+    {
+        int rs = 1;
+        while (rs < (int) (0.16 * sr) + maxBlock + 8) rs <<= 1;
+        ringSize = rs; ringMask = (uint32_t) (rs - 1);
+        cloudData.assign ((size_t) kCloudRings * (size_t) ringSize, 0.0f);
+        ringPos.fill (0); ringOwner.fill (0); ringRefs.fill (0);
+        for (auto& g : grains) g = CloudGrain {};
+    }
     planCandScratch.assign ((size_t) kPlanCand, PlanImage {});
     erRing.assign ((size_t) kErSlots * (size_t) kErRing, 0.0f);
     for (auto& v : voices) v.erSlot = -1;
@@ -385,7 +395,7 @@ void OrganEngine::hardJumpGains (const Voice& v, const EngineParams& p, double p
     pos.az = wrapAz (pos.az + v.pmAz);
     pos.el = juce::jlimit (-90.0f, 90.0f, pos.el + v.pmEl);
     pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * v.pmDist);
-    const float k = v.gainLin * distanceGain (pos.dist, p.distAmount);
+    const float k = v.gainLin * distanceGain (pos.dist, p.distAmount) * v.cloudDry;
     gainsFor (pos, g);
     for (int c = 0; c < kMaxAmbiChannels; ++c) g[c] *= k;
     if (gh != nullptr)
@@ -400,6 +410,19 @@ void OrganEngine::hardJumpGains (const Voice& v, const EngineParams& p, double p
 void OrganEngine::gainsFor (Pos pos, float* out) const noexcept
 {
     std::fill (out, out + kMaxAmbiChannels, 0.0f);
+    if (gridN > 0)
+    {
+        // "Richtungsraster": the direction snaps to the nearest of a few grid directions
+        const float a = juce::degreesToRadians (pos.az), e = juce::degreesToRadians (pos.el);
+        const float x = -std::sin (a) * std::cos (e), y = std::cos (a) * std::cos (e), z = std::sin (e);
+        int best = 0; float bd = -2.0f;
+        for (int i = 0; i < gridN; ++i)
+        {
+            const float d = x * gridX[(size_t) i] + y * gridY[(size_t) i] + z * gridZ[(size_t) i];
+            if (d > bd) { bd = d; best = i; }
+        }
+        pos.az = gridAz[(size_t) best]; pos.el = gridEl[(size_t) best];
+    }
     if (order == 0) encodeStereo (pos.az, out);
     else            encodeAmbiX (pos.az, pos.el, order, out);
 }
@@ -446,7 +469,14 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     v.pmEl = anyMod ? 90.0f * pm[tgtEl] : 0.0f;
     v.pmDist = anyMod ? std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist])) : 1.0f;
     v.gainLin = sg * lvl;
-    const float g = sg * lvl * distanceGain (pos.dist, p.distAmount);
+    float g = sg * lvl * distanceGain (pos.dist, p.distAmount);
+    // grain cloud: where the pipe is (the grains scatter around it); the pipe itself fades as it dissolves (equal power)
+    v.spPos = pos; v.spK = g;
+    {
+        const auto& cl = p.cloud[(size_t) v.stop];
+        v.cloudDry = cl.on() ? std::cos (0.5f * juce::MathConstants<float>::pi * juce::jlimit (0.0f, 1.0f, cl.mix)) : 1.0f;
+        g *= v.cloudDry;
+    }
     for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] *= g;
     if (p.fx.partSpread > 0.5f)
     {
@@ -586,6 +616,7 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->killStep = (float) (1.0 / (0.005 * sr));
     v->previewRemain = previewSamples;
     v->age = ++ageCounter;
+    v->cloudRing = -1; v->cloudAcc = 0.0; v->cloudDry = 1.0f;
     v->fresh = true;
     v->env = 0.0f; v->held1 = 0.0f;
     v->windSm = -1.0f; v->lp = 0.0f; v->lpA = 1.0f;
@@ -1167,6 +1198,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 juce::FloatVectorOperations::add (bufRamp, bufHRamp, n);
             }
         }
+        if (p.cloud[(size_t) v.stop].on() || v.cloudRing >= 0) cloudWrite (v, buf, nullptr, n, p);
         {
             // room sends: plain sum + circular harmonics of the pipe direction (start / end of the slice)
             const double a0 = juce::degreesToRadians ((double) v.sendAz0), a1 = juce::degreesToRadians ((double) v.sendAz1);
@@ -1212,6 +1244,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         }
         if (finished) { v.active = false; releaseSlot (v.erSlot); }
     }
+    renderCloud (outs, start, n);
 
     // noise one-shots
     for (auto& nv : noise)
@@ -2095,6 +2128,136 @@ float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) 
     }
 }
 
+// ---------------------------------------------------------------------------
+// "Raumverfall" and "Körnerwolke"
+// ---------------------------------------------------------------------------
+void OrganEngine::updateGrid (float amount) noexcept
+{
+    const int n = gridCount (amount);
+    if (n == gridN) return;
+    if (n > 0)
+    {
+        fibonacciDirs (n, gridAz.data(), gridEl.data());
+        for (int i = 0; i < n; ++i)
+        {
+            const float a = juce::degreesToRadians (gridAz[(size_t) i]), e = juce::degreesToRadians (gridEl[(size_t) i]);
+            gridX[(size_t) i] = -std::sin (a) * std::cos (e); gridY[(size_t) i] = std::cos (a) * std::cos (e); gridZ[(size_t) i] = std::sin (e);
+        }
+    }
+    gridN = n;
+}
+
+/** the pipe's sound into its history ring; new grains are born from it */
+void OrganEngine::cloudWrite (Voice& v, const float* buf, const float* bufH, int n, const EngineParams& p) noexcept
+{
+    if (ringSize <= 0) return;
+    const auto& cl = p.cloud[(size_t) v.stop];
+    if (v.cloudRing < 0)
+    {
+        if (! cl.on()) return;
+        for (int r = 0; r < kCloudRings; ++r)
+            if (ringOwner[(size_t) r] == 0 && ringRefs[(size_t) r] == 0)
+            {
+                v.cloudRing = r; ringOwner[(size_t) r] = v.age; ringPos[(size_t) r] = 0;
+                std::fill_n (cloudData.data() + (size_t) r * (size_t) ringSize, ringSize, 0.0f);
+                break;
+            }
+        if (v.cloudRing < 0) return;                     // all rings in use: this pipe stays whole
+    }
+    const int r = v.cloudRing;
+    float* ring = cloudData.data() + (size_t) r * (size_t) ringSize;
+    const uint32_t w = ringPos[(size_t) r];
+    for (int i = 0; i < n; ++i) ring[(w + (uint32_t) i) & ringMask] = buf[i] + (bufH != nullptr ? bufH[i] : 0.0f);
+    ringPos[(size_t) r] = w + (uint32_t) n;
+    if (! cl.on()) return;
+
+    // new grains: on average 'density' per second, each from a little earlier in the pipe's sound,
+    // somewhere on the sphere around the pipe
+    v.cloudAcc += (double) cl.density * n / sr * (0.5 + cloudRng.uni());
+    const float sizeS = juce::jmax (0.005f, cl.sizeMs * 0.001f);
+    const float wet = std::sin (0.5f * juce::MathConstants<float>::pi * juce::jlimit (0.0f, 1.0f, cl.mix));
+    // overlapping grains add up in energy; a Hann window keeps 3/8 of it
+    const float amp = wet * 1.633f / std::sqrt (juce::jmax (1.0f, cl.density * sizeS));
+    const int maxDelay = ringSize - maxBlock - 4;
+    while (v.cloudAcc >= 1.0)
+    {
+        v.cloudAcc -= 1.0;
+        int gi = -1;
+        for (int k = 0; k < kCloudGrains; ++k) if (! grains[(size_t) k].on) { gi = k; break; }
+        if (gi < 0) { v.cloudAcc = 0.0; break; }          // the pool is full
+        auto& g = grains[(size_t) gi];
+        // direction: uniform in the cap of 'spread' degrees around the pipe
+        const float a0 = juce::degreesToRadians (v.spPos.az), e0 = juce::degreesToRadians (v.spPos.el);
+        const float ux = -std::sin (a0) * std::cos (e0), uy = std::cos (a0) * std::cos (e0), uz = std::sin (e0);
+        float t1x = -uy, t1y = ux, t1z = 0.0f;                 // a tangent (horizontal unless at the pole)
+        float tl = std::sqrt (t1x * t1x + t1y * t1y);
+        if (tl < 1.0e-4f) { t1x = 1.0f; t1y = 0.0f; tl = 1.0f; }
+        t1x /= tl; t1y /= tl;
+        const float t2x = uy * t1z - uz * t1y, t2y = uz * t1x - ux * t1z, t2z = ux * t1y - uy * t1x;
+        const float cosMax = std::cos (juce::degreesToRadians (juce::jlimit (0.0f, 180.0f, cl.spread)));
+        const float ct = 1.0f - cloudRng.uni() * (1.0f - cosMax), st = std::sqrt (juce::jmax (0.0f, 1.0f - ct * ct));
+        const float ph = juce::MathConstants<float>::twoPi * cloudRng.uni();
+        const float dx = ux * ct + st * (std::cos (ph) * t1x + std::sin (ph) * t2x);
+        const float dy = uy * ct + st * (std::cos (ph) * t1y + std::sin (ph) * t2y);
+        const float dz = uz * ct + st * (std::cos (ph) * t1z + std::sin (ph) * t2z);
+        Pos gp;
+        gp.az = juce::radiansToDegrees (std::atan2 (-dx, dy));
+        gp.el = juce::radiansToDegrees (std::asin (juce::jlimit (-1.0f, 1.0f, dz)));
+        gp.dist = v.spPos.dist;
+        gainsFor (gp, g.g.data());
+        const float k = v.spK * amp;
+        for (auto& x : g.g) x *= k;
+        const int delay = juce::jlimit (1, maxDelay, 1 + (int) (cloudRng.uni() * cl.scatterMs * 0.001f * (float) sr));
+        g.on = true; g.dying = false; g.fade = 1.0f;
+        g.ring = r; g.owner = v.age;
+        g.len = juce::jmax (32, (int) (sizeS * (0.7f + 0.6f * cloudRng.uni()) * (float) sr));
+        g.age = 0;
+        g.rp = ringPos[(size_t) r] - (uint32_t) n - (uint32_t) delay;      // this block's first sample, 'delay' earlier
+        ++ringRefs[(size_t) r];
+    }
+}
+
+void OrganEngine::renderCloud (float* const* outs, int start, int n) noexcept
+{
+    if (ringSize <= 0) return;
+    // rings whose pipe has gone: no owner any more (freed when no grain reads them)
+    for (int r = 0; r < kCloudRings; ++r)
+    {
+        const uint32_t own = ringOwner[(size_t) r];
+        if (own == 0) continue;
+        bool alive = false;
+        for (const auto& v : voices) if (v.active && v.age == own && v.cloudRing == r) { alive = true; break; }
+        if (! alive) ringOwner[(size_t) r] = 0;
+    }
+    float* y = fxScratch.data() + 2 * (size_t) maxBlock;
+    const float fadeStep = (float) (1.0 / (0.005 * sr));
+    const float twoPi = juce::MathConstants<float>::twoPi;
+    int count = 0;
+    for (auto& g : grains)
+    {
+        if (! g.on) continue;
+        ++count;
+        if (! g.dying && ringOwner[(size_t) g.ring] != g.owner) g.dying = true;     // the pipe is gone: fade out quickly
+        const float* ring = cloudData.data() + (size_t) g.ring * (size_t) ringSize;
+        const float inc = 1.0f / (float) g.len;
+        int m = 0;
+        bool ended = false;
+        for (; m < n; ++m)
+        {
+            if (g.age >= g.len) { ended = true; break; }
+            float w = 0.5f - 0.5f * std::cos (twoPi * (float) g.age * inc);
+            if (g.dying) { g.fade -= fadeStep; if (g.fade <= 0.0f) { ended = true; break; } w *= g.fade; }
+            y[m] = ring[(g.rp + (uint32_t) m) & ringMask] * w;
+            ++g.age;
+        }
+        for (int i = m; i < n; ++i) y[i] = 0.0f;
+        g.rp += (uint32_t) n;
+        if (m > 0) mixInto (outs, start, usedChannels, y, nullptr, g.g.data(), nullptr, m);
+        if (ended) { g.on = false; --ringRefs[(size_t) g.ring]; }
+    }
+    cloudGrainsActive = count;
+}
+
 void OrganEngine::process (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi, const EngineParams& pIn)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -2557,6 +2720,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
         }
     partRot = std::fmod (partRot + (double) p.fx.partTurn * 360.0 * blockSeconds, 360.0);
 
+    updateGrid (p.space.grid);
     // ---- spatial data for this block (end-of-block targets, ramped from the previous ones)
     for (auto& v : voices)
     {
@@ -2609,6 +2773,11 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
 
     renderEchoes (out, numSamples, p);
     renderRoom (out, numSamples, p);
+
+    // ---- "Raumverfall" on the Ambisonics channels (the plugin does it after the impulse response instead)
+    if (spaceDegInProcess && order > 0) applySpaceDegradation (out.getArrayOfWritePointers(), juce::jmin (order, kMaxOrder), numSamples, p);
+    spaceErosionNow = eroder.erosionNow (p.space);
+    cloudGrainsNow = cloudGrainsActive;
 
     // ---- master gain (smoothed) + meters
     const float step = (p.masterGain - masterSmoothed) / (float) numSamples;

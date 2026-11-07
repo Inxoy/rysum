@@ -378,6 +378,35 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                       NormalisableRange<float> (0.0f, 1.0f), 1.0f, pct));
         l.add (std::make_unique<AudioParameterBool> (ParameterID { jumpHardParamId (s), 1 }, name + u8 (" harte Spr\xc3\xbcnge"), false));
     }
+
+    // ---- "Raumverfall": degradation of the spatial image (Spieltisch, Verfall · Raum); everything off by default
+    {
+        auto secs = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 0.05f ? String ("aus") : v < 60.0f ? String (v, 1) + " s" : String (v / 60.0f, 1) + " min"; })
+                                                   .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); });
+        auto gridTxt = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { const int n = rysum::gridCount (v); return n == 0 ? String ("aus") : String (n) + " Richtungen"; });
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcErode", 1 }, "Raum abtragen", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcWeather", 1 }, "Raum verwittern", NormalisableRange<float> (0.0f, 600.0f, 0.01f, 0.35f), 0.0f, secs));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcGrid", 1 }, "Richtungsraster", NormalisableRange<float> (0, 1), 0.0f, gridTxt));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcBits", 1 }, "Raum-Bittiefe", NormalisableRange<float> (2.0f, 16.0f, 0.1f), 16.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v >= 15.95f ? String ("aus") : String (v, 1) + " bit"; })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcRate", 1 }, "Raum-Abtastrate", NormalisableRange<float> (200.0f, 48000.0f, 1.0f, 0.35f), 48000.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v >= 47999.0f ? String ("aus") : v >= 1000 ? String (v / 1000.0f, 2) + " kHz" : String (roundToInt (v)) + " Hz"; })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcDrops", 1 }, "Raum-Aussetzer", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcAlias", 1 }, "Raum-Aliasing", NormalisableRange<float> (0, 1), 0.0f, pct));
+    }
+    // ---- "Körnerwolke" per stop (Raum page, tab "Wolke"): off by default
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        const String name = prettyLabel (kStops[(size_t) s].label) + " Wolke ";
+        auto hz = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, v < 10.0f ? 1 : 0) + " /s"; });
+        auto msA = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + " ms"; });
+        auto degA = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0"); });
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { cloudParamId ("Mix", s), 1 }, name + "Menge", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { cloudParamId ("Dens", s), 1 }, name + "Dichte", NormalisableRange<float> (1.0f, 200.0f, 0.01f, 0.4f), 30.0f, hz));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { cloudParamId ("Spread", s), 1 }, name + "Streuung", NormalisableRange<float> (0.0f, 180.0f, 0.1f), 60.0f, degA));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { cloudParamId ("Size", s), 1 }, name + String::fromUTF8 ("Korngr\xc3\xb6\xc3\x9f" "e"), NormalisableRange<float> (10.0f, 500.0f, 0.1f, 0.5f), 80.0f, msA));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { cloudParamId ("Scatter", s), 1 }, name + "Zeitstreuung", NormalisableRange<float> (0.0f, 150.0f, 0.1f), 40.0f, msA));
+    }
     return l;
 }
 
@@ -515,8 +544,12 @@ RysumProcessor::RysumProcessor()
         for (int st = 0; st < kNumStops; ++st) ix.stopRoom[(size_t) st] = I (stopRoomParamId (st));
         ix.inputRoom = I ("simRoomIn");
         ix.noteSpread = I ("noteSpread");
+        for (int k = 0; k < 7; ++k) ix.spc[(size_t) k] = I (kSpcIds[k]);
+        for (int st = 0; st < kNumStops; ++st)
+            for (int k = 0; k < 5; ++k) ix.cloud[(size_t) st][(size_t) k] = I (cloudParamId (kCloudKeys[k], st));
     }
     engine.setModHook (this);
+    engine.spaceDegInProcess = false;            // processBlock applies the spatial degradation after the impulse response
 
     // MIDI controller assignments: every new instance starts with the ones saved last (Documents/Rysum/MIDI-Regler.xml);
     // a saved project / session brings its own
@@ -638,6 +671,17 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     p.deg.wobble = V (ix.degWobble);
     p.deg.dropouts = V (ix.degDropouts);
     p.deg.perPipe = V (ix.degMode) < 0.5f;
+    {
+        auto Sp = [&] (int k) { return V (ix.spc[(size_t) k]); };
+        p.space.erode = Sp (0); p.space.weather = Sp (1) < 0.05f ? 0.0f : Sp (1); p.space.grid = Sp (2);
+        p.space.bits = Sp (3); p.space.rateHz = Sp (4); p.space.drops = Sp (5); p.space.alias = Sp (6);
+        for (int st = 0; st < kNumStops; ++st)
+        {
+            auto C = [&] (int k) { return V (ix.cloud[(size_t) st][(size_t) k]); };
+            auto& c = p.cloud[(size_t) st];
+            c.mix = C (0); c.density = C (1); c.spread = C (2); c.sizeMs = C (3); c.scatterMs = C (4);
+        }
+    }
     p.windModel = juce::roundToInt (V (ix.windModel));
 
     for (int i = 0; i < kNumLfos; ++i)
@@ -1023,6 +1067,9 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         lucPiece.process (rec, work.getArrayOfWritePointers(), gains, used, n, apvts.getRawParameterValue ("lucMix")->load());
     }
 
+    // ---- "Raumverfall": the spatial image wears away (after the impulse response, so the whole sphere does)
+    if (! stereo && used > 0) engine.applySpaceDegradation (work.getArrayOfWritePointers(), params.outputMode, n, params);
+
     // ---- binaural decoding (head rotation + HRTF filters)
     if (binaural)
     {
@@ -1272,7 +1319,7 @@ rysum::RoomParams RysumProcessor::heardRoom (int room) const
 juce::StringArray RysumProcessor::roomShapeNames()
 {
     // (new shapes only at the end: the index is stored)
-    return { "Quader", "L-Form", juce::String::fromUTF8 ("FÃ¤" "cher"), "Sechseck", "Achteck", "Rund", "Kreuz", "Apsis", "Gezeichnet" };
+    return { "Quader", "L-Form", juce::String::fromUTF8 ("F\xc3\xa4" "cher"), "Sechseck", "Achteck", "Rund", "Kreuz", "Apsis", "Gezeichnet" };
 }
 
 void RysumProcessor::setDrawnPlan (int room, const rysum::FloorPlan& f)
@@ -2357,7 +2404,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 11;
+    constexpr int kFactoryVersion = 12;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -2799,6 +2846,69 @@ void RysumProcessor::writeFactoryPatches()
     make (u8 ("85 Nah und fern"),
           { { "stop1", 1 }, { "stop6", 1 }, { "noteSpread", 1 }, { "simOn", 1 }, { "master", -16.0f },
             { "simRoom1", 3 }, { "simRoom6", 2 } }, {});
+
+    // ---- set 12: floor plans of the Saal, the spatial image wearing away (Verfall · Raum), grain clouds (Raum, Wolke)
+    //      (Verfall · Raum needs an Ambisonics output - AmbiX, binaural or loudspeakers; in stereo only the grid is heard)
+    currentSet = 12;
+    make (u8 ("86 Saal \xe2\x80\x93 Um die Ecke"),
+          { { "stop1", 1 }, { "stop2", 1 }, { "simOn", 1 }, { "simShape", (int) rysum::shapeL }, { "simShapeAmt", 0.9f },
+            { "simW", 14.0f }, { "simL", 22.0f }, { "simH", 9.0f }, { "simAbs", 0.04f }, { "simLy", 0.3f },
+            { "motion1", 2 }, { "rate1", 0.08f }, { "depth1", 70.0f } }, {});
+    make (u8 ("87 Saal \xe2\x80\x93 Rotunde (Fl\xc3\xbcstergalerie)"),
+          { { "stop3", 1 }, { "stop5", 1 }, { "simOn", 1 }, { "simShape", (int) rysum::shapeRound }, { "simShapeAmt", 1.0f },
+            { "simW", 20.0f }, { "simL", 20.0f }, { "simH", 16.0f }, { "simAbs", 0.02f }, { "simAbsFloor", 0.05f }, { "simScatter", 0.05f },
+            { "simLx", 0.2f }, { "simLy", 0.5f }, { "motion3", 1 }, { "rate3", 0.05f }, { "master", -15.0f } }, {});
+    make (u8 ("88 Saal \xe2\x80\x93 Kreuzkirche"),
+          { { "stop7", 1 }, { "stop1", 1 }, { "stop6", 1 }, { "simOn", 1 }, { "simShape", (int) rysum::shapeCross }, { "simShapeAmt", 0.4f },
+            { "simW", 28.0f }, { "simL", 44.0f }, { "simH", 18.0f }, { "simAbs", 0.04f }, { "simAbsFloor", 0.12f }, { "simScatter", 0.45f },
+            { "simLy", 0.25f }, { "master", -16.0f } }, {});
+    make (u8 ("89 Saal \xe2\x80\x93 F\xc3\xa4" "cher"),
+          { { "stop1", 1 }, { "stop3", 1 }, { "simOn", 1 }, { "simShape", (int) rysum::shapeFan }, { "simShapeAmt", 0.9f },
+            { "simW", 32.0f }, { "simL", 36.0f }, { "simH", 12.0f }, { "simAbs", 0.08f }, { "simLy", 0.2f } }, {});
+    make (u8 ("90 Saal \xe2\x80\x93 Der Grundriss atmet"),
+          { { "stop1", 1 }, { "stop2", 1 }, { "stop4", 1 }, { "simOn", 1 }, { "simShape", (int) rysum::shapeApse }, { "simShapeAmt", 0.5f },
+            { "simW", 16.0f }, { "simL", 30.0f }, { "simH", 12.0f }, { "simAbs", 0.03f },
+            { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.04f }, { "lfo2Shape", (float) shSmooth }, { "lfo2Rate", 0.023f } },
+          { { srcLfo1, "simShapeAmt", 0.5f }, { srcLfo2, "simSize", 0.25f } });
+    make (u8 ("91 Raumverfall \xe2\x80\x93 Verwittern"),
+          { { "stop1", 1 }, { "stop2", 1 }, { "stop7", 1 }, { "motion1", 1 }, { "rate1", 0.04f }, { "motion7", 1 }, { "rate7", -0.05f },
+            { "spcWeather", 90.0f }, { "spcDrops", 0.15f }, { "irEnvelop", 0.5f } }, {});
+    make (u8 ("92 Raumverfall \xe2\x80\x93 Raster"),
+          { { "stop3", 1 }, { "stop6", 1 }, { "motion3", 1 }, { "rate3", 0.15f }, { "motion6", 3 }, { "rate6", 0.4f }, { "depth6", 90.0f },
+            { "spcGrid", 0.85f } }, {});
+    make (u8 ("93 Raumverfall \xe2\x80\x93 Kugel aus Sand"),
+          { { "stop1", 1 }, { "stop4", 1 }, { "stop5", 1 }, { "motion4", 2 }, { "rate4", 0.2f }, { "depth4", 120.0f },
+            { "spcBits", 5.0f }, { "spcRate", 1500.0f }, { "spcDrops", 0.35f }, { "degAmount", 0.25f }, { "degGrain", 0.3f } }, {});
+    make (u8 ("94 Raumverfall \xe2\x80\x93 Geisterrichtungen"),
+          { { "stop3", 1 }, { "stop2", 1 }, { "motion3", 1 }, { "rate3", 0.1f }, { "spcAlias", 0.8f } }, {});
+    make (u8 ("95 Raumverfall \xe2\x80\x93 Die Kugel atmet aus"),
+          { { "stop1", 1 }, { "stop6", 1 }, { "motion6", 1 }, { "rate6", 0.25f }, { "spcErode", 0.0f },
+            { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.06f } },
+          { { srcLfo1, "spcErode", 1.0f, true } });
+    make (u8 ("96 Wolke \xe2\x80\x93 Flirrende Mixtur"),
+          { { "stop1", 1 }, { "stop6", 1 },
+            { "cloudMix6", 0.75f }, { "cloudDens6", 90.0f }, { "cloudSpread6", 30.0f }, { "cloudSize6", 35.0f }, { "cloudScatter6", 15.0f } }, {});
+    makeFull (u8 ("97 Wolke \xe2\x80\x93 Die Orgel l\xc3\xb6st sich auf"),
+              { { "stop1", 1 }, { "stop2", 1 }, { "stop3", 1 },
+                { "cloudMix1", 0.15f }, { "cloudMix2", 0.15f }, { "cloudMix3", 0.15f },
+                { "cloudSpread1", 180.0f }, { "cloudSpread2", 180.0f }, { "cloudSpread3", 180.0f },
+                { "cloudSize1", 220.0f }, { "cloudSize2", 220.0f }, { "cloudSize3", 220.0f },
+                { "cloudScatter1", 120.0f }, { "cloudScatter2", 120.0f }, { "cloudScatter3", 120.0f },
+                { "cloudDens1", 35.0f }, { "cloudDens2", 35.0f }, { "cloudDens3", 35.0f } }, {},
+              { {},
+                { { "cloudMix1", 0.4f }, { "cloudMix2", 0.4f }, { "cloudMix3", 0.4f } },
+                { { "cloudMix1", 0.8f }, { "cloudMix2", 0.8f }, { "cloudMix3", 0.8f } },
+                { { "cloudMix1", 1.0f }, { "cloudMix2", 1.0f }, { "cloudMix3", 1.0f }, { "spcErode", 0.4f } } }, false);
+    make (u8 ("98 Wolke \xe2\x80\x93 Chor aus allen Richtungen"),
+          { { "stop2", 1 }, { "stop7", 1 }, { "vol7", -6.0f },
+            { "cloudMix2", 0.6f }, { "cloudDens2", 20.0f }, { "cloudSpread2", 120.0f }, { "cloudSize2", 420.0f }, { "cloudScatter2", 60.0f },
+            { "cloudMix7", 0.35f }, { "cloudDens7", 15.0f }, { "cloudSpread7", 90.0f }, { "cloudSize7", 300.0f } }, {});
+    make (u8 ("99 Wolke kreist im Saal"),
+          { { "stop3", 1 }, { "stop5", 1 }, { "motion3", 1 }, { "rate3", 0.3f }, { "motion5", 1 }, { "rate5", -0.22f },
+            { "cloudMix3", 0.6f }, { "cloudSpread3", 40.0f }, { "cloudScatter3", 150.0f }, { "cloudDens3", 50.0f },
+            { "cloudMix5", 0.6f }, { "cloudSpread5", 40.0f }, { "cloudScatter5", 150.0f }, { "cloudDens5", 50.0f },
+            { "simOn", 1 }, { "simShape", (int) rysum::shapeOct }, { "simShapeAmt", 0.6f }, { "simW", 18.0f }, { "simL", 24.0f }, { "simH", 12.0f },
+            { "spcWeather", 180.0f } }, {});
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

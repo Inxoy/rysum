@@ -86,8 +86,8 @@ class PipeStrip : public juce::Component, public juce::SettableTooltipClient
 public:
     PipeStrip (RysumProcessor& p, int& selectedStop) : proc (p), stop (selectedStop)
     {
-        setTooltip (juce::String::fromUTF8 ("Pfeifen des Registers: Klick schaltet eine Pfeife stumm / wieder an, Ã¼" "ber mehrere ziehen. "
-                                            "Rechtsklick: Muster. Stumme Pfeifen spielen nicht (beim Verteilen der TÃ¶ne werden sie Ã¼" "bersprungen)."));
+        setTooltip (juce::String::fromUTF8 ("Pfeifen des Registers: Klick schaltet eine Pfeife stumm / wieder an, \xc3\xbc" "ber mehrere ziehen. "
+                                            "Rechtsklick: Muster. Stumme Pfeifen spielen nicht (beim Verteilen der T\xc3\xb6ne werden sie \xc3\xbc" "bersprungen)."));
     }
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -188,9 +188,14 @@ private:
     std::unique_ptr<juce::ParameterAttachment> ellFormAttachment;
     std::unique_ptr<ParamRow> spreadRow, ellDirRow, ellTiltRow;
     juce::Rectangle<int> ellPreview;
-    juce::TextButton tabMotion { "Bewegung" }, tabHall { "Hall" };
-    bool hallTab = false;
-    void showTab (bool hall);
+    juce::TextButton tabMotion { "Bewegung" }, tabHall { "Hall" }, tabCloud { "Wolke" };
+    bool hallTab = false, cloudTab = false;
+    void showTab (int tab);                       // 0 = Bewegung, 1 = Hall, 2 = Wolke
+    // grain cloud of the selected stop
+    std::array<std::unique_ptr<ParamRow>, 5> cloudRows;
+    juce::TextButton cloudAll { juce::String::fromUTF8 ("f\xc3\xbcr alle Register \xc3\xbc" "bernehmen") };
+    juce::Rectangle<int> cloudNote;
+    int shownGrains = -1;
     juce::Slider width, centre, elevation, spread, distance;
     std::unique_ptr<ParamRow> rateRow, depthRow, ellipseRow, irDry, irWet, irEnvelop, irDirect;
     juce::ComboBox irOrder;

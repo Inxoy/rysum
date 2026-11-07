@@ -2263,6 +2263,163 @@ int main (int argc, char** argv)
             check (maxStep < 2.0 * rms, "plan: no clicks when reflection paths come and go");
         }
 
+        // ---------------- "Raumverfall" and "Körnerwolke" ----------------
+        {
+            // energy per Ambisonics degree (0..3) of a rendered buffer, and the direction of the first-order vector
+            auto degreeEnergy = [] (const juce::AudioBuffer<float>& b, int from, std::array<double, 4>& e)
+            {
+                e.fill (0.0);
+                for (int c = 0; c < juce::jmin (16, b.getNumChannels()); ++c)
+                {
+                    const int l = (int) std::floor (std::sqrt ((double) c) + 1e-9);
+                    for (int i = from; i < b.getNumSamples(); ++i) e[(size_t) l] += (double) b.getSample (c, i) * b.getSample (c, i);
+                }
+            };
+            auto direction = [] (const juce::AudioBuffer<float>& b, int from, double& az, double& rE)
+            {
+                double wy = 0, wx = 0, wz = 0, ww = 0, yy = 0, xx = 0, zz = 0;
+                for (int i = from; i < b.getNumSamples(); ++i)
+                {
+                    const double w = b.getSample (0, i), y = b.getSample (1, i), z = b.getSample (2, i), x = b.getSample (3, i);
+                    wy += w * y; wx += w * x; wz += w * z; ww += w * w; yy += y * y; xx += x * x; zz += z * z;
+                }
+                az = juce::radiansToDegrees (std::atan2 (wy, wx));
+                rE = std::sqrt (wx * wx + wy * wy + wz * wz) / juce::jmax (1e-30, ww);       // 1 = one direction, 0 = all around
+            };
+            auto place = [&] (OrganEngine& e, float az, float el) { e.baseAz[0][(size_t) keyA] = az; e.baseEl[0][(size_t) keyA] = el; e.baseDist[0][(size_t) keyA] = 4.0f; };
+            const int from = (int) (0.3 * fsr);
+            std::array<double, 4> e0 {}, e1 {}, e2 {};
+            OrganEngine a0, a1, a2, a3;
+            for (auto* e : { &a0, &a1, &a2, &a3 }) place (*e, -50.0f, 10.0f);
+            auto dry = run ([] (EngineParams&) {}, 1.5, -1, "", 16, &a0);
+            auto half = run ([] (EngineParams& p) { p.space.erode = 0.5f; }, 1.5, -1, "50_space_erode_half", 16, &a1);
+            auto full = run ([] (EngineParams& p) { p.space.erode = 1.0f; }, 1.5, -1, "", 16, &a2);
+            degreeEnergy (dry, from, e0); degreeEnergy (half, from, e1); degreeEnergy (full, from, e2);
+            auto rel = [] (double a, double b) { return 10.0 * std::log10 (juce::jmax (1e-30, a) / juce::jmax (1e-30, b)); };
+            std::cout << "space erode 50 %: degree 0 " << rel (e1[0], e0[0]) << " dB, 1 " << rel (e1[1], e0[1]) << " dB, 2 " << rel (e1[2], e0[2])
+                      << " dB, 3 " << rel (e1[3], e0[3]) << " dB; 100 %: degree 1 " << rel (e2[1], e0[1]) << " dB" << std::endl;
+            check (std::abs (rel (e1[0], e0[0])) < 0.01 && std::abs (rel (e1[1], e0[1])) < 0.01 && std::abs (rel (e1[2], e0[2]) + 6.0) < 1.0
+                   && rel (e1[3], e0[3]) < -60.0 && rel (e2[1], e0[1]) < -60.0, "space: erosion takes the orders away from the top (1.5 of 3 left)");
+
+            // the direction grid: four directions - the pipe is heard from the nearest one
+            {
+                OrganEngine g; place (g, -50.0f, 10.0f);
+                auto b = run ([] (EngineParams& p) { p.space.grid = 1.0f; }, 1.0, -1, "", 16, &g);
+                double az, rE; direction (b, from, az, rE);
+                float gaz[4], gel[4]; fibonacciDirs (4, gaz, gel);
+                double best = 1e9;
+                for (int i = 0; i < 4; ++i) best = juce::jmin (best, std::abs (std::remainder (az - (double) gaz[i], 360.0)));
+                double azDry, rEDry; direction (dry, from, azDry, rEDry);
+                std::cout << "space grid (4 directions): heard from az " << az << " (pipe at " << azDry << "), " << best << " deg from a grid direction" << std::endl;
+                check (gridCount (1.0f) == 4 && gridCount (0.0f) == 0 && best < 3.0, "space: directions snap to the grid");
+            }
+            // bit depth / sample-and-hold of the directional channels: W untouched, the higher orders hit hardest
+            {
+                OrganEngine g; place (g, -50.0f, 10.0f);
+                auto b = run ([] (EngineParams& p) { p.space.bits = 4.0f; p.space.rateHz = 2000.0f; }, 1.0, -1, "51_space_crush", 16, &g);
+                std::array<double, 4> err {}, ref {};
+                for (int c = 0; c < 16; ++c)
+                {
+                    const int l = (int) std::floor (std::sqrt ((double) c) + 1e-9);
+                    for (int i = from; i < b.getNumSamples(); ++i)
+                    { const double d = b.getSample (c, i) - dry.getSample (c, i); err[(size_t) l] += d * d; ref[(size_t) l] += (double) dry.getSample (c, i) * dry.getSample (c, i); }
+                }
+                std::cout << "space crush: error per degree " << rel (err[0] + 1e-30, ref[0]) << " / " << rel (err[1], ref[1]) << " / " << rel (err[2], ref[2]) << " / " << rel (err[3], ref[3]) << " dB" << std::endl;
+                check (err[0] < 1e-20 && rel (err[1], ref[1]) < rel (err[3], ref[3]) && rel (err[3], ref[3]) > -20.0, "space: crushing grows with the order, W stays clean");
+            }
+            // dropouts: directional channels fall silent now and then, W never
+            {
+                OrganEngine g; place (g, -50.0f, 10.0f);
+                auto b = run ([] (EngineParams& p) { p.space.drops = 1.0f; }, 6.0, -1, "52_space_dropouts", 16, &g);
+                int silentFrames = 0, wSilent = 0, frames = 0;
+                for (int pos = from; pos + 480 < b.getNumSamples(); pos += 480)
+                {
+                    ++frames;
+                    for (int c = 1; c < 16; ++c) if (b.getRMSLevel (c, pos, 480) < 1e-3f * juce::jmax (1e-9f, dry.getRMSLevel (c, juce::jmin (pos, dry.getNumSamples() - 480), 480))) { ++silentFrames; break; }
+                    if (b.getRMSLevel (0, pos, 480) < 1e-6f) ++wSilent;
+                }
+                std::cout << "space dropouts: " << silentFrames << " of " << frames << " frames with a silent channel, W silent " << wSilent << std::endl;
+                check (silentFrames > 5 && wSilent == 0, "space: dropouts silence directional channels, never W");
+            }
+            // aliasing: the field sampled at too few points - the level stays, the direction smears
+            {
+                OrganEngine g; place (g, -50.0f, 10.0f);
+                auto b = run ([] (EngineParams& p) { p.space.alias = 1.0f; }, 1.5, -1, "53_space_alias", 16, &g);
+                degreeEnergy (b, from, e1);
+                double d = 0; for (int c = 0; c < 16; ++c) for (int i = from; i < b.getNumSamples(); ++i) { const double x = b.getSample (c, i) - dry.getSample (c, i); d += x * x; }
+                const double tot0 = e0[0] + e0[1] + e0[2] + e0[3];
+                std::cout << "space alias: W " << rel (e1[0], e0[0]) << " dB, change " << rel (d, tot0) << " dB, degree 3 " << rel (e1[3], e0[3]) << " dB" << std::endl;
+                bool fin = true; for (int c = 0; c < 16; ++c) for (int i = 0; i < b.getNumSamples(); ++i) fin = fin && std::isfinite (b.getSample (c, i));
+                check (fin && std::abs (rel (e1[0], e0[0])) < 4.0 && rel (d, tot0) > -12.0, "space: aliasing changes the field, not the level");
+            }
+            // weathering: the sphere wears away while it plays (2 s), and grows back in silence
+            {
+                OrganEngine g; place (g, -50.0f, 10.0f);
+                auto b = run ([] (EngineParams& p) { p.space.weather = 2.0f; }, 3.0, -1, "54_space_weather", 16, &g);
+                const float worn = g.spaceErosionNow.load();
+                std::array<double, 4> early {}, late {};
+                juce::AudioBuffer<float> eb (16, (int) (0.3 * fsr)), lb (16, (int) (0.3 * fsr));
+                for (int c = 0; c < 16; ++c) { eb.copyFrom (c, 0, b, c, (int) (0.2 * fsr), eb.getNumSamples()); lb.copyFrom (c, 0, b, c, (int) (2.6 * fsr), lb.getNumSamples()); }
+                degreeEnergy (eb, 0, early); degreeEnergy (lb, 0, late);
+                std::cout << "space weather 2 s: erosion after 3 s " << worn << ", degree 1 share early " << early[1] / early[0] << ", late " << late[1] / juce::jmax (1e-30, late[0]) << std::endl;
+                check (worn > 0.99f && late[1] / juce::jmax (1e-30, late[0]) < 1e-4 * early[1] / early[0], "space: weathering erodes the sphere over time");
+            }
+            // default: nothing changes (the shoebox reference files stay bit-identical, see the null test)
+
+            // grain cloud: the pipe dissolves into grains around it
+            {
+                OrganEngine c1, c2, c3;
+                for (auto* e : { &c1, &c2, &c3 }) place (*e, -50.0f, 0.0f);
+                auto wide = run ([] (EngineParams& p) { auto& c = p.cloud[0]; c.mix = 1.0f; c.spread = 180.0f; c.density = 60.0f; c.sizeMs = 80.0f; }, 3.0, -1, "55_cloud_sphere", 16, &c1);
+                auto narrow = run ([] (EngineParams& p) { auto& c = p.cloud[0]; c.mix = 1.0f; c.spread = 15.0f; c.density = 60.0f; c.sizeMs = 80.0f; }, 3.0, -1, "", 16, &c2);
+                auto halfMix = run ([] (EngineParams& p) { auto& c = p.cloud[0]; c.mix = 0.5f; c.spread = 90.0f; }, 3.0, -1, "55_cloud_half", 16, &c3);
+                double azD, rD, azW, rW, azN, rN, azH, rH;
+                direction (dry, from, azD, rD); direction (wide, from, azW, rW); direction (narrow, from, azN, rN); direction (halfMix, from, azH, rH);
+                std::array<double, 4> ew {}, eh {};
+                degreeEnergy (wide, from, ew); degreeEnergy (halfMix, from, eh);
+                const double dryLen = (double) dry.getNumSamples() - from, wideLen = (double) wide.getNumSamples() - from;
+                const double lvlW = rel (ew[0] / wideLen, e0[0] / dryLen), lvlH = rel (eh[0] / wideLen, e0[0] / dryLen);
+                std::cout << "cloud: dry az " << azD << " rE " << rD << "; whole sphere rE " << rW << ", level " << lvlW << " dB; 15 deg: az " << azN << " rE " << rN
+                          << "; half mix level " << lvlH << " dB, rE " << rH << "; grains " << c1.cloudGrainsNow.load() << std::endl;
+                bool fin = true; for (auto* b : { &wide, &narrow, &halfMix }) for (int c = 0; c < 16; ++c) for (int i = 0; i < b->getNumSamples(); ++i) fin = fin && std::isfinite (b->getSample (c, i));
+                check (fin && rW < 0.35 * rD && std::abs (lvlW) < 4.0, "cloud: on the whole sphere the pipe has no direction any more, at about its level");
+                check (std::abs (std::remainder (azN - azD, 360.0)) < 10.0 && rN > 0.7 * rD, "cloud: a narrow cloud stays at the pipe");
+                check (std::abs (lvlH) < 3.0 && rH < rD && rH > rW, "cloud: half dry, half grains");
+            }
+            {   // stereo, and many pipes: finite, cheap enough
+                OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = p.stopOn[1] = true; p.outputMode = 3;
+                for (auto& c : p.cloud) { c.mix = 0.7f; c.density = 80.0f; c.sizeMs = 120.0f; c.spread = 120.0f; }
+                p.space.erode = 0.3f; p.space.bits = 8.0f; p.space.drops = 0.3f; p.space.alias = 0.4f; p.space.grid = 0.3f;
+                juce::AudioBuffer<float> b (16, B);
+                const int blocks = (int) (6.0 * fsr / B);
+                bool fin = true;
+                auto t0 = std::chrono::high_resolution_clock::now();
+                for (int i = 0; i < blocks; ++i)
+                {
+                    juce::MidiBuffer mb;
+                    if (i == 0) for (int m = 48; m < 72; ++m) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 90), 0);
+                    if (i == blocks / 2) for (int m = 48; m < 72; ++m) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                    e.process (b, mb, p);
+                    for (int c = 0; c < 16; ++c) fin = fin && std::isfinite (b.getMagnitude (c, 0, B));
+                }
+                const double rt = 6.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
+                std::cout << "cloud + Raumverfall, 48 pipes, 3rd order: " << rt << " x real time, grains at the end " << e.cloudGrainsNow.load() << std::endl;
+                check (fin && rt > 3.0, "cloud + Raumverfall: finite and cheap enough with 48 pipes");
+                OrganEngine st; st.prepare (fsr, B); st.setLibrary (lib);
+                EngineParams q = p; q.outputMode = 0;
+                juce::AudioBuffer<float> b2 (2, B);
+                bool fin2 = true; double en = 0;
+                for (int i = 0; i < 200; ++i)
+                {
+                    juce::MidiBuffer mb; if (i == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 90), 0);
+                    st.process (b2, mb, q);
+                    fin2 = fin2 && std::isfinite (b2.getMagnitude (0, 0, B)); en += b2.getRMSLevel (0, 0, B);
+                }
+                check (fin2 && en > 0.0, "cloud in stereo works");
+            }
+        }
+
         {   // long sessions: the reflections must sound the same after the plugin has run for a long time
             // (the read position of the delay lines once lost its fraction after ~6 minutes -> aliasing, high ringing)
             auto setup = [] (EngineParams& p) { p.room.on = true; p.room.tailGain = 0.0f; p.room.order = 2; };

@@ -1,7 +1,10 @@
+#include <functional>
 // Renders the three views of the editor into PNG files (for checking the UI without a host).
 //   RysumUiSnapshot <samples folder> <output folder>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ConsoleView.h"
+#include "SpaceView.h"
 
 class SnapshotApp : public juce::JUCEApplication, private juce::Timer
 {
@@ -254,6 +257,7 @@ public:
                 proc->loadPatch (f);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
                 float peak = 0.0f; double e = 0.0; bool finite = true; long cnt = 0;
+                int maxGrains = 0; float maxErode = 0.0f;
                 const bool feedInput = proc->apvts.getRawParameterValue ("inpOn")->load() > 0.5f;
                 rysum::XorShift noise (11);
                 for (int b = 0; b < 600; ++b)          // 6.4 s
@@ -264,6 +268,8 @@ public:
                     buf.clear();
                     if (feedInput) for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) buf.setSample (c, i, 0.1f * noise.bi());   // a patch for the input: something to hear
                     proc->processBlock (buf, mb);
+                    maxGrains = std::max (maxGrains, proc->engine.cloudGrainsNow.load());
+                    maxErode = std::max (maxErode, proc->engine.spaceErosionNow.load());
                     for (int c = 0; c < 4; ++c)
                         for (int i = 0; i < 512; ++i)
                         {
@@ -288,7 +294,8 @@ public:
                 }
                 if (auto* io = proc->apvts.getParameter ("inpOn")) io->setValueNotifyingHost (0.0f);    // the next patch: without the input again
                 std::cout << "  " << f.getFileNameWithoutExtension() << (feedInput ? " [Eingang]" : "") << ": peak " << juce::Decibels::gainToDecibels (peak) << " dB, rms W "
-                          << rmsDb << " dB" << (ok ? "" : "  FAIL") << std::endl;
+                          << rmsDb << " dB" << (maxGrains > 0 ? ", grains up to " + juce::String (maxGrains) : juce::String())
+                          << (maxErode > 0.0f ? ", erosion up to " + juce::String (maxErode, 2) : juce::String()) << (ok ? "" : "  FAIL") << std::endl;
             }
             std::cout << "all factory patches play: " << (allOk ? "ok" : "FAIL") << std::endl;
             // back to a plain state for the rest of the test
@@ -489,6 +496,42 @@ public:
             std::cout << "wrote " << f.getFullPathName() << std::endl;
         };
         shoot (0, "ui_spieltisch.png");
+        {
+            // the spatial degradation tab and the grain cloud tab (found by their button text)
+            std::function<juce::Button* (juce::Component*, const juce::String&)> findButton = [&] (juce::Component* c, const juce::String& t) -> juce::Button*
+            {
+                if (! c->isVisible()) return nullptr;
+                if (auto* b = dynamic_cast<juce::TextButton*> (c)) if (b->getButtonText() == t) return b;
+                for (auto* ch : c->getChildren()) if (auto* f = findButton (ch, t)) return f;
+                return nullptr;
+            };
+            auto setN = [&] (const juce::String& id, float v) { if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v)); };
+            setN ("spcErode", 0.35f); setN ("spcGrid", 0.4f); setN ("spcDrops", 0.2f);
+            if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (0); c->tick(); }
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+            std::function<juce::Component* (juce::Component*, bool)> findView = [&] (juce::Component* c, bool console) -> juce::Component*
+            {
+                if (console ? dynamic_cast<rysum::ui::ConsoleView*> (c) != nullptr : dynamic_cast<rysum::ui::SpaceView*> (c) != nullptr) return c;
+                for (auto* ch : c->getChildren()) if (auto* f = findView (ch, console)) return f;
+                return nullptr;
+            };
+            if (auto* b = findView (content, true) ? findButton (findView (content, true), "Raum") : nullptr) b->triggerClick();
+            else std::cout << "Raum tab button not found  FAIL" << std::endl;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+            shoot (0, "ui_spieltisch_raumverfall.png");
+            if (auto* b = findView (content, true) ? findButton (findView (content, true), "Klang") : nullptr) b->triggerClick();
+            for (auto* id : { "spcErode", "spcGrid", "spcDrops" }) if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
+            setN (RysumProcessor::cloudParamId ("Mix", 6), 0.6f);
+            if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (1); c->tick(); }
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+            if (auto* b = findView (content, false) ? findButton (findView (content, false), "Wolke") : nullptr) b->triggerClick();
+            else std::cout << "Wolke tab button not found  FAIL" << std::endl;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+            auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
+            { juce::PNGImageFormat png; auto f = outDir.getChildFile ("ui_raum_wolke.png"); f.deleteFile(); juce::FileOutputStream os (f); png.writeImageToStream (img, os); }
+            if (auto* b = findView (content, false) ? findButton (findView (content, false), "Bewegung") : nullptr) b->triggerClick();
+            setN (RysumProcessor::cloudParamId ("Mix", 6), 0.0f);
+        }
         for (int k = 0; k < rysum::kNumKeys; k += 3) proc->setPipeMuted (6, k, true);      // some Trompete pipes muted
         shoot (1, "ui_raum.png");
         for (int k = 0; k < rysum::kNumKeys; ++k) proc->setPipeMuted (6, k, false);

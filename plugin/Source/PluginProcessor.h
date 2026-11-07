@@ -232,6 +232,10 @@ public:
     static juce::String ellFormParamId (int s)  { return "ellForm" + juce::String (s); }
     static juce::String pathSpreadParamId (int s) { return "pathSpread" + juce::String (s); }
     static juce::String jumpHardParamId (int s) { return "jumpHard" + juce::String (s); }
+    /** grain cloud per stop: key = Mix Dens Spread Size Scatter */
+    static juce::String cloudParamId (const char* key, int s) { return juce::String ("cloud") + key + juce::String (s); }
+    static constexpr const char* kCloudKeys[5] { "Mix", "Dens", "Spread", "Size", "Scatter" };
+    static constexpr const char* kSpcIds[7] { "spcErode", "spcWeather", "spcGrid", "spcBits", "spcRate", "spcDrops", "spcAlias" };
 
     // ---- drawn trajectories (message thread)
     struct DrawnPath
@@ -281,6 +285,8 @@ private:
         std::array<int, 16> inp {};
         std::array<std::array<int, 12>, rysum::kNumRooms> room {};
         std::array<int, rysum::kNumStops> stopRoom {};
+        std::array<int, 7> spc {};
+        std::array<std::array<int, 5>, rysum::kNumStops> cloud {};
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex { inpOn, inpLevel, inpMode, inpAz, inpEl, inpDist, inpWidth, inpSpin, inpFollow, inpGate, inpRelease, inpSend, kNumInp };

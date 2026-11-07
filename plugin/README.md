@@ -194,6 +194,24 @@ each pipe before it is placed in space ("pro Pfeife") or to the whole output
 ("Summe"); *Windschwankung* also gets disproportionately wilder towards 100 %. The
 keyboard strip can be clicked to play.
 
+*Verfall · Raum* (tab *Raum* in the Verfall title; everything off by default): the same idea for
+the spatial image – the Ambisonics sphere wears away. It works on the whole output after the
+impulse response / Saal, before the binaural or loudspeaker decoder, so it needs an Ambisonics
+output (AmbiX, binaural, loudspeakers); in stereo only the direction grid is heard.
+- *Ordnung abtragen*: the higher orders fade out from the top, continuously (50 % of 3rd order =
+  1st order full, 2nd at half, 3rd gone); 100 % = only W, everything from everywhere.
+- *Verwittern*: the sphere wears away by itself while something sounds – after this time it is
+  completely eroded; in silence it grows back four times as fast (the title shows how far).
+- *Richtungsraster*: every direction snaps to the nearest of a few grid points (64 down to 4,
+  evenly over the sphere) – moving pipes jump from point to point. Also in stereo.
+- *Raum-Bittiefe* / *Raum-Abtastrate*: bit crushing and sample-and-hold of the directional
+  channels; the higher the order, the coarser (W stays clean) – fine directions decay first.
+- *Raum-Aussetzer*: single channels or whole orders fall out for 50–400 ms (5 ms ramps) – the
+  sound tips to one side or goes flat for a moment.
+- *Raum-Aliasing*: the field is sampled at too few points and encoded again (fewer points the
+  higher the amount): ghost directions, slowly wandering as the sampling grid turns.
+All of them are modulation targets (group "Verfall") and part of the dice group Traktur und Verfall.
+
 **Raum** – every pipe of every stop as a small dot (top view: centre = zenith, edge = horizon,
 outside the circle = below the horizon). Select a stop on the right, then
 - drag a dot to move one pipe,
@@ -249,6 +267,16 @@ outside the circle = below the horizon). Select a stop on the right, then
   - *Direkt* and *Hall* set the dry and room levels, *x* removes the IR. The IR is resampled to
     the project rate and normalised automatically; changing these settings or the output format
     rebuilds the room in the background (~½ s).
+
+**Wolke** (Raum page, third tab next to *Bewegung* / *Hall*, per stop, off by default): every
+sounding pipe of the stop scatters grains of its own sound over the sphere around it.
+*Menge* dissolves the pipe into the cloud (equal power: 100 % = only grains), *Dichte* grains per
+second and pipe, *Streuung* how far around the pipe (a few degrees = a shimmering spot, 180° =
+the whole sphere), *Korngröße* (Hann-windowed, ±30 %), *Zeitstreuung* how far back in the pipe's
+sound a grain reaches (up to 150 ms – smears attacks and movement). The cloud follows the pipe's
+motion. The grains are not sent to the room separately (the pipe's room send stays as it is).
+*für alle Register übernehmen* copies the five values to every stop. Up to 64 pipes at once
+have a cloud (256 grains in all); more pipes stay whole.
 
 **Lucier** (Saal page, middle column) – after Alvin Lucier's *I am sitting in a room* (1969):
 a recording is played into a room and recorded again, over and over, until only the room's
@@ -538,7 +566,13 @@ set (deleted ones are not re-created). Set 9 (59–79) shows the newer features:
 59–63 Lucier (live), 80 Lucier as a piece (74 too, with the input), 64–67 expression (MPE pressure / slide – polyphonic or channel aftertouch
 work as pressure too), 68–71 scenes (move *Überblenden* on the Spieltisch; 70 moves by itself
 with an LFO), 72–79 the audio input (they switch it on); set 11 (81–85): notes spread to single
-pipes and stops in different rooms.
+pipes and stops in different rooms; set 12 (86–99): Saal floor plans (86 L-shape round the
+corner, 87 rotunda / whispering gallery, 88 cruciform church, 89 fan, 90 a plan that breathes
+with an LFO), Verfall · Raum (91 weathering, 92 direction grid, 93 sphere of sand – crushed and
+dropping out, 94 ghost directions, 95 an LFO erodes the sphere and lets it grow back) and grain
+clouds (96 shimmering Mixtur, 97 the organ dissolves – move *Überblenden* A → D, 98 a choir from
+all directions, 99 clouds circling in an octagonal hall while the sphere weathers). 91–95 need an
+Ambisonics output (AmbiX, binaural or loudspeakers); in stereo only 92's grid is heard.
 
 A patch made with the input on switches the input on when it loads; every other patch leaves
 the input as it is (on or off belongs to your setup, like MPE).
@@ -673,6 +707,7 @@ plugin/
     SampleLibrary.*     reads rysum_samples.json + WAVs, replaces unusable pipes
     Spatial.h           AmbiX encoder (ACN/SN3D), stereo panning, layouts, motion
     Degrade.h           "Verfall"
+    SpatialDegrade.h    "Verfall · Raum" (spatial erosion) and the grain cloud parameters
     PluginProcessor.*   parameters, state, sample loading
     Convolver.*         impulse-response reverb (stereo / AmbiX)
     PartConv.h          partitioned convolution with its work spread over time (used by all convolutions)

@@ -67,6 +67,13 @@ private:
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> tileAttachments;
     std::vector<std::unique_ptr<ParamRow>> noiseRows, decayRows, stopVol, stopWind;
     juce::TextButton perPipe { "pro Pfeife" }, onSum { "Summe" };
+    // Verfall: of the sound ("Klang") or of the spatial image ("Raum")
+    juce::TextButton tabSound { "Klang" }, tabSpace { "Raum" };
+    std::vector<std::unique_ptr<ParamRow>> spaceRows;
+    bool spaceTab = false;
+    void showDecayTab (bool space);
+    juce::String shownSpaceInfo;
+    juce::String spaceInfo() const;
     juce::Slider volume;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAttachment;
     juce::TextButton folderButton { juce::String (juce::CharPointer_UTF8 ("Samples-Ordner \xe2\x80\xa6")) };

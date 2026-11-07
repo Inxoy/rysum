@@ -17,11 +17,11 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
     outInfoButton.setAlpha (0.0f);
     outInfoButton.onClick = [this] { showView (current == 7 ? viewBeforeOrgan : 7); };
     addAndMakeVisible (outInfoButton);
-    logoButton.setTooltip (juce::String::fromUTF8 ("Ã" "ber die Orgel zu Rysum (nochmal klicken: zurÃ¼" "ck)"));
+    logoButton.setTooltip (juce::String::fromUTF8 ("\xc3\x9c" "ber die Orgel zu Rysum (nochmal klicken: zur\xc3\xbc" "ck)"));
     logoButton.onClick = [this] { showView (current == 6 ? viewBeforeOrgan : 6); };
     addAndMakeVisible (logoButton);
-    diceButton.setTooltip (juce::String::fromUTF8 ("WÃ¼rfeln: zufÃ¤llige Einstellungen â sanft oder wild, nur in den gewÃ¤hlten Bereichen. "
-                                                   "Ein Schritt zurÃ¼" "ck ist mÃ¶glich."));
+    diceButton.setTooltip (juce::String::fromUTF8 ("W\xc3\xbcrfeln: zuf\xc3\xa4llige Einstellungen \xe2\x80\x93 sanft oder wild, nur in den gew\xc3\xa4hlten Bereichen. "
+                                                   "Ein Schritt zur\xc3\xbc" "ck ist m\xc3\xb6glich."));
     diceButton.onClick = [this] { showDiceMenu(); };
     addAndMakeVisible (diceButton);
     addChildComponent (space);

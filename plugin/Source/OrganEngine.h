@@ -4,6 +4,7 @@
 #include "SampleLibrary.h"
 #include "Spatial.h"
 #include "Degrade.h"
+#include "SpatialDegrade.h"
 #include "Modulation.h"
 #include "RoomSim.h"
 #include "RoomTail.h"
@@ -78,6 +79,8 @@ struct EngineParams
     float wind = 0.15f;                // global wind: blower noise, above ~35 % increasingly unstable (gusts)
     float consoleAz = 0.0f, consoleEl = -10.0f;
     DegradeParams deg;
+    SpaceDegParams space;                              // "Raumverfall": degradation of the spatial image
+    std::array<CloudParams, kNumStops> cloud {};       // "Körnerwolke" per stop
 
     // movement
     std::array<int,   kNumStops> motionMode {};
@@ -217,6 +220,15 @@ public:
     std::array<std::atomic<uint64_t>, kNumStops> soundingMask {};   // bit k = pipe k of that stop sounds
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
+    /** "Raumverfall" on the Ambisonics channels. The processor calls it itself after the impulse response
+        (then set spaceDegInProcess = false); otherwise process() does it at the end. */
+    bool spaceDegInProcess = true;
+    void applySpaceDegradation (float* const* ch, int order, int n, const EngineParams& p) noexcept
+    {
+        eroder.process (ch, order, n, p.space, activeVoices.load() > 0);
+    }
+    std::atomic<float> spaceErosionNow { 0.0f };         // for the display
+    std::atomic<int> cloudGrainsNow { 0 };
 
     /** audio thread, before process(): the input of this block (left / right; right may be null = mono, both null = silence).
         The pointers must stay valid until process() returns. */
@@ -297,7 +309,12 @@ private:
         // hard jumps: gains switched sample-accurately at every jump (no ramp)
         bool hard = false;
         float pmAz = 0.0f, pmEl = 0.0f, pmDist = 1.0f, gainLin = 1.0f;
-        float pmWind = 0.0f, pmDeg = 0.0f, pmWob = 0.0f, pmCrk = 0.0f;   // per-pipe modulation of stop wind, Verfall, Windschwankung, crackle
+        float pmWind = 0.0f, pmDeg = 0.0f, pmWob = 0.0f, pmCrk = 0.0f;
+        // grain cloud: the pipe's sound history (a ring of the pool), when the next grain is due, where the pipe is
+        int cloudRing = -1;
+        double cloudAcc = 0.0;
+        Pos spPos;
+        float spK = 0.0f, cloudDry = 1.0f;   // per-pipe modulation of stop wind, Verfall, Windschwankung, crackle
         float noteCents = 0.0f;          // free tuning: shift from the pipe's own pitch
         float modCents0 = 0.0f, modCents1 = 0.0f;
         // crackle
@@ -591,6 +608,31 @@ private:
 
     // sum-mode degradation
     DegradeState sumDeg { 99 };
+    // ---- spatial degradation
+    SpaceEroder eroder;
+    int gridN = 0;                                       // direction grid (0 = off)
+    std::array<float, 64> gridX {}, gridY {}, gridZ {}, gridAz {}, gridEl {};
+    void updateGrid (float amount) noexcept;
+    // ---- grain cloud: a pool of sound histories (rings) and of grains
+    static constexpr int kCloudRings = 64, kCloudGrains = 256;
+    struct CloudGrain
+    {
+        bool on = false, dying = false;
+        int ring = -1, len = 0, age = 0;
+        uint32_t rp = 0, owner = 0;
+        float fade = 1.0f;
+        std::array<float, kMaxAmbiChannels> g {};
+    };
+    std::vector<float> cloudData;
+    int ringSize = 0;
+    uint32_t ringMask = 0;
+    std::array<uint32_t, kCloudRings> ringPos {}, ringOwner {};     // owner = the voice's age stamp (0 = free)
+    std::array<int, kCloudRings> ringRefs {};
+    std::array<CloudGrain, kCloudGrains> grains {};
+    XorShift cloudRng { 0xc10d };
+    int cloudGrainsActive = 0;
+    void cloudWrite (Voice& v, const float* buf, const float* bufH, int n, const EngineParams& p) noexcept;
+    void renderCloud (float* const* outs, int start, int n) noexcept;
     std::array<float, kMaxOutChannels> sumHeld {}, sumEnv {};
     float masterSmoothed = 1.0f;
 

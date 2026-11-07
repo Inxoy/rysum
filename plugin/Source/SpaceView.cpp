@@ -341,9 +341,9 @@ void PipeStrip::mouseDown (const juce::MouseEvent& e)
         m.addItem (1, "alle an");
         m.addItem (2, "alle stumm");
         m.addItem (3, "jede zweite");
-        m.addItem (4, juce::String::fromUTF8 ("nur die untere HÃ¤lfte"));
-        m.addItem (5, juce::String::fromUTF8 ("nur die obere HÃ¤lfte"));
-        m.addItem (6, juce::String::fromUTF8 ("zufÃ¤llig die HÃ¤lfte"));
+        m.addItem (4, juce::String::fromUTF8 ("nur die untere H\xc3\xa4lfte"));
+        m.addItem (5, juce::String::fromUTF8 ("nur die obere H\xc3\xa4lfte"));
+        m.addItem (6, juce::String::fromUTF8 ("zuf\xc3\xa4llig die H\xc3\xa4lfte"));
         m.addItem (7, "umkehren");
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int r)
         {
@@ -516,10 +516,27 @@ SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected, inputS
         ellForm[(size_t) i].onClick = [this, i] { if (ellFormAttachment) ellFormAttachment->setValueAsCompleteGesture ((float) i); };
         addAndMakeVisible (ellForm[(size_t) i]);
     }
-    tabMotion.onClick = [this] { showTab (false); };
-    tabHall.onClick = [this] { showTab (true); };
+    tabMotion.onClick = [this] { showTab (0); };
+    tabHall.onClick = [this] { showTab (1); };
+    tabCloud.onClick = [this] { showTab (2); };
+    tabCloud.setTooltip (u8 ("K\xc3\xb6rnerwolke: der Klang jeder Pfeife zerstreut sich in K\xc3\xb6rnern \xc3\xbc" "ber die Kugel um die Pfeife"));
     addAndMakeVisible (tabMotion);
     addAndMakeVisible (tabHall);
+    addAndMakeVisible (tabCloud);
+    cloudAll.setTooltip (u8 ("Diese f\xc3\xbcnf Werte f\xc3\xbcr alle Register setzen"));
+    cloudAll.onClick = [this]
+    {
+        for (const char* k : RysumProcessor::kCloudKeys)
+        {
+            auto* src = proc.apvts.getParameter (RysumProcessor::cloudParamId (k, selected));
+            if (src == nullptr) continue;
+            for (int s2 = 0; s2 < kNumStops; ++s2)
+                if (s2 != selected)
+                    if (auto* d = proc.apvts.getParameter (RysumProcessor::cloudParamId (k, s2)))
+                    { d->beginChangeGesture(); d->setValueNotifyingHost (src->getValue()); d->endChangeGesture(); }
+        }
+    };
+    addAndMakeVisible (cloudAll);
 
     // room / impulse response
     addAndMakeVisible (irLoad);
@@ -573,21 +590,25 @@ SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected, inputS
     distance.setSkewFactorFromMidPoint (8.0);
 
     selectStop (selected);
-    showTab (false);
+    showTab (0);
 }
 
-void SpaceView::showTab (bool hall)
+void SpaceView::showTab (int tab)
 {
-    hallTab = hall;
-    tabMotion.setToggleState (! hall, juce::dontSendNotification);
-    tabHall.setToggleState (hall, juce::dontSendNotification);
+    hallTab = tab == 1;
+    cloudTab = tab == 2;
+    tabMotion.setToggleState (tab == 0, juce::dontSendNotification);
+    tabHall.setToggleState (tab == 1, juce::dontSendNotification);
+    tabCloud.setToggleState (tab == 2, juce::dontSendNotification);
     updateVisibility();
 }
 
 void SpaceView::updateVisibility()
 {
     const bool stopPanel = ! inputSel;
-    const bool motion = stopPanel && ! hallTab, hall = stopPanel && hallTab;
+    const bool motion = stopPanel && ! hallTab && ! cloudTab, hall = stopPanel && hallTab, cloud = stopPanel && cloudTab;
+    for (auto& r : cloudRows) if (r) r->setVisible (cloud);
+    cloudAll.setVisible (cloud);
     juce::Component* motionComps[] { &drawButton, &pathLoop, &pathPing, &pathEven, &pathDrawnT, &jumpHard,
                                      &ellForm[0], &ellForm[1], &ellForm[2], &ellForm[3] };
     for (auto* c : motionComps) c->setVisible (motion);
@@ -600,6 +621,7 @@ void SpaceView::updateVisibility()
     tabMotion.setVisible (stopPanel);
     pipeStrip.setVisible (stopPanel);
     tabHall.setVisible (stopPanel);
+    tabCloud.setVisible (stopPanel);
     juce::Component* inputComps[] { &inMono, &inStereo, &inGate, &inFollow, inLevel.get(), inSend.get(), inAz.get(), inEl.get(),
                                     inDist.get(), inWidth.get(), inSpin.get(), inRelease.get() };
     for (auto* c : inputComps) if (c) c->setVisible (inputSel);
@@ -633,6 +655,21 @@ void SpaceView::selectStop (int s)
     ellDirRow->slider.setTooltip (u8 ("Wo die nahe Seite der Ellipse liegt (0\xc2\xb0 = vorn) \xe2\x80\x93 modulierbar: die Ellipse dreht sich"));
     ellTiltRow->slider.setTooltip (u8 ("Die Bahn neigt sich: zur nahen Seite hin h\xc3\xb6her, auf der anderen Seite tiefer (negativ: umgekehrt)"));
     for (auto* r : { rateRow.get(), depthRow.get(), ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get() }) addAndMakeVisible (*r);
+    {
+        const char* names[] { "Menge (0 = Pfeife, 100 = nur Wolke)", "Dichte (K\xc3\xb6rner pro Sekunde und Pfeife)", "Streuung um die Pfeife",
+                              "Korngr\xc3\xb6\xc3\x9f" "e", "Zeitstreuung (wie weit zur\xc3\xbc" "ck)" };
+        const char* tips[] { "Wie weit sich die Pfeife in K\xc3\xb6rner aufl\xc3\xb6st (gleiche Lautheit): bei 100 % ist nur noch die Wolke da.",
+                             "Wie viele K\xc3\xb6rner jede klingende Pfeife pro Sekunde aussendet.",
+                             "Wie weit die K\xc3\xb6rner um die Pfeife verstreut sind: wenige Grad = ein flirrender Fleck, 180\xc2\xb0 = die ganze Kugel.",
+                             "L\xc3\xa4nge eines Korns: kurz = Rauschen und Flirren, lang = ein Chor aus vielen Richtungen.",
+                             "Jedes Korn nimmt den Klang der Pfeife von bis zu so viel fr\xc3\xbch" "er: verschmiert Einschwingen und Bewegung." };
+        for (int k = 0; k < 5; ++k)
+        {
+            cloudRows[(size_t) k] = std::make_unique<ParamRow> (proc.apvts, RysumProcessor::cloudParamId (RysumProcessor::kCloudKeys[k], s), juce::String::fromUTF8 (names[k]));
+            cloudRows[(size_t) k]->setTooltip (juce::String::fromUTF8 (tips[k]));
+            addAndMakeVisible (*cloudRows[(size_t) k]);
+        }
+    }
     jumpHardAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, RysumProcessor::jumpHardParamId (s), jumpHard);
     if (auto* f = proc.apvts.getParameter (RysumProcessor::ellFormParamId (s)))
     {
@@ -745,8 +782,17 @@ void SpaceView::resized()
 
     // lower part: "Bewegung" or "Hall" (tabs in the title line)
     tabBox = rr;
-    tabHall.setBounds (tabBox.getRight() - 56, tabBox.getY() + 9, 56, 20);
+    tabCloud.setBounds (tabBox.getRight() - 60, tabBox.getY() + 9, 60, 20);
+    tabHall.setBounds (tabCloud.getX() - 4 - 56, tabBox.getY() + 9, 56, 20);
     tabMotion.setBounds (tabHall.getX() - 4 - 86, tabBox.getY() + 9, 86, 20);
+    {
+        auto cb = tabBox.withTrimmedTop (36);
+        for (auto& r : cloudRows) if (r) r->setBounds (cb.removeFromTop (34));
+        cb.removeFromTop (4);
+        cloudAll.setBounds (cb.removeFromTop (22).withWidth (220));
+        cb.removeFromTop (6);
+        cloudNote = cb;
+    }
     motionBox = hallBox = tabBox;
     auto mb = tabBox.withTrimmedTop (34);
     {
@@ -821,6 +867,12 @@ void SpaceView::refresh()
     }
     irDry->repaint();
     irWet->repaint();
+    if (cloudTab)
+    {
+        for (auto& r : cloudRows) if (r) r->repaint();
+        const int n = proc.engine.cloudGrainsNow.load();
+        if (n != shownGrains) { shownGrains = n; repaint (tabBox.withHeight (36)); }
+    }
     irEnvelop->repaint();
     irDirect->repaint();
     const auto mnames = motionNames();
@@ -905,7 +957,21 @@ void SpaceView::paint (juce::Graphics& g)
         g.setColour (col::dim);
         g.drawText (juce::String (on) + "/" + juce::String (kNumKeys), pipeStripLabel.withX (pipeStripLabel.getRight() - 50).withWidth (50), juce::Justification::centredRight);
     }
-    if (! hallTab)
+    if (cloudTab)
+    {
+        drawSectionTitle (g, tabBox, "Wolke");
+        g.setFont (A.monoFont (10.0f));
+        g.setColour (col::faint);
+        const int n = proc.engine.cloudGrainsNow.load();
+        g.drawText (n > 0 ? juce::String (n) + u8 (" K\xc3\xb6rner") : u8 ("K\xc3\xb6rnerwolke"),
+                    juce::Rectangle<int> (tabBox.getX() + 120, tabBox.getY() + 9, tabMotion.getX() - 8 - tabBox.getX() - 120, 20), juce::Justification::centredRight);
+        g.setFont (A.sansFont (12.0f));
+        g.setColour (col::mute);
+        if (cloudNote.getHeight() > 14)
+            g.drawFittedText (u8 ("Jede klingende Pfeife dieses Registers sendet K\xc3\xb6rner ihres eigenen Klangs aus, jedes aus einer anderen Richtung "
+                                  "um sie herum. Mit der Bewegung zieht die Wolke mit."), cloudNote, juce::Justification::topLeft, juce::jmax (1, cloudNote.getHeight() / 15));
+    }
+    else if (! hallTab)
     {
         drawSectionTitle (g, tabBox, "Bewegung");
         g.setFont (A.monoFont (10.0f));
