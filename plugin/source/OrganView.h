@@ -6,7 +6,7 @@
 namespace rysum::ui
 {
 /** the page about the organ itself (opened with the "Rysum" in the top bar): its history, the stops,
-    photos. The text is a resource (Resources/orgel.txt) with a tiny markup:
+    photos. The text is a resource (resources/orgel.txt) with a tiny markup:
       @middle / @right   column       # title      > subtitle       ## section
       - item             | stop | note (table)     ~ small text     [photos]   anything else: a paragraph */
 class OrganView : public juce::Component

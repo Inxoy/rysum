@@ -471,7 +471,7 @@ static void saveWindowScale (float s)
     xml.writeTo (windowSizeFile());
 }
 
-RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), proc (p), content (p)
+RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), content (p)
 {
     setLookAndFeel (&lnf.get());
     content.setLookAndFeel (&lnf.get());
@@ -504,8 +504,6 @@ RysumEditor::~RysumEditor()
     content.releaseComputerKeys();
     content.setLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
-    if (lnf.getReferenceCount() <= 1 && &juce::LookAndFeel::getDefaultLookAndFeel() == &lnf.get())
-        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
 void RysumEditor::resized()

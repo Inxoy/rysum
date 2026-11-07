@@ -1,6 +1,7 @@
 // inflate for libmysofa (HDF5 "deflate" chunks are zlib streams), done with JUCE's zlib,
-// so the plugin needs no separate zlib library. See ThirdParty/libmysofa/hdf/gunzip_rysum.c.
+// so the plugin needs no separate zlib library. See third-party/libmysofa/hdf/gunzip_rysum.c.
 #include <juce_core/juce_core.h>
+#include "SofaGunzip.h"
 
 extern "C" int (*rysum_mysofa_inflate) (int inlen, char* in, int* outlen, char* out);
 

@@ -131,8 +131,8 @@ std::vector<SpeakerLayout> speakerPresets()
     {
         SpeakerLayout L; L.name = juce::String::fromUTF8 ("Halbkugel 12 + 6 + 1 (19)");
         int ch = 1;
-        for (int i = 0; i < 12; ++i) { Speaker s; s.az = (float) wrapAz (15.0f + 30.0f * i); s.el = 0; s.channel = ch++; L.speakers.push_back (s); }
-        for (int i = 0; i < 6; ++i)  { Speaker s; s.az = (float) wrapAz (30.0f + 60.0f * i); s.el = 40; s.channel = ch++; L.speakers.push_back (s); }
+        for (int i = 0; i < 12; ++i) { Speaker s; s.az = (float) wrapAz (15.0f + 30.0f * static_cast<float> (i)); s.el = 0; s.channel = ch++; L.speakers.push_back (s); }
+        for (int i = 0; i < 6; ++i)  { Speaker s; s.az = (float) wrapAz (30.0f + 60.0f * static_cast<float> (i)); s.el = 40; s.channel = ch++; L.speakers.push_back (s); }
         { Speaker s; s.az = 0; s.el = 90; s.channel = ch++; L.speakers.push_back (s); }
         p.push_back (L);
     }
@@ -321,7 +321,7 @@ std::shared_ptr<AllRadDecoder> buildAllRad (const SpeakerLayout& layout, int ord
     D->energyMap.resize ((size_t) (AllRadDecoder::kMapAz * AllRadDecoder::kMapEl));
     for (int b = 0; b < AllRadDecoder::kMapEl; ++b)
         for (int a = 0; a < AllRadDecoder::kMapAz; ++a)
-            D->energyMap[(size_t) (b * AllRadDecoder::kMapAz + a)] = (float) (10.0 * std::log10 (energyAt (-180.0f + 5.0f * a, -90.0f + 5.0f * b, nullptr) + 1.0e-12));
+            D->energyMap[(size_t) (b * AllRadDecoder::kMapAz + a)] = (float) (10.0 * std::log10 (energyAt (-180.0f + 5.0f * static_cast<float> (a), -90.0f + 5.0f * static_cast<float> (b), nullptr) + 1.0e-12));
 
     // the matrix for the audio thread, with distance compensation (the farthest loudspeaker sets the time) and own gain
     float rMax = 0.1f;

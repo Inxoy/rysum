@@ -19,10 +19,10 @@ public:
         auto lib = SampleLibrary::load (folder, err, [this] { return threadShouldExit(); });
         if (threadShouldExit()) return;
         std::shared_ptr<const SampleLibrary> shared (lib.release());
-        juce::MessageManager::callAsync ([proc = &owner, shared, err, folder = folder, alive = owner.aliveFlag]
+        juce::MessageManager::callAsync ([proc = &owner, shared, err, loadedFolder = folder, alive = owner.aliveFlag]
         {
             if (! alive->load()) return;
-            proc->onLoaded (shared, err, folder);
+            proc->onLoaded (shared, err, loadedFolder);
         });
     }
 
@@ -470,7 +470,7 @@ RysumProcessor::RysumProcessor()
     modOff.assign ((size_t) N, 0.0f);
     modHitFlag.assign ((size_t) N, 0);
     modNorm.reset (new std::atomic<float>[(size_t) N]);
-    for (int i = 0; i < N; ++i) modNorm[i] = std::numeric_limits<float>::quiet_NaN();
+    for (int i = 0; i < N; ++i) modNorm[static_cast<size_t> (i)] = std::numeric_limits<float>::quiet_NaN();
     hits.reserve (kNumRoutes); prevHits.reserve (kNumRoutes);
     auto I = [this] (const juce::String& id) { jassert (paramIndex.count (id) > 0); return paramIndex.at (id); };
     for (int s = 0; s < kNumStops; ++s)
@@ -735,13 +735,13 @@ void RysumProcessor::modulate (EngineParams& p, const float* src)
         if (! modHitFlag[(size_t) t]) { modHitFlag[(size_t) t] = 1; modOff[(size_t) t] = 0.0f; hits.push_back (t); }
         modOff[(size_t) t] += a * shapeSource (sIdx, src[sIdx], routeUni[(size_t) r].load());
     }
-    for (int t : prevHits) modNorm[t] = std::numeric_limits<float>::quiet_NaN();
+    for (int t : prevHits) modNorm[static_cast<size_t> (t)] = std::numeric_limits<float>::quiet_NaN();
     for (int t : hits)
     {
         auto* prm = prmList[(size_t) t];
         const float n = juce::jlimit (0.0f, 1.0f, prm->convertTo0to1 (modVals[(size_t) t]) + modOff[(size_t) t]);
         modVals[(size_t) t] = prm->convertFrom0to1 (n);
-        modNorm[t] = n;
+        modNorm[static_cast<size_t> (t)] = n;
         modHitFlag[(size_t) t] = 0;
     }
     std::swap (hits, prevHits);
@@ -764,7 +764,7 @@ int RysumProcessor::getParamIndex (const juce::String& id) const
 
 float RysumProcessor::getModulatedNorm (int index) const
 {
-    return index >= 0 && index < (int) prmList.size() ? modNorm[index].load() : std::numeric_limits<float>::quiet_NaN();
+    return index >= 0 && index < (int) prmList.size() ? modNorm[static_cast<size_t> (index)].load() : std::numeric_limits<float>::quiet_NaN();
 }
 
 juce::String RysumProcessor::targetId (int target) const
@@ -847,13 +847,13 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             if (! fixedMap) continue;
             int target = -1; float value = 0.0f;
             const int ns = kNumStops;
-            if (cc == 11)                  { target = 0; value = v / 127.0f; }                            // expression -> global wind
+            if (cc == 11)                  { target = 0; value = static_cast<float> (v) / 127.0f; }                            // expression -> global wind
             else if (cc >= 20 && cc <= 26) { target = 1 + (cc - 20); value = v >= 64 ? 1.0f : 0.0f; }      // stops on / off
             else if (cc == 19)             { target = 1 + kPraestant16; value = v >= 64 ? 1.0f : 0.0f; }   // Praestant 16'
-            else if (cc >= 27 && cc <= 33) { target = 1 + ns + (cc - 27); value = v / 127.0f; }           // stop wind
-            else if (cc == 34)             { target = 1 + ns + kPraestant16; value = v / 127.0f; }        // Praestant 16' wind
+            else if (cc >= 27 && cc <= 33) { target = 1 + ns + (cc - 27); value = static_cast<float> (v) / 127.0f; }           // stop wind
+            else if (cc == 34)             { target = 1 + ns + kPraestant16; value = static_cast<float> (v) / 127.0f; }        // Praestant 16' wind
             else if (cc == 66)             { target = 1 + 2 * ns; value = v >= 64 ? 1.0f : 0.0f; }        // sostenuto -> freeze
-            else if (cc == 1)              { target = 2 + 2 * ns; value = v / 127.0f; }                   // mod wheel -> tremulant depth
+            else if (cc == 1)              { target = 2 + 2 * ns; value = static_cast<float> (v) / 127.0f; }                   // mod wheel -> tremulant depth
             if (target >= 0) { ccPending[(size_t) target] = value; any = true; }
         }
         if (any) triggerAsyncUpdate();
@@ -1377,9 +1377,12 @@ void RysumProcessor::saveLucierRecording()
     dir.createDirectory();
     auto f = dir.getChildFile ("Aufnahme " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S") + ".wav");
     juce::WavAudioFormat wav;
-    if (auto* os = new juce::FileOutputStream (f); os->openedOk())
+    std::unique_ptr<juce::OutputStream> stream = f.createOutputStream();
+    if (stream != nullptr)
     {
-        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os, lucPiece.recordingRate(), 1, 24, {}, 0));
+        const auto options = juce::AudioFormatWriterOptions{}
+            .withSampleRate (lucPiece.recordingRate()).withNumChannels (1).withBitsPerSample (24);
+        auto w = wav.createWriterFor (stream, options);
         if (w != nullptr)
         {
             const float* ch[] { r.data() };
@@ -1387,7 +1390,6 @@ void RysumProcessor::saveLucierRecording()
             lucPiece.recordingFile = f.getFullPathName();
         }
     }
-    else delete os;
 }
 
 bool RysumProcessor::loadLucierRecording (const juce::File& f, juce::String& error)

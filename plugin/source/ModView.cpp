@@ -339,9 +339,9 @@ void ModView::paint (juce::Graphics& g)
         pth.startNewSubPath (X (0), Y (0));
         pth.lineTo (X (d), Y (0));
         pth.lineTo (X (d + a), Y (1));
-        for (int k = 1; k <= 24; ++k) { const float t = dc * k / 24.0f; pth.lineTo (X (d + a + t), Y (su + (1.0f - su) * std::exp (-4.0f * t / juce::jmax (0.001f, dc)))); }
+        for (int k = 1; k <= 24; ++k) { const float t = dc * static_cast<float> (k) / 24.0f; pth.lineTo (X (d + a + t), Y (su + (1.0f - su) * std::exp (-4.0f * t / juce::jmax (0.001f, dc)))); }
         pth.lineTo (X (d + a + dc + hold), Y (su));
-        for (int k = 1; k <= 24; ++k) { const float t = rl * k / 24.0f; pth.lineTo (X (d + a + dc + hold + t), Y (su * std::exp (-4.0f * t / juce::jmax (0.001f, rl)))); }
+        for (int k = 1; k <= 24; ++k) { const float t = rl * static_cast<float> (k) / 24.0f; pth.lineTo (X (d + a + dc + hold + t), Y (su * std::exp (-4.0f * t / juce::jmax (0.001f, rl)))); }
         g.setColour (col::line);
         g.fillRect (sc.getX(), sc.getBottom() - 2.0f, sc.getWidth(), 1.0f);
         g.setColour (col::mute);

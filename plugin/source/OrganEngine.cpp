@@ -1400,7 +1400,8 @@ void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const E
                                                 distAmountNow, p.air, (float) order, (float) r.shape, r.shapeAmt, (float) r.plan.n };
     if (! s.fresh && s.keyValid && key == s.key && ! s.fading) return;
     bool roomChanged = ! s.keyValid;
-    for (int i = 4; i < ErSlot::kKey && ! roomChanged; ++i) roomChanged = key[(size_t) i] != s.key[(size_t) i];
+    // Cache identity is exact: even small parameter edits invalidate the room.
+    roomChanged = roomChanged || ! std::equal (key.begin() + 4, key.end(), s.key.begin() + 4);
     s.key = key; s.keyValid = true;
 
     const auto g = planGeo (r);
@@ -1410,7 +1411,7 @@ void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const E
     const float moved = std::sqrt ((S.x - s.visSrc.x) * (S.x - s.visSrc.x) + (S.y - s.visSrc.y) * (S.y - s.visSrc.y) + (S.z - s.visSrc.z) * (S.z - s.visSrc.z));
     const bool need = s.fresh || ! s.visValid || topo || roomChanged || moved > 0.12f;
     // the searches are spread evenly: every slot may search in one block out of kPlanEvery (new sounds and new plans at once)
-    const bool myTurn = ((erSlotIndex + erBlockCount) % kPlanEvery) == 0;
+    const bool myTurn = ((static_cast<uint32_t> (erSlotIndex) + erBlockCount) % static_cast<uint32_t> (kPlanEvery)) == 0;
     if (need && (s.fresh || topo || ! s.visValid || myTurn))
     {
         const int nc = planImageSources (r, g, S, L, r.order, planPathScratch.data(), kPlanPaths, planCandScratch.data(), kPlanCand, kMaxTaps);
@@ -1475,7 +1476,20 @@ void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const E
         if (t.code == -1) { if (i < s.numTaps && (t.g0 > 0.0f || t.g1 > 0.0f)) { t.g1 = 0.0f; last = i; } continue; }
         last = i;
         t.vis = t.visT > t.vis ? juce::jmin (t.visT, t.vis + step) : juce::jmax (t.visT, t.vis - step);
+        // The step above clamps to the exact endpoint; this tests completion.
+       #if defined(__clang__)
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wfloat-equal"
+       #elif defined(__GNUC__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wfloat-equal"
+       #endif
         if (t.vis != t.visT) fading = true;
+       #if defined(__clang__)
+        #pragma clang diagnostic pop
+       #elif defined(__GNUC__)
+        #pragma GCC diagnostic pop
+       #endif
         float ix = 0.0f, iy = 0.0f;
         if (! t.hold && ! planImageOf (g, t.k, t.w, S.x, S.y, ix, iy)) { t.hold = true; t.visT = 0.0f; fading = true; }
         if (t.hold)
@@ -1796,7 +1810,7 @@ void OrganEngine::renderFdn (RoomTail& R, float* const* o, int K, const float* i
     const float modDepth = (float) (8.0 * sr / 48000.0);
     // read position: the integer clock and the fractional delay are kept apart (a float clock would lose
     // the fraction after a few minutes - aliasing, a high ringing)
-    auto readLine = [mask] (const float* line, uint32_t now, float d)
+    auto readLine = [] (const float* line, uint32_t now, float d)
     {
         const int di = (int) d;
         const float fd = d - (float) di;

@@ -66,33 +66,33 @@ juce_add_binary_data(RysumData
     HEADER_NAME RysumBinaryData.h
     NAMESPACE RysumData
     SOURCES
-        Resources/IBMPlexSansCondensed-Regular.ttf
-        Resources/IBMPlexSansCondensed-SemiBold.ttf
-        Resources/IBMPlexMono-Regular.ttf
-        Resources/UnifrakturMaguntia-Book.ttf
-        Resources/RysumFell-Roman.ttf
-        Resources/RysumFell-Italic.ttf
-        Resources/k_praestant.jpg
-        Resources/k_praestant16.jpg
-        Resources/org_pipes.jpg
-        Resources/org_jamb_l.jpg
-        Resources/org_jamb_r.jpg
-        Resources/k_gedackt.jpg
-        Resources/k_mixtur.jpg
-        Resources/k_oktave2.jpg
-        Resources/k_oktave4.jpg
-        Resources/k_sesquialtera.jpg
-        Resources/k_trompete.jpg
-        Resources/knob_bare.jpg
-        Resources/keys.jpg
-        Resources/orgel.txt
-        Resources/wall.jpg
-        Resources/grain.png
-        Resources/fabian_hrir.bin)
+        resources/IBMPlexSansCondensed-Regular.ttf
+        resources/IBMPlexSansCondensed-SemiBold.ttf
+        resources/IBMPlexMono-Regular.ttf
+        resources/UnifrakturMaguntia-Book.ttf
+        resources/RysumFell-Roman.ttf
+        resources/RysumFell-Italic.ttf
+        resources/k_praestant.jpg
+        resources/k_praestant16.jpg
+        resources/org_pipes.jpg
+        resources/org_jamb_l.jpg
+        resources/org_jamb_r.jpg
+        resources/k_gedackt.jpg
+        resources/k_mixtur.jpg
+        resources/k_oktave2.jpg
+        resources/k_oktave4.jpg
+        resources/k_sesquialtera.jpg
+        resources/k_trompete.jpg
+        resources/knob_bare.jpg
+        resources/keys.jpg
+        resources/orgel.txt
+        resources/wall.jpg
+        resources/grain.png
+        resources/fabian_hrir.bin)
 
 # libmysofa (BSD-3): reads SOFA files (HRTFs) for the binaural mode. Its one zlib call goes to JUCE's zlib
-# (hdf/gunzip_rysum.c -> Source/SofaGunzip.cpp), so nothing else is needed.
-set(MYSOFA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/libmysofa)
+# (hdf/gunzip_rysum.c -> source/SofaGunzip.cpp), so nothing else is needed.
+set(MYSOFA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party/libmysofa)
 add_library(rysum_mysofa STATIC
     ${MYSOFA_DIR}/hrtf/reader.c ${MYSOFA_DIR}/hdf/superblock.c ${MYSOFA_DIR}/hdf/dataobject.c
     ${MYSOFA_DIR}/hdf/btree.c ${MYSOFA_DIR}/hdf/fractalhead.c ${MYSOFA_DIR}/hdf/gcol.c ${MYSOFA_DIR}/hdf/gunzip_rysum.c
@@ -111,7 +111,7 @@ endif()
 
 # MTS-ESP client (ODDSound, 0BSD): microtuning from an MTS-ESP master plug-in, or MIDI Tuning Standard SysEx.
 # It loads the MTS-ESP library at run time if it is installed; without it everything works, MTS-ESP just stays unconnected.
-set(MTSESP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MTS-ESP)
+set(MTSESP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party/MTS-ESP)
 add_library(rysum_mtsesp STATIC ${MTSESP_DIR}/libMTSClient.cpp)
 set_target_properties(rysum_mtsesp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(rysum_mtsesp PUBLIC ${MTSESP_DIR})
@@ -124,7 +124,7 @@ endif()
 
 # PFFFT (FFTPACK licence, BSD-like): fast SIMD FFT for all real-time convolutions (IR, binaural, simulated room, Lucier).
 # JUCE's own FFT is a plain scalar one on Windows.
-set(PFFFT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/pffft)
+set(PFFFT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party/pffft)
 add_library(rysum_pffft STATIC ${PFFFT_DIR}/pffft.c)
 set_target_properties(rysum_pffft PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
 target_include_directories(rysum_pffft PUBLIC ${PFFFT_DIR})
@@ -136,47 +136,47 @@ else()
     target_link_libraries(rysum_pffft PRIVATE m)
 endif()
 
-# The innermost loops (Source/Kernels.h), a second time compiled for AVX2 + FMA; the CPU decides at start-up which
+# The innermost loops (source/Kernels.h), a second time compiled for AVX2 + FMA; the CPU decides at start-up which
 # version runs, so the plugin still works on any x86-64 CPU. (That file is compiled without link-time optimisation,
 # so none of its AVX2 code can be merged into the rest.)
-set(RYSUM_KERNEL_SOURCES Source/Kernels.cpp)
+set(RYSUM_KERNEL_SOURCES source/Kernels.cpp)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64|x64)$" AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
-    list(APPEND RYSUM_KERNEL_SOURCES Source/KernelsAVX2.cpp)
-    set_source_files_properties(Source/Kernels.cpp PROPERTIES COMPILE_DEFINITIONS RYSUM_HAVE_AVX2_KERNELS=1)
+    list(APPEND RYSUM_KERNEL_SOURCES source/KernelsAVX2.cpp)
+    set_source_files_properties(source/Kernels.cpp PROPERTIES COMPILE_DEFINITIONS RYSUM_HAVE_AVX2_KERNELS=1)
     if(MSVC)
-        set_source_files_properties(Source/KernelsAVX2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/GL-")
+        set_source_files_properties(source/KernelsAVX2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/GL-")
     else()
-        set_source_files_properties(Source/KernelsAVX2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-fno-lto")
+        set_source_files_properties(source/KernelsAVX2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-fno-lto")
     endif()
 endif()
 
 set(RYSUM_PLUGIN_SOURCES
     ${RYSUM_KERNEL_SOURCES}
-    Source/SampleLibrary.cpp
-    Source/OrganEngine.cpp
-    Source/Convolver.cpp
-    Source/Binaural.cpp
-    Source/RoomTail.cpp
-    Source/Lucier.cpp
-    Source/LucierPiece.cpp
-    Source/Speakers.cpp
-    Source/SofaGunzip.cpp
-    Source/PluginProcessor.cpp
-    Source/ProcessorScenes.cpp
-    Source/PluginEditor.cpp
-    Source/ConsoleView.cpp
-    Source/SpaceView.cpp
-    Source/KlangView.cpp
-    Source/EffectsView.cpp
-    Source/SaalView.cpp
-    Source/MidiMapView.cpp
-    Source/OrganView.cpp
-    Source/SpeakerView.cpp
-    Source/ModView.cpp)
+    source/SampleLibrary.cpp
+    source/OrganEngine.cpp
+    source/Convolver.cpp
+    source/Binaural.cpp
+    source/RoomTail.cpp
+    source/Lucier.cpp
+    source/LucierPiece.cpp
+    source/Speakers.cpp
+    source/SofaGunzip.cpp
+    source/PluginProcessor.cpp
+    source/ProcessorScenes.cpp
+    source/PluginEditor.cpp
+    source/ConsoleView.cpp
+    source/SpaceView.cpp
+    source/KlangView.cpp
+    source/EffectsView.cpp
+    source/SaalView.cpp
+    source/MidiMapView.cpp
+    source/OrganView.cpp
+    source/SpeakerView.cpp
+    source/ModView.cpp)
 
 function(rysum_setup_plugin target)
     target_sources(${target} PRIVATE ${RYSUM_PLUGIN_SOURCES})
-    target_include_directories(${target} PRIVATE Source)
+    target_include_directories(${target} PRIVATE source)
     target_compile_definitions(${target} PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
@@ -237,18 +237,18 @@ option(RYSUM_BUILD_TESTS "Build the offline render test" OFF)
 if(RYSUM_BUILD_TESTS)
     juce_add_console_app(RysumRenderTest PRODUCT_NAME "RysumRenderTest")
     target_sources(RysumRenderTest PRIVATE
-        Tests/RenderTest.cpp
+        tests/RenderTest.cpp
         ${RYSUM_KERNEL_SOURCES}
-        Source/SampleLibrary.cpp
-        Source/OrganEngine.cpp
-        Source/Convolver.cpp
-        Source/Binaural.cpp
-        Source/RoomTail.cpp
-        Source/Lucier.cpp
-        Source/LucierPiece.cpp
-        Source/Speakers.cpp
-        Source/SofaGunzip.cpp)
-    target_include_directories(RysumRenderTest PRIVATE Source)
+        source/SampleLibrary.cpp
+        source/OrganEngine.cpp
+        source/Convolver.cpp
+        source/Binaural.cpp
+        source/RoomTail.cpp
+        source/Lucier.cpp
+        source/LucierPiece.cpp
+        source/Speakers.cpp
+        source/SofaGunzip.cpp)
+    target_include_directories(RysumRenderTest PRIVATE source)
     target_compile_definitions(RysumRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(RysumRenderTest PRIVATE RysumData rysum_mysofa rysum_pffft
         juce::juce_audio_basics juce::juce_audio_formats juce::juce_core juce::juce_events juce::juce_dsp
@@ -256,11 +256,11 @@ if(RYSUM_BUILD_TESTS)
 
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
-        Tests/UiSnapshot.cpp
+        tests/UiSnapshot.cpp
         ${RYSUM_KERNEL_SOURCES}
-        Source/SampleLibrary.cpp Source/OrganEngine.cpp Source/Convolver.cpp Source/Binaural.cpp Source/RoomTail.cpp Source/Lucier.cpp Source/LucierPiece.cpp Source/Speakers.cpp Source/SofaGunzip.cpp Source/PluginProcessor.cpp Source/ProcessorScenes.cpp Source/PluginEditor.cpp
-        Source/ConsoleView.cpp Source/SpaceView.cpp Source/KlangView.cpp Source/ModView.cpp Source/EffectsView.cpp Source/SaalView.cpp Source/MidiMapView.cpp Source/OrganView.cpp Source/SpeakerView.cpp)
-    target_include_directories(RysumUiSnapshot PRIVATE Source)
+        source/SampleLibrary.cpp source/OrganEngine.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/ProcessorScenes.cpp source/PluginEditor.cpp
+        source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp)
+    target_include_directories(RysumUiSnapshot PRIVATE source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
@@ -277,8 +277,8 @@ endif()
 option(RYSUM_BUILD_BENCH "Build the CPU benchmark" OFF)
 if(RYSUM_BUILD_BENCH)
     juce_add_gui_app(RysumBench PRODUCT_NAME "RysumBench")
-    target_sources(RysumBench PRIVATE Tests/Bench.cpp ${RYSUM_PLUGIN_SOURCES})
-    target_include_directories(RysumBench PRIVATE Source)
+    target_sources(RysumBench PRIVATE tests/Bench.cpp ${RYSUM_PLUGIN_SOURCES})
+    target_include_directories(RysumBench PRIVATE source)
     target_compile_definitions(RysumBench PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)

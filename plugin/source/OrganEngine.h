@@ -564,8 +564,6 @@ private:
     std::array<std::array<float, kFdnLines>, kFdnLines> fdnMatrix {};      // random orthogonal mixing matrix
     std::array<float, kFdnLines> fdnModStepC {}, fdnModStepS {};           // slow delay modulation (phasor steps)
     std::vector<float> zeroIn, room0In;
-    std::array<int, kNumStops> stopRoomNow {};
-    int inputRoomNow = 0;
     // notes to single pipes
     uint32_t spreadCounter = 0;
     int lastSpreadStop = -1;

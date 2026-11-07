@@ -8,7 +8,7 @@ This is a guided build plan. Source changes and full build/runtime checks below 
 
 - Main plugin code is C++17, using JUCE 8.0.12 and CMake 3.22 or newer. Supporting libraries include C sources.
 - `plugin/CMakeLists.txt` is the current build: instrument VST3, standalone application, optional FX VST3, render/UI checks and CPU benchmark.
-- The root `CMakeLists.txt` is an older duplicate, with missing source/resource inputs. Root `Source`, `Resources` and `Tests` also contain older material. Do not remove those folders as part of this build preparation; first make the root build delegate to the current configuration.
+- The root `CMakeLists.txt` now delegates to `plugin/`. Older root `Source`, `Resources` and `Tests` copies are preserved in `_archive/legacy-root/` and are not built.
 - ASIO is guarded by `WIN32`; no Mac replacement for ASIO is required. JUCE supplies the platform audio/MIDI implementation.
 - Native Apple Silicon processing already has suitable code paths: PFFFT supports ARM NEON, and the base kernels use portable loops. The baseline kernel label says "SSE2" even on ARM; that is a diagnostic label to correct later, not evidence that ARM uses Intel instructions.
 - MTS-ESP's client loader already supports macOS. On the inspected machine, `/Library/Application Support/MTS-ESP/libMTS.dylib` is installed and includes arm64 and x86_64.
@@ -45,7 +45,7 @@ add_subdirectory(plugin)
 
 The root project gives CMake a workspace entry point; the plugin subdirectory keeps its existing `project(RYSUM VERSION 0.1.0 ...)`, targets, resources and options. Paths inside that file continue to resolve relative to `plugin/`.
 
-Do not paste the root file's old source lists into `plugin/CMakeLists.txt`. Do not delete the older directories yet. Existing Windows commands that configure `plugin/` continue to use the same build configuration directly.
+Do not paste the root file's old source lists into `plugin/CMakeLists.txt`. The older directories have been archived under `_archive/legacy-root/`. Existing Windows commands that configure `plugin/` continue to use the same build configuration directly.
 
 ## Step 2 — declare standalone audio-input permission
 
@@ -162,7 +162,7 @@ cmake -S plugin -B plugin/build-mac-dev -DRYSUM_BUILD_TESTS=ON
 cmake --build plugin/build-mac-dev --target RysumRenderTest --parallel 4
 ```
 
-The existing cache retains the generator, architecture and dev settings. Run the generated render executable with the samples and output directory arguments documented in `plugin/Tests/RenderTest.cpp`. On macOS, locate the executable in the generated artefacts rather than assuming a Windows `.exe` path.
+The existing cache retains the generator, architecture and dev settings. Run the generated render executable with the samples and output directory arguments documented in `plugin/tests/RenderTest.cpp`. On macOS, locate the executable in the generated artefacts rather than assuming a Windows `.exe` path.
 
 The UI snapshot and CPU benchmark are additional targets. Establish functional correctness before drawing performance conclusions, then test several sample rates and buffer sizes.
 
@@ -184,7 +184,7 @@ Select signing identity, minimum macOS version, architectures, sample installati
 - [x] Review current build and platform-related source.
 - [x] Confirm macOS MTS loader and installed universal runtime library.
 - [x] Perform limited syntax-only checks of supporting components.
-- [ ] Replace root duplicate with forwarding configuration.
+- [x] Replace root duplicate with forwarding configuration.
 - [ ] Add standalone microphone usage description.
 - [ ] Quote optional local-JUCE paths.
 - [ ] Configure native arm64 dev build.

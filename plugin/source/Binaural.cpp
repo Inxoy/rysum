@@ -1,4 +1,5 @@
 #include "Binaural.h"
+#include "SofaGunzip.h"
 #include "Spatial.h"
 #include <RysumBinaryData.h>
 #include <complex>
@@ -10,7 +11,6 @@ extern "C"
 
 namespace rysum
 {
-void installSofaInflate();      // SofaGunzip.cpp
 using cplx = std::complex<double>;
 
 // ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ using cplx = std::complex<double>;
 // ---------------------------------------------------------------------------
 std::unique_ptr<HrirSet> HrirSet::fabian (juce::String& error)
 {
-    // Resources/fabian_hrir.bin (zlib): "RHRF", version, directions, length, rate (double), scale (float),
+    // resources/fabian_hrir.bin (zlib): "RHRF", version, directions, length, rate (double), scale (float),
     // directions x (az, el) float32, then int16 IRs [direction][ear][sample]
     juce::MemoryInputStream raw (RysumData::fabian_hrir_bin, (size_t) RysumData::fabian_hrir_binSize, false);
     juce::GZIPDecompressorInputStream gz (&raw, false, juce::GZIPDecompressorInputStream::zlibFormat);

@@ -148,7 +148,6 @@ private:
     void timerCallback (int id) override;
     bool sizeRestored = false;
     float scaleToSave = 1.0f, savedScale = -1.0f;
-    RysumProcessor& proc;
     juce::SharedResourcePointer<rysum::ui::Assets> assets;     // fonts + images, alive while an editor exists
     juce::SharedResourcePointer<rysum::ui::LookAndFeel> lnf;   // also the default look (context menus, dialogs)
     RysumContent content;

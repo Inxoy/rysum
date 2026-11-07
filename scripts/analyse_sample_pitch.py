@@ -216,7 +216,7 @@ def write_reports(output, manifest, manifest_path, rows):
                "deviation_cents", "legacy_difference_cents", "window_spread_cents", "median_periodicity",
                "median_method_difference_cents", "minimum_harmonic_count", "region_kind", "runtime_substitute_key", "sha256", "flags"]
     with (output / "final-wav-pitch-analysis.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore", lineterminator="\n")
         writer.writeheader()
         for r in rows:
             writer.writerow({**r, "flags": ";".join(r["flags"])})

@@ -204,7 +204,7 @@ void EffectsView::drawCompass (juce::Graphics& g, juce::Rectangle<int> area, int
 {
     auto& A = Assets::get();
     const auto c = area.toFloat().getCentre();
-    const float R = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f - 12.0f;
+    const float R = static_cast<float> (juce::jmin (area.getWidth(), area.getHeight())) * 0.5f - 12.0f;
     if (R < 10.0f) return;
     g.setColour (col::border);
     g.drawEllipse (c.x - R, c.y - R, 2 * R, 2 * R, 1.0f);

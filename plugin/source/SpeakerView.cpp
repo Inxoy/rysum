@@ -35,12 +35,12 @@ void SpeakerMap::paint (juce::Graphics& g)
     if (d != nullptr && d->error.isEmpty())
         for (int b = 0; b < AllRadDecoder::kMapEl; ++b)
         {
-            const float el = -90.0f + 5.0f * b;
+            const float el = -90.0f + 5.0f * static_cast<float> (b);
             if (el < -45.0f) continue;
             for (int a = 0; a < AllRadDecoder::kMapAz - 1; ++a)
             {
                 const float db = d->energyMap[(size_t) (b * AllRadDecoder::kMapAz + a)];
-                const auto p = toScreen (-180.0f + 5.0f * a, el);
+                const auto p = toScreen (-180.0f + 5.0f * static_cast<float> (a), el);
                 const float sz = 2.0f + 5.5f * std::cos (juce::degreesToRadians (el));
                 if (db < -0.5f) g.setColour (col::rubric.withAlpha (juce::jlimit (0.0f, 0.8f, -db / 10.0f)));
                 else if (db > 0.5f) g.setColour (col::white.withAlpha (juce::jlimit (0.0f, 0.5f, db / 6.0f)));

@@ -163,10 +163,10 @@ void SpaceCircle::paint (juce::Graphics& g)
         {
             std::array<Pos, 2> ip {};
             const int n = inputPositions (ip);
-            for (int c = 0; c < n; ++c)
+            for (int channel = 0; channel < n; ++channel)
             {
-                const float near = juce::jlimit (0.6f, 1.7f, std::sqrt (6.0f / juce::jmax (0.5f, ip[(size_t) c].dist)));
-                drawInputGlyph (g, toScreen (ip[(size_t) c]), (inputSel ? 15.0f : 11.0f) * near, on, n == 2 ? juce::String (c == 0 ? "L" : "R") : juce::String());
+                const float near = juce::jlimit (0.6f, 1.7f, std::sqrt (6.0f / juce::jmax (0.5f, ip[(size_t) channel].dist)));
+                drawInputGlyph (g, toScreen (ip[(size_t) channel]), (inputSel ? 15.0f : 11.0f) * near, on, n == 2 ? juce::String (channel == 0 ? "L" : "R") : juce::String());
             }
             if (inputSel)
             {

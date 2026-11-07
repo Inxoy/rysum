@@ -159,6 +159,13 @@ public:
     }
 
 
+    ~LookAndFeel() override
+    {
+        // The shared object, rather than an individual editor, owns this lifetime.
+        if (&juce::LookAndFeel::getDefaultLookAndFeel() == this)
+            juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+    }
+
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down) override
     {
         // a double rule, like a ruled frame in an old book; pulled = parchment

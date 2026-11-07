@@ -289,8 +289,8 @@ void ConsoleView::resized()
     auto panels = r.withTrimmedBottom (14);
     const int gap = 28;
     const int total = panels.getWidth() - 2 * gap;
-    noiseArea = panels.removeFromLeft ((int) (total * 1.0f / 3.0f)); panels.removeFromLeft (gap);
-    decayArea = panels.removeFromLeft ((int) (total * 1.0f / 3.0f)); panels.removeFromLeft (gap);
+    noiseArea = panels.removeFromLeft (total / 3); panels.removeFromLeft (gap);
+    decayArea = panels.removeFromLeft (total / 3); panels.removeFromLeft (gap);
     outArea = panels;
 
     auto rows = noiseArea.withTrimmedTop (40);
@@ -391,7 +391,7 @@ void ConsoleView::paint (juce::Graphics& g)
     g.setColour (col::faint);
     const char* labels[] { "+12", "-6", "-24", "-42", "-60" };
     for (int i = 0; i < 5; ++i)
-        g.drawText (labels[i], scale.withHeight (12).withY (scale.getY() + (int) (i * (scale.getHeight() - 12) / 4.0f)), juce::Justification::centredLeft);
+        g.drawText (labels[i], scale.withHeight (12).withY (scale.getY() + (i * (scale.getHeight() - 12) / 4)), juce::Justification::centredLeft);
     auto meterBar = [&] (juce::Rectangle<int> b, float v)
     {
         g.setColour (juce::Colour (0xff23231f));

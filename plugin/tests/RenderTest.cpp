@@ -44,7 +44,7 @@ static void testEncoder()
     for (int a = 0; a < N; ++a)
         for (int b = 0; b < N; ++b)
         {
-            const float azd = -180.0f + 360.0f * (a + 0.5f) / N;
+            const float azd = -180.0f + 360.0f * (static_cast<float> (a) + 0.5f) / static_cast<float> (N);
             const double u = -1.0 + 2.0 * (b + 0.5) / N;                     // sin(el) uniform -> equal area
             const float eld = (float) juce::radiansToDegrees (std::asin (u));
             encodeAmbiX (azd, eld, 5, g);
@@ -116,18 +116,18 @@ static double itdMs (const std::vector<float>& l, const std::vector<float>& r, d
 
 static void testBinaural (const juce::File& sofa)
 {
-    juce::String err;
-    auto fab = HrirSet::fabian (err);
-    check (fab != nullptr && fab->numDirections() > 1900, "FABIAN set built in (" + juce::String (fab != nullptr ? fab->numDirections() : 0) + " directions) " + err);
+    juce::String loadError;
+    auto fab = HrirSet::fabian (loadError);
+    check (fab != nullptr && fab->numDirections() > 1900, "FABIAN set built in (" + juce::String (fab != nullptr ? fab->numDirections() : 0) + " directions) " + loadError);
     if (fab == nullptr) return;
 
     std::unique_ptr<HrirSet> full;
     if (sofa.existsAsFile())
     {
         auto t0 = std::chrono::high_resolution_clock::now();
-        full = HrirSet::fromSofa (sofa, err);
+        full = HrirSet::fromSofa (sofa, loadError);
         const double secs = std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
-        check (full != nullptr && full->numDirections() == 11950 && full->length == 279, "SOFA read with libmysofa (" + juce::String (secs, 2) + " s) " + err);
+        check (full != nullptr && full->numDirections() == 11950 && full->length == 279, "SOFA read with libmysofa (" + juce::String (secs, 2) + " s) " + loadError);
         if (full != nullptr)
         {
             // the same direction in both: identical data (up to the 16-bit storage)
@@ -150,8 +150,8 @@ static void testBinaural (const juce::File& sofa)
     {   // broken file
         auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_bad.sofa");
         tmp.replaceWithText ("not a sofa file");
-        auto bad = HrirSet::fromSofa (tmp, err);
-        check (bad == nullptr && err.isNotEmpty(), "broken SOFA rejected: " + err);
+        auto bad = HrirSet::fromSofa (tmp, loadError);
+        check (bad == nullptr && loadError.isNotEmpty(), "broken SOFA rejected: " + loadError);
         tmp.deleteFile();
     }
 
@@ -568,7 +568,12 @@ static void writeWav (const juce::File& f, const juce::AudioBuffer<float>& b, do
     std::unique_ptr<juce::OutputStream> os (f.createOutputStream());
     auto opts = juce::AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (b.getNumChannels()).withBitsPerSample (24);
     if (auto w = wav.createWriterFor (os, opts))
-        w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+    {
+        if (! w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()))
+            check (false, "WAV write failed: " + f.getFullPathName());
+    }
+    else
+        check (false, "WAV writer creation failed: " + f.getFullPathName());
 }
 
 struct Scene
@@ -611,10 +616,10 @@ static juce::AudioBuffer<float> render (OrganEngine& e, Scene& sc, double sr, in
 static void testLucier (std::shared_ptr<const SampleLibrary> lib)
     {
         RoomParams rp;     // the default hall
-        auto t0 = std::chrono::high_resolution_clock::now();
+        auto baseStarted = std::chrono::high_resolution_clock::now();
         auto base = lucierFromRoom (rp, 0.5f, 48000.0);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        auto contrast = [] (const LucierResult& r)       // how far the strongest resonance stands out (curve: max 0 dB, median below)
+        auto baseFinished = std::chrono::high_resolution_clock::now();
+        auto resonanceContrast = [] (const LucierResult& r)       // how far the strongest resonance stands out (curve: max 0 dB, median below)
         {
             auto c = r.curve; std::sort (c.begin(), c.end()); return -c[c.size() / 2];
         };
@@ -626,12 +631,12 @@ static void testLucier (std::shared_ptr<const SampleLibrary> lib)
             res.push_back (buildLucier (*base, g, 0.3f, 1));
             buildMs = std::max (buildMs, std::chrono::duration<double, std::milli> (std::chrono::high_resolution_clock::now() - a0).count());
         }
-        std::cout << "lucier: base '" << base->what << "' in " << std::chrono::duration<double, std::milli> (t1 - t0).count() << " ms; builds up to "
-                  << buildMs << " ms; contrast gen 1/4/12/30: " << contrast (res[0]) << " / " << contrast (res[1]) << " / " << contrast (res[2]) << " / "
-                  << contrast (res[3]) << " dB; strongest at gen 30:";
+        std::cout << "lucier: base '" << base->what << "' in " << std::chrono::duration<double, std::milli> (baseFinished - baseStarted).count() << " ms; builds up to "
+                  << buildMs << " ms; contrast gen 1/4/12/30: " << resonanceContrast (res[0]) << " / " << resonanceContrast (res[1]) << " / " << resonanceContrast (res[2]) << " / "
+                  << resonanceContrast (res[3]) << " dB; strongest at gen 30:";
         for (auto f : res[3].peaks) std::cout << " " << f;
         std::cout << " Hz" << std::endl;
-        check (contrast (res[1]) > contrast (res[0]) + 3.0f && contrast (res[2]) > contrast (res[1]) + 3.0f && contrast (res[3]) > contrast (res[2]),
+        check (resonanceContrast (res[1]) > resonanceContrast (res[0]) + 3.0f && resonanceContrast (res[2]) > resonanceContrast (res[1]) + 3.0f && resonanceContrast (res[3]) > resonanceContrast (res[2]),
                "lucier: the room's resonances stand out more with every generation");
         check (! res[3].peaks.empty() && res[3].peaks[0] > 30.0f && res[3].peaks[0] < 12000.0f, "lucier: resonances found");
 
@@ -673,17 +678,14 @@ static void testLucier (std::shared_ptr<const SampleLibrary> lib)
             juce::AudioBuffer<float> ir (1, 96000); ir.clear();
             XorShift rng (7);
             for (int i = 4800; i < 96000; ++i) ir.setSample (0, i, (i == 4800 ? 1.0f : 0.3f * rng.bi()) * std::exp (-(float) (i - 4800) / 9000.0f));
-            tmp.deleteFile();
-            juce::WavAudioFormat wav;
-            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (tmp), 44100.0, 1, 24, {}, 0));
-            w->writeFromAudioSampleBuffer (ir, 0, ir.getNumSamples());
+            writeWav (tmp, ir, 44100.0);
         }
-        juce::String err;
-        auto fb = lucierFromFile (tmp, 48000.0, err);
+        juce::String fileError;
+        auto fb = lucierFromFile (tmp, 48000.0, fileError);
         int argMax = 0;
         if (fb != nullptr) for (int i = 0; i < (int) fb->h.size(); ++i) if (std::abs (fb->h[(size_t) i]) > std::abs (fb->h[(size_t) argMax])) argMax = i;
         const bool fileOk = fb != nullptr && fb->h.size() > 48000 && argMax > 0.001 * 48000 && argMax < 0.004 * 48000;
-        std::cout << "lucier from a file (44.1 kHz, 100 ms silence before): " << (fb != nullptr ? fb->what : err) << ", starts at the direct sound: " << fileOk << std::endl;
+        std::cout << "lucier from a file (44.1 kHz, 100 ms silence before): " << (fb != nullptr ? fb->what : fileError) << ", starts at the direct sound: " << fileOk << std::endl;
         check (fileOk, "lucier: impulse response file read, resampled and trimmed");
         tmp.deleteFile();
 
@@ -696,7 +698,7 @@ static void testLucier (std::shared_ptr<const SampleLibrary> lib)
             const auto y1 = lucierPass (imp, pass, 1 << 22);
             double err = 0.0, ref = 0.0;
             for (size_t i = 0; i < pass.size() && i < y1.size(); ++i) { err += std::pow (y1[i] - pass[i], 2.0); ref += (double) pass[i] * pass[i]; }
-            std::cout << "lucier piece: impulse through one pass, error " << 10.0 * std::log10 (err / ref + 1e-30) << " dB, pass " << pass.size() / 48000.0 << " s" << std::endl;
+            std::cout << "lucier piece: impulse through one pass, error " << 10.0 * std::log10 (err / ref + 1e-30) << " dB, pass " << static_cast<double> (pass.size()) / 48000.0 << " s" << std::endl;
             check (y1.size() == imp.size() + pass.size() - 1 && err < 1.0e-8 * ref, "lucier piece: one pass = convolution with the room");
             // 10 s of noise through 12 generations: the spectrum becomes a few lines (contrast grows), the level stays
             XorShift rr (5);
@@ -953,7 +955,7 @@ static void testSpeakers()
     // ring of 8 at ear level: imaginary poles are added, nothing comes from above
     {
         SpeakerLayout ringL;
-        for (int i = 0; i < 8; ++i) { Speaker s; s.az = -180.0f + 45.0f * i; s.channel = i + 1; ringL.speakers.push_back (s); }
+        for (int i = 0; i < 8; ++i) { Speaker s; s.az = -180.0f + 45.0f * static_cast<float> (i); s.channel = i + 1; ringL.speakers.push_back (s); }
         auto D = buildAllRad (ringL, 3, false, 3);
         check (D->error.isEmpty() && D->addedImaginary == 2, "allrad: ring - imaginary loudspeakers above and below");
     }
@@ -1117,11 +1119,11 @@ int main (int argc, char** argv)
     outDir.createDirectory();
 
     std::cout << "loading " << folder.getFullPathName() << std::endl;
-    juce::String err;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    std::shared_ptr<const SampleLibrary> lib (SampleLibrary::load (folder, err).release());
-    auto t1 = std::chrono::high_resolution_clock::now();
-    check (lib != nullptr, "library loaded " + err);
+    juce::String loadError;
+    auto loadStarted = std::chrono::high_resolution_clock::now();
+    std::shared_ptr<const SampleLibrary> lib (SampleLibrary::load (folder, loadError).release());
+    auto loadFinished = std::chrono::high_resolution_clock::now();
+    check (lib != nullptr, "library loaded " + loadError);
     if (lib == nullptr) return 1;
     if (std::getenv ("RYSUM_LUCIER_DEMO") != nullptr)
     {
@@ -1154,12 +1156,9 @@ int main (int argc, char** argv)
         }
         all.applyGain (0.8f / juce::jmax (0.01f, all.getMagnitude (0, all.getNumSamples())));
         auto f = outDir.getChildFile ("lucier_demo.wav");
-        f.deleteFile();
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), 48000.0, 2, 24, {}, 0));
-        w->writeFromAudioSampleBuffer (all, 0, all.getNumSamples());
+        writeWav (f, all, 48000.0);
         std::cout << "wrote " << f.getFullPathName() << std::endl;
-        return 0;
+        return failures;
     }
     if (std::getenv ("RYSUM_ONLY_PIPEMOD") != nullptr) { testPipeTargets (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (std::getenv ("RYSUM_ONLY_ROOMS") != nullptr) { testRoomsAndSpread (lib); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
@@ -1168,7 +1167,7 @@ int main (int argc, char** argv)
     std::cout << "  " << lib->loadedPipes << " pipes, " << lib->substitutedPipes << " substituted, "
               << lib->clicksDown.size() << "/" << lib->clicksUp.size() << "/" << lib->clicksOther.size() << " clicks, "
               << lib->stopPulls.size() << " pulls, " << lib->wind.size() << " wind, "
-              << std::chrono::duration<double> (t1 - t0).count() << " s" << std::endl;
+              << std::chrono::duration<double> (loadFinished - loadStarted).count() << " s" << std::endl;
     for (int s = 0; s < kNumStops; ++s)
         for (int k = 0; k < kNumKeys; ++k)
         {
@@ -1675,13 +1674,13 @@ int main (int argc, char** argv)
             // pressure on channel 3 makes only that note louder; MPE off: the same bend does nothing to the pitch
             auto mpePlay = [&] (bool mpe, int onlyCh, std::function<void (juce::MidiBuffer&, int)> extra, EngineParams* out = nullptr)
             {
-                OrganEngine e; e.prepare (48000.0, 512); e.setLibrary (lib);
-                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
-                p.mpe = mpe; p.mpeBendRange = 48.0f;
-                p.mod.routes[0] = { srcPressure, tgtLevel, 0.4f };
-                if (out != nullptr) *out = p;
-                juce::AudioBuffer<float> b (2, 512), all (1, 72000);
-                for (int pos = 0; pos < all.getNumSamples(); pos += 512)
+                OrganEngine mpeEngine; mpeEngine.prepare (48000.0, 512); mpeEngine.setLibrary (lib);
+                EngineParams mpeParams; mpeParams.stopOn = {}; mpeParams.stopOn[0] = true; mpeParams.clickLevel = 0; mpeParams.releaseClick = 0; mpeParams.wind = 0; mpeParams.stopPull = 0;
+                mpeParams.mpe = mpe; mpeParams.mpeBendRange = 48.0f;
+                mpeParams.mod.routes[0] = { srcPressure, tgtLevel, 0.4f };
+                if (out != nullptr) *out = mpeParams;
+                juce::AudioBuffer<float> blockBuffer (2, 512), rendered (1, 72000);
+                for (int pos = 0; pos < rendered.getNumSamples(); pos += 512)
                 {
                     juce::MidiBuffer mb;
                     if (pos == 0)
@@ -1690,17 +1689,17 @@ int main (int argc, char** argv)
                         if (onlyCh == 0 || onlyCh == 3) mb.addEvent (juce::MidiMessage::noteOn (3, 57, (juce::uint8) 100), 0);
                     }
                     extra (mb, pos);
-                    e.process (b, mb, p);
-                    all.copyFrom (0, pos, b, 0, 0, juce::jmin (512, all.getNumSamples() - pos));
+                    mpeEngine.process (blockBuffer, mb, mpeParams);
+                    rendered.copyFrom (0, pos, blockBuffer, 0, 0, juce::jmin (512, rendered.getNumSamples() - pos));
                 }
-                return all;
+                return rendered;
             };
             const int bend2 = 8192 + juce::roundToInt (8191.0 * 2.0 / 48.0);
             auto bendCh2 = [&] (juce::MidiBuffer& mb, int pos) { if (pos == 4096) mb.addEvent (juce::MidiMessage::pitchWheel (2, bend2), 0); };
             const double mpeBent = 1200.0 * std::log2 (pitchOf (mpePlay (true, 2, bendCh2), kA4 * std::pow (2.0, 2.0 / 12.0)) / kA4);
             const double other = 1200.0 * std::log2 (pitchOf (mpePlay (true, 3, bendCh2), kA4 / 2.0) / (kA4 / 2.0));
             const double offBent = 1200.0 * std::log2 (pitchOf (mpePlay (false, 2, bendCh2), kA4) / kA4);
-            auto rmsLate = [] (const juce::AudioBuffer<float>& b) { return juce::Decibels::gainToDecibels (b.getRMSLevel (0, 36000, 30000)); };
+            auto rmsLate = [] (const juce::AudioBuffer<float>& buffer) { return juce::Decibels::gainToDecibels (buffer.getRMSLevel (0, 36000, 30000)); };
             auto press3 = [&] (juce::MidiBuffer& mb, int pos) { if (pos == 4096) mb.addEvent (juce::MidiMessage::channelPressureChange (3, 127), 0); };
             const float quiet2 = rmsLate (mpePlay (true, 2, [] (juce::MidiBuffer&, int) {})), pressed2 = rmsLate (mpePlay (true, 2, press3));
             const float quiet3 = rmsLate (mpePlay (true, 3, [] (juce::MidiBuffer&, int) {})), pressed3 = rmsLate (mpePlay (true, 3, press3));
@@ -2051,7 +2050,7 @@ int main (int argc, char** argv)
             dir.createDirectory();
             juce::AudioBuffer<float> snd (2, 24000);
             snd.clear();
-            for (int i = 12000; i < 24000; ++i) { const float v = 0.2f * std::exp (-(i - 12000) / 800.0f) * (float) std::sin (i * 0.9); snd.setSample (0, i, v); snd.setSample (1, i, v); }
+            for (int i = 12000; i < 24000; ++i) { const float v = 0.2f * std::exp (-static_cast<float> (i - 12000) / 800.0f) * (float) std::sin (i * 0.9); snd.setSample (0, i, v); snd.setSample (1, i, v); }
             writeWav (dir.getChildFile ("schraube.wav"), snd, 48000.0);
             auto list = SampleLibrary::loadCustom (tmp);
             float pk = 0; for (auto v : list.empty() ? std::vector<float>() : list[0].sample->data) pk = std::max (pk, std::abs (v));
@@ -2240,7 +2239,7 @@ int main (int argc, char** argv)
                 p.room.shape = shapeL; p.room.shapeAmt = 1.0f; p.room.absWalls = 0.02f; p.room.erGain = erOn ? 1.0f : 0.0f;
                 p.motionMode[0] = (int) Motion::Rotation; p.motionRate[0] = 0.15f;
             }; };
-            for (auto* e : { &e1, &e2 }) { e->baseAz[0][(size_t) keyA] = 0.0f; e->baseEl[0][(size_t) keyA] = 0.0f; e->baseDist[0][(size_t) keyA] = 7.0f; }
+            for (auto* engine : { &e1, &e2 }) { engine->baseAz[0][(size_t) keyA] = 0.0f; engine->baseEl[0][(size_t) keyA] = 0.0f; engine->baseDist[0][(size_t) keyA] = 7.0f; }
             auto t0 = std::chrono::high_resolution_clock::now();
             auto on = run (setupL (true), 4.0, -1, "43_plan_L_rotating", 4, &e1);
             const double rtf = 4.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
@@ -2345,7 +2344,7 @@ int main (int argc, char** argv)
                 {
                     const double db = 10 * std::log10 (sch[i] / acc);
                     if (db > -5) continue; if (db < -25) break;
-                    const double x = i * 0.01; sx += x; sy += db; sxx += x * x; sxy += x * db; ++nn;
+                    const double x = static_cast<double> (i) * 0.01; sx += x; sy += db; sxx += x * x; sxy += x * db; ++nn;
                 }
                 const double slope = (nn * sxy - sx * sy) / (nn * sxx - sx * sx);
                 const double measured = -60.0 / slope;

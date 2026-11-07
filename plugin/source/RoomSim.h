@@ -26,8 +26,9 @@ struct FloorPlan
     bool operator== (const FloorPlan& o) const noexcept
     {
         if (n != o.n) return false;
-        for (int i = 0; i < n; ++i) if (x[(size_t) i] != o.x[(size_t) i] || y[(size_t) i] != o.y[(size_t) i]) return false;
-        return true;
+        // Exact equality detects changes to stored coordinates, not geometric proximity.
+        return std::equal (x.begin(), x.begin() + n, o.x.begin())
+            && std::equal (y.begin(), y.begin() + n, o.y.begin());
     }
 };
 
@@ -704,7 +705,7 @@ inline RayResult traceRoom (const RoomParams& r, float air, int numRays = 3000, 
             const double db = 10.0 * std::log10 (juce::jmax (1e-30, sch[(size_t) b] / acc));
             if (db > -5.0) continue;
             if (db < -35.0) break;
-            const double x = b * binSec;
+            const double x = static_cast<double> (b) * binSec;
             sx += x; sy += db; sxx += x * x; sxy += x * db; ++n;
         }
         if (n < 3) return 30.0f;

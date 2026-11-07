@@ -596,8 +596,8 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
         const Preset pr = { nullptr, r.w, r.l, r.h, r.aw, r.af, r.hi, r.sc };
         b.onClick = [this, pr]
         {
-            const int r = editRoom;
-            auto id = [r] (const char* k) { return RysumProcessor::roomParamId (r, k); };
+            const int roomIndex = editRoom;
+            auto id = [roomIndex] (const char* k) { return RysumProcessor::roomParamId (roomIndex, k); };
             const std::pair<juce::String, float> vals[] { { id ("W"), pr.w }, { id ("L"), pr.l }, { id ("H"), pr.h }, { id ("Size"), 1.0f }, { id ("Abs"), pr.aw },
                                                           { id ("AbsFloor"), pr.af }, { id ("High"), pr.hi }, { id ("Scatter"), pr.sc } };
             for (auto& [pid, v] : vals)

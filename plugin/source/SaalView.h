@@ -100,7 +100,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> orderAtt;
     std::vector<std::unique_ptr<juce::TextButton>> roomPresets, materials;
     std::vector<std::unique_ptr<ParamRow>> rows;
-    std::array<ParamRow*, 4> dims {}, surf {}, levels {};
     juce::Rectangle<int> saalBox, dimBox, surfBox, levelBox, planBox;
     juce::String shownStatus;
     // late reverb model: convolution / FDN

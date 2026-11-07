@@ -225,7 +225,11 @@ void LucierPiece::exportPiece (const juce::File& f, std::shared_ptr<const Lucier
         const auto passResp = lucierPassResponse (*base);
         f.deleteFile();
         juce::WavAudioFormat wav;
-        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), rate, 1, 24, {}, 0));
+        std::unique_ptr<juce::OutputStream> stream = f.createOutputStream();
+        if (stream == nullptr) { exportProgress = -1.0f; return; }
+        const auto options = juce::AudioFormatWriterOptions{}
+            .withSampleRate (rate).withNumChannels (1).withBitsPerSample (24);
+        auto w = wav.createWriterFor (stream, options);
         if (w == nullptr) { exportProgress = -1.0f; return; }
         std::vector<float> gap ((size_t) (juce::jmax (0.0f, gapSeconds) * rate), 0.0f);
         auto write = [&] (const std::vector<float>& x)
