@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(RYSUM_JUCE_DIR "" CACHE PATH "Path to a local JUCE checkout (optional)")
 
 if(RYSUM_JUCE_DIR)
-    add_subdirectory(${RYSUM_JUCE_DIR} ${CMAKE_BINARY_DIR}/JUCE)
+    add_subdirectory("${RYSUM_JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
 else()
     include(FetchContent)
     FetchContent_Declare(JUCE
@@ -58,7 +58,9 @@ juce_add_plugin(Rysum
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     VST3_CATEGORIES Instrument Spatial
-    COPY_PLUGIN_AFTER_BUILD FALSE)
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "Rysum uses audio input for live sound processing.")
 
 juce_add_binary_data(RysumData
     HEADER_NAME RysumBinaryData.h

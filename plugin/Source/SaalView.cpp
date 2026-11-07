@@ -1,5 +1,6 @@
 #include "SaalView.h"
 #include "RoomSim.h"
+#include <algorithm>
 
 namespace rysum::ui
 {
@@ -734,7 +735,7 @@ void SaalView::paintLucier (juce::Graphics& g)
         g.setColour (col::dim);
         juce::String s;
         static const char* names[] { "c", "cis", "d", "es", "e", "f", "fis", "g", "gis", "a", "b", "h" };
-        for (size_t i = 0; i < juce::jmin<size_t> (4, lv.peaks.size()); ++i)
+        for (size_t i = 0; i < std::min<size_t> (4, lv.peaks.size()); ++i)
         {
             const float f = lv.peaks[i];
             const float m = 69.0f + 12.0f * std::log2 (f / 444.5f);
