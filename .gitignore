@@ -2,8 +2,9 @@
 .venv/
 
 # plugin build output (any build, build-dev, ...)
-plugin/build*/
-plugin/test_renders/
+plugin/**/build*/
+plugin/**/test_renders/
+plugin/**/*.user
 
 # Visual Studio / compiler leftovers
 .vs/
@@ -15,3 +16,7 @@ plugin/test_renders/
 
 # Ableton analysis files
 *.asd
+
+# Generated Python caches and legacy extraction working files
+__pycache__/
+scripts/output_notes*/

@@ -1,0 +1,131 @@
+{
+  "schema": "rysum-pitch-metadata/v1",
+  "schema_version": 1,
+  "library_id": "rysum-1457",
+  "revision": "draft-audit-2026-11-07",
+  "base_manifest_sha256": "9431299467f924ca53c5599a082ab24e70476f0a00cf94032d06875d0b526d4e",
+  "assets": [
+    {
+      "id": "trompete-060",
+      "file": "trompete/060_cp.wav",
+      "sha256": "1da496905f506b12428b4f57899e1c5289ca9bbd554cc3a15a9d55f9463eaa9a",
+      "sample_rate_hz": 48000,
+      "frames": 204960,
+      "channels": 1,
+      "pitch": {
+        "kind": "single_rank",
+        "measurement": {
+          "frequency_hz": 268.78987420660417,
+          "status": "candidate",
+          "method": "harmonic-spectrum-crosschecked-autocorrelation",
+          "method_version": "1.0.0",
+          "regions": [
+            {
+              "start_frame": 18658,
+              "end_frame": 52258
+            },
+            {
+              "start_frame": 45573,
+              "end_frame": 79173
+            },
+            {
+              "start_frame": 72489,
+              "end_frame": 106089
+            },
+            {
+              "start_frame": 99404,
+              "end_frame": 133004
+            },
+            {
+              "start_frame": 126320,
+              "end_frame": 159920
+            }
+          ],
+          "flags": [],
+          "metrics": {
+            "window_spread_cents": 0.28167132414317186,
+            "median_periodicity": 0.9995035966189527,
+            "median_method_difference_cents": 0.09965041029631266
+          }
+        }
+      }
+    },
+    {
+      "id": "praestant-060",
+      "file": "praestant/060_cp.wav",
+      "sha256": "5257d14a7b3f8b11eb7945935a46149ef1d02e882776dc07621e7e5945e0d93f",
+      "sample_rate_hz": 48000,
+      "frames": 177120,
+      "channels": 1,
+      "pitch": {
+        "kind": "single_rank",
+        "measurement": {
+          "frequency_hz": 265.5045172817323,
+          "status": "candidate",
+          "method": "harmonic-spectrum-crosschecked-autocorrelation",
+          "method_version": "1.0.0",
+          "regions": [
+            {
+              "start_frame": 24867,
+              "end_frame": 58467
+            },
+            {
+              "start_frame": 43630,
+              "end_frame": 77230
+            },
+            {
+              "start_frame": 62393,
+              "end_frame": 95993
+            },
+            {
+              "start_frame": 81156,
+              "end_frame": 114756
+            },
+            {
+              "start_frame": 99920,
+              "end_frame": 133520
+            }
+          ],
+          "flags": [],
+          "metrics": {
+            "window_spread_cents": 0.13258533131889777,
+            "median_periodicity": 0.9993829966669693,
+            "median_method_difference_cents": 0.1996262217660768
+          }
+        }
+      }
+    }
+  ],
+  "pipes": [
+    {
+      "stop_id": "trompete",
+      "key_midi": 60,
+      "asset_id": "trompete-060",
+      "source_playback_ratio": 1,
+      "target_reference_ratio": {
+        "numerator": 1,
+        "denominator": 1
+      }
+    },
+    {
+      "stop_id": "praestant",
+      "key_midi": 60,
+      "asset_id": "praestant-060",
+      "source_playback_ratio": 1,
+      "target_reference_ratio": {
+        "numerator": 1,
+        "denominator": 1
+      }
+    },
+    {
+      "stop_id": "praestant16",
+      "key_midi": 60,
+      "asset_id": "praestant-060",
+      "source_playback_ratio": 0.5,
+      "target_reference_ratio": {
+        "numerator": 1,
+        "denominator": 2
+      }
+    }
+  ]
+}

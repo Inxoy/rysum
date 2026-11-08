@@ -52,7 +52,7 @@ Either copy the whole `Rysum.vst3` folder to `C:\Program Files\Common Files\VST3
 `D:\RYSUM_plugin\rysum_plugin\plugin\build\Rysum_artefacts\Release\VST3`, then *Re-scan*.
 
 The plugin finds the samples by itself in `D:\RYSUM_plugin\rysum_plugin\samples`
-(the output of `rysum_preprocess.py`). If they are somewhere else, click
+(the output of `scripts/rysum_preprocess.py`, run from the repository root). If they are somewhere else, click
 **Samples-Ordner …** on the Spieltisch page and choose the folder that contains
 `rysum_samples.json`.
 
@@ -455,10 +455,17 @@ works the same way in Ableton, Reaper and the standalone app:
 
 ## 5. Files
 
+The maintained application is in `plugin/`. Repository-wide utilities are in
+`scripts/`; sample preparation and analysis are documented in `scripts/README.md`.
+`docs/` contains design and analysis reports. Historical source copies, extracted
+notes and original photos are retained in `_archive/` and are not built.
+
+All paths in the following tree are relative to the repository root.
+
 ```
 plugin/
   CMakeLists.txt        build description
-  Source/               C++ code
+  source/               C++ code
     OrganEngine.*       voices, loops, releases, noise layer, encoder, degradation
     SampleLibrary.*     reads rysum_samples.json + WAVs, replaces unusable pipes
     Spatial.h           AmbiX encoder (ACN/SN3D), stereo panning, layouts, motion
@@ -474,11 +481,10 @@ plugin/
     WindChaos.h         wind model "instabil": resonances, intermittent speech, hiss of starving pipes
     PluginEditor.*, ConsoleView.*, SpaceView.*, SaalView.*, KlangView.*, EffectsView.*, ModView.*,
     MidiMapView.*, Theme.h   interface
-  Resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
-  ThirdParty/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
-  ThirdParty/MTS-ESP/   MTS-ESP client by ODDSound (0BSD, see its LICENSE and README_RYSUM.txt)
-  tools/make_fabian.py  rebuilds Resources/fabian_hrir.bin from the FABIAN SOFA file
-  Tests/                offline render test + UI snapshot tool (optional)
+  resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
+  third-party/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
+  third-party/MTS-ESP/   MTS-ESP client by ODDSound (0BSD, see its LICENSE and README_RYSUM.txt)
+  tests/                offline render test + UI snapshot tool (optional)
 ```
 
 Optional tests (not needed for normal use):
@@ -486,13 +492,13 @@ Optional tests (not needed for normal use):
 to WAV and checks the encoder maths) and `RysumUiSnapshot`.
 
 Fonts: "Rysum Fell" = IM FELL DW Pica by Igino Marini with a few symbols (arrows, primes, ♯ …)
-added from DejaVu Serif and renamed as the OFL requires (built by `tools/make_fell.py`);
+added from DejaVu Serif and renamed as the OFL requires (built by `scripts/make_fell.py`);
 UnifrakturMaguntia for the title; IBM Plex (no longer used in the interface). All SIL Open
-Font License (see `Resources/OFL_*.txt`).
+Font License (see `plugin/resources/OFL_*.txt`).
 
 HRTF: FABIAN head-related transfer function database, Audio Communication Group, TU Berlin –
 F. Brinkmann et al., "A High Resolution and Full-Spherical Head-Related Transfer Function
 Database for Different Head-Above-Torso Orientations", JAES 65(10), 2017, data DOI
-10.14279/depositonce-5718, licence CC BY 4.0 (see `Resources/FABIAN_LICENSE.txt`).
+10.14279/depositonce-5718, licence CC BY 4.0 (see `plugin/resources/FABIAN_LICENSE.txt`).
 SOFA files are read with libmysofa by Christian Hoene / Symonics (BSD 3-clause).
 Microtuning via the MTS-ESP client library by ODDSound Ltd. (0BSD).
