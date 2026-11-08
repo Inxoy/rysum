@@ -260,10 +260,28 @@ public:
                 int maxGrains = 0; float maxErode = 0.0f;
                 const bool feedInput = proc->apvts.getRawParameterValue ("inpOn")->load() > 0.5f;
                 rysum::XorShift noise (11);
+                // the routes that are on when the patch is loaded must stay on (scenes used to switch them off)
+                // (taken from the file: loading has already applied scene A)
+                std::vector<int> liveRoutes;
+                if (auto xml = juce::XmlDocument::parse (f))
+                    for (int r = 0; r < rysum::kNumRoutes; ++r)
+                        for (auto* e : xml->getChildWithTagNameIterator ("PARAM"))
+                            if (e->getStringAttribute ("id") == proc->getModAmountId (r) && std::abs (e->getDoubleAttribute ("value")) > 1.0e-4
+                                && proc->getRouteSrc (r) >= 0)
+                                liveRoutes.push_back (r);
                 for (int b = 0; b < 600; ++b)          // 6.4 s
                 {
                     juce::MidiBuffer mb;
                     if (b == 5)   for (int m : { 41, 53, 57, 60, 65, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) (b % 2 ? 60 : 110)), 0);
+                    // the hands: mod wheel up and down, pitch wheel swinging, while the chord sounds
+                    if (b >= 60 && b < 420 && b % 6 == 0)
+                    {
+                        const double ph = (double) (b - 60) / 360.0;
+                        mb.addEvent (juce::MidiMessage::controllerEvent (1, 1, juce::jlimit (0, 127, (int) std::round (127.0 * std::sin (juce::MathConstants<double>::pi * ph)))), 0);
+                        mb.addEvent (juce::MidiMessage::pitchWheel (1, juce::jlimit (0, 16383, 8192 + (int) (8000.0 * std::sin (juce::MathConstants<double>::twoPi * 2.0 * ph)))), 1);
+                    }
+                    if (b == 420) { mb.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0); mb.addEvent (juce::MidiMessage::pitchWheel (1, 8192), 0); }
+                    if (b % 20 == 0) juce::MessageManager::getInstance()->runDispatchLoopUntil (2);    // the scene timer (moving through the scenes)
                     if (b == 420) for (int m : { 41, 53, 57, 60, 65, 69, 72 }) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0);
                     buf.clear();
                     if (feedInput) for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) buf.setSample (c, i, 0.1f * noise.bi());   // a patch for the input: something to hear
@@ -284,7 +302,10 @@ public:
                 buf.clear(), proc->processBlock (buf, off);
                 for (int b = 0; b < 300; ++b) { juce::MidiBuffer none; buf.clear(), proc->processBlock (buf, none); }   // let tails / freeze die
                 const float rmsDb = juce::Decibels::gainToDecibels ((float) std::sqrt (e / juce::jmax (1L, cnt)));
-                const bool ok = finite && peak > 1.0e-4f;
+                bool routesKept = true;
+                for (int r : liveRoutes)
+                    if (std::abs (proc->apvts.getRawParameterValue (proc->getModAmountId (r))->load()) < 1.0e-4f) routesKept = false;
+                const bool ok = finite && peak > 1.0e-4f && routesKept;
                 allOk = allOk && ok;
                 if (feedInput && std::getenv ("RYSUM_DEBUG_INPUT") != nullptr)
                 {
@@ -295,9 +316,61 @@ public:
                 if (auto* io = proc->apvts.getParameter ("inpOn")) io->setValueNotifyingHost (0.0f);    // the next patch: without the input again
                 std::cout << "  " << f.getFileNameWithoutExtension() << (feedInput ? " [Eingang]" : "") << ": peak " << juce::Decibels::gainToDecibels (peak) << " dB, rms W "
                           << rmsDb << " dB" << (maxGrains > 0 ? ", grains up to " + juce::String (maxGrains) : juce::String())
-                          << (maxErode > 0.0f ? ", erosion up to " + juce::String (maxErode, 2) : juce::String()) << (ok ? "" : "  FAIL") << std::endl;
+                          << (maxErode > 0.0f ? ", erosion up to " + juce::String (maxErode, 2) : juce::String()) << (routesKept ? "" : ", a route was switched off")
+                          << (ok ? "" : "  FAIL") << std::endl;
             }
             std::cout << "all factory patches play: " << (allOk ? "ok" : "FAIL") << std::endl;
+
+            // set 14 (playing with the hands): how much one note a' changes with velocity, mod wheel and pitch wheel
+            // (W channel, first 1.5 s: level difference, and the share of the highs (first difference) as brightness)
+            for (auto& f : RysumProcessor::getPatchFiles())
+            {
+                const int num = f.getFileNameWithoutExtension().getIntValue();
+                if (num < 118 || num > 133) continue;
+                auto play = [&] (int vel, int wheel, int bend, double& level, double& bright, juce::AudioBuffer<float>* keep)
+                {
+                    proc->loadPatch (f);
+                    juce::MidiBuffer pre;
+                    pre.addEvent (juce::MidiMessage::controllerEvent (1, 1, wheel), 0);
+                    pre.addEvent (juce::MidiMessage::pitchWheel (1, bend), 0);
+                    buf.clear(); proc->processBlock (buf, pre);
+                    for (int w = 0; w < 6; ++w) { juce::MessageManager::getInstance()->runDispatchLoopUntil (20); juce::MidiBuffer none; buf.clear(); proc->processBlock (buf, none); }
+                    double e = 0, d = 0; float prev = 0.0f;
+                    for (int b = 0; b < 141; ++b)
+                    {
+                        juce::MidiBuffer mb;
+                        if (b == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) vel), 0);
+                        buf.clear(); proc->processBlock (buf, mb);
+                        if (b % 20 == 0) juce::MessageManager::getInstance()->runDispatchLoopUntil (2);
+                        for (int i = 0; i < 512; ++i) { const float v = buf.getSample (0, i); e += (double) v * v; d += (double) (v - prev) * (v - prev); prev = v; }
+                        if (keep != nullptr) for (int i = 0; i < 512 && b * 512 + i < keep->getNumSamples(); ++i) keep->setSample (0, b * 512 + i, buf.getSample (0, i));
+                    }
+                    juce::MidiBuffer off;
+                    for (int m = 36; m < 82; ++m) off.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                    off.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 1); off.addEvent (juce::MidiMessage::pitchWheel (1, 8192), 1);
+                    buf.clear(); proc->processBlock (buf, off);
+                    for (int b = 0; b < 400; ++b) { juce::MidiBuffer none; buf.clear(); proc->processBlock (buf, none); }
+                    level = 10.0 * std::log10 (juce::jmax (1e-30, e));
+                    bright = 10.0 * std::log10 (juce::jmax (1e-30, d) / juce::jmax (1e-30, e));
+                };
+                juce::AudioBuffer<float> a (1, 141 * 512), b2 (1, 141 * 512);
+                auto diffDb = [] (const juce::AudioBuffer<float>& x, const juce::AudioBuffer<float>& y)
+                {
+                    double dd = 0, ee = 0;
+                    for (int i = 0; i < x.getNumSamples(); ++i) { const double t = x.getSample (0, i) - y.getSample (0, i); dd += t * t; ee += (double) y.getSample (0, i) * y.getSample (0, i); }
+                    return 10.0 * std::log10 (juce::jmax (1e-30, dd) / juce::jmax (1e-30, ee));
+                };
+                double l0, b0, l1, b1, lw, bw, lb, bb;
+                play (25, 0, 8192, l0, b0, nullptr);
+                play (120, 0, 8192, l1, b1, &a);
+                play (120, 127, 8192, lw, bw, &b2);
+                const double wheelDiff = diffDb (b2, a);
+                play (120, 0, 0, lb, bb, &b2);
+                const double bendDiff = diffDb (b2, a);
+                std::cout << "  expression " << f.getFileNameWithoutExtension() << ": velocity 25 -> 120: level " << juce::String (l1 - l0, 1) << " dB, brightness "
+                          << juce::String (b1 - b0, 1) << " dB; mod wheel 0 -> 127: level " << juce::String (lw - l1, 1) << " dB, brightness " << juce::String (bw - b1, 1)
+                          << " dB, change " << juce::String (wheelDiff, 1) << " dB; pitch wheel down: change " << juce::String (bendDiff, 1) << " dB" << std::endl;
+            }
             // back to a plain state for the rest of the test
             proc->setRoute (0, -1, -1);
         }

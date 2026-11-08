@@ -52,6 +52,29 @@ enum PipeTarget
     tgtDegrade,       // the pipe's amount of "Verfall" (per-pipe mode), +-100 %
     tgtWobble,        // the pipe's "Windschwankung", +-100 %
     tgtCrackle,       // the pipe's crackle ("Knistern", Effekte page), +-100 %
+    // the pipe's own sound (Raum page, tab "Pfeife"), on top of its stop's setting
+    tgtAttack,        // Ansprache, +-1 (-1 soft swell .. +1 chiff)
+    tgtAttSharp,      // Ansprache Schaerfe, +-100 %
+    tgtAttIso,        // Nur Ansprache, +-100 %
+    tgtAttRep,        // Ansprache wiederholen, +-100 % (taken when the note starts)
+    tgtPuff,          // Abriss, +-100 % (taken when the key is released)
+    tgtHiFreq,        // Obertoene ab, +-4 octaves
+    tgtHiGain,        // Obertoene Pegel, +-24 dB
+    tgtHiShape,       // Obertoene Anschlag, +-100 %
+    tgtAirInvert,     // Luft umkehren, +-100 %
+    // the pipe's grain cloud (Raum page, tab "Wolke")
+    tgtCloudMix,      // Menge, +-100 %
+    tgtCloudDens,     // Dichte, x8 / :8
+    tgtCloudSpread,   // Streuung, +-180 deg
+    tgtCloudSize,     // Korngroesse, x8 / :8
+    tgtCloudScatter,  // Zeitstreuung, +-150 ms
+    // the pipe's Verfall (only in the mode "pro Pfeife")
+    tgtDegGrain,      // Koernung, +-100 %
+    tgtDegBits,       // Bittiefe, +-13 bits
+    tgtDegRate,       // Abtastrate, +-6 octaves
+    tgtDegDrops,      // Aussetzer, +-100 %
+    // the pipe's glitches (Spieltisch, Verfall - Glitch)
+    tgtStutter, tgtSplice, tgtZero, tgtClip,      // +-100 % (harte Kanten: at the start and the release of the note)
     kNumPipeTargets
 };
 constexpr int kGlobalTargetBase = 100;
@@ -60,7 +83,14 @@ inline juce::StringArray pipeTargetNames()
 {
     return { "Pfeife: Richtung", juce::String::fromUTF8 ("Pfeife: H\xc3\xb6he"), "Pfeife: Abstand", juce::String::fromUTF8 ("Pfeife: Lautst\xc3\xa4rke"),
              juce::String::fromUTF8 ("Pfeife: Tonh\xc3\xb6he"), "Pfeife: Helligkeit", "Pfeife: Hall-Anteil",
-             "Pfeife: Wind", "Pfeife: Verfall", "Pfeife: Windschwankung", "Pfeife: Knistern" };
+             "Pfeife: Wind", "Pfeife: Verfall", "Pfeife: Windschwankung", "Pfeife: Knistern",
+             "Pfeife: Ansprache", juce::String::fromUTF8 ("Pfeife: Ansprache Sch\xc3\xa4rfe"), "Pfeife: Nur Ansprache", "Pfeife: Ansprache wiederholen",
+             "Pfeife: Abriss", juce::String::fromUTF8 ("Pfeife: Obert\xc3\xb6ne ab"), juce::String::fromUTF8 ("Pfeife: Obert\xc3\xb6ne Pegel"),
+             juce::String::fromUTF8 ("Pfeife: Obert\xc3\xb6ne Anschlag"), "Pfeife: Luft umkehren",
+             "Pfeife: Wolke Menge", "Pfeife: Wolke Dichte", "Pfeife: Wolke Streuung", juce::String::fromUTF8 ("Pfeife: Wolke Korngr\xc3\xb6\xc3\x9f" "e"),
+             "Pfeife: Wolke Zeitstreuung",
+             juce::String::fromUTF8 ("Pfeife: K\xc3\xb6rnung"), "Pfeife: Bittiefe", "Pfeife: Abtastrate", "Pfeife: Aussetzer",
+             "Pfeife: Glitch Stottern", "Pfeife: Glitch Bandschnitt", "Pfeife: Glitch harte Kanten", "Pfeife: Glitch Clipping" };
 }
 inline juce::String pipeTargetId (int t) { return "pipe:" + juce::String (t); }
 

@@ -2401,6 +2401,73 @@ int main (int argc, char** argv)
                     check (finite (g) && db (d, energy (ref, 0, 7.0, fsr)) > -40.0 && pk < 1.0f, juce::String ("glitch ") + names[k] + " changes the sound, finite");
                 }
             }
+            // per-pipe modulation of the new targets: a route from a constant source (LFO 1, square, almost still: +1)
+            // must sound exactly like setting the stop's parameter by hand
+            {
+                auto lfoOne = [] (EngineParams& p, int tgt, float amt)
+                {
+                    p.mod.lfo[0].shape = shSquare; p.mod.lfo[0].rate = 1.0e-4f; p.mod.lfo[0].spread = 0.0f;
+                    p.mod.routes[0] = { srcLfo1, tgt, amt, false };
+                };
+                auto maxDiff = [] (const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b)
+                {
+                    float m = 0.0f;
+                    for (int c = 0; c < 2; ++c) for (int i = 0; i < a.getNumSamples(); ++i) m = juce::jmax (m, std::abs (a.getSample (c, i) - b.getSample (c, i)));
+                    return m;
+                };
+                struct Case { const char* name; int tgt; float amt; std::function<void (EngineParams&)> direct; bool degMode; };
+                const std::vector<Case> cases {
+                    { "Ansprache", tgtAttack, 0.5f, [] (EngineParams& p) { p.pipeSnd[0].attGain = 0.5f; }, false },
+                    { "Ansprache Schaerfe", tgtAttSharp, 0.75f, [] (EngineParams& p) { p.pipeSnd[0].attSharp = 0.75f; }, false },
+                    { "Nur Ansprache", tgtAttIso, 1.0f, [] (EngineParams& p) { p.pipeSnd[0].attIso = 1.0f; }, false },
+                    { "Ansprache wiederholen", tgtAttRep, 0.6f, [] (EngineParams& p) { p.pipeSnd[0].attRep = 0.6f; }, false },
+                    { "Abriss", tgtPuff, 1.0f, [] (EngineParams& p) { p.pipeSnd[0].puff = 1.0f; }, false },
+                    { "Obertoene ab", tgtHiFreq, 0.25f, [] (EngineParams& p) { p.pipeSnd[0].hiFreq = 8000.0f; p.pipeSnd[0].hiGain = 9.0f; }, false },
+                    { "Obertoene Pegel", tgtHiGain, 0.25f, [] (EngineParams& p) { p.pipeSnd[0].hiGain = 6.0f; }, false },
+                    { "Obertoene Anschlag", tgtHiShape, 1.0f, [] (EngineParams& p) { p.pipeSnd[0].hiShape = 1.0f; }, false },
+                    { "Luft umkehren", tgtAirInvert, 1.0f, [] (EngineParams& p) { p.airInvert = 1.0f; }, false },
+                    { "Wolke Menge", tgtCloudMix, 0.7f, [] (EngineParams& p) { p.cloud[0].mix = 0.7f; }, false },
+                    { "Koernung", tgtDegGrain, 0.5f, [] (EngineParams& p) { p.deg.grain = 1.0f; }, true },
+                    { "Bittiefe", tgtDegBits, -1.0f, [] (EngineParams& p) { p.deg.bits = 3.0f; }, true },
+                    { "Abtastrate", tgtDegRate, -0.5f, [] (EngineParams& p) { p.deg.rateHz = 2756.25f; }, true },
+                };
+                for (const auto& cs : cases)
+                {
+                    const bool hiFreqCase = cs.tgt == tgtHiFreq;
+                    auto base = [&] (EngineParams& p)
+                    {
+                        p.airInvert = 0.0f;
+                        if (cs.degMode) { p.deg.perPipe = true; p.deg.amount = 1.0f; p.deg.grain = 0.5f; p.deg.bits = 16.0f; p.deg.rateHz = 22050.0f; p.deg.dropouts = 0.0f; p.deg.wobble = 0.0f; }
+                        if (hiFreqCase) p.pipeSnd[0].hiGain = 9.0f;       // the frequency only matters with a level
+                    };
+                    const float dist = cs.tgt == tgtAirInvert ? 30.0f : 0.0f;
+                    auto viaMod = note ([&] (EngineParams& p) { base (p); lfoOne (p, cs.tgt, cs.amt); }, 1.6, 1.0, "", false, dist);
+                    auto byHand = note ([&] (EngineParams& p) { base (p); cs.direct (p); }, 1.6, 1.0, "", false, dist);
+                    auto plain = note ([&] (EngineParams& p) { base (p); }, 1.6, 1.0, "", false, dist);
+                    const float d = maxDiff (viaMod, byHand), changed = maxDiff (byHand, plain);
+                    std::cout << "per-pipe target " << cs.name << ": route vs by hand max diff " << d << " (the setting itself changes up to " << changed << ")" << std::endl;
+                    check (finite (viaMod) && d < 1.0e-6f && changed > 1.0e-4f, juce::String ("per-pipe target ") + cs.name + " = the parameter by hand");
+                }
+                // glitches (random draws differ): the route turns them on, the result changes and stays finite
+                const int gt[] { tgtStutter, tgtSplice, tgtZero, tgtClip };
+                const char* gn[] { "stutter", "splice", "zero", "clip" };
+                auto ref = note ([] (EngineParams&) {}, 7.0, 6.5, "");
+                for (int k = 0; k < 4; ++k)
+                {
+                    auto g = note ([&] (EngineParams& p) { lfoOne (p, gt[k], 1.0f); }, 7.0, 6.5, k == 0 ? "67_glitch_per_pipe_mod" : "");
+                    double d2 = 0; for (int i = 0; i < g.getNumSamples(); ++i) { const double x = g.getSample (0, i) - ref.getSample (0, i); d2 += x * x; }
+                    std::cout << "per-pipe target glitch " << gn[k] << ": difference " << db (d2, energy (ref, 0, 7.0, fsr)) << " dB" << std::endl;
+                    check (finite (g) && db (d2, energy (ref, 0, 7.0, fsr)) > -40.0, juce::String ("per-pipe target glitch ") + gn[k] + " works");
+                }
+                // a different value for every pipe: Ansprache from the key position, low key vs. high key are not the same
+                {
+                    auto keyed = note ([&] (EngineParams& p) { p.mod.routes[0] = { srcKey, tgtAttack, 1.0f, false }; }, 1.0, -1, "");
+                    auto flat = note ([] (EngineParams&) {}, 1.0, -1, "");
+                    const double kr = db (energy (keyed, tOn, tAtt, fsr), energy (flat, tOn, tAtt, fsr));
+                    std::cout << "per-pipe Ansprache from the key position (a' sits a bit above the middle): attack " << kr << " dB" << std::endl;
+                    check (std::abs (kr) > 0.3, "per-pipe target: Ansprache follows the key position");
+                }
+            }
         }
 
         // ---------------- "Raumverfall" and "Körnerwolke" ----------------

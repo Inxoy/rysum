@@ -528,6 +528,17 @@ follow the pipes. Everything is off in older patches.
     *Windschwankung* and its crackle (*Knistern*, Effekte page). Example: *Hüllkurve 1 pro Pfeife*
     → *Pfeife: Wind* −80 % with a slow attack lets every note start full and sag on its own;
     *Tastenlage* → *Pfeife: Verfall* wears out only the high pipes;
+  - in submenus, added on top of the pipe's stop setting (Raum · Pfeife / Wolke, Verfall, Glitch):
+    *Ansprache · Abriss · Obertöne* (Ansprache ±1, Schärfe / Nur Ansprache / Wiederholen /
+    Abriss ±100 %, Obertöne ab ±4 octaves, Pegel ±24 dB, Anschlag ±100 %, Luft umkehren ±100 %),
+    *Wolke* (Menge ±100 %, Dichte and Korngröße ×8 / :8, Streuung ±180°, Zeitstreuung ±150 ms),
+    *Verfall* (Körnung / Aussetzer ±100 %, Bittiefe ±13 bits, Abtastrate ±6 octaves – only in the
+    mode *pro Pfeife*, and only where the pipe's *Verfall* amount is above 0) and *Glitch*
+    (Stottern, Bandschnitt, harte Kanten, Clipping ±100 %). *Wiederholen* and the hard start of
+    *harte Kanten* are taken when the note starts, *Abriss* and the hard release when the key
+    is let go; everything else follows the modulation all the time (Obertöne Pegel and Luft
+    umkehren glide over ~4 ms). Example: *Zufall je Ton* → *Pfeife: Ansprache* +60 % gives every
+    note its own chiff; *Tastenlage* → *Pfeife: Wolke Menge* dissolves only the high pipes;
   - every continuous parameter of the plugin (stop volume, motion speed, wind, Verfall,
     Doppler, Hall, even the LFO speeds themselves …), amount = share of the slider's range.
     **These are global:** one value for the whole instrument. There the per-pipe sources act
@@ -572,7 +583,25 @@ with an LFO), Verfall · Raum (91 weathering, 92 direction grid, 93 sphere of sa
 dropping out, 94 ghost directions, 95 an LFO erodes the sphere and lets it grow back) and grain
 clouds (96 shimmering Mixtur, 97 the organ dissolves – move *Überblenden* A → D, 98 a choir from
 all directions, 99 clouds circling in an octagonal hall while the sphere weathers). 91–95 need an
-Ambisonics output (AmbiX, binaural or loudspeakers); in stereo only 92's grid is heard.
+Ambisonics output (AmbiX, binaural or loudspeakers); in stereo only 92's grid is heard. Set 13 (100–117): Ansprache (100 soft speech, 101 sharp chiff on the high
+registers, 102 only the chiff, 103 repeated chiff), Abriss (104 breath, 105 sighs in a cruciform
+church), upper partials (106 glass organ, 107 under the ceiling, 108 needle attack), 109 inverted
+air (distant presence), key-click resonance (110, 111), glitches (112 stutter, 113 tape splices,
+114 hard edges, 115 clipping storm), 116 an LFO breathes the Ansprache, 117 everything decays.
+101, 102, 110, 111 and 114 use registers other than the Praestant 8′, so they are quiet or silent
+in a build that only has the Praestant samples. Set 14 (118–133) is made for playing with the hands – velocity,
+pitch wheel (±2 semitones per pipe unless noted), mod wheel, pressure / slide: 118 from a breath to
+a scream (velocity shapes chiff, brightness, level, overtones, distance, the ringing keys), 119 a
+church becomes a machine (mod wheel through four scenes), 120 out of breath (pitch wheel down
+starves the wind, wind model *instabil*), 121 the pipe under the finger (pressure blows it – needs
+aftertouch or MPE), 122 a long walk (four slow random LFOs, never the same), 123 glass shatters
+(hard notes cut and clip), 124 no note like the last (*Zufall je Ton*), 125 the organ evaporates
+(mod wheel: only the chiffs remain, in a cloud, far away), 126 clockwork (every pipe gated at its
+own phase), 127 the organist has been drinking, 128 every note crumbles on its own (pressure holds
+it together), 129 four organs on the mod wheel, 130 gravity (pitch wheel lifts the pipes into the
+vault), 131 continuum (MPE pressure and slide), 132 slow erosion (ten minutes and more), 133
+explosion (velocity, pitch wheel ±12 semitones). Set 14 also re-issues 70: factory scenes used to
+store the routes at 0 %, so moving through the scenes switched the LFO off that moves them.
 
 A patch made with the input on switches the input on when it loads; every other patch leaves
 the input as it is (on or off belongs to your setup, like MPE).

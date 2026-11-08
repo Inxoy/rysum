@@ -2443,7 +2443,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 13;
+    constexpr int kFactoryVersion = 14;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -2500,6 +2500,10 @@ void RysumProcessor::writeFactoryPatches()
                     if (! takesPartInScenes (id)) continue;
                     float v = prm->convertFrom0to1 (prm->getDefaultValue());
                     for (auto& b : values) if (b.first == id) v = (float) b.second;
+                    // the routes' amounts belong to every scene - otherwise moving through the scenes switches them off
+                    // (including a route that moves the scenes itself)
+                    for (size_t r = 0; r < routesIn.size() && r < (size_t) kNumRoutes; ++r)
+                        if (id == getModAmountId ((int) r)) v = routesIn[r].amt;
                     for (auto& c : scenesIn[slot]) if (c.first == id) v = (float) c.second;
                     kv.add (id + "=" + juce::String (prm->convertTo0to1 (v), 6));
                 }
@@ -3002,6 +3006,199 @@ void RysumProcessor::writeFactoryPatches()
           { { "stop0", 1 }, { "stop2", 1 }, { "stop5", 1 }, { "pipeAtt0", 0.6f }, { "pipeRep0", 0.5f }, { "pipePuff0", 0.6f },
             { "clickRes", 0.6f }, { "clickResDecay", 0.7f }, { "degStutter", 0.3f }, { "degSplice", 0.4f }, { "degZero", 0.3f },
             { "degAmount", 0.2f }, { "degGrain", 0.25f }, { "spcWeather", 120.0f }, { "spcDrops", 0.2f } }, {});
+
+    // ---- set 14: playing with the hands - velocity, pitch wheel, mod wheel, pressure; long evolutions; wild ones
+    //      (every patch: pitch wheel -> +-2 semitones per pipe, unless said otherwise)
+    currentSet = 14;
+    {
+        const float bend2 = 1.0f / 6.0f;
+        // 70 again: its scenes had switched its own LFO route off (route amounts are part of the scenes now)
+        makeFull (u8 ("70 Szenen \xe2\x80\x93 Wanderung von selbst"),
+                  { { "stop1", 1 }, { "lfo1Shape", (float) shTriangle }, { "lfo1Rate", 0.02f } },
+                  { { srcLfo1, "sceneMorph", 1.0f, true } },
+                  { {},
+                    { { "motion0", 1 }, { "motion1", 1 }, { "rate0", 0.2f }, { "rate1", -0.15f }, { "ellipse0", 0.5f }, { "ellipse1", 0.5f } },
+                    { { "motion0", 1 }, { "motion1", 1 }, { "rate0", 0.35f }, { "rate1", -0.3f }, { "stop3", 1 },
+                      { "fxEchoLevel", 0.6f }, { "fxEchoTurn", 120.0f } },
+                    { { "stop0", 0 }, { "stop7", 1 }, { "stop3", 1 }, { "tremOn", 1 }, { "tremDepth", 0.4f }, { "degAmount", 0.4f }, { "degWobble", 0.5f },
+                      { "motion1", 2 }, { "rate1", 0.1f } } }, false);
+
+        // velocity shapes the whole pipe: soft = a swelling, dull, distant breath; hard = a sharp, bright, close chiff
+        // (envelope 2 is held at 1 while a key is down: it gives the soft end its offset)
+        make (u8 ("118 Anschlag \xe2\x80\x93 Vom Hauch zum Schrei"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "pipeAtt0", -0.9f }, { "pipeAtt2", -0.9f }, { "pipePuff0", 0.3f }, { "pipePuff2", 0.3f },
+                { "env2Attack", 0.001f }, { "env2Decay", 1.0f }, { "env2Sustain", 1.0f }, { "env2Release", 20.0f } },
+              { { srcVelocity, pipe (tgtAttack), 1.0f }, { srcVelocity, pipe (tgtAttack), 0.9f }, { srcVelocity, pipe (tgtAttSharp), 0.9f },
+                { srcVelocity, pipe (tgtLevel), 0.3f }, { srcEnv2, pipe (tgtLevel), -0.15f },
+                { srcVelocity, pipe (tgtBright), 0.5f }, { srcEnv2, pipe (tgtBright), -0.4f },
+                { srcVelocity, pipe (tgtHiGain), 0.4f }, { srcVelocity, pipe (tgtDist), -0.25f }, { srcVelocity, "clickRes", 0.7f },
+                { srcPitchWheel, pipe (tgtPitch), bend2 },
+                { srcModWheel, pipe (tgtAttRep), 0.9f }, { srcModWheel, pipe (tgtCloudMix), 0.45f }, { srcPressure, pipe (tgtHiGain), 0.3f } });
+
+        // the mod wheel goes through four scenes: a church -> sharp speech -> tape and grid -> a broken machine
+        makeFull (u8 ("119 Modrad \xe2\x80\x93 Kirche wird Maschine"),
+                  { { "stop0", 1 }, { "stop1", 1 }, { "simOn", 1 }, { "simShape", (int) rysum::shapeApse }, { "simShapeAmt", 0.6f },
+                    { "simW", 16.0f }, { "simL", 30.0f }, { "simH", 12.0f }, { "master", -14.0f } },
+                  { { srcModWheel, "sceneMorph", 1.0f }, { srcVelocity, pipe (tgtAttack), 0.8f }, { srcPitchWheel, pipe (tgtPitch), bend2 },
+                    { srcVelocity, pipe (tgtClip), 0.0f } },
+                  { {},
+                    { { "pipeAtt0", 0.6f }, { "pipeSharp0", 0.5f }, { "pipeRep0", 0.4f }, { "pipeHiGain0", 6.0f }, { "pipeHiShape0", 0.6f },
+                      { "cloudMix1", 0.3f }, { "stop3", 1 } },
+                    { { "stop3", 1 }, { "stop5", 1 }, { "pipeRep0", 0.7f }, { "degStutter", 0.5f }, { "degSplice", 0.6f }, { "degAmount", 0.4f },
+                      { "degBits", 8.0f }, { "cloudMix0", 0.4f }, { "cloudMix1", 0.6f }, { "spcGrid", 0.6f }, { "clickRes", 0.5f }, { "mod4Amt", 0.4f } },
+                    { { "stop3", 1 }, { "stop5", 1 }, { "stop6", 1 }, { "stop7", 1 }, { "degStutter", 0.8f }, { "degSplice", 0.9f }, { "degZero", 0.9f },
+                      { "degClip", 0.4f }, { "degAmount", 0.8f }, { "degBits", 4.0f }, { "degRate", 2500.0f }, { "spcErode", 0.6f }, { "spcAlias", 0.7f },
+                      { "airInvert", 1.0f }, { "pipeIso0", 0.5f }, { "clickRes", 1.0f }, { "mod4Amt", 0.7f } } }, false);
+
+        // pitch wheel down: the organ runs out of breath (wind model "instabil": edge tones); up: it bends up, rises and brightens
+        make (u8 ("120 Tonh\xc3\xb6henrad \xe2\x80\x93 Atemnot"),
+              { { "windModel", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "swind0", 0.85f }, { "swind1", 0.85f }, { "swind2", 0.85f },
+                { "tremOn", 1 }, { "tremDepth", 0.0f }, { "pipePuff0", 0.5f }, { "pipePuff1", 0.7f } },
+              { { srcPitchWheel, pipe (tgtWind), 0.8f }, { srcPitchWheel, pipe (tgtPitch), 1.0f / 12.0f }, { srcPitchWheel, pipe (tgtEl), 0.4f },
+                { srcPitchWheel, pipe (tgtHiFreq), 0.4f }, { srcModWheel, "tremDepth", 0.9f }, { srcVelocity, pipe (tgtPuff), 0.5f },
+                { srcVelocity, pipe (tgtAttack), 0.6f }, { srcPressure, pipe (tgtWind), 0.3f } });
+
+        // aftertouch / MPE pressure blows the pipe: without pressure it barely speaks
+        make (u8 ("121 Druck \xe2\x80\x93 Die Pfeife unter dem Finger"),
+              { { "windModel", 1 }, { "stop0", 1 }, { "stop3", 1 }, { "swind0", 0.38f }, { "swind3", 0.38f }, { "pipeAtt0", -0.5f }, { "pipeAtt3", -0.5f } },
+              { { srcPressure, pipe (tgtWind), 0.62f }, { srcPressure, pipe (tgtHiGain), 0.45f }, { srcPressure, pipe (tgtCloudMix), 0.5f },
+                { srcSlide, pipe (tgtAz), 0.6f }, { srcSlide, pipe (tgtHiFreq), -0.5f }, { srcVelocity, pipe (tgtAttack), 1.0f },
+                { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, pipe (tgtAttRep), 0.8f }, { srcModWheel, pipe (tgtCloudSpread), 0.6f } });
+
+        // half an hour that never repeats: four slow random LFOs at odd rates - the scenes, and every pipe its own chiff and cloud
+        // (mod wheel: the wandering speeds up)
+        makeFull (u8 ("122 Lange Wanderung"),
+                  { { "stop0", 0 }, { "stop1", 1 },
+                    { "lfo4Shape", (float) shSmooth }, { "lfo4Rate", 0.01f },
+                    { "lfo3Shape", (float) shSmooth }, { "lfo3Rate", 0.0137f }, { "lfo3Spread", 1.0f }, { "lfo3SpreadMode", 1 },
+                    { "lfo2Shape", (float) shSmooth }, { "lfo2Rate", 0.0171f }, { "lfo2Spread", 1.0f }, { "lfo2SpreadMode", 1 },
+                    { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.023f }, { "lfo1Spread", 0.5f } },
+                  { { srcLfo4, "sceneMorph", 1.0f, true }, { srcLfo3, pipe (tgtAttack), 0.8f }, { srcLfo2, pipe (tgtCloudMix), 0.6f, true },
+                    { srcLfo1, pipe (tgtAz), 0.35f }, { srcLfo2, pipe (tgtHiGain), 0.3f }, { srcModWheel, "lfo4Rate", 0.5f }, { srcModWheel, "lfo3Rate", 0.4f },
+                    { srcVelocity, pipe (tgtLevel), 0.2f }, { srcPitchWheel, pipe (tgtPitch), bend2 } },
+                  { {},
+                    { { "stop2", 1 }, { "cloudMix2", 0.4f }, { "cloudSpread2", 120.0f }, { "motion2", 1 }, { "rate2", 0.03f } },
+                    { { "stop2", 1 }, { "stop4", 1 }, { "stop5", 1 }, { "vol5", -10.0f }, { "degSplice", 0.5f }, { "pipeIso5", 0.6f }, { "pipeRep5", 0.5f } },
+                    { { "stop7", 1 }, { "stop6", 1 }, { "vol6", -8.0f }, { "degAmount", 0.5f }, { "degWobble", 0.6f }, { "spcWeather", 300.0f }, { "airInvert", 0.6f } } },
+                  false);
+
+        // soft = a glass organ (bright, soft overtones); hard = it shatters (hard edges, clipping, spiky overtones); wheel: it stutters
+        make (u8 ("123 Anschlag \xe2\x80\x93 Glas zerspringt"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 },
+                { "pipeHiFreq0", 3000.0f }, { "pipeHiGain0", 8.0f }, { "pipeHiShape0", -0.6f },
+                { "pipeHiFreq2", 3500.0f }, { "pipeHiGain2", 7.0f }, { "pipeHiShape2", -0.6f },
+                { "pipeHiFreq3", 4500.0f }, { "pipeHiGain3", 6.0f }, { "pipeHiShape3", -0.6f } },
+              { { srcVelocity, pipe (tgtZero), 0.8f }, { srcVelocity, pipe (tgtClip), 0.6f }, { srcVelocity, pipe (tgtHiShape), 1.0f },
+                { srcVelocity, pipe (tgtHiShape), 0.6f }, { srcVelocity, pipe (tgtAttSharp), 1.0f },
+                { srcModWheel, pipe (tgtStutter), 0.8f }, { srcModWheel, pipe (tgtSplice), 0.6f },
+                { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcPitchWheel, pipe (tgtHiFreq), 0.5f } });
+
+        // no note like the last: chiff, overtones, direction, a little pitch, cloud, bits, puff - drawn anew for every note
+        // (LFO 1 almost still, Versatz random: every pipe also keeps its own leaning)
+        make (u8 ("124 Zufall je Ton \xe2\x80\x93 Kein Ton gleich"),
+              { { "stop0", 1 }, { "stop1", 1 }, { "stop3", 1 }, { "degAmount", 0.0f }, { "degDropouts", 0.0f }, { "degWobble", 0.0f }, { "degBits", 16.0f },
+                { "lfo1Shape", (float) shSine }, { "lfo1Rate", 0.01f }, { "lfo1Spread", 1.0f }, { "lfo1SpreadMode", 1 } },
+              { { srcRandom, pipe (tgtAttack), 0.8f }, { srcLfo1, pipe (tgtHiFreq), 0.5f }, { srcLfo1, pipe (tgtHiGain), 0.35f },
+                { srcRandom, pipe (tgtAz), 0.5f }, { srcLfo1, pipe (tgtEl), 0.3f }, { srcRandom, pipe (tgtPitch), 0.006f },
+                { srcRandom, pipe (tgtCloudMix), 0.5f }, { srcLfo1, pipe (tgtDegrade), 0.4f, true }, { srcRandom, pipe (tgtDegBits), -0.7f },
+                { srcRandom, pipe (tgtPuff), 0.8f }, { srcLfo1, pipe (tgtAttRep), 0.6f },
+                { srcModWheel, pipe (tgtStutter), 0.7f }, { srcVelocity, pipe (tgtLevel), 0.25f }, { srcPitchWheel, pipe (tgtPitch), bend2 } });
+
+        // the mod wheel lets the organ evaporate: the sustain falls away until only the chiffs are left, dissolved into a cloud,
+        // far away, the sphere worn down
+        make (u8 ("125 Modrad \xe2\x80\x93 Die Orgel verdunstet"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "stop7", 1 }, { "simOn", 1 }, { "simW", 20.0f }, { "simL", 36.0f }, { "simH", 14.0f }, { "master", -14.0f } },
+              { { srcModWheel, pipe (tgtAttIso), 1.0f }, { srcModWheel, pipe (tgtCloudMix), 0.9f }, { srcModWheel, pipe (tgtCloudSpread), 0.7f },
+                { srcModWheel, pipe (tgtCloudSize), 0.5f }, { srcModWheel, pipe (tgtDist), 0.45f }, { srcModWheel, "spcErode", 0.85f },
+                { srcModWheel, pipe (tgtAttRep), 0.7f }, { srcVelocity, pipe (tgtAttack), 0.8f }, { srcPitchWheel, pipe (tgtPitch), bend2 },
+                { srcPressure, pipe (tgtLevel), 0.2f } });
+
+        // clockwork: every pipe gated by a fast square at its own phase (polyrhythms across the keyboard), the action rings;
+        // mod wheel: faster and stuttering; velocity: repeated chiffs and a brighter ring
+        make (u8 ("126 Uhrwerk der Traktur"),
+              { { "stop0", 0 }, { "stop1", 1 }, { "stop3", 1 },
+                { "lfo1Shape", (float) shSquare }, { "lfo1Rate", 5.0f }, { "lfo1Spread", 0.37f },
+                { "lfo2Shape", (float) shSteps }, { "lfo2Rate", 3.0f }, { "lfo2Spread", 1.0f }, { "lfo2SpreadMode", 1 },
+                { "click", 0.7f }, { "releaseClick", 0.6f }, { "clickRes", 0.7f }, { "clickResDecay", 0.5f },
+                { "pipeAtt1", 0.8f }, { "pipeAtt3", 0.8f }, { "pipeIso1", 0.4f } },
+              { { srcLfo1, pipe (tgtLevel), -0.5f, true }, { srcLfo2, pipe (tgtAz), 0.5f }, { srcLfo2, pipe (tgtHiGain), 0.3f },
+                { srcModWheel, "lfo1Rate", 0.3f }, { srcModWheel, pipe (tgtStutter), 0.7f }, { srcVelocity, "clickResBright", 0.6f },
+                { srcVelocity, pipe (tgtAttRep), 0.7f }, { srcPitchWheel, pipe (tgtPitch), bend2 } });
+
+        // a tipsy organist: every note a little off, the wind of every pipe sways on its own, hard notes stammer;
+        // mod wheel: more detuned, more wobble
+        make (u8 ("127 Der Organist hat getrunken"),
+              { { "windModel", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "degAmount", 0.3f }, { "degWobble", 0.7f },
+                { "degDropouts", 0.0f }, { "degBits", 16.0f }, { "degGrain", 0.0f },
+                { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.4f }, { "lfo1Spread", 1.0f }, { "lfo1SpreadMode", 1 } },
+              { { srcRandom, pipe (tgtPitch), 0.012f }, { srcLfo1, pipe (tgtWind), -0.5f, true }, { srcLfo1, pipe (tgtPitch), 0.006f },
+                { srcVelocity, pipe (tgtAttRep), 0.8f }, { srcVelocity, pipe (tgtStutter), 0.4f }, { srcRandom, pipe (tgtAz), 0.4f },
+                { srcModWheel, "detune", 0.8f }, { srcModWheel, pipe (tgtWobble), 0.6f }, { srcPitchWheel, pipe (tgtPitch), bend2 } });
+
+        // every note decays on its own: after a second it starts to crumble (bits, rate, dropouts, cloud, stutter) for 12 s;
+        // pressure holds it together, the mod wheel makes it crumble faster
+        make (u8 ("128 H\xc3\xbcllkurve \xe2\x80\x93 Jeder Ton zerf\xc3\xa4llt"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "degAmount", 0.0f }, { "degBits", 4.0f }, { "degRate", 3000.0f }, { "degGrain", 0.5f },
+                { "degDropouts", 0.3f }, { "degWobble", 0.5f },
+                { "env2Delay", 1.0f }, { "env2Attack", 12.0f }, { "env2Decay", 1.0f }, { "env2Sustain", 1.0f }, { "env2Release", 6.0f },
+                { "env1Attack", 0.002f }, { "env1Decay", 2.5f }, { "env1Sustain", 0.2f }, { "env1Release", 1.0f } },
+              { { srcEnv2, pipe (tgtDegrade), 1.0f }, { srcEnv2, pipe (tgtCloudMix), 0.8f }, { srcEnv2, pipe (tgtStutter), 0.4f },
+                { srcEnv2, pipe (tgtBright), -0.35f }, { srcEnv1, pipe (tgtHiGain), 0.5f }, { srcVelocity, pipe (tgtAttack), 1.0f },
+                { srcModWheel, "env2Attack", -0.5f }, { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcPressure, pipe (tgtDegrade), -0.6f } });
+
+        // four instruments on the mod wheel: a flute in a small room - reeds in a cruciform church - only chiffs and
+        // ringing keys in a fan-shaped hall - a frozen cloud in a weathering sphere
+        makeFull (u8 ("129 Modrad \xe2\x80\x93 Vier Orgeln"),
+                  { { "stop0", 0 }, { "stop1", 1 }, { "simOn", 1 }, { "simW", 5.0f }, { "simL", 7.0f }, { "simH", 3.5f }, { "simAbs", 0.2f }, { "master", -14.0f } },
+                  { { srcModWheel, "sceneMorph", 1.0f }, { srcVelocity, pipe (tgtAttack), 0.8f }, { srcPitchWheel, pipe (tgtPitch), bend2 },
+                    { srcPressure, pipe (tgtHiGain), 0.4f } },
+                  { {},
+                    { { "stop1", 0 }, { "stop6", 1 }, { "stop5", 1 }, { "stop7", 1 }, { "simShape", (int) rysum::shapeCross }, { "simShapeAmt", 0.5f },
+                      { "simW", 28.0f }, { "simL", 46.0f }, { "simH", 18.0f }, { "simAbs", 0.04f }, { "simScatter", 0.4f }, { "pipePuff6", 0.8f } },
+                    { { "stop1", 0 }, { "stop2", 1 }, { "stop3", 1 }, { "pipeIso2", 1.0f }, { "pipeIso3", 1.0f }, { "pipeRep2", 0.5f }, { "pipeRep3", 0.6f },
+                      { "pipeAtt2", 0.8f }, { "pipeAtt3", 0.8f }, { "clickRes", 1.0f }, { "clickResDecay", 1.5f }, { "click", 0.8f },
+                      { "simShape", (int) rysum::shapeFan }, { "simShapeAmt", 1.0f }, { "simW", 30.0f }, { "simL", 34.0f }, { "simH", 12.0f } },
+                    { { "stop1", 1 }, { "stop7", 1 }, { "cloudMix1", 1.0f }, { "cloudMix7", 0.8f }, { "cloudSize1", 420.0f }, { "cloudSize7", 420.0f },
+                      { "cloudSpread1", 180.0f }, { "cloudSpread7", 180.0f }, { "cloudDens1", 25.0f }, { "cloudDens7", 25.0f },
+                      { "spcAlias", 0.6f }, { "spcWeather", 120.0f }, { "degAmount", 0.3f }, { "simW", 40.0f }, { "simL", 80.0f }, { "simH", 30.0f }, { "simAbs", 0.03f } } },
+                  false);
+
+        // the pitch wheel lifts the pipes up into the vault (and a semitone up) or pulls them down to the floor and near;
+        // they circle, with Doppler; hard notes come close; the mod wheel dissolves them
+        make (u8 ("130 Tonh\xc3\xb6henrad \xe2\x80\x93 Schwerkraft"),
+              { { "stop0", 1 }, { "stop3", 1 }, { "doppler", 2.5f }, { "motion0", 1 }, { "rate0", 0.15f }, { "motion3", 1 }, { "rate3", -0.2f } },
+              { { srcPitchWheel, pipe (tgtEl), 1.0f }, { srcPitchWheel, pipe (tgtPitch), 1.0f / 12.0f }, { srcPitchWheel, pipe (tgtDist), -0.5f },
+                { srcModWheel, "doppler", 0.4f }, { srcVelocity, pipe (tgtDist), -0.5f }, { srcVelocity, pipe (tgtAttack), 0.7f },
+                { srcModWheel, pipe (tgtCloudMix), 0.6f }, { srcModWheel, pipe (tgtCloudSpread), 0.5f } });
+
+        // for MPE (or aftertouch + CC 74): pressure = loudness and overtones, slide = direction, cloud and colour; wheel: only the chiff
+        make (u8 ("131 Druck & Gleiten \xe2\x80\x93 Kontinuum"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "vol0", -10.0f }, { "vol2", -10.0f }, { "pipeAtt0", -0.6f }, { "pipeAtt2", -0.6f } },
+              { { srcPressure, pipe (tgtLevel), 0.3f }, { srcPressure, pipe (tgtHiGain), 0.5f }, { srcPressure, pipe (tgtHiShape), 0.6f },
+                { srcSlide, pipe (tgtAz), 0.8f }, { srcSlide, pipe (tgtCloudMix), 0.7f }, { srcSlide, pipe (tgtHiFreq), -0.6f },
+                { srcVelocity, pipe (tgtAttack), 1.0f }, { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, pipe (tgtAttIso), 0.8f } });
+
+        // slow erosion: the sphere weathers over ten minutes of playing, LFOs (100 s and more) wear it down and let it grow back,
+        // every pipe drifts in its own chiff and cloud; the mod wheel makes it weather faster
+        make (u8 ("132 Langsame Erosion"),
+              { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "spcWeather", 600.0f }, { "degAmount", 0.0f }, { "degBits", 6.0f }, { "degDropouts", 0.1f },
+                { "lfo4Shape", (float) shSmooth }, { "lfo4Rate", 0.01f },
+                { "lfo3Shape", (float) shSine }, { "lfo3Rate", 0.01f }, { "lfo3Spread", 1.0f }, { "lfo3SpreadMode", 1 } },
+              { { srcLfo4, "spcErode", 0.5f, true }, { srcLfo3, pipe (tgtAttack), 0.7f }, { srcLfo3, pipe (tgtCloudMix), 0.5f, true },
+                { srcLfo4, pipe (tgtDegrade), 0.4f, true }, { srcModWheel, "spcWeather", -0.6f }, { srcVelocity, pipe (tgtAttack), 0.5f },
+                { srcPitchWheel, pipe (tgtPitch), bend2 } });
+
+        // velocity = explosion: soft notes are clean, hard ones clip, cut, crush, scatter all around and come close;
+        // pitch wheel +-12 semitones; mod wheel: stutter and a broken sphere; pressure: tape splices
+        make (u8 ("133 Anschlag \xe2\x80\x93 Explosion"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "stop5", 1 }, { "stop7", 1 }, { "master", -18.0f }, { "simOn", 1 }, { "simW", 24.0f }, { "simL", 40.0f }, { "simH", 16.0f },
+                { "degAmount", 0.0f }, { "degBits", 16.0f } },
+              { { srcVelocity, pipe (tgtClip), 1.0f }, { srcVelocity, pipe (tgtZero), 1.0f }, { srcVelocity, pipe (tgtHiGain), 0.7f },
+                { srcVelocity, pipe (tgtDist), -0.6f }, { srcVelocity, pipe (tgtCloudMix), 0.8f }, { srcVelocity, pipe (tgtCloudSpread), 1.0f },
+                { srcVelocity, pipe (tgtDegBits), -0.9f }, { srcVelocity, pipe (tgtDegrade), 0.8f }, { srcVelocity, pipe (tgtAttack), 1.0f },
+                { srcVelocity, pipe (tgtAttRep), 1.0f }, { srcPitchWheel, pipe (tgtPitch), 1.0f }, { srcModWheel, pipe (tgtStutter), 1.0f },
+                { srcModWheel, "spcAlias", 1.0f }, { srcModWheel, "spcErode", 0.7f }, { srcPressure, pipe (tgtSplice), 1.0f } });
+    }
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

@@ -341,6 +341,10 @@ private:
         bool hard = false;
         float pmAz = 0.0f, pmEl = 0.0f, pmDist = 1.0f, gainLin = 1.0f;
         float pmWind = 0.0f, pmDeg = 0.0f, pmWob = 0.0f, pmCrk = 0.0f;   // per-pipe modulation of stop wind, Verfall, Windschwankung, crackle
+        // per-pipe modulation of the pipe sound, cloud, Verfall details and glitches (pmx: all per-pipe targets of this block)
+        std::array<float, kNumPipeTargets> pmx {};
+        bool pmNew = false;                       // anything routed to the targets from tgtAttack on
+        float hiGSm = -1.0f, airInvSm = -1.0f;    // (smoothed while modulated: no steps from block to block)
         // grain cloud: the pipe's sound history (a ring of the pool), when the next grain is due, where the pipe is
         int cloudRing = -1;
         double cloudAcc = 0.0;
@@ -525,6 +529,10 @@ private:
     void gainsFor (Pos pos, float* out) const noexcept;
     void renderRange (juce::AudioBuffer<float>& out, int start, int end, int blockLen, const EngineParams& p);
     void updateVoiceSpatial (Voice& v, const EngineParams& p, double blockSeconds) noexcept;
+    // a stop's settings with this pipe's own modulation on top (exact copies when nothing is routed there)
+    static PipeSoundParams pipeSndFor (const PipeSoundParams& b, const Voice& v) noexcept;
+    static GlitchParams glitchFor (const GlitchParams& b, const Voice& v) noexcept;
+    static CloudParams cloudFor (const CloudParams& b, const Voice& v) noexcept;
     float readSample (const float* d, int len, double pos) const noexcept;
     void advanceModulation (const EngineParams& p, double dt) noexcept;
     float voiceSource (const Voice& v, int src, const EngineParams& p) const noexcept;
