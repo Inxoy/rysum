@@ -451,7 +451,7 @@ SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected, inputS
         pullAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, RysumProcessor::stopParamId (s), *pullButtons.back()));
     }
     const auto lnames = layoutNames();
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < (int) layoutButtons.size(); ++i)
     {
         auto& b = layoutButtons[(size_t) i];
         b.setButtonText (lnames[i]);
@@ -459,7 +459,7 @@ SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected, inputS
         addAndMakeVisible (b);
     }
     const auto mnames = motionNames();
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < (int) motionButtons.size(); ++i)
     {
         auto& b = motionButtons[(size_t) i];
         b.setButtonText (mnames[i]);
@@ -470,6 +470,10 @@ SpaceView::SpaceView (RysumProcessor& p) : proc (p), circle (p, selected, inputS
         };
         addAndMakeVisible (b);
     }
+    layoutButtons[6].setTooltip (u8 ("Jede Taste an ihrem Platz im Tonnetz der Stimmung: Quinten nach rechts, gro\xc3\x9f" "e Terzen nach oben. "
+                                     "Reine Intervalle liegen eng, unreine weit; der Wolf ist die Naht. Folgt einem Wechsel der Stimmung."));
+    motionButtons[7].setTooltip (u8 ("Jede Pfeife dreht sich so schnell, wie sie mit den anderen klingenden Pfeifen schwebt: reine Terzen stehen still, "
+                                     "der Wolf kreist. \xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = Umdrehungen je Schwebung."));
     motionButtons[6].setTooltip (u8 ("Die Pfeifen laufen die gezeichnete Bahn entlang (Bahn zeichnen \xe2\x86\x92)"));
     motionButtons[5].setTooltip (u8 ("Spr\xc3\xbcnge an zuf\xc3\xa4llige Orte \xe2\x80\x93 mit \xe2\x80\x9eharte Spr\xc3\xbcnge\xe2\x80\x9c ohne jede Gl\xc3\xa4ttung: bei hohem Tempo klickt es"));
     drawButton.setClickingTogglesState (true);
@@ -736,7 +740,7 @@ void SpaceView::syncLayoutControls()
     elevation.setValue (L.elevation, juce::dontSendNotification);
     spread.setValue (L.spread, juce::dontSendNotification);
     distance.setValue (L.distance, juce::dontSendNotification);
-    for (int i = 0; i < 6; ++i) layoutButtons[(size_t) i].setToggleState (i == L.type, juce::dontSendNotification);
+    for (int i = 0; i < (int) layoutButtons.size(); ++i) layoutButtons[(size_t) i].setToggleState (i == L.type, juce::dontSendNotification);
     updating = false;
 }
 
@@ -811,9 +815,9 @@ void SpaceView::resized()
     layoutBox = rr.removeFromTop (30 + 44 + 5 * 18 + 24);
     auto lb = layoutBox.withTrimmedTop (30);
     auto row1 = lb.removeFromTop (22), row2 = lb.removeFromTop (22);
-    const int bw1 = (row1.getWidth() - 8) / 3;
-    for (int i = 0; i < 3; ++i) layoutButtons[(size_t) i].setBounds (row1.getX() + i * (bw1 + 4), row1.getY(), bw1, 20);
-    for (int i = 0; i < 3; ++i) layoutButtons[(size_t) i + 3].setBounds (row2.getX() + i * (bw1 + 4), row2.getY(), bw1, 20);
+    const int bw1 = (row1.getWidth() - 12) / 4;
+    for (int i = 0; i < 4; ++i) layoutButtons[(size_t) i].setBounds (row1.getX() + i * (bw1 + 4), row1.getY(), bw1, 20);
+    for (int i = 0; i < 3; ++i) layoutButtons[(size_t) i + 4].setBounds (row2.getX() + i * (bw1 + 4), row2.getY(), bw1, 20);
     for (auto* s : { &width, &centre, &elevation, &spread, &distance })
         s->setBounds (lb.removeFromTop (18).withTrimmedLeft (100).withTrimmedRight (52));
     lb.removeFromTop (3);
@@ -850,10 +854,14 @@ void SpaceView::resized()
     auto mb = tabBox.withTrimmedTop (34);
     {
         auto m1 = mb.removeFromTop (22), m2 = mb.removeFromTop (22);
-        const int bw2 = (m1.getWidth() - 12) / 4;
-        for (int i = 0; i < 4; ++i) motionButtons[(size_t) i].setBounds (m1.getX() + i * (bw2 + 4), m1.getY(), bw2, 20);
-        for (int i = 0; i < 3; ++i) motionButtons[(size_t) i + 4].setBounds (m2.getX() + i * (bw2 + 4), m2.getY(), bw2, 20);
-        drawButton.setBounds (m2.getX() + 3 * (bw2 + 4), m2.getY(), bw2, 20);
+        // five columns: Statisch Rotation Pendel Drift Vertikal / Spruenge Schwebung Gezeichnet [Bahn zeichnen]
+        const int bw2 = (m1.getWidth() - 16) / 5;
+        auto at = [&] (juce::Rectangle<int> line, int col) { return juce::Rectangle<int> (line.getX() + col * (bw2 + 4), line.getY(), bw2, 20); };
+        for (int i = 0; i < 5; ++i) motionButtons[(size_t) i].setBounds (at (m1, i));
+        motionButtons[5].setBounds (at (m2, 0));
+        motionButtons[7].setBounds (at (m2, 1));
+        motionButtons[6].setBounds (at (m2, 2));
+        drawButton.setBounds (at (m2, 3));
         mb.removeFromTop (2);
         if (rateRow) rateRow->setBounds (mb.removeFromTop (34));
         auto half = mb.removeFromTop (26);
@@ -905,7 +913,7 @@ void SpaceView::resized()
 void SpaceView::refresh()
 {
     const int mode = (int) proc.apvts.getRawParameterValue (RysumProcessor::motionParamId (selected))->load();
-    for (int i = 0; i < 7; ++i) motionButtons[(size_t) i].setToggleState (i == mode, juce::dontSendNotification);
+    for (int i = 0; i < (int) motionButtons.size(); ++i) motionButtons[(size_t) i].setToggleState (i == mode, juce::dontSendNotification);
     {
         const auto& dp = proc.getDrawnPath (selected);
         pathLoop.setToggleState (! dp.pingPong, juce::dontSendNotification);

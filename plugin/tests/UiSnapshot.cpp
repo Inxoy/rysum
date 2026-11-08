@@ -252,7 +252,9 @@ public:
             for (int w = 0; w < 100 && ! proc->getIrStatus().contains ("AmbiX"); ++w) juce::Thread::sleep (20);
             juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
             bool allOk = true;
-            for (auto& f : RysumProcessor::getPatchFiles())
+            // RYSUM_QUICK: skip playing every factory patch (for quick looks at the pages)
+            const bool quick = std::getenv ("RYSUM_QUICK") != nullptr;
+            for (auto& f : quick ? juce::Array<juce::File>() : RysumProcessor::getPatchFiles())
             {
                 proc->loadPatch (f);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
@@ -323,7 +325,7 @@ public:
 
             // set 14 (playing with the hands): how much one note a' changes with velocity, mod wheel and pitch wheel
             // (W channel, first 1.5 s: level difference, and the share of the highs (first difference) as brightness)
-            for (auto& f : RysumProcessor::getPatchFiles())
+            for (auto& f : quick ? juce::Array<juce::File>() : RysumProcessor::getPatchFiles())
             {
                 const int num = f.getFileNameWithoutExtension().getIntValue();
                 if (num < 118 || num > 133) continue;
@@ -625,6 +627,24 @@ public:
         }
         for (int k = 0; k < rysum::kNumKeys; k += 3) proc->setPipeMuted (6, k, true);      // some Trompete pipes muted
         shoot (1, "ui_raum.png");
+        {
+            // the arrangement "Tonnetz" and the motion "Schwebung" (their buttons, found by text)
+            std::function<juce::Button* (juce::Component*, const juce::String&)> fb = [&] (juce::Component* c, const juce::String& t) -> juce::Button*
+            {
+                if (! c->isVisible()) return nullptr;
+                if (auto* b = dynamic_cast<juce::TextButton*> (c)) if (b->getButtonText() == t) return b;
+                for (auto* ch : c->getChildren()) if (auto* f = fb (ch, t)) return f;
+                return nullptr;
+            };
+            const int before = proc->layouts[0].type;
+            bool found = true;
+            if (auto* b = fb (content, "Tonnetz")) b->triggerClick(); else found = false;
+            if (auto* b = fb (content, "Schwebung")) b->triggerClick(); else found = false;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+            shoot (1, "ui_raum_tonnetz.png");
+            std::cout << "Raum: Tonnetz and Schwebung buttons " << (found ? "ok" : "not found  FAIL") << std::endl;
+            (void) before;
+        }
         for (int k = 0; k < rysum::kNumKeys; ++k) proc->setPipeMuted (6, k, false);
         {
             // the audio input: on, stereo, kreisend; some noise through the processor so the meter and the places show
