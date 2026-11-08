@@ -2262,6 +2262,147 @@ int main (int argc, char** argv)
             check (maxStep < 2.0 * rms, "plan: no clicks when reflection paths come and go");
         }
 
+        // ---------------- the sound of the pipe: Ansprache, Abriss, upper partials, air, resonated clicks, glitches ----------------
+        {
+            // one Praestant 8' note (key a', MIDI 69), stereo, clicks off unless asked; released at 'relAt' seconds
+            auto note = [&] (std::function<void (EngineParams&)> setup, double secs, double relAt, const juce::String& file, bool clicks = false, float dist = 0.0f)
+            {
+                OrganEngine e; e.prepare (fsr, B); e.setLibrary (lib);
+                if (dist > 0.0f) e.baseDist[0][(size_t) keyA] = dist;
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.outputMode = 0; p.wind = 0; p.stopPull = 0;
+                if (! clicks) { p.clickLevel = 0; p.releaseClick = 0; }
+                setup (p);
+                const int total = (int) (secs * fsr);
+                juce::AudioBuffer<float> outB (2, total), b (2, B);
+                outB.clear();
+                for (int pos = 0; pos < total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) mb.addEvent (juce::MidiMessage::noteOn (1, 69, (juce::uint8) 110), 0);
+                    if (relAt > 0 && pos <= (int) (relAt * fsr) && pos + B > (int) (relAt * fsr)) mb.addEvent (juce::MidiMessage::noteOff (1, 69), (int) (relAt * fsr) - pos);
+                    e.process (b, mb, p);
+                    for (int c = 0; c < 2; ++c) outB.copyFrom (c, pos, b, c, 0, juce::jmin (B, total - pos));
+                }
+                if (file.isNotEmpty()) writeWav (outDir.getChildFile (file + ".wav"), outB, fsr);
+                return outB;
+            };
+            auto energy = [] (const juce::AudioBuffer<float>& b, double t0, double t1, double sr0)
+            {
+                double e = 0;
+                for (int i = (int) (t0 * sr0); i < juce::jmin (b.getNumSamples(), (int) (t1 * sr0)); ++i) e += (double) b.getSample (0, i) * b.getSample (0, i);
+                return e;
+            };
+            auto db = [] (double a, double b) { return 10.0 * std::log10 (juce::jmax (1e-30, a) / juce::jmax (1e-30, b)); };
+            // energy above (high) or below a frequency, 6th order (three cascaded biquads), channel 0, t0..t1
+            auto bandE = [&] (const juce::AudioBuffer<float>& b, double f, bool high, double t0, double t1)
+            {
+                juce::IIRFilter fl[3];
+                for (auto& x : fl) x.setCoefficients (high ? juce::IIRCoefficients::makeHighPass (fsr, f) : juce::IIRCoefficients::makeLowPass (fsr, f));
+                double e = 0;
+                for (int i = 0; i < juce::jmin (b.getNumSamples(), (int) (t1 * fsr)); ++i)
+                {
+                    float y = b.getSample (0, i);
+                    for (auto& x : fl) y = x.processSingleSampleRaw (y);
+                    if (i >= (int) (t0 * fsr)) e += (double) y * y;
+                }
+                return e;
+            };
+            auto finite = [] (const juce::AudioBuffer<float>& b) { for (int c = 0; c < b.getNumChannels(); ++c) for (int i = 0; i < b.getNumSamples(); ++i) if (! std::isfinite (b.getSample (c, i))) return false; return true; };
+            const auto& pa = lib->pipes[0][(size_t) keyA];
+            const double tOn = pa.onset / 48000.0, tAttFull = pa.attackEnd / 48000.0;
+            const double tAtt = tOn + 0.4 * (tAttFull - tOn);          // the chiff: the first part of the measured attack
+            std::cout << "pipe sound: Praestant a' attack " << (tAttFull - tOn) * 1000.0 << " ms" << std::endl;
+            auto dry = note ([] (EngineParams&) {}, 2.0, -1, "");
+            auto dryLong = note ([] (EngineParams&) {}, 1.5, -1, "");
+            const double dA = energy (dry, tOn, tAtt, fsr), dS = energy (dry, 1.0, 1.8, fsr);
+            // Ansprache: louder / softer chiff, the sustain the same
+            auto up = note ([] (EngineParams& p) { p.pipeSnd[0].attGain = 1.0f; }, 2.0, -1, "60_ansprache_plus");
+            auto down = note ([] (EngineParams& p) { p.pipeSnd[0].attGain = -1.0f; }, 2.0, -1, "");
+            std::cout << "Ansprache +1: attack " << db (energy (up, tOn, tAtt, fsr), dA) << " dB, sustain " << db (energy (up, 1.0, 1.8, fsr), dS)
+                      << " dB; -1: attack " << db (energy (down, tOn, tAtt, fsr), dA) << " dB" << std::endl;
+            check (db (energy (up, tOn, tAtt, fsr), dA) > 4.0 && std::abs (db (energy (up, 1.0, 1.8, fsr), dS)) < 0.05
+                   && db (energy (down, tOn, tAtt, fsr), dA) < -4.0, "Ansprache: the attack louder / softer, the sustain unchanged");
+            // sharpness: more highs in the attack
+            {
+                auto sh = note ([] (EngineParams& p) { p.pipeSnd[0].attSharp = 1.0f; }, 1.0, -1, "");
+                auto hp = [&] (const juce::AudioBuffer<float>& b) { return bandE (b, 4000.0, true, tOn, tAtt); };
+                std::cout << "Ansprache Schaerfe: highs in the attack " << db (hp (sh), hp (dry)) << " dB" << std::endl;
+                check (db (hp (sh), hp (dry)) > 3.0, "Ansprache: sharpness lifts the highs of the chiff");
+            }
+            // isolation: only the chiff
+            {
+                auto iso = note ([] (EngineParams& p) { p.pipeSnd[0].attIso = 1.0f; }, 2.0, -1, "61_nur_ansprache");
+                std::cout << "nur Ansprache: attack " << db (energy (iso, tOn, tOn + 0.3 * (tAtt - tOn), fsr), energy (dry, tOn, tOn + 0.3 * (tAtt - tOn), fsr))
+                          << " dB, sustain " << db (energy (iso, 1.0, 1.8, fsr), dS) << " dB" << std::endl;
+                check (db (energy (iso, 1.0, 1.8, fsr), dS) < -60.0 && db (energy (iso, tOn, tOn + 0.3 * (tAtt - tOn), fsr), energy (dry, tOn, tOn + 0.3 * (tAtt - tOn), fsr)) > -3.0,
+                       "Ansprache: isolated, only the chiff remains");
+            }
+            // repeated chiffs: a burst (count the energy peaks of the isolated attack)
+            {
+                auto rep = note ([] (EngineParams& p) { p.pipeSnd[0].attRep = 1.0f; p.pipeSnd[0].attIso = 1.0f; }, 1.5, -1, "62_ansprache_wiederholt");
+                auto one = note ([] (EngineParams& p) { p.pipeSnd[0].attIso = 1.0f; }, 1.5, -1, "");
+                std::cout << "Ansprache wiederholt: energy after the attack " << db (energy (rep, tAtt, 1.2, fsr), energy (one, tAtt, 1.2, fsr)) << " dB more" << std::endl;
+                check (finite (rep) && db (energy (rep, tAtt, 1.2, fsr), energy (one, tAtt, 1.2, fsr)) > 6.0, "Ansprache: the chiff repeats as a burst");
+            }
+            // Abriss: a puff at the release, stronger with a harder key
+            {
+                auto pf = note ([] (EngineParams& p) { p.pipeSnd[0].puff = 1.0f; }, 2.0, 1.0, "63_abriss");
+                auto np = note ([] (EngineParams&) {}, 2.0, 1.0, "");
+                double d = 0, ref = 0;
+                for (int i = (int) (1.0 * fsr); i < (int) (1.15 * fsr); ++i) { const double x = pf.getSample (0, i) - np.getSample (0, i); d += x * x; }
+                ref = energy (np, 1.0, 1.15, fsr);
+                double before = 0; for (int i = 0; i < (int) (0.99 * fsr); ++i) { const double x = pf.getSample (0, i) - np.getSample (0, i); before += x * x; }
+                std::cout << "Abriss: puff " << db (d, ref) << " dB against the release, before it " << before << std::endl;
+                check (before == 0.0 && db (d, ref) > -30.0 && db (d, ref) < 6.0, "Abriss: a puff when the key is let go (and nothing before)");
+            }
+            // upper partials: +12 dB above 3 kHz, the lows the same
+            {
+                auto hi = note ([] (EngineParams& p) { p.pipeSnd[0].hiFreq = 3000.0f; p.pipeSnd[0].hiGain = 12.0f; }, 1.5, -1, "64_obertoene_laut");
+                auto band = [&] (const juce::AudioBuffer<float>& b, bool high) { return bandE (b, high ? 6000.0 : 1200.0, high, 0.8, 1.4); };
+                std::cout << "Obertoene +12 dB: highs " << db (band (hi, true), band (dry, true)) << " dB, lows " << db (band (hi, false), band (dry, false)) << " dB" << std::endl;
+                check (db (band (hi, true), band (dry, true)) > 5.0 && std::abs (db (band (hi, false), band (dry, false))) < 1.5, "Obertoene: the upper partials alone get louder");
+                auto sp = note ([] (EngineParams& p) { p.pipeSnd[0].hiFreq = 2000.0f; p.pipeSnd[0].hiShape = 1.0f; }, 1.5, -1, "");
+                check (finite (sp), "Obertoene: transient shaper finite");
+            }
+            // air inversion: a far pipe gets its highs back
+            {
+                auto far = [&] (float inv) { return note ([inv] (EngineParams& p) { p.air = 1.0f; p.airInvert = inv; p.distAmount = 1.0f; }, 1.2, -1, "", false, 40.0f); };
+                auto f0 = far (0.0f), fH = far (0.5f), f1 = far (1.0f);
+                auto hiE = [&] (const juce::AudioBuffer<float>& b) { return bandE (b, 5000.0, true, 0.6, 1.1) / juce::jmax (1e-30, bandE (b, 1500.0, false, 0.6, 1.1)); };
+                auto noAir = note ([] (EngineParams& p) { p.air = 0.0f; p.distAmount = 1.0f; }, 1.2, -1, "", false, 40.0f);
+                std::cout << "(air off vs on at 40 m: highs " << db (hiE (noAir), hiE (f0)) << " dB)" << std::endl;
+                std::cout << "Luft umkehren (pipe at 40 m): highs 50 % " << db (hiE (fH), hiE (f0)) << " dB, 100 % " << db (hiE (f1), hiE (f0)) << " dB" << std::endl;
+                check (db (hiE (fH), hiE (f0)) > 2.0 && db (hiE (f1), hiE (fH)) > 2.0, "Luft umkehren: distant highs restored and exaggerated");
+            }
+            // resonated clicks: the key click rings at the pitch of the key
+            {
+                auto plain = note ([] (EngineParams& p) { p.stopOn = {}; }, 1.0, 0.5, "", true);
+                auto res = note ([] (EngineParams& p) { p.stopOn = {}; p.resClick = 1.0f; p.resDecay = 0.6f; }, 1.0, 0.5, "65_klick_resonanz", true);
+                // where is the energy of the ringing? a resonator test at the key's pitch vs. half a tone away
+                const double hz = (pa.measuredHz > 0 ? pa.measuredHz : pa.nominalHz);
+                auto atF = [&] (const juce::AudioBuffer<float>& b, double f) { double c = 0, s2 = 0;
+                    for (int i = (int) (0.05 * fsr); i < (int) (0.45 * fsr); ++i) { const double ph = juce::MathConstants<double>::twoPi * f * i / fsr; c += b.getSample (0, i) * std::cos (ph); s2 += b.getSample (0, i) * std::sin (ph); }
+                    return c * c + s2 * s2; };
+                const double tail = energy (res, 0.15, 0.45, fsr), tailPlain = energy (plain, 0.15, 0.45, fsr);
+                std::cout << "Klick-Resonanz: tail " << db (tail, tailPlain) << " dB over the plain click, at the key's pitch " << db (atF (res, hz), atF (res, hz * 1.06)) << " dB over a semitone up" << std::endl;
+                check (finite (res) && db (tail, tailPlain) > 6.0 && db (atF (res, hz), atF (res, hz * 1.06)) > 10.0, "Klick-Resonanz: the click rings at the key's pitch");
+            }
+            // glitches: all four, each changes the sound, everything finite
+            {
+                const char* names[] { "stutter", "splice", "zero", "clip" };
+                for (int k = 0; k < 4; ++k)
+                {
+                    auto g = note ([k] (EngineParams& p) { float* f[] { &p.glitch.stutter, &p.glitch.splice, &p.glitch.zero, &p.glitch.clip }; *f[k] = 1.0f; },
+                                   7.0, 6.5, "66_glitch_" + juce::String (names[k]));
+                    auto ref = note ([] (EngineParams&) {}, 7.0, 6.5, "");
+                    double d = 0; for (int i = 0; i < g.getNumSamples(); ++i) { const double x = g.getSample (0, i) - ref.getSample (0, i); d += x * x; }
+                    float pk = 0; for (int i = 0; i < g.getNumSamples(); ++i) pk = juce::jmax (pk, std::abs (g.getSample (0, i)));
+                    std::cout << "glitch " << names[k] << ": difference " << db (d, energy (ref, 0, 7.0, fsr)) << " dB, peak " << juce::Decibels::gainToDecibels (pk) << " dB" << std::endl;
+                    check (finite (g) && db (d, energy (ref, 0, 7.0, fsr)) > -40.0 && pk < 1.0f, juce::String ("glitch ") + names[k] + " changes the sound, finite");
+                }
+            }
+        }
+
         // ---------------- "Raumverfall" and "Körnerwolke" ----------------
         {
             // energy per Ambisonics degree (0..3) of a rendered buffer, and the direction of the first-order vector

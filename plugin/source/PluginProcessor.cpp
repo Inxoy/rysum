@@ -394,6 +394,33 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcDrops", 1 }, "Raum-Aussetzer", NormalisableRange<float> (0, 1), 0.0f, pct));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { "spcAlias", 1 }, "Raum-Aliasing", NormalisableRange<float> (0, 1), 0.0f, pct));
     }
+    // ---- the sound of the pipe per stop (Raum page, tab "Pfeife"): neutral by default
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        const String name = prettyLabel (kStops[(size_t) s].label) + " ";
+        auto signedPct = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { const int k = roundToInt (v * 100); return (k > 0 ? "+" : "") + String (k) + " %"; });
+        auto hzA = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v >= 1000 ? String (v / 1000.0f, 1) + " kHz" : String (roundToInt (v)) + " Hz"; });
+        auto dbA = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0.05f ? "+" : "") + String (v, 1) + " dB"; });
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("Att", s), 1 }, name + "Ansprache", NormalisableRange<float> (-1, 1), 0.0f, signedPct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("Sharp", s), 1 }, name + String::fromUTF8 ("Ansprache Sch\xc3\xa4rfe"), NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("Iso", s), 1 }, name + "Nur Ansprache", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("Rep", s), 1 }, name + "Ansprache wiederholen", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("Puff", s), 1 }, name + "Abriss", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("HiFreq", s), 1 }, name + String::fromUTF8 ("Obert\xc3\xb6ne ab"), NormalisableRange<float> (500.0f, 16000.0f, 1.0f, 0.4f), 4000.0f, hzA));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("HiGain", s), 1 }, name + String::fromUTF8 ("Obert\xc3\xb6ne Pegel"), NormalisableRange<float> (-24.0f, 18.0f, 0.1f), 0.0f, dbA));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { pipeSndParamId ("HiShape", s), 1 }, name + String::fromUTF8 ("Obert\xc3\xb6ne Anschlag"), NormalisableRange<float> (-1, 1), 0.0f, signedPct));
+    }
+    // ---- air inversion (Klang), resonated clicks (Spieltisch, Traktur · Resonanz), glitches (Spieltisch, Verfall · Glitch)
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "airInvert", 1 }, "Luft umkehren", NormalisableRange<float> (0, 1), 0.0f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "clickRes", 1 }, "Klick-Resonanz", NormalisableRange<float> (0, 1), 0.0f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "clickResDecay", 1 }, "Klick-Resonanz Nachklang", NormalisableRange<float> (0.02f, 3.0f, 0.001f, 0.4f), 0.4f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 1.0f ? String (roundToInt (v * 1000)) + " ms" : String (v, 2) + " s"; })));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "clickResBright", 1 }, "Klick-Resonanz Helligkeit", NormalisableRange<float> (0, 1), 0.5f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degStutter", 1 }, "Glitch Stottern", NormalisableRange<float> (0, 1), 0.0f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degSplice", 1 }, "Glitch Bandschnitt", NormalisableRange<float> (0, 1), 0.0f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degZero", 1 }, "Glitch harte Kanten", NormalisableRange<float> (0, 1), 0.0f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degClip", 1 }, "Glitch Clipping", NormalisableRange<float> (0, 1), 0.0f, pct));
+
     // ---- "Körnerwolke" per stop (Raum page, tab "Wolke"): off by default
     for (int s = 0; s < kNumStops; ++s)
     {
@@ -546,6 +573,10 @@ RysumProcessor::RysumProcessor()
         ix.noteSpread = I ("noteSpread");
         for (int k = 0; k < 7; ++k) ix.spc[(size_t) k] = I (kSpcIds[k]);
         for (int st = 0; st < kNumStops; ++st)
+            for (int k = 0; k < 8; ++k) ix.pipeSnd[(size_t) st][(size_t) k] = I (pipeSndParamId (kPipeSndKeys[k], st));
+        ix.airInvert = I ("airInvert"); ix.clickRes = I ("clickRes"); ix.clickResDecay = I ("clickResDecay"); ix.clickResBright = I ("clickResBright");
+        { const char* g[] { "degStutter", "degSplice", "degZero", "degClip" }; for (int k = 0; k < 4; ++k) ix.glitch[(size_t) k] = I (g[k]); }
+        for (int st = 0; st < kNumStops; ++st)
             for (int k = 0; k < 5; ++k) ix.cloud[(size_t) st][(size_t) k] = I (cloudParamId (kCloudKeys[k], st));
     }
     engine.setModHook (this);
@@ -680,7 +711,13 @@ EngineParams RysumProcessor::readParams (const float* vals) const
             auto C = [&] (int k) { return V (ix.cloud[(size_t) st][(size_t) k]); };
             auto& c = p.cloud[(size_t) st];
             c.mix = C (0); c.density = C (1); c.spread = C (2); c.sizeMs = C (3); c.scatterMs = C (4);
+            auto Q = [&] (int k) { return V (ix.pipeSnd[(size_t) st][(size_t) k]); };
+            auto& q = p.pipeSnd[(size_t) st];
+            q.attGain = Q (0); q.attSharp = Q (1); q.attIso = Q (2); q.attRep = Q (3); q.puff = Q (4); q.hiFreq = Q (5); q.hiGain = Q (6); q.hiShape = Q (7);
         }
+        p.airInvert = V (ix.airInvert);
+        p.resClick = V (ix.clickRes); p.resDecay = V (ix.clickResDecay); p.resBright = V (ix.clickResBright);
+        p.glitch.stutter = V (ix.glitch[0]); p.glitch.splice = V (ix.glitch[1]); p.glitch.zero = V (ix.glitch[2]); p.glitch.clip = V (ix.glitch[3]);
     }
     p.windModel = juce::roundToInt (V (ix.windModel));
 
@@ -2406,7 +2443,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 12;
+    constexpr int kFactoryVersion = 13;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -2911,6 +2948,60 @@ void RysumProcessor::writeFactoryPatches()
             { "cloudMix5", 0.6f }, { "cloudSpread5", 40.0f }, { "cloudScatter5", 150.0f }, { "cloudDens5", 50.0f },
             { "simOn", 1 }, { "simShape", (int) rysum::shapeOct }, { "simShapeAmt", 0.6f }, { "simW", 18.0f }, { "simL", 24.0f }, { "simH", 12.0f },
             { "spcWeather", 180.0f } }, {});
+
+    // ---- set 13: Ansprache, Abriss, Obertoene (Raum · Pfeife), Luft umkehren, Klick-Resonanz, Glitch
+    //      (internal stop numbers: 0 Praestant 8', 1 Gedackt, 2 Octave 4', 3 Octave 2', 4 Sesquialtera, 5 Mixtur, 6 Trompete, 7 Praestant 16')
+    currentSet = 13;
+    make (u8 ("100 Ansprache \xe2\x80\x93 Weiche Rede"),
+          { { "stop0", 1 }, { "stop1", 1 }, { "pipeAtt0", -0.8f }, { "pipeAtt1", -0.7f }, { "click", 0.1f } }, {});
+    make (u8 ("101 Ansprache \xe2\x80\x93 Sch\xc3\xa4rfe"),
+          { { "stop0", 0 }, { "stop2", 1 }, { "stop3", 1 }, { "pipeAtt2", 0.9f }, { "pipeSharp2", 0.6f },
+            { "pipeAtt3", 0.9f }, { "pipeSharp3", 0.7f } }, {});
+    make (u8 ("102 Ansprache \xe2\x80\x93 Nur das Anblasen"),
+          { { "stop0", 0 }, { "stop2", 1 }, { "stop5", 1 }, { "pipeAtt2", 0.5f }, { "pipeIso2", 1.0f }, { "pipeRep2", 0.4f },
+            { "pipeAtt5", 0.5f }, { "pipeIso5", 1.0f }, { "pipeRep5", 0.25f }, { "simOn", 1 }, { "simW", 16.0f }, { "simL", 30.0f }, { "simH", 12.0f } }, {});
+    make (u8 ("103 Ansprache \xe2\x80\x93 Kr\xc3\xa4hende Pfeife"),
+          { { "stop0", 1 }, { "stop2", 1 }, { "pipeAtt0", 0.7f }, { "pipeSharp0", 0.4f }, { "pipeRep0", 0.85f },
+            { "pipeAtt2", 0.5f }, { "pipeRep2", 0.6f } }, {});
+    make (u8 ("104 Abriss \xe2\x80\x93 Atem"),
+          { { "stop0", 1 }, { "stop1", 1 }, { "pipePuff0", 0.7f }, { "pipePuff1", 1.0f }, { "releaseClick", 0.0f }, { "noteSpread", 1 } }, {});
+    make (u8 ("105 Abriss \xe2\x80\x93 Seufzer im Kirchenschiff"),
+          { { "stop7", 1 }, { "stop6", 1 }, { "stop0", 0 }, { "pipePuff7", 1.0f }, { "pipePuff6", 0.8f }, { "simOn", 1 },
+            { "simShape", (int) rysum::shapeCross }, { "simShapeAmt", 0.3f }, { "simW", 26.0f }, { "simL", 42.0f }, { "simH", 18.0f }, { "master", -15.0f } }, {});
+    make (u8 ("106 Obert\xc3\xb6ne \xe2\x80\x93 Glasorgel"),
+          { { "stop0", 1 }, { "stop2", 1 }, { "pipeHiFreq0", 3000.0f }, { "pipeHiGain0", 10.0f }, { "pipeHiShape0", 0.4f },
+            { "pipeHiFreq2", 3500.0f }, { "pipeHiGain2", 9.0f }, { "pipeHiShape2", 0.4f } }, {});
+    make (u8 ("107 Obert\xc3\xb6ne \xe2\x80\x93 Unter der Decke"),
+          { { "stop7", 1 }, { "stop5", 1 }, { "stop0", 0 }, { "pipeHiFreq5", 2500.0f }, { "pipeHiGain5", -20.0f },
+            { "pipeHiFreq7", 1200.0f }, { "pipeHiGain7", -12.0f }, { "master", -14.0f } }, {});
+    make (u8 ("108 Obert\xc3\xb6ne \xe2\x80\x93 Nadelanschlag"),
+          { { "stop0", 1 }, { "stop3", 1 }, { "pipeHiFreq0", 5000.0f }, { "pipeHiGain0", 6.0f }, { "pipeHiShape0", 1.0f },
+            { "pipeHiFreq3", 6000.0f }, { "pipeHiGain3", 8.0f }, { "pipeHiShape3", 1.0f } }, {});
+    make (u8 ("109 Luft umkehren \xe2\x80\x93 Ferne Pr\xc3\xa4senz"),
+          { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "airInvert", 0.85f }, { "simOn", 1 }, { "simW", 24.0f }, { "simL", 60.0f }, { "simH", 16.0f },
+            { "simLy", 0.1f }, { "master", -17.0f } }, {});
+    make (u8 ("110 Klick-Resonanz \xe2\x80\x93 Die Traktur singt"),
+          { { "stop0", 0 }, { "stop1", 1 }, { "vol1", -16.0f }, { "click", 0.8f }, { "releaseClick", 0.6f }, { "clickBlend", 0.7f },
+            { "clickRes", 0.8f }, { "clickResDecay", 0.9f }, { "clickResBright", 0.6f } }, {});
+    make (u8 ("111 Klick-Resonanz \xe2\x80\x93 Tasten wie Glocken"),
+          { { "stop0", 0 }, { "stop1", 1 }, { "vol1", -22.0f }, { "click", 1.0f }, { "releaseClick", 1.0f }, { "clickBlend", 1.0f },
+            { "clickRes", 1.0f }, { "clickResDecay", 2.2f }, { "clickResBright", 0.9f }, { "simOn", 1 }, { "simW", 18.0f }, { "simL", 34.0f }, { "simH", 14.0f } }, {});
+    make (u8 ("112 Glitch \xe2\x80\x93 Stottern"),
+          { { "stop0", 1 }, { "stop2", 1 }, { "degStutter", 0.6f } }, {});
+    make (u8 ("113 Glitch \xe2\x80\x93 Bandschnitt"),
+          { { "stop0", 1 }, { "stop1", 1 }, { "degSplice", 0.85f } }, {});
+    make (u8 ("114 Glitch \xe2\x80\x93 Harte Kanten"),
+          { { "stop0", 0 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 }, { "degZero", 0.9f } }, {});
+    make (u8 ("115 Glitch \xe2\x80\x93 Clipping-Gewitter"),
+          { { "stop7", 1 }, { "stop6", 1 }, { "stop0", 0 }, { "degClip", 0.7f }, { "degStutter", 0.25f }, { "master", -16.0f } }, {});
+    make (u8 ("116 Atmende Ansprache"),
+          { { "stop0", 1 }, { "stop2", 1 }, { "pipeAtt0", 0.0f }, { "pipeAtt2", 0.0f }, { "pipePuff0", 0.5f },
+            { "lfo1Shape", (float) shSmooth }, { "lfo1Rate", 0.05f } },
+          { { srcLfo1, "pipeAtt0", 0.9f }, { srcLfo1, "pipeAtt2", -0.8f } });
+    make (u8 ("117 Alles zerf\xc3\xa4llt"),
+          { { "stop0", 1 }, { "stop2", 1 }, { "stop5", 1 }, { "pipeAtt0", 0.6f }, { "pipeRep0", 0.5f }, { "pipePuff0", 0.6f },
+            { "clickRes", 0.6f }, { "clickResDecay", 0.7f }, { "degStutter", 0.3f }, { "degSplice", 0.4f }, { "degZero", 0.3f },
+            { "degAmount", 0.2f }, { "degGrain", 0.25f }, { "spcWeather", 120.0f }, { "spcDrops", 0.2f } }, {});
 
     marker.replaceWithText (juce::String (kFactoryVersion));
 }

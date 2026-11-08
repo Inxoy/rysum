@@ -17,6 +17,32 @@
 namespace rysum
 {
 /** the "Effekte" page: sounds and effects that are easy to locate in space */
+/** the sound of the pipe itself, per stop (Raum page, tab "Pfeife"); all neutral by default */
+struct PipeSoundParams
+{
+    // Ansprache: the measured attack of every pipe (onset .. attack end from the preprocessing)
+    float attGain = 0.0f;      // -1 = the attack swells in softly .. 0 = as recorded .. +1 = +12 dB chiff
+    float attSharp = 0.0f;     // 0..1: the highs of the attack lifted (a sharper chiff)
+    float attIso = 0.0f;       // 0..1: the sustain falls away after the attack (1 = only the chiff)
+    float attRep = 0.0f;       // 0..1: the chiff repeats as a short burst (up to 6 times)
+    // Abriss: a puff of air when the pallet closes
+    float puff = 0.0f;
+    // upper partials above hiFreq as their own layer: gain and transient shaping
+    float hiFreq = 4000.0f, hiGain = 0.0f /* dB */, hiShape = 0.0f /* -1 soft .. +1 spiky */;
+    bool attOn() const noexcept { return attGain != 0.0f || attSharp > 0.0f || attIso > 0.0f; }
+    bool hiOn() const noexcept { return hiGain != 0.0f || hiShape != 0.0f; }
+};
+
+/** "Verfall · Glitch": transients of a failing playback (per pipe); all off by default */
+struct GlitchParams
+{
+    float stutter = 0.0f;      // a short slice of the pipe repeats 2..6 times
+    float splice = 0.0f;       // loop points become hard tape splices (with a tick)
+    float zero = 0.0f;         // no care for zero crossings: hard note starts and releases
+    float clip = 0.0f;         // short bursts of hard digital clipping
+    bool on() const noexcept { return stutter > 0.0f || splice > 0.0f || zero > 0.0f || clip > 0.0f; }
+};
+
 struct FxParams
 {
     // own sounds (samples/noise/eigene), triggered by the keys
@@ -100,6 +126,11 @@ struct EngineParams
     // distance
     float doppler = 1.0f;              // 0 = off, 1 = physical, up to 4 = exaggerated
     float air = 0.5f;                  // air absorption amount
+    float airInvert = 0.0f;            // 0 = natural, 0.5 = the highs of distant pipes restored, 1 = exaggerated
+    // resonated clicks: key clicks ring a bank of resonators tuned to the harmonics of the pressed key
+    float resClick = 0.0f, resDecay = 0.4f /* s */, resBright = 0.5f;
+    std::array<PipeSoundParams, kNumStops> pipeSnd {};
+    GlitchParams glitch;
     float distAmount = 0.7f;           // 0 = distance does not change the level, 1 = 1/r
 
     // tuning
@@ -309,14 +340,27 @@ private:
         // hard jumps: gains switched sample-accurately at every jump (no ramp)
         bool hard = false;
         float pmAz = 0.0f, pmEl = 0.0f, pmDist = 1.0f, gainLin = 1.0f;
-        float pmWind = 0.0f, pmDeg = 0.0f, pmWob = 0.0f, pmCrk = 0.0f;
+        float pmWind = 0.0f, pmDeg = 0.0f, pmWob = 0.0f, pmCrk = 0.0f;   // per-pipe modulation of stop wind, Verfall, Windschwankung, crackle
         // grain cloud: the pipe's sound history (a ring of the pool), when the next grain is due, where the pipe is
         int cloudRing = -1;
         double cloudAcc = 0.0;
         Pos spPos;
-        float spK = 0.0f, cloudDry = 1.0f;   // per-pipe modulation of stop wind, Verfall, Windschwankung, crackle
+        float spK = 0.0f, cloudDry = 1.0f;
         float noteCents = 0.0f;          // free tuning: shift from the pipe's own pitch
         float modCents0 = 0.0f, modCents1 = 0.0f;
+        // Ansprache: the attack (gain, sharpness, isolation) and the repeated chiff (a second reader)
+        float attLp = 0.0f;
+        int chLeft = 0, chWait = 0, chLen = 0, chAge = 0, chCount = 0;
+        double chPos = 0.0;
+        // Abriss: the release puff (band-passed noise)
+        bool puffPending = false;
+        float puffEnv = 0.0f, puffDec = 0.0f, puffAmp = 0.0f, pb1 = 0.0f, pb2 = 0.0f, py1 = 0.0f, py2 = 0.0f, pLp = 0.0f, pLpA = 1.0f;
+        // upper partials as their own layer
+        float hiS1 = 0.0f, hiS2 = 0.0f, hiEf = 0.0f, hiEs = 0.0f;     // (2nd-order high-pass state, envelopes)
+        // glitch: stutter (a slice repeated), clipping bursts
+        double stStart = 0.0;
+        int stLen = 0, stAcc = 0, stCount = 0, glTimer = 0, clipLeft = 0, clipTimer = 0, splLeft = 0;
+        float clipDrive = 1.0f;
         // crackle
         int crkCount = 0;
         float crkAmp = 0.0f, crkEnv = 1.0f;
@@ -349,6 +393,10 @@ private:
         float azVel = 0.0f;                   // deg per second, 0 = still
         std::array<float, kMaxRoomSends> sendW {};   // room-send weights (direction harmonics)
         int erSlot = -1;                      // simulated room: early reflections
+        // resonated clicks: up to 6 two-pole resonators on the harmonics of the key
+        int resN = 0, resTail = 0;
+        float resMix = 0.0f;
+        std::array<float, 6> rb1 {}, rb2 {}, rg {}, ry1 {}, ry2 {};
     };
 
     // ---- simulated room ----
@@ -447,7 +495,7 @@ private:
     void releaseVoice (Voice& v);
     void freezeVoice (Voice& v);
     void releaseStopKey (int stop, int key, int noteId = -1);
-    void playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone = 1.0f);
+    NoiseVoice* playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone = 1.0f);
     void spawnSound (const Sample& s, float gain, float tone, double rate, Pos pos, float azVel, float send);
     void schedule (const Scheduled& e);
     void customSounds (int key, float velocity, const EngineParams& p);
@@ -606,6 +654,11 @@ private:
 
     // sum-mode degradation
     DegradeState sumDeg { 99 };
+    // ---- the sound of the pipe (Ansprache, Abriss, upper partials) and glitches: this block's settings,
+    //      for the places that have no params at hand (voice start, release)
+    std::array<PipeSoundParams, kNumStops> pipeSndNow {};
+    GlitchParams glitchNow;
+    void setupResonators (NoiseVoice& nv, int key, float velocity, const EngineParams& p) noexcept;
     // ---- spatial degradation
     SpaceEroder eroder;
     int gridN = 0;                                       // direction grid (0 = off)

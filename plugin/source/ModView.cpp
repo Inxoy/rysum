@@ -9,7 +9,8 @@ namespace
         if (id.startsWith ("vol") || id.startsWith ("swind") || id.startsWith ("rate") || id.startsWith ("depth") || id.startsWith ("ellipse"))
             return "Register";
         if (id.startsWith ("deg") || id.startsWith ("spc")) return "Verfall";
-        if (id.startsWith ("cloud")) return "Register";
+        if (id.startsWith ("cloud") || id.startsWith ("pipe")) return "Register";
+        if (id.startsWith ("clickRes")) return juce::String::fromUTF8 ("Traktur \xc2\xb7 Ausgang");
         if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" || id == "wind" || id == "master")
             return juce::String::fromUTF8 ("Traktur \xc2\xb7 Ausgang");
         if (id.startsWith ("ir")) return "Hall";

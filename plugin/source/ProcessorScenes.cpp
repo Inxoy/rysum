@@ -148,12 +148,13 @@ int RysumProcessor::diceGroupOf (const juce::String& id) const
     auto stopParam = [&] (const char* prefix) { return id.startsWith (prefix) && id.substring ((int) std::strlen (prefix)).containsOnly ("0123456789"); };
     if (stopParam ("stop") || stopParam ("vol") || stopParam ("swind")) return dgRegister;
     for (auto* p : { "motion", "rate", "depth", "ellipse", "ellDir", "ellTilt", "ellForm", "pathSpread", "jumpHard",
-                     "cloudMix", "cloudDens", "cloudSpread", "cloudSize", "cloudScatter" })
+                     "cloudMix", "cloudDens", "cloudSpread", "cloudSize", "cloudScatter",
+                     "pipeAtt", "pipeSharp", "pipeIso", "pipeRep", "pipePuff", "pipeHiFreq", "pipeHiGain", "pipeHiShape" })
         if (stopParam (p)) return dgRaum;
-    if (id == "doppler" || id == "air" || id == "distAmount" || id == "irDry" || id == "irWet" || id == "irEnvelop" || id == "irDirect") return dgRaum;
+    if (id == "doppler" || id == "air" || id == "airInvert" || id == "distAmount" || id == "irDry" || id == "irWet" || id == "irEnvelop" || id == "irDirect") return dgRaum;
     if (id.startsWith ("sim") && id != "simOrder") return dgSaal;
     if (id == "detune" || id.startsWith ("trem") || id == "freezeSmear" || id == "freezeRelease" || id == "windModel") return dgKlang;
-    if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" || id == "wind" || id.startsWith ("deg") || id.startsWith ("spc")) return dgSpieltisch;
+    if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" || id == "wind" || id.startsWith ("deg") || id.startsWith ("spc") || id.startsWith ("clickRes")) return dgSpieltisch;
     if (id.startsWith ("fx")) return dgEffekte;
     if (id.startsWith ("lfo") || id.startsWith ("env") || (id.startsWith ("mod") && id.endsWith ("Amt"))) return dgModulation;
     if (id.startsWith ("luc") && id != "lucSource") return dgLucier;

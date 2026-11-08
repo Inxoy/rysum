@@ -257,6 +257,7 @@ void OrganEngine::spawnSound (const Sample& s, float gain, float tone, double ra
     nv->lp = 0.0f;
     nv->lpA = juce::jlimit (0.02f, 1.0f, tone);
     nv->azVel = azVel;
+    nv->resN = 0; nv->resTail = 0;
     nv->where.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist);
     placedGains (*nv);
 }
@@ -617,6 +618,24 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->previewRemain = previewSamples;
     v->age = ++ageCounter;
     v->cloudRing = -1; v->cloudAcc = 0.0; v->cloudDry = 1.0f;
+    {
+        // Ansprache: the chiff repeated as a short burst (a second reader over the attack)
+        const auto& ps = pipeSndNow[(size_t) stop];
+        v->attLp = 0.0f;
+        v->chLeft = ps.attRep > 0.0001f ? 1 + (int) std::round (ps.attRep * 5.0f) : 0;
+        v->chLen = juce::jmax (64, juce::jmin (pipe.attackEnd - pipe.onset, (int) (0.09 * kSampleFileRate)));
+        v->chWait = (int) ((double) (pipe.onset + v->chLen * 0.7) / juce::jmax (1.0e-6, v->baseRate));
+        v->chAge = -1; v->chCount = 0; v->chPos = 0.0;
+        // Abriss, upper partials, glitches
+        v->puffPending = false; v->puffEnv = 0.0f; v->py1 = v->py2 = 0.0f; v->pLp = 0.0f;
+        v->hiS1 = v->hiS2 = 0.0f; v->hiEf = v->hiEs = 0.0f;
+        v->stCount = 0; v->stAcc = 0; v->clipLeft = 0; v->splLeft = 0;
+        v->glTimer = v->clipTimer = 1;
+        if (glitchNow.on()) { v->glTimer = (int) (rng.uni() * 0.3 * sr) + 1; v->clipTimer = (int) (rng.uni() * 0.3 * sr) + 1; }
+        // no care for zero crossings: the note may start anywhere in its first moments (a hard edge)
+        if (glitchNow.zero > 0.0001f && rng.uni() < glitchNow.zero)
+            v->pos = (double) rng.uni() * glitchNow.zero * (pipe.onset + 0.03 * kSampleFileRate);
+    }
     v->fresh = true;
     v->env = 0.0f; v->held1 = 0.0f;
     v->windSm = -1.0f; v->lp = 0.0f; v->lpA = 1.0f;
@@ -647,6 +666,7 @@ void OrganEngine::releaseVoice (Voice& v)
 {
     if (! v.held) return;
     v.held = false;
+    if (pipeSndNow[(size_t) v.stop].puff > 0.0001f) v.puffPending = true;        // Abriss: the pallet closes
     const Pipe& p = *v.pipe;
     const int relLenFile = (int) (0.04 * kSampleFileRate);
     const double target = (double) juce::jmax (0, p.release - relLenFile);
@@ -657,7 +677,7 @@ void OrganEngine::releaseVoice (Voice& v)
         v.relXfade = true;
         v.relPos = target;
         v.relCount = 0;
-        v.relLen = juce::jmax (1, (int) (0.04 * sr));
+        v.relLen = juce::jmax (1, (int) (0.04 * sr * (1.0 - 0.995 * glitchNow.zero)));   // glitch: a hard cut instead
     }
     else
     {
@@ -734,9 +754,9 @@ void OrganEngine::releaseAllKeys (const EngineParams& p)
     }
 }
 
-void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone)
+OrganEngine::NoiseVoice* OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, const float* gains, int& lastIndex, float send, float tone)
 {
-    if (pool.empty() || gain <= 0.0001f) return;
+    if (pool.empty() || gain <= 0.0001f) return nullptr;
     int idx = (int) (rng.uni() * (float) pool.size());
     if (pool.size() > 1 && idx == lastIndex) idx = (idx + 1) % (int) pool.size();
     idx = juce::jlimit (0, (int) pool.size() - 1, idx);
@@ -758,8 +778,41 @@ void OrganEngine::playNoise (const std::vector<NoiseSample>& pool, float gain, c
     nv->lp = 0.0f;
     nv->lpA = juce::jlimit (0.02f, 1.0f, tone);
     nv->azVel = 0.0f;
+    nv->resN = 0; nv->resTail = 0;
     std::copy (gains, gains + kMaxAmbiChannels, nv->g.begin());
     nv->sendW = noiseRoomW;
+    return nv;
+}
+
+/** resonated clicks: the click rings the harmonics of the pressed key (in the current tuning) */
+void OrganEngine::setupResonators (NoiseVoice& nv, int key, float velocity, const EngineParams& p) noexcept
+{
+    if (p.resClick <= 0.0001f || library == nullptr) return;
+    // the key's pitch at 8': the Praestant pipe of this key (or the nominal pitch), moved by the tuning
+    const auto& pp = library->pipes[0][(size_t) juce::jlimit (0, kNumKeys - 1, key)];
+    double hz = pp.valid ? (pp.measuredHz > 0.0 ? pp.measuredHz : pp.nominalHz) : 0.0;
+    if (hz <= 0.0) hz = kA4 * std::pow (2.0, ((double) kPhysKeys[(size_t) juce::jlimit (0, kNumKeys - 1, key)] - 69.0) / 12.0);
+    hz *= std::exp2 ((p.tuning.cents[(size_t) juce::jlimit (0, kNumKeys - 1, key)] + p.pitchCents) / 1200.0);
+    const float decay = juce::jlimit (0.02f, 4.0f, p.resDecay);
+    int n = 0;
+    for (int h = 1; h <= 6 && n < 6; ++h)
+    {
+        const double f = hz * h;
+        if (f > 0.45 * sr) break;
+        const double tau = decay / std::sqrt ((double) h);                 // the upper harmonics die sooner
+        const double r = std::exp (-1.0 / (tau * sr));
+        const double w = juce::MathConstants<double>::twoPi * f / sr;
+        nv.rb1[(size_t) n] = (float) (2.0 * r * std::cos (w));
+        nv.rb2[(size_t) n] = (float) (-r * r);
+        // peak gain of a two-pole resonator ~ 1 / (1 - r): normalised, then tilted by brightness
+        const float tilt = std::pow ((float) h, -1.6f * (1.0f - juce::jlimit (0.0f, 1.0f, p.resBright)));
+        nv.rg[(size_t) n] = (float) ((1.0 - r) * 0.5) * tilt * 6.0f;
+        nv.ry1[(size_t) n] = nv.ry2[(size_t) n] = 0.0f;
+        ++n;
+    }
+    nv.resN = n;
+    nv.resMix = juce::jlimit (0.0f, 1.0f, p.resClick) * (0.6f + 0.4f * juce::jlimit (0.0f, 1.0f, velocity));
+    nv.resTail = (int) (decay * 6.0 * sr);
 }
 
 void OrganEngine::keyDown (int key, float velocity, const EngineParams& p, int noteId)
@@ -792,8 +845,9 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p, int n
         // velocity: a light touch gives a quieter and duller click
         const float v = juce::jlimit (0.0f, 1.0f, velocity);
         keyVelocity[(size_t) key] = v;
-        playNoise (library->clicksDown.empty() ? library->clicksOther : library->clicksDown,
-                   p.clickLevel * clickCurve (v) * 1.6f, g.data(), lastDown, 0.5f, clickTone (v));
+        if (auto* nv = playNoise (library->clicksDown.empty() ? library->clicksOther : library->clicksDown,
+                                  p.clickLevel * clickCurve (v) * 1.6f, g.data(), lastDown, 0.5f, clickTone (v)))
+            setupResonators (*nv, key, v, p);
     }
 
     // effects: own sounds, ticks running to the pipes
@@ -867,8 +921,9 @@ void OrganEngine::keyUp (int key, const EngineParams& p, int noteId)
     if (library != nullptr)
     {
         const float v = keyVelocity[(size_t) key];      // the key comes up about as hard as it went down
-        playNoise (library->clicksUp.empty() ? library->clicksOther : library->clicksUp,
-                   p.releaseClick * clickCurve (v) * 1.6f, console.data(), lastUp, 0.5f, clickTone (v));
+        if (auto* nv = playNoise (library->clicksUp.empty() ? library->clicksOther : library->clicksUp,
+                                  p.releaseClick * clickCurve (v) * 1.6f, console.data(), lastUp, 0.5f, clickTone (v)))
+            setupResonators (*nv, key, v, p);
     }
     if (p.fx.custLevel > 0.0001f && rng.uni() < p.fx.custUp) customSounds (key, 0.8f * keyVelocity[(size_t) key], p);
     for (auto& v : voices)
@@ -1006,6 +1061,42 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         const float crkMean = (float) sr / juce::jmax (0.05f, p.fx.crackRate);
         const float crkGain = 0.25f * crkLevel * v.crkEnv;
         const bool chaosModel = p.windModel == 1;
+        // ---- the sound of this pipe: Ansprache, Abriss, upper partials; glitches
+        const auto& ps = p.pipeSnd[(size_t) v.stop];
+        const bool attOn = ps.attOn();
+        const int attA = pipe.onset, attB = juce::jmax (pipe.onset + 16, pipe.attackEnd);
+        const double attInv = 1.0 / (double) (attB - attA);
+        const float attBoost = ps.attGain > 0.0f ? 3.0f * ps.attGain : 0.0f, attCut = ps.attGain < 0.0f ? -ps.attGain : 0.0f;
+        const float attSharpG = 3.0f * ps.attSharp;
+        const float attLpA = 1.0f - std::exp (-twoPiOverSr * 2500.0f);
+        const bool chOn = v.chLeft > 0 || v.chAge >= 0;
+        const bool hiOn = ps.hiOn();
+        // a 2nd-order high-pass (state variable, Butterworth): the layer above hiFreq; out = x + (gain - 1) * layer
+        const float hiG0 = (float) std::tan (juce::MathConstants<double>::pi * juce::jlimit (200.0, 0.45 * sr, (double) ps.hiFreq) / sr);
+        const float hiK = 1.41421356f, hiA1 = 1.0f / (1.0f + hiG0 * (hiG0 + hiK)), hiA2 = hiG0 * hiA1, hiA3 = hiG0 * hiA2;
+        const float hiG = juce::Decibels::decibelsToGain (ps.hiGain);
+        const float efA = 1.0f - std::exp (-1.0f / (0.0007f * (float) sr)), efR = 1.0f - std::exp (-1.0f / (0.006f * (float) sr));
+        const float esA = 1.0f - std::exp (-1.0f / (0.025f * (float) sr)), esR = 1.0f - std::exp (-1.0f / (0.12f * (float) sr));
+        if (v.puffPending)
+        {
+            // Abriss: a puff of air, shaped by the register and the pitch; as hard as the key was struck
+            v.puffPending = false;
+            static constexpr float kPuffMult[kNumStops] { 4.0f, 2.5f, 4.0f, 4.5f, 6.0f, 8.0f, 3.0f, 3.0f };
+            const double hz = pipe.measuredHz > 0.0 ? pipe.measuredHz : juce::jmax (30.0, pipe.nominalHz);
+            const float fc = juce::jlimit (250.0f, 12000.0f, (float) hz * kPuffMult[(size_t) v.stop]);
+            const float tau = juce::jlimit (0.008f, 0.09f, 0.04f * std::sqrt (130.0f / (float) hz));
+            const double w = juce::MathConstants<double>::twoPi * fc / sr, r = std::exp (-juce::MathConstants<double>::pi * fc / (1.4 * sr));
+            v.pb1 = (float) (2.0 * r * std::cos (w)); v.pb2 = (float) (-r * r);
+            v.pLpA = 1.0f - std::exp (-twoPiOverSr * juce::jmin (0.45f * (float) sr, 2.5f * fc));
+            v.puffDec = std::exp (-1.0f / (tau * (float) sr));
+            const float vel = keyVelocity[(size_t) v.key];
+            v.puffAmp = ps.puff * clickCurve (vel) * 0.9f * juce::Decibels::decibelsToGain (juce::jlimit (-60.0f, 0.0f, pipe.levelDb)) * (1.0f - (float) r);
+            v.puffEnv = 1.0f;
+        }
+        const bool puffOn = v.puffEnv > 1.0e-4f;
+        const auto& gl = p.glitch;
+        const bool glOn = gl.on();
+        const int xfEff = gl.splice > 0.0f ? juce::jmax (1, (int) ((float) v.loopXf * (1.0f - gl.splice))) : v.loopXf;
         for (int i = 0; i < n; ++i)
         {
             if ((i & 15) == 0)       // control rate: every 16 samples
@@ -1062,9 +1153,9 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             float x = 0.0f;
             if (! v.frozen || v.freezeMix < 1.0f)
             {
-                if (v.looping && v.pos >= pipe.loopEnd - v.loopXf)
+                if (v.looping && v.pos >= pipe.loopEnd - xfEff)
                 {
-                    const float t = (float) ((v.pos - (pipe.loopEnd - v.loopXf)) / v.loopXf);
+                    const float t = (float) ((v.pos - (pipe.loopEnd - xfEff)) / xfEff);
                     x = (1.0f - t) * readSample (d, len, v.pos) + t * readSample (d, len, v.pos - loopLen);
                 }
                 else x = readSample (d, len, v.pos);
@@ -1084,7 +1175,70 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 if (! jumped)
                 {
                     v.pos += rate;
-                    if (v.looping && v.pos >= pipe.loopEnd) v.pos -= loopLen;
+                    if (v.looping && v.pos >= pipe.loopEnd)
+                    {
+                        v.pos -= loopLen;
+                        if (gl.splice > 0.0f) v.splLeft = (int) (0.012 * sr);         // a tape splice: a tick and a short dip
+                    }
+                }
+                if (v.splLeft > 0)
+                {
+                    const int total = (int) (0.012 * sr), age = total - v.splLeft--;
+                    const float tick = age < (int) (0.0025 * sr) ? std::exp (-(float) age / (0.0006f * (float) sr)) : 0.0f;
+                    const float level = juce::Decibels::decibelsToGain (juce::jlimit (-60.0f, 0.0f, pipe.levelDb));
+                    x = x * (1.0f - 0.85f * gl.splice * (1.0f - (float) age / (float) total)) + gl.splice * 1.5f * level * tick * v.grainRng.bi();
+                }
+                if (glOn && ! v.relXfade)
+                {
+                    // glitch: stutter - a short slice of the pipe repeats a few times (hard jumps back)
+                    if (v.stCount > 0)
+                    {
+                        if (++v.stAcc >= v.stLen) { v.stAcc = 0; v.pos = v.stStart; --v.stCount; }
+                    }
+                    else if (gl.stutter > 0.0f && --v.glTimer <= 0)
+                    {
+                        const float u = juce::jmax (1.0e-4f, v.grainRng.uni());
+                        v.glTimer = 1 + (int) (-std::log (u) * (float) sr / juce::jmax (0.02f, 2.5f * gl.stutter * gl.stutter));
+                        v.stStart = v.pos;
+                        v.stLen = (int) ((0.02f + 0.13f * v.grainRng.uni()) * (float) sr);
+                        v.stCount = 1 + (int) (v.grainRng.uni() * 5.0f);
+                        v.stAcc = 0;
+                    }
+                }
+                if (attOn && v.pos < attB + 0.05 * kSampleFileRate)
+                {
+                    // Ansprache: e = 1 at the onset, falling to 0 at the end of the measured attack
+                    const double u = (v.pos - attA) * attInv;
+                    const float e = u <= 0.0 ? 1.0f : (u >= 1.0 ? 0.0f : 0.5f + 0.5f * (float) std::cos (juce::MathConstants<double>::pi * u));
+                    v.attLp += attLpA * (x - v.attLp);
+                    x += attSharpG * e * (x - v.attLp);
+                    x *= (1.0f + attBoost * e) * (1.0f - attCut * e);
+                }
+                if (ps.attIso > 0.0f)
+                {
+                    const double u = (v.pos - attA) * attInv;
+                    const float e = u <= 0.0 ? 1.0f : (u >= 1.0 ? 0.0f : 0.5f + 0.5f * (float) std::cos (juce::MathConstants<double>::pi * u));
+                    x *= 1.0f - ps.attIso * (1.0f - e);
+                }
+                if (chOn)
+                {
+                    // the chiff once more, and again: a short burst (each repeat a little quieter)
+                    if (v.chAge < 0 && v.chLeft > 0 && --v.chWait <= 0)
+                    {
+                        v.chAge = 0; v.chPos = attA; --v.chLeft; ++v.chCount;
+                    }
+                    if (v.chAge >= 0)
+                    {
+                        const int lenOut = juce::jmax (16, (int) ((double) v.chLen / rate));
+                        const float w = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) v.chAge / (float) lenOut);
+                        x += readSample (d, len, v.chPos) * w * std::pow (0.82f, (float) v.chCount) * (1.0f + attBoost);
+                        v.chPos += rate;
+                        if (++v.chAge >= lenOut)
+                        {
+                            v.chAge = -1;
+                            v.chWait = (int) ((0.55f + 0.4f * v.grainRng.uni()) * (float) lenOut);
+                        }
+                    }
                 }
             }
             if (v.frozen)
@@ -1103,7 +1257,8 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
 
             v.lp += v.lpA * (x - v.lp);
             v.lpAir += v.airA * (v.lp - v.lpAir);
-            x = v.lpAir * amp;
+            // air inversion: the highs the distance took away given back (0.5) or more (1)
+            x = (p.airInvert > 0.0f ? v.lpAir + 2.0f * p.airInvert * (v.lp - v.lpAir) : v.lpAir) * amp;
             if (chaosModel && ! v.chaos.idle)
             {
                 v.chAir += v.airA * (kChaosLevel * v.chaos.sample() - v.chAir);
@@ -1116,6 +1271,45 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 x = DegradeState::process (x, v.held1, v.env, f, degV);
             }
 
+            if (hiOn)
+            {
+                // upper partials as their own layer: gain, and a transient shaper (fast / slow envelope)
+                const float v3 = x - v.hiS2, v1 = hiA1 * v.hiS1 + hiA2 * v3, v2 = v.hiS2 + hiA2 * v.hiS1 + hiA3 * v3;
+                v.hiS1 = 2.0f * v1 - v.hiS1; v.hiS2 = 2.0f * v2 - v.hiS2;
+                const float h = x - hiK * v1 - v2, ah = std::abs (h);
+                v.hiEf += (ah > v.hiEf ? efA : efR) * (ah - v.hiEf);
+                v.hiEs += (ah > v.hiEs ? esA : esR) * (ah - v.hiEs);
+                const float tg = ps.hiShape != 0.0f
+                    ? juce::jlimit (0.2f, 5.0f, std::pow ((v.hiEf + 1.0e-7f) / (v.hiEs + 1.0e-7f), 1.5f * ps.hiShape)) : 1.0f;
+                x += h * (hiG * tg - 1.0f);
+            }
+            if (glOn && gl.clip > 0.0f)
+            {
+                // glitch: a short burst of hard clipping
+                if (v.clipLeft > 0)
+                {
+                    --v.clipLeft;
+                    const float lim = 0.02f;
+                    x = juce::jlimit (-lim, lim, x * v.clipDrive) * (1.5f / std::sqrt (v.clipDrive));
+                }
+                else if (--v.clipTimer <= 0)
+                {
+                    const float u = juce::jmax (1.0e-4f, v.grainRng.uni());
+                    v.clipTimer = 1 + (int) (-std::log (u) * (float) sr / juce::jmax (0.02f, 3.0f * gl.clip * gl.clip));
+                    v.clipLeft = (int) ((0.008f + 0.07f * v.grainRng.uni()) * (float) sr);
+                    v.clipDrive = 4.0f + 30.0f * gl.clip * v.grainRng.uni();
+                }
+            }
+            if (puffOn)
+            {
+                // Abriss: band-passed noise with a fast decay, at the pipe
+                const float nz = v.grainRng.bi();
+                v.pLp += v.pLpA * (nz - v.pLp);
+                const float y = v.pLp + v.pb1 * v.py1 + v.pb2 * v.py2;
+                v.py2 = v.py1; v.py1 = y;
+                x += v.puffAmp * v.puffEnv * y * (v.killing ? juce::jmax (0.0f, v.killGain) : 1.0f);
+                v.puffEnv *= v.puffDec;
+            }
             if (split)
             {
                 v.partLp += splitA * (x - v.partLp);
@@ -1253,12 +1447,39 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         float* buf = scratch.data();
         int m = 0;
         bool ended = false;
-        for (; m < n; ++m)
+        if (nv.resN == 0)
         {
-            if (nv.pos >= nv.length - 2) { ended = true; break; }
-            nv.lp += nv.lpA * (readSample (nv.data, nv.length, nv.pos) - nv.lp);
-            buf[m] = nv.lp * nv.gain;
-            nv.pos += nv.rate;
+            for (; m < n; ++m)
+            {
+                if (nv.pos >= nv.length - 2) { ended = true; break; }
+                nv.lp += nv.lpA * (readSample (nv.data, nv.length, nv.pos) - nv.lp);
+                buf[m] = nv.lp * nv.gain;
+                nv.pos += nv.rate;
+            }
+        }
+        else
+        {
+            // resonated click: the click excites the key's harmonics, which ring on after it
+            const float dry = 1.0f - 0.6f * nv.resMix;
+            for (; m < n; ++m)
+            {
+                float x = 0.0f;
+                if (nv.pos < nv.length - 2)
+                {
+                    nv.lp += nv.lpA * (readSample (nv.data, nv.length, nv.pos) - nv.lp);
+                    x = nv.lp * nv.gain;
+                    nv.pos += nv.rate;
+                }
+                else if (--nv.resTail <= 0) { ended = true; break; }
+                float r = 0.0f;
+                for (int k = 0; k < nv.resN; ++k)
+                {
+                    const float y = nv.rg[(size_t) k] * x + nv.rb1[(size_t) k] * nv.ry1[(size_t) k] + nv.rb2[(size_t) k] * nv.ry2[(size_t) k];
+                    nv.ry2[(size_t) k] = nv.ry1[(size_t) k]; nv.ry1[(size_t) k] = y;
+                    r += y;
+                }
+                buf[m] = dry * x + nv.resMix * r;
+            }
         }
         if (nv.erSlot >= 0)
         {
@@ -2735,6 +2956,8 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     partRot = std::fmod (partRot + (double) p.fx.partTurn * 360.0 * blockSeconds, 360.0);
 
     updateGrid (p.space.grid);
+    pipeSndNow = p.pipeSnd;
+    glitchNow = p.glitch;
     // ---- spatial data for this block (end-of-block targets, ramped from the previous ones)
     for (auto& v : voices)
     {

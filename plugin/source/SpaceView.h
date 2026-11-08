@@ -188,9 +188,12 @@ private:
     std::unique_ptr<juce::ParameterAttachment> ellFormAttachment;
     std::unique_ptr<ParamRow> spreadRow, ellDirRow, ellTiltRow;
     juce::Rectangle<int> ellPreview;
-    juce::TextButton tabMotion { "Bewegung" }, tabHall { "Hall" }, tabCloud { "Wolke" };
-    bool hallTab = false, cloudTab = false;
-    void showTab (int tab);                       // 0 = Bewegung, 1 = Hall, 2 = Wolke
+    juce::TextButton tabMotion { "Bewegung" }, tabHall { "Hall" }, tabCloud { "Wolke" }, tabPipe { "Pfeife" };
+    bool hallTab = false, cloudTab = false, pipeTab = false;
+    void showTab (int tab);                       // 0 = Bewegung, 1 = Hall, 2 = Wolke, 3 = Pfeife
+    // the sound of the selected stop's pipes: Ansprache, Abriss, upper partials
+    std::array<std::unique_ptr<ParamRow>, 8> pipeRows;
+    juce::TextButton pipeAll { juce::String::fromUTF8 ("f\xc3\xbcr alle Register \xc3\xbc" "bernehmen") };
     // grain cloud of the selected stop
     std::array<std::unique_ptr<ParamRow>, 5> cloudRows;
     juce::TextButton cloudAll { juce::String::fromUTF8 ("f\xc3\xbcr alle Register \xc3\xbc" "bernehmen") };

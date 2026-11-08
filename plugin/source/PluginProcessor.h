@@ -235,6 +235,9 @@ public:
     /** grain cloud per stop: key = Mix Dens Spread Size Scatter */
     static juce::String cloudParamId (const char* key, int s) { return juce::String ("cloud") + key + juce::String (s); }
     static constexpr const char* kCloudKeys[5] { "Mix", "Dens", "Spread", "Size", "Scatter" };
+    /** the sound of the pipe per stop (Raum page, tab "Pfeife"): key = Att Sharp Iso Rep Puff HiFreq HiGain HiShape */
+    static juce::String pipeSndParamId (const char* key, int s) { return juce::String ("pipe") + key + juce::String (s); }
+    static constexpr const char* kPipeSndKeys[8] { "Att", "Sharp", "Iso", "Rep", "Puff", "HiFreq", "HiGain", "HiShape" };
     static constexpr const char* kSpcIds[7] { "spcErode", "spcWeather", "spcGrid", "spcBits", "spcRate", "spcDrops", "spcAlias" };
 
     // ---- drawn trajectories (message thread)
@@ -287,6 +290,9 @@ private:
         std::array<int, rysum::kNumStops> stopRoom {};
         std::array<int, 7> spc {};
         std::array<std::array<int, 5>, rysum::kNumStops> cloud {};
+        std::array<std::array<int, 8>, rysum::kNumStops> pipeSnd {};
+        int airInvert = -1, clickRes = -1, clickResDecay = -1, clickResBright = -1;
+        std::array<int, 4> glitch {};
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex { inpOn, inpLevel, inpMode, inpAz, inpEl, inpDist, inpWidth, inpSpin, inpFollow, inpGate, inpRelease, inpSend, kNumInp };

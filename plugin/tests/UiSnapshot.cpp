@@ -519,6 +519,15 @@ public:
             else std::cout << "Raum tab button not found  FAIL" << std::endl;
             juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
             shoot (0, "ui_spieltisch_raumverfall.png");
+            if (auto* b = findView (content, true) ? findButton (findView (content, true), "Glitch") : nullptr) b->triggerClick();
+            else std::cout << "Glitch tab button not found  FAIL" << std::endl;
+            if (auto* b = findView (content, true) ? findButton (findView (content, true), "Resonanz") : nullptr) b->triggerClick();
+            else std::cout << "Resonanz tab button not found  FAIL" << std::endl;
+            setN ("degStutter", 0.4f); setN ("clickRes", 0.6f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+            shoot (0, "ui_spieltisch_glitch_resonanz.png");
+            setN ("degStutter", 0.0f); setN ("clickRes", 0.0f);
+            if (auto* b = findView (content, true) ? findButton (findView (content, true), juce::String::fromUTF8 ("Ger\xc3\xa4usche")) : nullptr) b->triggerClick();
             if (auto* b = findView (content, true) ? findButton (findView (content, true), "Klang") : nullptr) b->triggerClick();
             for (auto* id : { "spcErode", "spcGrid", "spcDrops" }) if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
             setN (RysumProcessor::cloudParamId ("Mix", 6), 0.6f);
@@ -529,6 +538,15 @@ public:
             juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
             auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
             { juce::PNGImageFormat png; auto f = outDir.getChildFile ("ui_raum_wolke.png"); f.deleteFile(); juce::FileOutputStream os (f); png.writeImageToStream (img, os); }
+            setN (RysumProcessor::pipeSndParamId ("Att", 6), 0.5f); setN (RysumProcessor::pipeSndParamId ("HiGain", 6), 6.0f);
+            if (auto* b = findView (content, false) ? findButton (findView (content, false), "Pfeife") : nullptr) b->triggerClick();
+            else std::cout << "Pfeife tab button not found  FAIL" << std::endl;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+            {
+                auto img2 = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
+                juce::PNGImageFormat png; auto f = outDir.getChildFile ("ui_raum_pfeife.png"); f.deleteFile(); juce::FileOutputStream os (f); png.writeImageToStream (img2, os);
+            }
+            setN (RysumProcessor::pipeSndParamId ("Att", 6), 0.0f); setN (RysumProcessor::pipeSndParamId ("HiGain", 6), 0.0f);
             if (auto* b = findView (content, false) ? findButton (findView (content, false), "Bewegung") : nullptr) b->triggerClick();
             setN (RysumProcessor::cloudParamId ("Mix", 6), 0.0f);
         }

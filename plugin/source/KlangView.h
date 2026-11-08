@@ -36,7 +36,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> temperamentAtt;
 
     ParamRow *pitch = nullptr, *detune = nullptr, *tremRate = nullptr, *tremDepth = nullptr, *smear = nullptr, *release = nullptr,
-             *doppler = nullptr, *distAmount = nullptr, *air = nullptr;
+             *doppler = nullptr, *distAmount = nullptr, *air = nullptr, *airInvert = nullptr;
     juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr, *mpeOn = nullptr;
     ParamRow* mpeBend = nullptr;
     int midiTextTop = 118;

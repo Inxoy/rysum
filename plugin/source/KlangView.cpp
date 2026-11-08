@@ -59,6 +59,8 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     doppler    = &row ("doppler", "Doppler");
     distAmount = &row ("distAmount", u8 ("Entfernung \xe2\x86\x92 Lautst\xc3\xa4rke"));
     air        = &row ("air", u8 ("Luft (H\xc3\xb6hen in der Ferne)"));
+    airInvert  = &row ("airInvert", u8 ("Luft umkehren"));
+    airInvert->setTooltip (u8 ("Gibt fernen Pfeifen die H\xc3\xb6hen zur\xc3\xbc" "ck, die die Luft ihnen nimmt: 50 % = wie nah, 100 % = unnat\xc3\xbcrlich pr\xc3\xa4sent \xe2\x80\x93 je ferner, desto heller."));
 
     // headphones
     if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("binOrder")))
@@ -181,6 +183,7 @@ void KlangView::resized()
         doppler->setBounds (b.removeFromTop (38));
         distAmount->setBounds (b.removeFromTop (38));
         air->setBounds (b.removeFromTop (38));
+        airInvert->setBounds (b.removeFromTop (38));
         b.removeFromTop (16);
         speakersButton.setBounds (b.removeFromTop (28).withWidth (230));
     }

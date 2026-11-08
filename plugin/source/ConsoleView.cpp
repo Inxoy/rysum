@@ -242,9 +242,43 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
             spaceRows.back()->setTooltip (juce::String::fromUTF8 (tips[i++]));
             addChildComponent (*spaceRows.back());
         }
-        for (auto* b : { &tabSound, &tabSpace }) { b->setClickingTogglesState (false); addAndMakeVisible (*b); }
-        tabSound.onClick = [this] { showDecayTab (false); };
-        tabSpace.onClick = [this] { showDecayTab (true); };
+        // "Glitch": transients of a failing playback, per pipe
+        const std::pair<const char*, const char*> glitch[] {
+            { "degStutter", "Stottern" }, { "degSplice", "Bandschnitt (Loop)" }, { "degZero", "Harte Kanten" }, { "degClip", "Clipping" } };
+        const char* gtips[] {
+            "Ein kurzes St\xc3\xbc" "ck der Pfeife (20\xe2\x80\x93" "150 ms) springt zwei- bis sechsmal zur\xc3\xbc" "ck \xe2\x80\x93 wie ein h\xc3\xa4ngender Puffer.",
+            "Die Loop-Punkte werden zu harten Bandschnitten: kein \xc3\x9c" "berblenden mehr, dazu ein Ticken und ein kurzes Wegsacken bei jedem Durchlauf.",
+            "Keine R\xc3\xbc" "cksicht auf Nulldurchg\xc3\xa4nge: T\xc3\xb6ne beginnen irgendwo in ihren ersten Momenten und enden mit einem harten Schnitt.",
+            "Kurze St\xc3\xb6\xc3\x9f" "e harten digitalen Clippings (8\xe2\x80\x93" "80 ms), mal mehr, mal weniger \xc3\xbc" "bersteuert." };
+        int gi = 0;
+        for (auto& n : glitch)
+        {
+            glitchRows.push_back (std::make_unique<ParamRow> (proc.apvts, n.first, juce::String (juce::CharPointer_UTF8 (n.second))));
+            glitchRows.back()->setTooltip (juce::String::fromUTF8 (gtips[gi++]));
+            addChildComponent (*glitchRows.back());
+        }
+        for (auto* b : { &tabSound, &tabSpace, &tabGlitch }) { b->setClickingTogglesState (false); addAndMakeVisible (*b); }
+        tabSound.onClick = [this] { showDecayTab (0); };
+        tabSpace.onClick = [this] { showDecayTab (1); };
+        tabGlitch.onClick = [this] { showDecayTab (2); };
+        tabGlitch.setTooltip (juce::String::fromUTF8 ("Glitches einer versagenden Wiedergabe: Stottern, Bandschnitte, harte Kanten, Clipping (pro Pfeife)"));
+        // Traktur · Resonanz: the key clicks ring the harmonics of the pressed key
+        const std::pair<const char*, const char*> res[] {
+            { "clickRes", "Klick-Resonanz" }, { "clickResDecay", "Nachklang" }, { "clickResBright", "Helligkeit" } };
+        const char* rtips[] {
+            "Die Tastenklicks regen Resonatoren an, gestimmt auf die Teilt\xc3\xb6ne der gedr\xc3\xbc" "ckten Taste (in der gew\xc3\xa4hlten Stimmung): kurze, glockige T\xc3\xb6ne.",
+            "Wie lange die Resonanz nachklingt (die oberen Teilt\xc3\xb6ne k\xc3\xbcrzer).",
+            "Wie stark die oberen Teilt\xc3\xb6ne mitklingen." };
+        int ri = 0;
+        for (auto& n : res)
+        {
+            resRows.push_back (std::make_unique<ParamRow> (proc.apvts, n.first, juce::String (juce::CharPointer_UTF8 (n.second))));
+            resRows.back()->setTooltip (juce::String::fromUTF8 (rtips[ri++]));
+            addChildComponent (*resRows.back());
+        }
+        for (auto* b : { &tabNoise, &tabRes }) { b->setClickingTogglesState (false); addAndMakeVisible (*b); }
+        tabNoise.onClick = [this] { showNoiseTab (false); };
+        tabRes.onClick = [this] { showNoiseTab (true); };
         tabSound.setTooltip (juce::String::fromUTF8 ("Verfall des Klangs: K\xc3\xb6rnung, Bittiefe, Abtastrate, Windschwankung, Aussetzer"));
         tabSpace.setTooltip (juce::String::fromUTF8 ("Verfall des Raumbilds: die Ambisonics-Kugel nutzt sich ab (Ambisonics, Binaural, Lautsprecher; in Stereo nur das Richtungsraster)"));
     }
@@ -255,7 +289,8 @@ ConsoleView::ConsoleView (RysumProcessor& p) : proc (p), keys (p)
     }
     perPipe.onClick = [this] { if (auto* pr = proc.apvts.getParameter ("degMode")) pr->setValueNotifyingHost (0.0f); };
     onSum.onClick   = [this] { if (auto* pr = proc.apvts.getParameter ("degMode")) pr->setValueNotifyingHost (1.0f); };
-    showDecayTab (false);
+    showDecayTab (0);
+    showNoiseTab (false);
 
     volume.setSliderStyle (juce::Slider::LinearVertical);
     volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -332,13 +367,22 @@ void ConsoleView::resized()
     {
         auto r2 = rows;
         for (auto& row : decayRows) { row->setBounds (rows.removeFromTop (36)); }
+        auto r3 = r2;
         const int rh = juce::jmin (36, r2.getHeight() / (int) spaceRows.size());
         for (auto& row : spaceRows) row->setBounds (r2.removeFromTop (rh));
+        for (auto& row : glitchRows) row->setBounds (r3.removeFromTop (36));
     }
+    {
+        auto r4 = noiseArea.withTrimmedTop (40);
+        for (auto& row : resRows) row->setBounds (r4.removeFromTop (36));
+    }
+    tabNoise.setBounds (noiseArea.getX() + 104, noiseArea.getY() + 8, 76, 20);
+    tabRes.setBounds (tabNoise.getRight() + 4, noiseArea.getY() + 8, 74, 20);
     perPipe.setBounds (decayArea.getRight() - 150, decayArea.getY() + 8, 80, 20);
     onSum.setBounds (decayArea.getRight() - 70, decayArea.getY() + 8, 70, 20);
     tabSound.setBounds (decayArea.getX() + 112, decayArea.getY() + 8, 56, 20);
     tabSpace.setBounds (tabSound.getRight() + 4, decayArea.getY() + 8, 52, 20);
+    tabGlitch.setBounds (tabSpace.getRight() + 4, decayArea.getY() + 8, 58, 20);
 
     auto o = outArea.withTrimmedTop (40);
     {
@@ -364,15 +408,30 @@ void ConsoleView::resized()
     keys.setBounds (kb.reduced (20, 0).withTrimmedTop (34).withTrimmedBottom (10).withTrimmedLeft (0));
 }
 
-void ConsoleView::showDecayTab (bool space)
+void ConsoleView::showNoiseTab (bool res)
 {
+    resTab = res;
+    tabNoise.setToggleState (! res, juce::dontSendNotification);
+    tabRes.setToggleState (res, juce::dontSendNotification);
+    for (auto& r : noiseRows) r->setVisible (! res);
+    for (auto& r : resRows) r->setVisible (res);
+    spreadChoice.setVisible (! res);
+    repaint (noiseArea);
+}
+
+void ConsoleView::showDecayTab (int tab)
+{
+    decayTab = tab;
+    const bool space = tab == 1;
     spaceTab = space;
-    tabSound.setToggleState (! space, juce::dontSendNotification);
+    for (auto& r : glitchRows) r->setVisible (tab == 2);
+    tabGlitch.setToggleState (tab == 2, juce::dontSendNotification);
+    tabSound.setToggleState (tab == 0, juce::dontSendNotification);
     tabSpace.setToggleState (space, juce::dontSendNotification);
-    for (auto& r : decayRows) r->setVisible (! space);
+    for (auto& r : decayRows) r->setVisible (tab == 0);
     for (auto& r : spaceRows) r->setVisible (space);
-    perPipe.setVisible (! space);
-    onSum.setVisible (! space);
+    perPipe.setVisible (tab == 0);
+    onSum.setVisible (tab == 0);
     repaint (decayArea);
 }
 
@@ -392,6 +451,8 @@ void ConsoleView::refresh()
     meterL = proc.engine.meterL.load();
     meterR = proc.engine.meterR.load();
     for (auto& r : noiseRows) r->repaint();
+    if (resTab) for (auto& r : resRows) r->repaint();
+    if (decayTab == 2) for (auto& r : glitchRows) r->repaint();
     for (auto& r : decayRows) r->repaint();
     if (spaceTab)
     {
@@ -437,10 +498,10 @@ void ConsoleView::paint (juce::Graphics& g)
     g.setFont (A.monoFont (11.0f));
     g.drawText (juce::String (on) + " von 7 gezogen", head, juce::Justification::centredRight);
 
-    drawSectionTitle (g, noiseArea, "Traktur", juce::String (juce::CharPointer_UTF8 ("Ger\xc3\xa4uschschicht")));
+    drawSectionTitle (g, noiseArea, "Traktur");
     g.setFont (Assets::get().sansFont (14.0f));
     g.setColour (col::ink);
-    g.drawText (juce::String::fromUTF8 ("T\xc3\xb6ne verteilen"), spreadLabel, juce::Justification::centredLeft);
+    if (! resTab) g.drawText (juce::String::fromUTF8 ("T\xc3\xb6ne verteilen"), spreadLabel, juce::Justification::centredLeft);
     drawSectionTitle (g, decayArea, "Verfall", spaceTab ? shownSpaceInfo : juce::String());
     drawSectionTitle (g, outArea, "Ausgang");
 
