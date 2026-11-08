@@ -23,6 +23,7 @@ enum ModSource
     srcPressure,     // per note: MPE pressure / polyphonic aftertouch / channel pressure, 0..1
     srcSlide,        // per note: MPE "slide" (CC 74, the finger moving up and down the key), 0..1
     srcInput,        // loudness of the audio input, 0..1 (-54 .. 0 dB)
+    srcBeat,         // per pipe: how fast it beats with the other sounding pipes, 0..1 (0 Hz .. 32 Hz, logarithmic)
     kNumSources
 };
 
@@ -30,7 +31,7 @@ inline juce::StringArray modSourceNames()
 {
     return { "LFO 1", "LFO 2", "LFO 3", "LFO 4", juce::String::fromUTF8 ("H\xc3\xbc" "llkurve 1"), juce::String::fromUTF8 ("H\xc3\xbc" "llkurve 2"),
              "Tastenlage", "Modrad", juce::String::fromUTF8 ("Zufall je Ton"), "Anschlag", juce::String::fromUTF8 ("Tonh\xc3\xb6henrad"),
-             "Druck (MPE)", "Gleiten (MPE, CC 74)", "Eingang (Pegel)" };
+             "Druck (MPE)", "Gleiten (MPE, CC 74)", "Eingang (Pegel)", "Schwebung" };
 }
 
 /** targets 0..kNumPipeTargets-1 act on every pipe separately: only here do the per-pipe sources differ from pipe to

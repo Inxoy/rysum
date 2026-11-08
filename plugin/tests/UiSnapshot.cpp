@@ -758,6 +758,27 @@ public:
             shoot (4, "ui_effekte.png");
             for (auto* id : { "fxEchoLevel", "fxPartSpread", "fxEchoTilt" })
                 if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
+            {
+                // second tab: Stimmung & Belichtung
+                std::function<juce::Button* (juce::Component*, const juce::String&)> fb = [&] (juce::Component* c, const juce::String& t) -> juce::Button*
+                {
+                    if (! c->isVisible()) return nullptr;
+                    if (auto* b = dynamic_cast<juce::TextButton*> (c)) if (b->getButtonText() == t) return b;
+                    for (auto* ch : c->getChildren()) if (auto* f = fb (ch, t)) return f;
+                    return nullptr;
+                };
+                auto setV = [&] (const char* id, float v) { if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v)); };
+                setV ("fxGhostLevel", -6.0f); setV ("fxDexMix", 0.5f); setV ("fxExpoMix", 0.4f);
+                if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (4); c->tick(); }
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+                if (auto* b = fb (content, juce::String::fromUTF8 ("Stimmung & Belichtung"))) b->triggerClick();
+                else std::cout << "Stimmung & Belichtung tab button not found  FAIL" << std::endl;
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+                shoot (4, "ui_effekte_stimmung_belichtung.png");
+                if (auto* b = fb (content, juce::String::fromUTF8 ("Kl\xc3\xa4nge"))) b->triggerClick();
+                for (auto* id : { "fxGhostLevel", "fxDexMix", "fxExpoMix" })
+                    if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
+            }
         }
         {
             // the simulated room: on, a note played, ray tracing done in the background

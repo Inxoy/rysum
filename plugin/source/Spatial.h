@@ -131,12 +131,14 @@ inline void encodeStereo (float azDeg, float* out) noexcept
 // --------------------------------------------------------------------------
 // Motion
 // --------------------------------------------------------------------------
-enum class Motion { Static = 0, Rotation, Pendulum, Drift, Vertical, Jumps, Drawn };
+enum class Motion { Static = 0, Rotation, Pendulum, Drift, Vertical, Jumps, Drawn,
+                    Beat        // "Schwebung": every pipe turns as fast as it beats with the others (OrganEngine)
+};
 
 inline juce::StringArray motionNames()
 {
     // new entries only at the end: projects and patches store the index
-    return { "Statisch", "Rotation", "Pendel", "Drift", "Vertikal", juce::String::fromUTF8 ("Spr\xc3\xbcnge"), "Gezeichnet" };
+    return { "Statisch", "Rotation", "Pendel", "Drift", "Vertikal", juce::String::fromUTF8 ("Spr\xc3\xbcnge"), "Gezeichnet", "Schwebung" };
 }
 
 /** a drawn trajectory (Raum page): points on the sphere in the order (and timing) they were drawn */
@@ -277,12 +279,12 @@ inline float distanceGain (float dist, float amount) noexcept
 // --------------------------------------------------------------------------
 // Layout generators (UI side, write the base position of every pipe of a stop)
 // --------------------------------------------------------------------------
-enum class Layout { Case = 0, Pitch, Scatter, Ring, Spiral, Zone };
+enum class Layout { Case = 0, Pitch, Scatter, Ring, Spiral, Zone, Tonnetz };
 
 inline juce::StringArray layoutNames()
 {
     return { juce::String (juce::CharPointer_UTF8 ("Geh\xc3\xa4use C/C\xe2\x99\xaf")), juce::String (juce::CharPointer_UTF8 ("Tonh\xc3\xb6he")),
-             "Streuung", "Ring", "Spirale", "Zone" };
+             "Streuung", "Ring", "Spirale", "Zone", "Tonnetz" };
 }
 
 struct LayoutSettings
@@ -295,8 +297,90 @@ struct LayoutSettings
     float distance = 6.0f;     // metres
 };
 
-inline void generateLayout (const LayoutSettings& s, int stopIndex, std::array<Pos, kNumKeys>& out)
+/** "Tonnetz": every key's place in the lattice of fifths (a) and major thirds (b) of the tuning in use.
+    The tuning's own fifth and third (the median of its twelve, or the nearest steps of a step tuning) decide which
+    lattice point a key is - pure intervals are cheap, so in 1/4-comma meantone the notes take thirds, in Pythagorean
+    tuning they line up as a chain of fifths; G# and Eb land on opposite edges (the wolf is the seam).
+    stepF / stepT: how far one fifth / one third is on the sphere (impure intervals are drawn longer). */
+struct TonnetzPlace { int a = 0, b = 0, octave = 4; };
+inline std::array<TonnetzPlace, kNumKeys> tonnetzPlaces (const KeyTuning& kt, double step, float& stepF, float& stepT)
 {
+    auto recorded = [] (int midi) { return 1200.0 * std::log2 (meantoneHz (midi) / meantoneHz (69)); };
+    std::array<double, kNumKeys> pitch {};       // cents above c' (MIDI 60)
+    for (int k = 0; k < kNumKeys; ++k)
+    {
+        const int src = juce::jlimit (0, kNumKeys - 1, kt.source[(size_t) k]);
+        pitch[(size_t) k] = recorded (kPhysKeys[(size_t) src]) + (double) kt.cents[(size_t) k] + 900.0;
+    }
+    auto pcOf = [] (double c) { double x = std::fmod (c, 1200.0); return x < 0.0 ? x + 1200.0 : x; };
+    double F = 701.955, T = 386.314;
+    if (step > 0.0)
+    {
+        F = step * std::round (701.955 / step);
+        T = step * std::round (386.314 / step);
+    }
+    else
+    {
+        // the tuning's own twelve fifths and thirds (pitch classes from the keys that have them)
+        std::array<double, 12> pc {}; std::array<bool, 12> have {};
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const int c = ((kPhysKeys[(size_t) k] % 12) + 12) % 12;
+            if (! have[(size_t) c]) { pc[(size_t) c] = pcOf (pitch[(size_t) k]); have[(size_t) c] = true; }
+        }
+        std::vector<double> fs, ts;
+        for (int c = 0; c < 12; ++c)
+        {
+            if (have[(size_t) c] && have[(size_t) ((c + 7) % 12)]) fs.push_back (pcOf (pc[(size_t) ((c + 7) % 12)] - pc[(size_t) c] + 1200.0));
+            if (have[(size_t) c] && have[(size_t) ((c + 4) % 12)]) ts.push_back (pcOf (pc[(size_t) ((c + 4) % 12)] - pc[(size_t) c] + 1200.0));
+        }
+        auto median = [] (std::vector<double> v, double dflt) { if (v.empty()) return dflt; std::sort (v.begin(), v.end()); return v[v.size() / 2]; };
+        F = median (fs, F); T = median (ts, T);
+    }
+    const double wF = 0.5 + std::abs (F - 701.955) / 4.0, wT = 0.5 + std::abs (T - 386.314) / 4.0;
+    stepF = (float) (0.7 + std::abs (F - 701.955) / 10.0);
+    stepT = (float) (0.7 + std::abs (T - 386.314) / 10.0);
+    std::array<TonnetzPlace, kNumKeys> out {};
+    for (int k = 0; k < kNumKeys; ++k)
+    {
+        const double p = pcOf (pitch[(size_t) k]);
+        double bestCost = 1.0e9;
+        TonnetzPlace best;
+        for (int b = -2; b <= 2; ++b)
+            for (int a = -8; a <= 8; ++a)
+            {
+                double e = std::abs (pcOf ((double) a * F + (double) b * T) - p);
+                e = std::min (e, 1200.0 - e);
+                const double cost = std::abs (a) * wF + std::abs (b) * wT + e / 3.0;
+                if (cost < bestCost - 1.0e-9) { bestCost = cost; best.a = a; best.b = b; }
+            }
+        best.octave = (int) std::floor (pitch[(size_t) k] / 1200.0) + 4;
+        out[(size_t) k] = best;
+    }
+    return out;
+}
+
+inline void generateLayout (const LayoutSettings& s, int stopIndex, std::array<Pos, kNumKeys>& out,
+                            const KeyTuning* tuning = nullptr, double tuningStep = 0.0)
+{
+    if ((Layout) s.type == Layout::Tonnetz)
+    {
+        // fifths to the right, thirds upwards (and a little to the right: the triangles of the Tonnetz)
+        static const KeyTuning plain = makeKeyTuning (0);
+        float sf = 1.0f, st = 1.0f;
+        const auto places = tonnetzPlaces (tuning != nullptr ? *tuning : plain, tuningStep, sf, st);
+        const float scale = 26.0f * s.width / 120.0f;
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const auto& tp = places[(size_t) k];
+            Pos p { s.center, s.elevation, s.distance };
+            p.az = wrapAz (s.center - scale * sf * ((float) tp.a + 0.5f * (float) tp.b));
+            p.el = juce::jlimit (-85.0f, 85.0f, s.elevation + scale * st * (float) tp.b + 3.0f * (float) (tp.octave - 4));
+            p.dist = juce::jlimit (kMinDist, kMaxDist, s.distance * (1.25f - 0.12f * (float) (tp.octave - 3)));
+            out[(size_t) k] = p;
+        }
+        return;
+    }
     const auto byPitch = keysByPitch();
     XorShift rnd ((uint32_t) (1234 + stopIndex * 977 + s.type * 31));
     const float half = s.width * 0.5f;

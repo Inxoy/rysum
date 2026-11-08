@@ -91,6 +91,7 @@ OrganEngine::OrganEngine()
             baseEl[(size_t) s][(size_t) k] = pos[(size_t) k].el;
             baseDist[(size_t) s][(size_t) k] = pos[(size_t) k].dist;
             muted[(size_t) s][(size_t) k] = false;
+            beatTurn[(size_t) s][(size_t) k] = 0.0f;
         }
     }
     uint32_t seed = 1;
@@ -125,6 +126,12 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     planPathScratch.assign ((size_t) kPlanPaths, PlanPath {});
     // spatial degradation and the grain cloud (all memory here)
     eroder.prepare (sr);
+    // photographic operations, ice walls, difference tones
+    dexFx.prepare (sr, 8);
+    expoFx.prepare (sr);
+    iceHi.reset(); iceLo.reset(); iceWasOn = false;
+    iceBus.assign ((size_t) 20 * (size_t) maxBlock, 0.0f);
+    for (auto& g : ghosts) g = Ghost {};
     {
         int rs = 1;
         while (rs < (int) (0.16 * sr) + maxBlock + 8) rs <<= 1;
@@ -362,6 +369,9 @@ Pos OrganEngine::currentPosition (int stop, int key, const EngineParams& p) cons
 {
     Pos base { baseAz[(size_t) stop][(size_t) key].load(), baseEl[(size_t) stop][(size_t) key].load(),
                baseDist[(size_t) stop][(size_t) key].load() };
+    if ((Motion) p.motionMode[(size_t) stop] == Motion::Beat)        // every pipe its own turn, as fast as it beats
+        return applyMotion (base, Motion::Rotation, (double) beatTurn[(size_t) stop][(size_t) key].load() / 360.0,
+                            p.motionDepth[(size_t) stop], (uint32_t) (stop * 101 + key * 7 + 1), shapeFor (stop, key, p));
     return applyMotion (base, (Motion) p.motionMode[(size_t) stop], motionPhase[(size_t) stop].load(),
                         p.motionDepth[(size_t) stop], (uint32_t) (stop * 101 + key * 7 + 1), shapeFor (stop, key, p));
 }
@@ -502,6 +512,17 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     modDistMul[(size_t) v.stop][(size_t) v.key] = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
     v.modCents1 = 1200.0f * juce::jlimit (-4.0f, 4.0f, pm[tgtPitch]);
     v.pmWind = pm[tgtWind]; v.pmDeg = pm[tgtDegrade]; v.pmWob = pm[tgtWobble]; v.pmCrk = pm[tgtCrackle];
+    {
+        // the frequency this pipe sounds at now: as recorded (measured) or as the tuning means it (nominal)
+        const Pipe& pp = *v.pipe;
+        double ratio = 1.0;
+        if (pp.substituted && pp.substituteFrom >= 0)
+            ratio = meantoneHz (pp.midi) / meantoneHz (kPhysKeys[(size_t) juce::jlimit (0, kNumKeys - 1, pp.substituteFrom)]);
+        const double rec = (pp.measuredHz > 0.0 ? pp.measuredHz : pp.nominalHz) * ratio, ideal = (pp.nominalHz > 0.0 ? pp.nominalHz : pp.measuredHz) * ratio;
+        const float cents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t) v.key]) + p.pitchCents + p.detune * v.detuneRnd
+                          + v.modCents1 + (mpeNow ? v.bendSm : 0.0f);
+        v.hzNow = (float) ((p.beatIdeal ? ideal : rec) * std::exp2 (cents / 1200.0) * (double) v.dop);
+    }
     v.pmx = pm;
     v.pmNew = false;
     for (int t = tgtAttack; t < kNumPipeTargets; ++t) if (pm[(size_t) t] != 0.0f) { v.pmNew = true; break; }
@@ -673,6 +694,7 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->age = ++ageCounter;
     v->cloudRing = -1; v->cloudAcc = 0.0; v->cloudDry = 1.0f;
     v->pmx.fill (0.0f); v->pmNew = false; v->hiGSm = v->airInvSm = -1.0f;
+    v->hzNow = 0.0f; v->beatT = v->beatHz = v->beatNorm = 0.0f;
     {
         // Ansprache: the chiff repeated as a short burst (a second reader over the attack)
         const auto& ps = pipeSndNow[(size_t) stop];
@@ -1615,6 +1637,191 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             }
         }
     }
+    // difference tones of the sounding pairs ("Differenzt\u00f6ne")
+    if (p.ghostLevel > 0.0f || ghostsNow.load() > 0) renderGhosts (outs, start, n, inv);
+}
+
+// ---------------------------------------------------------------------------
+// tuning made audible in space: beats between the sounding pipes, and their difference tones
+// ---------------------------------------------------------------------------
+void OrganEngine::updateBeats (const EngineParams& p, double blockSeconds) noexcept
+{
+    // the sounding pipes
+    int idx[kMaxVoices];
+    int nv = 0;
+    for (int i = 0; i < (int) voices.size(); ++i)
+    {
+        auto& v = voices[(size_t) i];
+        v.beatT = 0.0f;
+        if (v.active && ! v.killing && v.hzNow > 8.0f && v.gainLin > 1.0e-4f && nv < kMaxVoices) idx[nv++] = i;
+    }
+    bool anyBeatMotion = false;
+    for (int s = 0; s < kNumStops; ++s) anyBeatMotion = anyBeatMotion || (Motion) p.motionMode[(size_t) s] == Motion::Beat;
+    const bool ghostsOn = p.ghostLevel > 0.0f;
+    bool beatRouted = false;
+    for (const auto& r : p.mod.routes) beatRouted = beatRouted || (r.src == srcBeat && r.amount != 0.0f);
+    if (! anyBeatMotion && ! ghostsOn && ! beatRouted && ghostsNow.load() == 0)
+    {
+        // nothing listens: no pairs to compare
+        for (auto& v : voices) { v.beatHz = 0.0f; v.beatNorm = 0.0f; }
+        beatMaxNow = 0.0f;
+        return;
+    }
+    // the strongest pairs for difference tones
+    struct Cand { float w = 0.0f, hz = 0.0f; int a = -1, b = -1; };
+    std::array<Cand, kGhosts> best {};
+    for (int ia = 0; ia < nv; ++ia)
+        for (int ib = ia + 1; ib < nv; ++ib)
+        {
+            auto& A = voices[(size_t) idx[ia]];
+            auto& B = voices[(size_t) idx[ib]];
+            const bool aLow = A.hzNow <= B.hzNow;
+            const float f1 = aLow ? A.hzNow : B.hzNow, f2 = aLow ? B.hzNow : A.hzNow;
+            // beats: the lowest pair of partials that nearly coincide (n * f1 ~ m * f2), slower than 35 Hz
+            int bestNm = 1000; float beat = -1.0f;
+            for (int m = 1; m <= 6; ++m)
+            {
+                const int nn = (int) std::lround ((double) m * f2 / f1);
+                if (nn < 1 || nn > 8 || nn * m >= bestNm) continue;
+                const float b = std::abs ((float) nn * f1 - (float) m * f2);
+                if (b < 35.0f) { bestNm = nn * m; beat = b; }
+            }
+            if (beat >= 0.0f)
+            {
+                A.beatT = juce::jmax (A.beatT, beat);
+                B.beatT = juce::jmax (B.beatT, beat);
+            }
+            if (ghostsOn && A.held && B.held)
+            {
+                // the difference tone (below the lower pipe, as the resultant 32' of the organ builders)
+                const float fd = f2 - f1;
+                if (fd >= 16.0f && fd <= f1 * 1.02f)
+                {
+                    const float cons = beat >= 0.0f ? juce::jmin (1.0f, 6.0f / (float) bestNm) : 0.0f;
+                    const float w = std::sqrt (A.gainLin * B.gainLin) * (1.0f - p.ghostCons + p.ghostCons * cons);
+                    if (w > 1.0e-4f)
+                    {
+                        int k = kGhosts - 1;
+                        if (w > best[(size_t) k].w)
+                        {
+                            while (k > 0 && best[(size_t) (k - 1)].w < w) { best[(size_t) k] = best[(size_t) (k - 1)]; --k; }
+                            best[(size_t) k] = { w, fd, idx[ia], idx[ib] };
+                        }
+                    }
+                }
+            }
+        }
+    // smoothed beat rates; the "Schwebung" motion turns every pipe by its own beat
+    const float k = 1.0f - std::exp (-(float) blockSeconds / 0.25f);
+    float maxBeat = 0.0f;
+    for (int i = 0; i < nv; ++i)
+    {
+        auto& v = voices[(size_t) idx[i]];
+        v.beatHz += k * (v.beatT - v.beatHz);
+        v.beatNorm = juce::jlimit (0.0f, 1.0f, std::log2 (1.0f + v.beatHz) / 5.044f);     // 32 Hz = 1
+        maxBeat = juce::jmax (maxBeat, v.beatHz);
+        if (anyBeatMotion && (Motion) p.motionMode[(size_t) v.stop] == Motion::Beat && v.held)
+        {
+            auto& t = beatTurn[(size_t) v.stop][(size_t) v.key];
+            float a = t.load() + (float) (360.0 * (double) p.motionRate[(size_t) v.stop] * (double) v.beatHz * blockSeconds);
+            a -= 360.0f * std::floor (a / 360.0f);
+            t = a;
+        }
+    }
+    for (auto& v : voices) if (! v.active) { v.beatHz = 0.0f; v.beatNorm = 0.0f; }
+    beatMaxNow = maxBeat;
+
+    // difference tones: keep a ghost on its pair (continuous phase), new pairs get free ghosts, gone pairs fade
+    for (auto& g : ghosts) { g.seen = false; std::copy (g.g1.begin(), g.g1.end(), g.g0.begin()); }
+    int live = 0;
+    for (const auto& c : best)
+    {
+        if (c.a < 0) continue;
+        const auto& A = voices[(size_t) c.a];
+        const auto& B = voices[(size_t) c.b];
+        Ghost* g = nullptr;
+        for (auto& x : ghosts)
+            if (x.on && ((x.ageA == A.age && x.ageB == B.age) || (x.ageA == B.age && x.ageB == A.age))) { g = &x; break; }
+        if (g == nullptr)
+            for (auto& x : ghosts) if (! x.on) { g = &x; break; }
+        if (g == nullptr) continue;
+        if (! g->on) { *g = Ghost {}; g->on = true; g->ageA = A.age; g->ageB = B.age; g->hz = c.hz; }
+        g->seen = true;
+        g->hzT = c.hz;
+        g->ampT = 0.06f * p.ghostLevel * c.w;
+        // where: between the two pipes (direction of the sum of their unit vectors), towards the floor with 'place'
+        auto unit = [] (const Pos& q, float& x, float& y, float& z)
+        {
+            const float a = juce::degreesToRadians (q.az), e = juce::degreesToRadians (q.el);
+            x = -std::sin (a) * std::cos (e); y = std::cos (a) * std::cos (e); z = std::sin (e);
+        };
+        float ax, ay, az, bx, by, bz;
+        unit (A.spPos, ax, ay, az); unit (B.spPos, bx, by, bz);
+        const float sx = ax + bx, sy = ay + by, sz = az + bz;
+        Pos gp;
+        gp.az = std::abs (sx) + std::abs (sy) > 1.0e-4f ? juce::radiansToDegrees (std::atan2 (-sx, sy)) : A.spPos.az;
+        const float elMid = juce::radiansToDegrees (std::atan2 (sz, std::sqrt (sx * sx + sy * sy)));
+        gp.el = juce::jlimit (-89.0f, 89.0f, elMid + p.ghostPlace * (-75.0f - elMid));
+        gp.dist = juce::jlimit (kMinDist, kMaxDist, 0.5f * (A.spPos.dist + B.spPos.dist) * (1.0f + 0.5f * p.ghostPlace));
+        float gg[kMaxAmbiChannels];
+        gainsFor (gp, gg);
+        const float dg = distanceGain (gp.dist, p.distAmount);
+        for (int ch = 0; ch < kMaxAmbiChannels; ++ch) g->g1[(size_t) ch] = gg[ch] * dg;
+        if (g->amp <= 0.0f) std::copy (g->g1.begin(), g->g1.end(), g->g0.begin());     // a new ghost: no sweep from nowhere
+    }
+    for (auto& g : ghosts)
+    {
+        if (! g.on) continue;
+        if (! g.seen) g.ampT = 0.0f;
+        if (g.ampT <= 0.0f && g.amp < 1.0e-6f) { g.on = false; continue; }
+        ++live;
+    }
+    ghostsNow = live;
+}
+
+void OrganEngine::renderGhosts (float* const* outs, int start, int n, float inv) noexcept
+{
+    float* y = fxScratch.data() + 10 * (size_t) maxBlock;
+    float* yr = fxScratch.data() + 11 * (size_t) maxBlock;
+    // fade in over ~0.4 s once the interval is held, out over ~0.3 s
+    const float upA = 1.0f - std::exp (-1.0f / (0.4f * (float) sr)), downA = 1.0f - std::exp (-1.0f / (0.3f * (float) sr));
+    const float glideA = 1.0f - std::exp (-1.0f / (0.03f * (float) sr));
+    const double twoPi = juce::MathConstants<double>::twoPi;
+    for (auto& g : ghosts)
+    {
+        if (! g.on) continue;
+        for (int i = 0; i < n; ++i)
+        {
+            g.amp += (g.ampT > g.amp ? upA : downA) * (g.ampT - g.amp);
+            g.hz += glideA * (g.hzT - g.hz);
+            g.ph += (double) g.hz / sr;
+            if (g.ph >= 1.0) g.ph -= 1.0;
+            // a soft, round tone (a little 2nd and 3rd partial so the low ones are heard on small speakers)
+            const double a = twoPi * g.ph;
+            const float x = (float) (std::sin (a) + 0.18 * std::sin (2.0 * a) + 0.08 * std::sin (3.0 * a)) * g.amp;
+            y[i] = x;
+            yr[i] = x * (float) i;
+        }
+        float ga[kMaxAmbiChannels], dg[kMaxAmbiChannels];
+        for (int c = 0; c < kMaxAmbiChannels; ++c)
+        {
+            const float a = g.g0[(size_t) c], b = g.g1[(size_t) c];
+            ga[c] = a + (b - a) * (float) start * inv;
+            dg[c] = (b - a) * inv;
+        }
+        mixInto (outs, start, usedChannels, y, yr, ga, dg, n);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Doppelbelichtung / Belichtung on the finished field
+// ---------------------------------------------------------------------------
+void OrganEngine::applyPhotoFx (float* const* ch, int outputMode, int n, const EngineParams& p) noexcept
+{
+    const bool stereo = outputMode == 0;
+    const int numCh = stereo ? juce::jmin (2, usedChannels) : (outputMode + 1) * (outputMode + 1);
+    dexFx.process (ch, numCh, stereo, n, p.dex);
+    expoFx.process (ch, numCh, stereo, n, p.expo);
 }
 
 // ---------------------------------------------------------------------------
@@ -1904,6 +2111,15 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
     // ---- early reflections
     const float shelfA = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 2500.0f / (float) sr);
     int activeCount = 0;
+    // "Eis": the reflections are collected (first ones up to 3rd order, later ones at 1st order), made dispersive, added
+    const bool iceOn = p.ice > 1.0e-4f && n <= maxBlock && (int) iceBus.size() >= 20 * n;
+    if (iceOn && ! iceWasOn) { iceHi.reset(); iceLo.reset(); }
+    std::array<float*, 20> busP {};
+    if (iceOn)
+    {
+        for (int c = 0; c < 20; ++c) busP[(size_t) c] = iceBus.data() + (size_t) c * (size_t) n;
+        std::fill_n (iceBus.data(), (size_t) 20 * (size_t) n, 0.0f);
+    }
     for (size_t si = 0; si < erSlots.size(); ++si)
     {
         auto& s = erSlots[si];
@@ -2006,12 +2222,28 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
                 static const float zeroEnc[kErCh] {};
                 const float* e[4];
                 for (int j = 0; j < 4; ++j) e[j] = j < J ? tp[j]->enc.data() : zeroEnc;
-                mixGroup4 (out.getArrayOfWritePointers(), kc, ys, e, n);
+                if (iceOn) mixGroup4 (list == 0 ? busP.data() : busP.data() + 16, list == 0 ? juce::jmin (kc, 16) : juce::jmin (kc, 4), ys, e, n);
+                else       mixGroup4 (out.getArrayOfWritePointers(), kc, ys, e, n);
                 for (int j = 0; j < J; ++j) { auto& t = *tp[j]; t.d0 = t.d1; t.g0 = t.g1; t.r0 = t.r1; }
             }
         }
     }
     erActive = activeCount;
+    if (iceOn)
+    {
+        // all-pass chains: the later reflections (longer ways) disperse more; 'iceLen' sets how long a chirp is
+        const float a = -juce::jmap (juce::jlimit (0.0f, 1.0f, p.iceLen), 0.55f, 0.95f);
+        const int Khi = juce::jmin (K, 16), Klo = juce::jmin (K, 4);
+        // "Eis" 0..1: from the plain reflections to only the chirps
+        const float wet = juce::jlimit (0.0f, 1.0f, p.ice);
+        for (int c = 0; c < Khi; ++c) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), busP[(size_t) c], 1.0f - wet, n);
+        for (int c = 0; c < Klo; ++c) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), busP[(size_t) (16 + c)], 1.0f - wet, n);
+        iceHi.process (busP.data(), Khi, n, 64, a);
+        iceLo.process (busP.data() + 16, Klo, n, 96, a);
+        for (int c = 0; c < Khi; ++c) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), busP[(size_t) c], wet, n);
+        for (int c = 0; c < Klo; ++c) juce::FloatVectorOperations::addWithMultiply (out.getWritePointer (c), busP[(size_t) (16 + c)], wet, n);
+    }
+    iceWasOn = iceOn;
 
     // ---- late reverb, one per room in use. The decay comes from the ray tracer (the processor builds the responses in the
     // background); two ways to make the tail: convolution with a synthesised response, or a feedback delay network.
@@ -2346,6 +2578,7 @@ void OrganEngine::advanceModulation (const EngineParams& p, double dt) noexcept
     globalSrc[srcPressure] = lastPress;
     globalSrc[srcSlide] = lastSlide;
     globalSrc[srcInput] = inFollowVal;
+    globalSrc[srcBeat] = juce::jlimit (0.0f, 1.0f, std::log2 (1.0f + beatMaxNow.load()) / 5.044f);
     for (int i = 0; i < kNumSources; ++i) sourceOut[(size_t) i] = globalSrc[(size_t) i];
 }
 
@@ -2433,6 +2666,7 @@ float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) 
         case srcPressure: return voicePressure (v);
         case srcSlide:    return voiceSlide (v);
         case srcInput:    return inFollowVal;
+        case srcBeat:     return v.beatNorm;
         default:          return 0.0f;
     }
 }
@@ -3042,6 +3276,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
         updateVoiceSpatial (v, p, blockSeconds);
         if (v.fresh) { v.g0 = v.g1; v.gh0 = v.gh1; v.send0 = v.send1; v.sendAz0 = v.sendAz1; v.modCents0 = v.modCents1; v.fresh = false; }
     }
+    updateBeats (p, blockSeconds);
     auto initFresh = [&] ()
     {
         for (auto& v : voices)

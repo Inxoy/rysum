@@ -420,6 +420,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degSplice", 1 }, "Glitch Bandschnitt", NormalisableRange<float> (0, 1), 0.0f, pct));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degZero", 1 }, "Glitch harte Kanten", NormalisableRange<float> (0, 1), 0.0f, pct));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "degClip", 1 }, "Glitch Clipping", NormalisableRange<float> (0, 1), 0.0f, pct));
+    // ---- the tuning in space (Effekte, "Stimmung & Belichtung"): beats from ..., difference tones; Eis (Saal);
+    //      Doppelbelichtung, Belichtung (Effekte) - all off by default
+    {
+        auto dbOff = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= -59.9f ? String ("aus") : (v > 0 ? "+" : "") + String (v, 1) + " dB"; });
+        auto secsA = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 1.0f ? String (roundToInt (v * 1000.0f)) + " ms" : String (v, 2) + " s"; });
+        auto degA = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0.5f ? "+" : "") + String (roundToInt (v)) + String::fromUTF8 ("\xc2\xb0"); });
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "fxBeatIdeal", 1 }, "Schwebungen aus",
+                                                       StringArray { "der Stimmung (ideal)", "den Pfeifen (wie aufgenommen)" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxGhostLevel", 1 }, String::fromUTF8 ("Differenzt\xc3\xb6ne"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), -60.0f, dbOff));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxGhostPlace", 1 }, String::fromUTF8 ("Differenzt\xc3\xb6ne Ort"), NormalisableRange<float> (0, 1), 0.3f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxGhostCons", 1 }, String::fromUTF8 ("Differenzt\xc3\xb6ne nur Konsonanzen"), NormalisableRange<float> (0, 1), 0.5f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "simIce", 1 }, "Eis (Reflexionen)", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "simIceLen", 1 }, String::fromUTF8 ("Eis L\xc3\xa4nge"), NormalisableRange<float> (0, 1), 0.5f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxDexMix", 1 }, "Doppelbelichtung", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxDexTime", 1 }, "Doppelbelichtung Abstand", NormalisableRange<float> (0.05f, 8.0f, 0.001f, 0.45f), 2.0f, secsA));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxDexTurn", 1 }, "Doppelbelichtung Drehung", NormalisableRange<float> (-180.0f, 180.0f, 0.1f), 0.0f, degA));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "fxDexMirror", 1 }, "Doppelbelichtung Spiegeln",
+                                                       StringArray { "nicht gespiegelt", "gespiegelt links / rechts", "gespiegelt vorn / hinten", "gespiegelt oben / unten" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxDexFade", 1 }, "Doppelbelichtung Verblassen", NormalisableRange<float> (0, 1), 0.3f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxDexAgain", 1 }, "Doppelbelichtung mehrfach", NormalisableRange<float> (0.0f, 0.85f), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxExpoMix", 1 }, "Belichtung", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxExpoTime", 1 }, "Belichtungszeit", NormalisableRange<float> (0.2f, 60.0f, 0.001f, 0.4f), 4.0f, secsA));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "fxExpoBright", 1 }, "Belichtung Helligkeit", NormalisableRange<float> (0, 1), 0.5f, pct));
+    }
 
     // ---- "Körnerwolke" per stop (Raum page, tab "Wolke"): off by default
     for (int s = 0; s < kNumStops; ++s)
@@ -576,6 +600,7 @@ RysumProcessor::RysumProcessor()
             for (int k = 0; k < 8; ++k) ix.pipeSnd[(size_t) st][(size_t) k] = I (pipeSndParamId (kPipeSndKeys[k], st));
         ix.airInvert = I ("airInvert"); ix.clickRes = I ("clickRes"); ix.clickResDecay = I ("clickResDecay"); ix.clickResBright = I ("clickResBright");
         { const char* g[] { "degStutter", "degSplice", "degZero", "degClip" }; for (int k = 0; k < 4; ++k) ix.glitch[(size_t) k] = I (g[k]); }
+        for (int k = 0; k < (int) ix.space2.size(); ++k) ix.space2[(size_t) k] = I (kSpace2Ids[k]);
         for (int st = 0; st < kNumStops; ++st)
             for (int k = 0; k < 5; ++k) ix.cloud[(size_t) st][(size_t) k] = I (cloudParamId (kCloudKeys[k], st));
     }
@@ -718,6 +743,13 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         p.airInvert = V (ix.airInvert);
         p.resClick = V (ix.clickRes); p.resDecay = V (ix.clickResDecay); p.resBright = V (ix.clickResBright);
         p.glitch.stutter = V (ix.glitch[0]); p.glitch.splice = V (ix.glitch[1]); p.glitch.zero = V (ix.glitch[2]); p.glitch.clip = V (ix.glitch[3]);
+        auto S2 = [&] (int k) { return V (ix.space2[(size_t) k]); };
+        p.beatIdeal = S2 (0) < 0.5f;
+        p.ghostLevel = S2 (1) <= -59.9f ? 0.0f : dbToGain (S2 (1));
+        p.ghostPlace = S2 (2); p.ghostCons = S2 (3);
+        p.ice = S2 (4); p.iceLen = S2 (5);
+        p.dex.mix = S2 (6); p.dex.time = S2 (7); p.dex.turn = S2 (8); p.dex.mirror = juce::roundToInt (S2 (9)); p.dex.fade = S2 (10); p.dex.again = S2 (11);
+        p.expo.mix = S2 (12); p.expo.time = S2 (13); p.expo.bright = S2 (14);
     }
     p.windModel = juce::roundToInt (V (ix.windModel));
 
@@ -1103,6 +1135,9 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         else gains[0] = 1.0f;
         lucPiece.process (rec, work.getArrayOfWritePointers(), gains, used, n, apvts.getRawParameterValue ("lucMix")->load());
     }
+
+    // ---- Doppelbelichtung / Belichtung: on the whole field (after the room), before it wears away
+    if (used > 0) engine.applyPhotoFx (work.getArrayOfWritePointers(), params.outputMode, n, params);
 
     // ---- "Raumverfall": the spatial image wears away (after the impulse response, so the whole sphere does)
     if (! stereo && used > 0) engine.applySpaceDegradation (work.getArrayOfWritePointers(), params.outputMode, n, params);
@@ -1838,8 +1873,19 @@ juce::String RysumProcessor::irSettingsKey (const rysum::Convolver::Settings& s)
 void RysumProcessor::applyLayout (int stop)
 {
     std::array<Pos, kNumKeys> pos {};
-    generateLayout (layouts[(size_t) stop], stop, pos);
+    const int t = juce::jlimit (0, (int) tunings.size() - 1, juce::roundToInt (apvts.getRawParameterValue ("temperament")->load()));
+    generateLayout (layouts[(size_t) stop], stop, pos, &tunings[(size_t) t], tuningStepCents (t));
+    layoutTuning = t;
     for (int k = 0; k < kNumKeys; ++k) setPipePosition (stop, k, pos[(size_t) k]);
+}
+
+void RysumProcessor::followTuningLayouts()
+{
+    const int t = juce::roundToInt (apvts.getRawParameterValue ("temperament")->load());
+    if (t == layoutTuning) return;
+    layoutTuning = t;
+    for (int s = 0; s < kNumStops; ++s)
+        if ((Layout) layouts[(size_t) s].type == Layout::Tonnetz) applyLayout (s);
 }
 
 void RysumProcessor::setPipePosition (int stop, int key, Pos p)
@@ -2034,6 +2080,7 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             L.elevation = (float) st.getProperty ("elevation", L.elevation);
             L.spread = (float) st.getProperty ("spread", L.spread);
             L.distance = (float) st.getProperty ("distance", L.distance);
+            const bool hasPositions = st.hasProperty ("az");     // (a factory patch may give only the layout)
             {
                 auto& dp = drawnPaths[(size_t) s];
                 dp.points.clear();
@@ -2062,6 +2109,7 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
                 if (k < el.size()) engine.baseEl[(size_t) s][(size_t) k] = el[k].getFloatValue();
                 if (k < mu.size()) engine.muted[(size_t) s][(size_t) k] = mu[k] == "1";
             }
+            if (! hasPositions) applyLayout (s);
         }
         const juce::File irf (extra["irFile"].toString());
         if (irf != juce::File() && irf != irFile && irf.existsAsFile())
@@ -2443,7 +2491,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 14;
+    constexpr int kFactoryVersion = 15;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -2453,7 +2501,9 @@ void RysumProcessor::writeFactoryPatches()
     struct Route { int src; juce::String tgt; float amt; bool uni = false; };
     using Values = std::vector<std::pair<juce::String, double>>;
     // scenes: each one = the patch's values with these changes on top; 'input' = made for the audio input (switches it on)
-    auto makeFull = [&] (const juce::String& name, Values values, std::vector<Route> routesIn, std::vector<Values> scenesIn, bool input)
+    // layoutsIn: (stop, layout type) - the stop gets that layout (default width etc.), its pipes placed when the patch loads
+    auto makeFull = [&] (const juce::String& name, Values values, std::vector<Route> routesIn, std::vector<Values> scenesIn, bool input,
+                         std::vector<std::pair<int, int>> layoutsIn = {})
     {
         for (auto& sc : scenesIn)
             for (auto& kv : sc)
@@ -2488,6 +2538,21 @@ void RysumProcessor::writeFactoryPatches()
         }
         extra.appendChild (mod, nullptr);
         if (input) extra.setProperty ("input", true, nullptr);
+        for (auto [ls, lt] : layoutsIn)
+        {
+            auto L = defaultLayout (ls);
+            L.type = lt;
+            if (lt == (int) Layout::Tonnetz) { L.width = 120.0f; L.elevation = 10.0f; }
+            juce::ValueTree st ("STOP");
+            st.setProperty ("id", kStops[(size_t) ls].id, nullptr);
+            st.setProperty ("layout", L.type, nullptr);
+            st.setProperty ("width", L.width, nullptr);
+            st.setProperty ("center", L.center, nullptr);
+            st.setProperty ("elevation", L.elevation, nullptr);
+            st.setProperty ("spread", L.spread, nullptr);
+            st.setProperty ("distance", L.distance, nullptr);
+            extra.appendChild (st, nullptr);
+        }
         if (! scenesIn.empty())
         {
             juce::ValueTree scs ("SCENES");
@@ -3198,6 +3263,85 @@ void RysumProcessor::writeFactoryPatches()
                 { srcVelocity, pipe (tgtDegBits), -0.9f }, { srcVelocity, pipe (tgtDegrade), 0.8f }, { srcVelocity, pipe (tgtAttack), 1.0f },
                 { srcVelocity, pipe (tgtAttRep), 1.0f }, { srcPitchWheel, pipe (tgtPitch), 1.0f }, { srcModWheel, pipe (tgtStutter), 1.0f },
                 { srcModWheel, "spcAlias", 1.0f }, { srcModWheel, "spcErode", 0.7f }, { srcPressure, pipe (tgtSplice), 1.0f } });
+    }
+
+    // ---- set 15: the tuning in space (beats move the pipes, difference tones, the Tonnetz), ice walls, double / long exposure
+    currentSet = 15;
+    {
+        const float bend2 = 1.0f / 6.0f;
+        const int beat = (int) Motion::Beat, tonnetz = (int) Layout::Tonnetz;
+        // play thirds (still), fifths (drifting) and the remote keys (the wolf fifth G#-Eb and the wolf thirds spin)
+        make (u8 ("134 Schwebungsraum \xe2\x80\x93 Die Stimmung tanzt"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "motion0", beat }, { "rate0", 0.08f }, { "motion2", beat }, { "rate2", -0.06f },
+                { "simOn", 1 }, { "simW", 16.0f }, { "simL", 24.0f }, { "simH", 10.0f }, { "master", -20.0f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 } });
+        // beats decide the sound: impure intervals crumble and stutter, the wolf howls; pure ones stay whole
+        make (u8 ("135 Schwebungsraum \xe2\x80\x93 Wolfsgeheul"),
+              { { "stop0", 1 }, { "stop3", 1 }, { "motion0", beat }, { "rate0", 0.15f }, { "motion3", beat }, { "rate3", 0.12f },
+                { "degAmount", 0.0f }, { "degBits", 5.0f }, { "degRate", 4000.0f }, { "degDropouts", 0.2f }, { "degWobble", 0.3f } },
+              { { srcBeat, pipe (tgtDegrade), 0.9f }, { srcBeat, pipe (tgtStutter), 0.5f }, { srcBeat, pipe (tgtHiGain), 0.3f },
+                { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, pipe (tgtWind), -0.5f } });
+        // beats as light: impure intervals dissolve into clouds and brighten, pure ones stand solid in place
+        make (u8 ("136 Schwebung als Licht"),
+              { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "cloudSpread0", 120.0f }, { "cloudSpread2", 120.0f }, { "cloudSize0", 160.0f }, { "cloudSize2", 160.0f } },
+              { { srcBeat, pipe (tgtCloudMix), 0.9f }, { srcBeat, pipe (tgtBright), 0.4f }, { srcBeat, pipe (tgtAttRep), 0.5f },
+                { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcVelocity, pipe (tgtAttack), 0.6f } });
+        // the resultant 32': held fifths and thirds give their difference tones deep under the floor
+        make (u8 ("137 Differenzt\xc3\xb6ne \xe2\x80\x93 Resultantbass"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "fxGhostLevel", 0.0f }, { "fxGhostPlace", 1.0f }, { "fxGhostCons", 0.8f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, "fxGhostLevel", 0.25f } });
+        // ghosts between the pipes: every pair sounds its difference, where the two pipes are (spread wide)
+        make (u8 ("138 Differenzt\xc3\xb6ne \xe2\x80\x93 Geister zwischen den Pfeifen"),
+              { { "stop0", 0 }, { "stop3", 1 }, { "stop5", 1 }, { "vol5", -6.0f }, { "fxGhostLevel", 4.0f }, { "fxGhostPlace", 0.0f }, { "fxGhostCons", 0.0f },
+                { "motion3", 3 }, { "rate3", 0.1f }, { "depth3", 120.0f }, { "motion5", 3 }, { "rate5", 0.13f }, { "depth5", 120.0f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 } });
+        // a hall of ice: every early reflection a falling chirp from its own direction
+        make (u8 ("139 Eis-Saal"),
+              { { "stop2", 1 }, { "stop3", 1 }, { "click", 0.5f }, { "simOn", 1 }, { "simIce", 1.0f }, { "simIceLen", 0.7f },
+                { "simW", 20.0f }, { "simL", 30.0f }, { "simH", 12.0f }, { "simAbs", 0.02f }, { "master", -21.0f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, "simIceLen", 0.3f } });
+        // a frozen rotunda: the pipes circle, the round walls chirp
+        make (u8 ("140 Eis-Saal \xe2\x80\x93 Gefrorene Rotunde"),
+              { { "stop0", 1 }, { "stop3", 1 }, { "motion0", 1 }, { "rate0", 0.12f }, { "motion3", 1 }, { "rate3", -0.17f },
+                { "simOn", 1 }, { "simShape", (int) rysum::shapeRound }, { "simShapeAmt", 1.0f }, { "simW", 22.0f }, { "simL", 22.0f }, { "simH", 16.0f },
+                { "simAbs", 0.02f }, { "simIce", 0.8f }, { "simIceLen", 1.0f }, { "master", -20.0f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, "simIce", 0.2f } });
+        // a mirror image a moment later: what sounded on the left comes back on the right
+        make (u8 ("141 Doppelbelichtung \xe2\x80\x93 Spiegelbild"),
+              { { "stop0", 1 }, { "stop1", 1 }, { "motion0", 1 }, { "rate0", 0.1f }, { "fxDexMix", 0.8f }, { "fxDexTime", 1.5f }, { "fxDexMirror", 1 },
+                { "fxDexFade", 0.4f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, "fxDexTime", 0.3f } });
+        // the past, exposed again and again: each image a quarter turn further, fainter, duller
+        make (u8 ("142 Doppelbelichtung \xe2\x80\x93 Echo der Vergangenheit"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "fxDexMix", 0.7f }, { "fxDexTime", 4.0f }, { "fxDexTurn", 90.0f }, { "fxDexAgain", 0.7f }, { "fxDexFade", 0.6f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, "fxDexTurn", 0.5f } });
+        // light trails: two registers circle in opposite directions and paint rings on the sphere
+        make (u8 ("143 Belichtung \xe2\x80\x93 Lichtspuren"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "motion0", 1 }, { "rate0", 0.3f }, { "motion2", 1 }, { "rate2", -0.5f },
+                { "fxExpoMix", 0.8f }, { "fxExpoTime", 6.0f }, { "fxExpoBright", 0.4f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcModWheel, "fxExpoTime", 0.3f } });
+        // a long exposure of jumping pipes: every place they jump to keeps glowing for twenty seconds
+        make (u8 ("144 Belichtung \xe2\x80\x93 Zwanzig Sekunden"),
+              { { "stop0", 1 }, { "stop3", 1 }, { "motion0", 5 }, { "rate0", 0.7f }, { "depth0", 150.0f }, { "motion3", 5 }, { "rate3", 1.1f }, { "depth3", 150.0f },
+                { "fxExpoMix", 1.0f }, { "fxExpoTime", 20.0f }, { "fxExpoBright", 0.7f }, { "master", -15.0f } },
+              { { srcPitchWheel, pipe (tgtPitch), bend2 } });
+        // the tuning as a map: Praestant and Octave arranged in the Tonnetz (change the tuning on the Klang page: the map changes)
+        makeFull (u8 ("145 Tonnetz \xe2\x80\x93 Die Stimmung als Landkarte"),
+                  { { "stop0", 1 }, { "stop2", 1 } }, { { srcPitchWheel, pipe (tgtPitch), bend2 } }, {}, false,
+                  { { 0, tonnetz }, { 2, tonnetz } });
+        // the Tonnetz moving: every pipe on its lattice place, turning as fast as it beats
+        makeFull (u8 ("146 Tonnetz \xe2\x80\x93 Die Karte schwebt"),
+                  { { "stop0", 1 }, { "stop1", 1 }, { "motion0", beat }, { "rate0", 0.05f }, { "motion1", beat }, { "rate1", -0.05f },
+                    { "fxGhostLevel", -6.0f }, { "fxGhostPlace", 0.5f } },
+                  { { srcPitchWheel, pipe (tgtPitch), bend2 } }, {}, false, { { 0, tonnetz }, { 1, tonnetz } });
+        // everything at once, on the mod wheel: beats move the pipes, ghosts appear, the past is laid over, trails glow
+        make (u8 ("147 Die Stimmung wird Raum"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "motion0", beat }, { "rate0", 0.1f }, { "motion2", beat }, { "rate2", -0.08f },
+                { "fxGhostLevel", -60.0f }, { "fxGhostPlace", 0.6f }, { "fxDexMix", 0.0f }, { "fxDexTime", 3.0f }, { "fxDexTurn", 180.0f },
+                { "fxExpoMix", 0.0f }, { "fxExpoTime", 8.0f }, { "simOn", 1 }, { "simIce", 0.0f }, { "simW", 18.0f }, { "simL", 30.0f }, { "simH", 12.0f },
+                { "master", -20.0f } },
+              { { srcModWheel, "fxGhostLevel", 0.85f }, { srcModWheel, "fxDexMix", 0.6f }, { srcModWheel, "fxExpoMix", 0.7f }, { srcModWheel, "simIce", 0.8f },
+                { srcBeat, pipe (tgtCloudMix), 0.5f }, { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcVelocity, pipe (tgtAttack), 0.6f } });
     }
 
     marker.replaceWithText (juce::String (kFactoryVersion));

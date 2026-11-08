@@ -2470,6 +2470,202 @@ int main (int argc, char** argv)
             }
         }
 
+        // ---------------- the tuning in space: beats, Tonnetz, difference tones; ice walls; double / long exposure ----------------
+        {
+            // two (or more) Praestant notes held together; returns the engine so its state can be read
+            auto chord = [&] (OrganEngine& e, std::function<void (EngineParams&)> setup, std::vector<int> midis, double secs, int outMode, juce::AudioBuffer<float>* keepOut)
+            {
+                e.prepare (fsr, B); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+                p.outputMode = outMode;
+                setup (p);
+                const int ch = outMode == 0 ? 2 : (outMode + 1) * (outMode + 1);
+                const int total = (int) (secs * fsr);
+                juce::AudioBuffer<float> b (ch, B);
+                if (keepOut != nullptr) { keepOut->setSize (ch, total); keepOut->clear(); }
+                for (int pos = 0; pos < total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) for (int m : midis) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 100), 0);
+                    b.clear();
+                    e.process (b, mb, p);
+                    if (keepOut != nullptr) for (int c = 0; c < ch; ++c) keepOut->copyFrom (c, pos, b, c, 0, juce::jmin (B, total - pos));
+                }
+            };
+            auto finiteB = [] (const juce::AudioBuffer<float>& b) { for (int c = 0; c < b.getNumChannels(); ++c) for (int i = 0; i < b.getNumSamples(); ++i) if (! std::isfinite (b.getSample (c, i))) return false; return true; };
+            // beats in 1/4-comma meantone (ideal): pure third c'-e' still, fifth c'-g' slow, wolf g#-eb' fast
+            {
+                struct Iv { const char* name; int a, b; float lo, hi; };
+                const Iv ivs[] { { "major third c'-e' (pure)", 60, 64, -0.01f, 0.05f }, { "fifth c'-g'", 60, 67, 1.8f, 3.2f },
+                                 { "minor third e'-g'", 64, 67, 2.0f, 6.5f }, { "wolf fifth g#-eb'", 56, 63, 6.0f, 16.0f } };
+                float rates[4] {};
+                for (int k = 0; k < 4; ++k)
+                {
+                    OrganEngine e;
+                    chord (e, [] (EngineParams& p) { p.motionMode[0] = (int) Motion::Beat; }, { ivs[k].a, ivs[k].b }, 2.0, 1, nullptr);
+                    rates[k] = e.beatMaxNow.load();
+                    std::cout << "beats " << ivs[k].name << ": " << rates[k] << " Hz" << std::endl;
+                    check (rates[k] >= ivs[k].lo && rates[k] <= ivs[k].hi, juce::String ("beats: ") + ivs[k].name);
+                }
+                // as recorded: the pure third beats a little (the pipes are not exactly in tune)
+                OrganEngine er;
+                chord (er, [] (EngineParams& p) { p.beatIdeal = false; p.motionMode[0] = (int) Motion::Beat; }, { 60, 64 }, 2.0, 1, nullptr);
+                std::cout << "beats major third as recorded: " << er.beatMaxNow.load() << " Hz" << std::endl;
+                check (er.beatMaxNow.load() > rates[0], "beats: the recorded pipes beat where the tuning is pure");
+                // motion "Schwebung": the wolf pipes have turned far, the pure third has not moved
+                OrganEngine ew, et;
+                auto beatMotion = [] (EngineParams& p) { p.motionMode[0] = (int) Motion::Beat; p.motionRate[0] = 0.08f; };
+                chord (ew, beatMotion, { 56, 63 }, 3.0, 1, nullptr);
+                chord (et, beatMotion, { 60, 64 }, 3.0, 1, nullptr);
+                const float turnWolf = ew.beatTurn[0][(size_t) keyIndexForMidi (56)].load(), turnThird = et.beatTurn[0][(size_t) keyIndexForMidi (60)].load();
+                std::cout << "Schwebung motion after 3 s: wolf pipe turned to " << turnWolf << " deg, pure third " << turnThird << " deg" << std::endl;
+                check (std::abs (std::remainder (turnThird, 360.0f)) < 2.0f && turnWolf > 20.0f, "Schwebung: the wolf spins, the pure third stands still");
+            }
+            // Tonnetz: meantone keeps c-e-g together and puts g# and eb at opposite edges; Pythagorean lines the fifths up
+            {
+                auto placeOf = [&] (int t, int midi) {
+                    float sf, st; const auto kt = makeKeyTuning (t);
+                    return tonnetzPlaces (kt, tuningStepCents (t), sf, st)[(size_t) keyIndexForMidi (midi)];
+                };
+                auto show = [&] (int t, const char* name)
+                {
+                    std::cout << "Tonnetz " << name << ":";
+                    for (int m : { 60, 62, 64, 65, 67, 69, 71, 63, 68 }) { auto q = placeOf (t, m); std::cout << " " << helmholtzName (m) << "(" << q.a << "," << q.b << ")"; }
+                    std::cout << std::endl;
+                };
+                show (0, "1/4-comma"); show (5, "Pythagorean"); show (6, "equal");
+                const auto c = placeOf (0, 60), e = placeOf (0, 64), g = placeOf (0, 67), gs = placeOf (0, 68), eb = placeOf (0, 63);
+                auto dist = [] (TonnetzPlace x, TonnetzPlace y) { return std::abs (x.a - y.a) + std::abs (x.b - y.b); };
+                bool pythLine = true;
+                for (int m = 60; m < 72; ++m) if (keyIndexForMidi (m) >= 0) pythLine = pythLine && placeOf (5, m).b == 0;
+                check (dist (c, e) <= 1 && dist (c, g) <= 1 && dist (gs, eb) >= 4 && pythLine,
+                       "Tonnetz: meantone triad compact, the wolf a seam, Pythagorean a chain of fifths");
+                std::array<Pos, kNumKeys> pos {};
+                LayoutSettings ls; ls.type = (int) Layout::Tonnetz;
+                const auto kt = makeKeyTuning (0);
+                generateLayout (ls, 0, pos, &kt, 0.0);
+                bool ok = true; for (auto& q : pos) ok = ok && std::isfinite (q.az) && std::abs (q.el) <= 85.0f;
+                check (ok, "Tonnetz: a layout on the sphere");
+            }
+            // difference tones: a held fifth c'-g' sounds c (an octave below c') between / below the pipes
+            {
+                const double fC = meantoneHz (60), fG = meantoneHz (67), fd = fG - fC;
+                juce::AudioBuffer<float> with, without;
+                OrganEngine e1, e0;
+                chord (e1, [] (EngineParams& p) { p.ghostLevel = 1.0f; p.ghostPlace = 1.0f; }, { 60, 67 }, 2.5, 1, &with);
+                chord (e0, [] (EngineParams&) {}, { 60, 67 }, 2.5, 1, &without);
+                auto atF = [&] (const juce::AudioBuffer<float>& b, int c, double f) { double re = 0, im = 0;
+                    for (int i = (int) (1.2 * fsr); i < (int) (2.4 * fsr); ++i) { const double ph = juce::MathConstants<double>::twoPi * f * i / fsr; re += b.getSample (c, i) * std::cos (ph); im += b.getSample (c, i) * std::sin (ph); }
+                    return re * re + im * im; };
+                const double gain = 10.0 * std::log10 (atF (with, 0, fd) / juce::jmax (1e-30, atF (without, 0, fd)));
+                // the ghost sits below: Z (ACN 2) negative relative to W at the difference frequency
+                double zw = 0; for (int i = (int) (1.2 * fsr); i < (int) (2.4 * fsr); ++i) zw += (double) (with.getSample (2, i) - without.getSample (2, i)) * (with.getSample (0, i) - without.getSample (0, i));
+                std::cout << "difference tone of c'-g': " << fd << " Hz, " << gain << " dB over the plain fifth at that frequency, ghosts " << e1.ghostsNow.load()
+                          << ", below the listener: " << (zw < 0 ? "yes" : "no") << std::endl;
+                writeWav (outDir.getChildFile ("70_differenzton_quinte.wav"), with, fsr);
+                check (e1.ghostsNow.load() >= 1 && gain > 10.0 && zw < 0 && finiteB (with), "difference tones: the fifth's ghost an octave below c', under the floor");
+            }
+            // ice: the reflections chirp - low frequencies of the early reflections arrive later
+            {
+                DispersionBank bank;
+                const int N = 8192;
+                std::vector<float> x ((size_t) N, 0.0f); x[0] = 1.0f;
+                float* px = x.data();
+                bank.process (&px, 1, N, 64, -0.9f);
+                auto peakAt = [&] (bool low)
+                {
+                    juce::IIRFilter fl; fl.setCoefficients (low ? juce::IIRCoefficients::makeLowPass (fsr, 300.0) : juce::IIRCoefficients::makeHighPass (fsr, 4000.0));
+                    double best = 0; int at = 0, i0 = 0; double acc = 0, tot = 0;
+                    for (int i = 0; i < N; ++i) { const double y = fl.processSingleSampleRaw (x[(size_t) i]); acc += y * y * i; tot += y * y; if (std::abs (y) > best) { best = std::abs (y); i0 = i; } }
+                    at = (int) (acc / juce::jmax (1e-30, tot)); (void) i0;
+                    return at;
+                };
+                const int tl = peakAt (true), th = peakAt (false);
+                std::cout << "ice: all-pass chain, energy arrives at " << tl / 48.0 << " ms (below 300 Hz) and " << th / 48.0 << " ms (above 4 kHz)" << std::endl;
+                juce::AudioBuffer<float> iceB, plainB;
+                OrganEngine e1, e0;
+                auto room = [] (EngineParams& p) { p.room.on = true; p.room.width = 12; p.room.length = 18; p.room.height = 8; p.clickLevel = 0.8f; };
+                chord (e1, [&] (EngineParams& p) { room (p); p.ice = 1.0f; p.iceLen = 0.8f; }, { 69 }, 1.5, 3, &iceB);
+                chord (e0, room, { 69 }, 1.5, 3, &plainB);
+                double d = 0, e = 0; for (int i = 0; i < iceB.getNumSamples(); ++i) { const double t = iceB.getSample (0, i) - plainB.getSample (0, i); d += t * t; e += (double) plainB.getSample (0, i) * plainB.getSample (0, i); }
+                std::cout << "ice in the Saal: difference " << 10.0 * std::log10 (d / juce::jmax (1e-30, e)) << " dB" << std::endl;
+                writeWav (outDir.getChildFile ("71_eis_saal.wav"), iceB, fsr);
+                check (tl > th + 48 && finiteB (iceB) && d > 1e-4 * e, "ice: the lows come later (a falling chirp), the Saal changes");
+            }
+            // double exposure (class): an impulse from the left comes back 0.5 s later, mirrored to the right / turned to the front
+            {
+                const int N = (int) (1.0 * fsr);
+                auto runDex = [&] (int mirror, float turn, double& azBack, double& level)
+                {
+                    DoubleExposure dx; dx.prepare (fsr, 2);
+                    std::vector<std::vector<float>> ch (16, std::vector<float> ((size_t) N, 0.0f));
+                    float enc[kMaxAmbiChannels] {};
+                    encodeAmbiX (90.0f, 0.0f, 3, enc);                  // from the left
+                    for (int c = 0; c < 16; ++c) ch[(size_t) c][100] = enc[c];
+                    std::vector<float*> pp; for (auto& v : ch) pp.push_back (v.data());
+                    DoubleExposureParams dp; dp.mix = 1.0f; dp.time = 0.5f; dp.mirror = mirror; dp.turn = turn; dp.fade = 0.0f;
+                    for (int pos = 0; pos < N; pos += 256) { std::vector<float*> q; for (auto* x : pp) q.push_back (x + pos); dx.process (q.data(), 16, false, juce::jmin (256, N - pos), dp); }
+                    double w = 0, y = 0, x = 0, e2 = 0;
+                    for (int i = (int) (0.45 * fsr); i < N; ++i) { w += ch[0][(size_t) i]; y += ch[1][(size_t) i]; x += ch[3][(size_t) i]; e2 += ch[0][(size_t) i] * ch[0][(size_t) i]; }
+                    azBack = juce::radiansToDegrees (std::atan2 (y, x)); level = e2;
+                };
+                double a0, l0, a1, l1, a2, l2;
+                runDex (0, 0.0f, a0, l0); runDex (1, 0.0f, a1, l1); runDex (0, -90.0f, a2, l2);
+                std::cout << "double exposure: the copy comes from " << a0 << " deg (plain), " << a1 << " deg (mirrored), " << a2 << " deg (turned -90)" << std::endl;
+                check (std::abs (a0 - 90.0) < 3.0 && std::abs (a1 + 90.0) < 3.0 && std::abs (a2) < 3.0 && l0 > 0.0, "double exposure: delayed, mirrored, turned");
+                // in the engine: the field of 1 s ago laid over the present, everything finite
+                juce::AudioBuffer<float> dexB;
+                OrganEngine ed;
+                chord (ed, [] (EngineParams& p) { p.dex.mix = 0.8f; p.dex.time = 0.7f; p.dex.turn = 120.0f; p.dex.again = 0.5f; }, { 60, 64, 67 }, 2.0, 3, &dexB);
+                std::vector<float*> chp; for (int c = 0; c < dexB.getNumChannels(); ++c) chp.push_back (dexB.getWritePointer (c));
+                EngineParams pp; pp.dex.mix = 0.8f; pp.dex.time = 0.7f; pp.dex.turn = 120.0f; pp.dex.again = 0.5f; pp.outputMode = 3;
+                for (int pos = 0; pos < dexB.getNumSamples(); pos += 512)
+                {
+                    std::vector<float*> q; for (auto* x : chp) q.push_back (x + pos);
+                    ed.applyPhotoFx (q.data(), 3, juce::jmin (512, dexB.getNumSamples() - pos), pp);
+                }
+                writeWav (outDir.getChildFile ("72_doppelbelichtung.wav"), dexB, fsr);
+                check (finiteB (dexB), "double exposure in the engine: finite");
+            }
+            // long exposure (class): a burst from the front leaves a trail there that fades over the exposure time
+            {
+                const int N = (int) (3.0 * fsr);
+                LongExposure lx; lx.prepare (fsr);
+                std::vector<std::vector<float>> ch (16, std::vector<float> ((size_t) N, 0.0f));
+                float enc[kMaxAmbiChannels] {};
+                encodeAmbiX (0.0f, 0.0f, 3, enc);
+                juce::Random rnd (3);
+                for (int i = 0; i < (int) (0.1 * fsr); ++i) { const float v = 0.3f * (rnd.nextFloat() * 2.0f - 1.0f); for (int c = 0; c < 16; ++c) ch[(size_t) c][(size_t) i] = v * enc[c]; }
+                std::vector<float*> pp; for (auto& v : ch) pp.push_back (v.data());
+                LongExposureParams lp; lp.mix = 1.0f; lp.time = 2.0f; lp.bright = 0.6f;
+                for (int pos = 0; pos < N; pos += 256) { std::vector<float*> q; for (auto* x : pp) q.push_back (x + pos); lx.process (q.data(), 16, false, juce::jmin (256, N - pos), lp); }
+                auto win = [&] (double t0, double t1, double& w2, double& az)
+                {
+                    double y = 0, x = 0; w2 = 0;
+                    for (int i = (int) (t0 * fsr); i < (int) (t1 * fsr); ++i) { const double w = ch[0][(size_t) i]; w2 += w * w; y += w * ch[1][(size_t) i]; x += w * ch[3][(size_t) i]; }
+                    az = juce::radiansToDegrees (std::atan2 (y, x));
+                };
+                double eBurst, azB, e05, az05, e15, az15;
+                win (0.0, 0.1, eBurst, azB); win (0.4, 0.6, e05, az05); win (1.4, 1.6, e15, az15);
+                const double d05 = 10.0 * std::log10 (e05 / eBurst * 0.5), d15 = 10.0 * std::log10 (e15 / eBurst * 0.5);
+                std::cout << "long exposure (2 s): trail at 0.5 s " << d05 << " dB, at 1.5 s " << d15 << " dB (burst = 0 dB), from " << az05 << " deg" << std::endl;
+                check (d05 > -30.0 && d15 < d05 - 10.0 && std::abs (az05) < 15.0, "long exposure: a trail where the sound was, fading");
+                // in the engine: a rotating pipe paints a ring
+                juce::AudioBuffer<float> exB;
+                OrganEngine ex;
+                chord (ex, [] (EngineParams& p) { p.motionMode[0] = (int) Motion::Rotation; p.motionRate[0] = 0.5f; }, { 69 }, 2.0, 3, &exB);
+                std::vector<float*> chp; for (int c = 0; c < exB.getNumChannels(); ++c) chp.push_back (exB.getWritePointer (c));
+                EngineParams pp2; pp2.expo.mix = 0.8f; pp2.expo.time = 6.0f; pp2.outputMode = 3;
+                for (int pos = 0; pos < exB.getNumSamples(); pos += 512)
+                {
+                    std::vector<float*> q; for (auto* x : chp) q.push_back (x + pos);
+                    ex.applyPhotoFx (q.data(), 3, juce::jmin (512, exB.getNumSamples() - pos), pp2);
+                }
+                writeWav (outDir.getChildFile ("73_belichtung_ring.wav"), exB, fsr);
+                check (finiteB (exB), "long exposure in the engine: finite");
+            }
+        }
+
         // ---------------- "Raumverfall" and "Körnerwolke" ----------------
         {
             // energy per Ambisonics degree (0..3) of a rendered buffer, and the direction of the first-order vector

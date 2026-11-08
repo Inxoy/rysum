@@ -105,11 +105,44 @@ EffectsView::EffectsView (RysumProcessor& p) : proc (p)
     echoRows = { &row ("fxEchoLevel", U ("Lautst\xc3\xa4rke")), &row ("fxEchoRepeats", "Wiederholungen"),
                  &row ("fxEchoFeedback", "Abnahme je Wiederholung"), &row ("fxEchoTurn", "Drehung je Wiederholung"),
                  &row ("fxEchoTilt", U ("Neigung je Wiederholung")), &row ("fxEchoDamp", U ("D\xc3\xa4mpfung")) };
+    for (int i = 0; i < getNumChildComponents(); ++i) page0.push_back (getChildComponent (i));
+
+    // ---- second tab: the tuning in space, photographic operations
+    const int before = getNumChildComponents();
+    beatFrom = &combo ("fxBeatIdeal");
+    beatFrom->setTooltip (U ("Woraus die Schwebungen berechnet werden: aus der Stimmung, wie sie gemeint ist (reine Terzen stehen still), "
+                             "oder aus den Pfeifen, wie sie aufgenommen sind (\xc2\xb1" "5 ct: auch reine Terzen schweben ein wenig)."));
+    ghostRows = { &row ("fxGhostLevel", U ("Lautst\xc3\xa4rke")), &row ("fxGhostPlace", U ("Ort (zwischen \xe2\x86\x92 unten)")),
+                  &row ("fxGhostCons", "nur Konsonanzen"), nullptr, nullptr, nullptr };
+    dexMirror = &combo ("fxDexMirror");
+    dexMirror->setTooltip (U ("Das alte Bild gespiegelt: links / rechts, vorn / hinten, oben / unten"));
+    dexRows = { &row ("fxDexMix", "Menge"), &row ("fxDexTime", "Abstand (Sekunden davor)"), &row ("fxDexTurn", "Drehung"),
+                &row ("fxDexFade", "Verblassen"), &row ("fxDexAgain", "mehrfach belichten"), nullptr };
+    expoRows = { &row ("fxExpoMix", "Menge"), &row ("fxExpoTime", "Belichtungszeit"), &row ("fxExpoBright", "Helligkeit der Spuren"),
+                 nullptr, nullptr, nullptr };
+    for (int i = before; i < getNumChildComponents(); ++i) page1.push_back (getChildComponent (i));
+    for (auto* b : { &tabSounds, &tabLight }) { b->setClickingTogglesState (false); addAndMakeVisible (*b); }
+    tabSounds.onClick = [this] { showTab (0); };
+    tabLight.onClick = [this] { showTab (1); };
+    showTab (0);
     refresh();
+}
+
+void EffectsView::showTab (int t)
+{
+    tab = t;
+    for (auto* c : page0) c->setVisible (t == 0);
+    for (auto* c : page1) c->setVisible (t == 1);
+    if (t == 0) resetFolder.setVisible (proc.hasOwnCustomFolder());
+    tabSounds.setToggleState (t == 0, juce::dontSendNotification);
+    tabLight.setToggleState (t == 1, juce::dontSendNotification);
+    repaint();
 }
 
 void EffectsView::resized()
 {
+    tabSounds.setBounds (getWidth() - 28 - 170 - 4 - 80, 4, 80, 18);
+    tabLight.setBounds (getWidth() - 28 - 170, 4, 170, 18);
     auto r = getLocalBounds().reduced (28, 0).withTrimmedTop (22).withTrimmedBottom (18);
     const int gap = 28;
     const int cw = (r.getWidth() - 2 * gap) / 3;
@@ -182,6 +215,35 @@ void EffectsView::resized()
         echoTime->setBounds (b.removeFromTop (kRow).withTrimmedBottom (2));
         stack (b, echoRows);
     }
+    // ---- second tab: Schwebung | Differenztoene | (note) / Doppelbelichtung | Belichtung
+    beatBox = cell (0, 0); ghostBox = cell (1, 0); dexBox = cell (0, 1).withRight (cell (1, 1).getRight()); expoBox = cell (2, 1);
+    {
+        auto b = body (beatBox);
+        beatFrom->setBounds (b.removeFromTop (24));
+        b.removeFromTop (8);
+        beatNote = b;
+    }
+    {
+        auto b = body (ghostBox);
+        stack (b, ghostRows);
+        b.removeFromTop (8);
+        ghostNote = b;
+    }
+    {
+        auto b = body (dexBox);
+        auto left = b.removeFromLeft (cw);
+        dexMirror->setBounds (left.removeFromTop (24));
+        left.removeFromTop (6);
+        stack (left, dexRows);
+        b.removeFromLeft (gap);
+        dexNote = b;
+    }
+    {
+        auto b = body (expoBox);
+        stack (b, expoRows);
+        b.removeFromTop (8);
+        expoNote = b;
+    }
 }
 
 void EffectsView::refresh()
@@ -193,7 +255,7 @@ void EffectsView::refresh()
     echoDiv->setAlpha (sync ? 1.0f : 0.45f);
     const int n = proc.getNumCustomSounds();
     if (n != shownCustom) { shownCustom = n; repaint (custBox); }
-    if (resetFolder.isVisible() != proc.hasOwnCustomFolder()) { resetFolder.setVisible (proc.hasOwnCustomFolder()); repaint (custBox); }
+    if (tab == 0 && resetFolder.isVisible() != proc.hasOwnCustomFolder()) { resetFolder.setVisible (proc.hasOwnCustomFolder()); repaint (custBox); }
     for (auto& r : rows) r->repaint();
     repaint (echoCompass.expanded (14));
     repaint (partCompass.expanded (14));
@@ -274,6 +336,44 @@ void EffectsView::paint (juce::Graphics& g)
         juce::Graphics::ScopedSaveState ss (g);
         g.setOpacity (0.07f);
         drawCover (g, A.wall, getLocalBounds().toFloat(), 0.4f);
+    }
+    auto noteIn = [&] (juce::Rectangle<int> r, const char* text)
+    {
+        g.setFont (A.sansFont (12.5f));
+        g.setColour (col::mute);
+        if (r.getHeight() > 14) g.drawFittedText (U (text), r, juce::Justification::topLeft, juce::jmax (1, r.getHeight() / 15));
+    };
+    if (tab == 1)
+    {
+        auto tonnetzBox = juce::Rectangle<int> (ghostBox.getRight() + 28, ghostBox.getY(), expoBox.getWidth(), ghostBox.getHeight());
+        drawSectionTitle (g, beatBox, "Schwebungsraum", "die Stimmung bewegt den Raum");
+        drawSectionTitle (g, ghostBox, U ("Differenzt\xc3\xb6ne"), "Geister zwischen den Pfeifen");
+        drawSectionTitle (g, tonnetzBox, "Tonnetz", "die Stimmung als Landkarte");
+        drawSectionTitle (g, dexBox, "Doppelbelichtung", U ("das Bild von vorhin dar\xc3\xbc" "ber"));
+        drawSectionTitle (g, expoBox, "Belichtung", "Spuren auf der Kugel");
+        noteIn (beatNote, "Je zwei klingende Pfeifen schweben gegeneinander (die n\xc3\xa4" "chsten Teilt\xc3\xb6ne, die fast zusammenfallen). "
+                          "Mit der Bewegung \xe2\x80\x9eSchwebung\xe2\x80\x9c (Raum-Seite) dreht sich jede Pfeife so schnell, wie sie schwebt: "
+                          "reine Terzen stehen still, mittelt\xc3\xb6nige Quinten wandern langsam (um 2 Hz), kleine Terzen schneller, "
+                          "die Wolfsquinte G\xe2\x99\xaf\xe2\x80\x93" "Es kreist heftig (um 13 Hz), die Wolfsterzen noch heftiger. "
+                          "\xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = Umdrehungen je Schwebung.\n\n"
+                          "Als Modulationsquelle \xe2\x80\x9eSchwebung\xe2\x80\x9c (je Pfeife) steuert sie alles andere.");
+        noteIn (ghostNote, "Aus je zwei gehaltenen Pfeifen entsteht der Differenzton (h\xc3\xb6here minus tiefere Frequenz) \xe2\x80\x93 "
+                           "wie die Resultante, mit der Orgelbauer einen 32\xe2\x80\xb2 andeuten. Er erscheint, solange das Intervall "
+                           "gehalten wird, zwischen den beiden Pfeifen oder tief unter dem H\xc3\xb6rer. Quinte: die Oktave unter dem "
+                           "tieferen Ton; reine Terz: zwei Oktaven unter dem Grundton des Dreiklangs.");
+        noteIn (tonnetzBox.withTrimmedTop (38), "Auf der Raum-Seite: Anordnung \xe2\x80\x9eTonnetz\xe2\x80\x9c. Jede Taste bekommt ihren Platz im Gitter "
+                                                 "der Stimmung: Quinten nach rechts, gro\xc3\x9f" "e Terzen nach oben. Reine Intervalle liegen eng "
+                                                 "beieinander, unreine weit \xe2\x80\x93 in \xc2\xbc-Komma bilden Dreikl\xc3\xa4nge enge Gruppen, "
+                                                 "G\xe2\x99\xaf und Es liegen an entgegengesetzten R\xc3\xa4ndern (dort sitzt der Wolf). "
+                                                 "Eine andere Stimmung zeichnet die Karte neu (pythagoreisch: eine Kette von Quinten, "
+                                                 "gleichstufig: weit auseinander liegende Terzen).");
+        noteIn (dexNote, "Das Klangfeld von vor ein paar Sekunden wird \xc3\xbc" "ber das jetzige gelegt \xe2\x80\x93 gedreht, gespiegelt, "
+                         "verblasst, wie eine zweite Belichtung auf demselben Film. \xe2\x80\x9eMehrfach\xe2\x80\x9c belichtet das "
+                         "alte Bild noch einmal: weitere, immer blassere Bilder weiter zur\xc3\xbc" "ck.\n\n"
+                         "Wirkt auf das ganze Feld nach Hall und Saal (bis 3. Ordnung; in Stereo wird gespiegelt durch Tauschen der Seiten).");
+        noteIn (expoNote, "Jede Richtung der Kugel h\xc3\xa4lt fest, was durch sie kommt, und gibt es langsam wieder ab: "
+                          "bewegte Pfeifen ziehen Lichtspuren, schnelle malen B\xc3\xb6gen.");
+        return;
     }
     const int n = proc.getNumCustomSounds();
     const juce::String where = proc.hasOwnCustomFolder() ? proc.getCustomFolder().getFileName() + U (" \xc2\xb7 ") : juce::String();

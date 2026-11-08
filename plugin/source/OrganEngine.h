@@ -9,6 +9,7 @@
 #include "RoomSim.h"
 #include "RoomTail.h"
 #include "WindChaos.h"
+#include "SpaceFx.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 #include <memory>
@@ -131,6 +132,16 @@ struct EngineParams
     float resClick = 0.0f, resDecay = 0.4f /* s */, resBright = 0.5f;
     std::array<PipeSoundParams, kNumStops> pipeSnd {};
     GlitchParams glitch;
+    // tuning made audible in space: beats ("Schwebung", motion mode and modulation source) and difference tones
+    bool  beatIdeal = true;            // beats from the tuning as it should be (true) or from the pipes as recorded
+    float ghostLevel = 0.0f;           // difference tones of sounding pairs (linear, 0 = off)
+    float ghostPlace = 0.3f;           // 0 = between the two pipes .. 1 = deep below the listener
+    float ghostCons = 0.5f;            // 0 = every pair .. 1 = only pairs with simple ratios (fifths, octaves, thirds)
+    // "Eis": dispersive walls - every early reflection becomes a falling chirp
+    float ice = 0.0f, iceLen = 0.5f;
+    // photographic operations on the whole field (applied by the processor after the room, see applyPhotoFx)
+    DoubleExposureParams dex;
+    LongExposureParams expo;
     float distAmount = 0.7f;           // 0 = distance does not change the level, 1 = 1/r
 
     // tuning
@@ -345,6 +356,8 @@ private:
         std::array<float, kNumPipeTargets> pmx {};
         bool pmNew = false;                       // anything routed to the targets from tgtAttack on
         float hiGSm = -1.0f, airInvSm = -1.0f;    // (smoothed while modulated: no steps from block to block)
+        // beats: the pipe's frequency now, how fast it beats with the others (Hz, smoothed) and as a modulation source
+        float hzNow = 0.0f, beatT = 0.0f, beatHz = 0.0f, beatNorm = 0.0f;
         // grain cloud: the pipe's sound history (a ring of the pool), when the next grain is due, where the pipe is
         int cloudRing = -1;
         double cloudAcc = 0.0;
@@ -529,6 +542,9 @@ private:
     void gainsFor (Pos pos, float* out) const noexcept;
     void renderRange (juce::AudioBuffer<float>& out, int start, int end, int blockLen, const EngineParams& p);
     void updateVoiceSpatial (Voice& v, const EngineParams& p, double blockSeconds) noexcept;
+    /** beats between the sounding pipes (motion "Schwebung", source "Schwebung") and the difference tones that go with them */
+    void updateBeats (const EngineParams& p, double blockSeconds) noexcept;
+    void renderGhosts (float* const* outs, int start, int n, float inv) noexcept;
     // a stop's settings with this pipe's own modulation on top (exact copies when nothing is routed there)
     static PipeSoundParams pipeSndFor (const PipeSoundParams& b, const Voice& v) noexcept;
     static GlitchParams glitchFor (const GlitchParams& b, const Voice& v) noexcept;
@@ -692,6 +708,30 @@ private:
     int cloudGrainsActive = 0;
     void cloudWrite (Voice& v, const float* buf, const float* bufH, int n, const EngineParams& p) noexcept;
     void renderCloud (float* const* outs, int start, int n) noexcept;
+public:
+    /** Doppelbelichtung and Belichtung on the finished field (the processor calls it after the room, before Raumverfall) */
+    void applyPhotoFx (float* const* ch, int outputMode, int n, const EngineParams& p) noexcept;
+    /** "Schwebung" motion: how far every pipe has turned so far (degrees) */
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> beatTurn;
+    std::atomic<int> ghostsNow { 0 };          // difference tones sounding (for tests / display)
+    std::atomic<float> beatMaxNow { 0.0f };    // fastest beat right now (Hz)
+private:
+    struct Ghost
+    {
+        bool on = false;
+        uint32_t ageA = 0, ageB = 0;           // the pair (voice age stamps)
+        float hz = 0.0f, hzT = 0.0f, amp = 0.0f, ampT = 0.0f;
+        double ph = 0.0;
+        bool seen = false;
+        std::array<float, kMaxAmbiChannels> g0 {}, g1 {};
+    };
+    static constexpr int kGhosts = 12;
+    std::array<Ghost, kGhosts> ghosts {};
+    DoubleExposure dexFx;
+    LongExposure expoFx;
+    DispersionBank iceHi, iceLo;
+    bool iceWasOn = false;
+    std::vector<float> iceBus;                 // early reflections collected for the dispersion (16 + 4 channels)
     std::array<float, kMaxOutChannels> sumHeld {}, sumEnv {};
     float masterSmoothed = 1.0f;
 

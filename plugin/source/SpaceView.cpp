@@ -916,7 +916,7 @@ void SpaceView::refresh()
         for (auto* b : { &pathLoop, &pathPing, &pathEven, &pathDrawnT }) b->setAlpha (pathAlpha);
         if (spreadRow) spreadRow->setAlpha (pathAlpha);
         jumpHard.setAlpha (mode == (int) Motion::Jumps ? 1.0f : 0.45f);
-        if (depthRow) depthRow->setAlpha (mode == (int) Motion::Drawn || mode == (int) Motion::Rotation || mode == (int) Motion::Vertical ? 0.45f : 1.0f);
+        if (depthRow) depthRow->setAlpha (mode == (int) Motion::Drawn || mode == (int) Motion::Rotation || mode == (int) Motion::Vertical || mode == (int) Motion::Beat ? 0.45f : 1.0f);
     }
     irDry->repaint();
     irWet->repaint();

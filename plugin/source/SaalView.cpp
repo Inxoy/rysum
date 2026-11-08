@@ -640,6 +640,11 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
         lisR[(size_t) r] = { &row (id ("Lx").toRawUTF8(), U ("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")), &row (id ("Ly").toRawUTF8(), U ("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)")) };
     }
     gainRows = { &row ("simEr", U ("Fr\xc3\xbche Reflexionen")), &row ("simTail", "Nachhall") };
+    iceRows = { &row ("simIce", "Eis (Reflexionen)"), &row ("simIceLen", U ("Eis L\xc3\xa4nge")) };
+    iceRows[0]->setTooltip (U ("Die W\xc3\xa4nde werden zu Eis: in jeder fr\xc3\xbchen Reflexion laufen die tiefen Frequenzen langsamer als die hohen \xe2\x80\x93 "
+                               "jede Reflexion wird ein fallendes Zirpen aus ihrer eigenen Richtung, wie Schall auf einem zugefrorenen See. "
+                               "Sp\xc3\xa4tere Reflexionen (l\xc3\xa4ngere Wege) zirpen st\xc3\xa4rker."));
+    iceRows[1]->setTooltip (U ("Wie lang ein Zirpen ist (etwa 5 bis 50 ms)"));
     // rooms: tabs to edit one, and which stop sounds where
     for (int r = 0; r < rysum::kNumRooms; ++r)
     {
@@ -928,7 +933,15 @@ void SaalView::resized()
         auto b = levelBox.withTrimmedTop (kTitle);
         for (auto& l2 : lisR) { auto bb = b; for (auto* x : l2) x->setBounds (bb.removeFromTop (kRow).withTrimmedBottom (2)); }
         b.removeFromTop (2 * kRow);
-        for (auto* x : gainRows) x->setBounds (b.removeFromTop (kRow).withTrimmedBottom (2));
+        // two rows side by side each: reflections | tail, ice | ice length
+        for (auto* pair : { &gainRows, &iceRows })
+        {
+            auto line = b.removeFromTop (kRow).withTrimmedBottom (2);
+            const int w = (line.getWidth() - 12) / 2;
+            (*pair)[0]->setBounds (line.removeFromLeft (w));
+            line.removeFromLeft (12);
+            (*pair)[1]->setBounds (line);
+        }
     }
     tailFdn.setBounds (levelBox.getRight() - 52, levelBox.getY() + 9, 52, 20);
     tailConv.setBounds (tailFdn.getX() - 4 - 66, levelBox.getY() + 9, 66, 20);

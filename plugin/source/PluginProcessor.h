@@ -217,6 +217,9 @@ public:
 
     // layouts (message thread)
     std::array<rysum::LayoutSettings, rysum::kNumStops> layouts;
+    int layoutTuning = -1;                     // the tuning the "Tonnetz" layouts were made for
+    /** a stop arranged as a Tonnetz follows a change of the tuning (message thread) */
+    void followTuningLayouts();
     void applyLayout (int stop);
     void setPipePosition (int stop, int key, rysum::Pos p);
 
@@ -237,6 +240,9 @@ public:
     static constexpr const char* kCloudKeys[5] { "Mix", "Dens", "Spread", "Size", "Scatter" };
     /** the sound of the pipe per stop (Raum page, tab "Pfeife"): key = Att Sharp Iso Rep Puff HiFreq HiGain HiShape */
     static juce::String pipeSndParamId (const char* key, int s) { return juce::String ("pipe") + key + juce::String (s); }
+    static constexpr const char* kSpace2Ids[15] { "fxBeatIdeal", "fxGhostLevel", "fxGhostPlace", "fxGhostCons", "simIce", "simIceLen",
+                                                  "fxDexMix", "fxDexTime", "fxDexTurn", "fxDexMirror", "fxDexFade", "fxDexAgain",
+                                                  "fxExpoMix", "fxExpoTime", "fxExpoBright" };
     static constexpr const char* kPipeSndKeys[8] { "Att", "Sharp", "Iso", "Rep", "Puff", "HiFreq", "HiGain", "HiShape" };
     static constexpr const char* kSpcIds[7] { "spcErode", "spcWeather", "spcGrid", "spcBits", "spcRate", "spcDrops", "spcAlias" };
 
@@ -293,6 +299,7 @@ private:
         std::array<std::array<int, 8>, rysum::kNumStops> pipeSnd {};
         int airInvert = -1, clickRes = -1, clickResDecay = -1, clickResBright = -1;
         std::array<int, 4> glitch {};
+        std::array<int, 15> space2 {};
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex { inpOn, inpLevel, inpMode, inpAz, inpEl, inpDist, inpWidth, inpSpin, inpFollow, inpGate, inpRelease, inpSend, kNumInp };
@@ -386,7 +393,7 @@ private:
     struct MorphTimer : juce::Timer
     {
         explicit MorphTimer (RysumProcessor& p) : proc (p) {}
-        void timerCallback() override { proc.applySceneMorph(); }
+        void timerCallback() override { proc.applySceneMorph(); proc.followTuningLayouts(); }
         RysumProcessor& proc;
     } morphTimer { *this };
     // dice

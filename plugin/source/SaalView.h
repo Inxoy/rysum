@@ -88,7 +88,7 @@ private:
     std::array<juce::TextButton, rysum::kNumStops + 1> assign;          // stops in console order, then the input
     std::array<std::array<ParamRow*, 4>, rysum::kNumRooms> dimsR {}, surfR {};
     std::array<std::array<ParamRow*, 2>, rysum::kNumRooms> lisR {};
-    std::array<ParamRow*, 2> gainRows {};
+    std::array<ParamRow*, 2> gainRows {}, iceRows {};
     juce::Rectangle<int> roomsArea;
     std::array<int, rysum::kNumStops + 1> shownAssign {};
     void selectRoom (int r);

@@ -499,6 +499,45 @@ follow the pipes. Everything is off in older patches.
   uses a note value instead of *Zeit*. The little circle shows where the repeats come from
   (top view, front up). Echoes also go into the Hall from their own direction.
 
+*Effekte · Stimmung & Belichtung* (second tab, everything off by default):
+- **Schwebungsraum** – the tuning moves the room. For every two sounding pipes the engine finds
+  the lowest partials that nearly coincide (n × f1 ≈ m × f2) and their beat rate. With the
+  motion *Schwebung* (Raum page, Bewegung) every pipe turns as fast as it beats with the others
+  (*Geschwindigkeit* = turns per beat): in ¼-comma meantone pure major thirds stand still, the
+  fifths drift (c′–g′ about 2.5 Hz), minor thirds go faster (about 6 Hz), the wolf fifth G♯–E♭
+  spins (about 13 Hz) and the wolf thirds even faster. A pipe stops where it is when its
+  interval becomes pure. *Schwebungen aus*: the tuning as it is meant (ideal) or the pipes as
+  recorded (they are only accurate to about ±5 ct, so even pure thirds beat a little). The
+  modulation source *Schwebung* (per pipe, 0 = still … 1 = 32 Hz, logarithmic) lets the beats
+  drive anything else (e.g. *Schwebung* → *Pfeife: Verfall*: impure intervals crumble).
+- **Differenztöne** (resultant ghosts) – every two held pipes sound their difference tone
+  (higher minus lower frequency), like the resultant with which organ builders suggest a 32′:
+  a fifth gives the octave below its lower note, a pure third two octaves below the root of the
+  triad. Up to 12 at once, fading in over ~0.4 s while the interval is held. *Ort*: between the
+  two pipes … deep below the listener; *nur Konsonanzen*: 0 = every pair, 100 % = only simple
+  ratios. Below ~80 Hz no Ambisonics system places sound well – the deepest ghosts are felt
+  more than located.
+- **Tonnetz** – an arrangement (Raum page, *Anordnung*): every key gets its place in the
+  lattice of the tuning, fifths to the right, major thirds upwards. The tuning's own fifth and
+  third decide: pure intervals are short, impure ones long, and each key takes the lattice point
+  that is cheapest to reach. In ¼-comma the triads form tight groups and G♯ and E♭ end up on
+  opposite edges (the wolf is the seam); in Pythagorean tuning the keys line up as one chain of
+  fifths; in equal temperament the thirds are drawn long. Changing the tuning redraws the map.
+- **Doppelbelichtung** (double exposure) – the field of a few seconds ago (*Abstand* 0.05–8 s),
+  turned (*Drehung*), mirrored (*Spiegeln*: left/right, front/back, up/down), faded (*Verblassen*,
+  a low-pass) and laid over the present; *mehrfach belichten* feeds the copy back (more, fainter
+  images further back). On the whole field after Hall and Saal, up to 3rd order (stereo: mirrored
+  = sides swapped).
+- **Belichtung** (long exposure) – 24 directions of the sphere each keep what passes through
+  them and let it go slowly (*Belichtungszeit* = −60 dB, 0.2–60 s; *Helligkeit der Spuren*):
+  moving pipes leave light trails, fast ones paint arcs and rings. Up to 3rd order.
+
+*Saal · Eis* (Saal page, below *Nachhall*): the walls turn to ice – in every early reflection
+the low frequencies travel slower than the high ones (an all-pass chain per Ambisonics channel of
+the reflections), so each reflection becomes a falling chirp from its own direction; the later
+reflections (longer ways) chirp more. *Eis* blends from the plain reflections to only the chirps,
+*Eis Länge* sets how long a chirp is (about 5–50 ms).
+
 **Modulation**
 - *LFO 1–4*: shape (sine, triangle, saw, square, random steps, smooth random), *Tempo*
   0.01–20 Hz or *Sync* to the project tempo (note values), *Versatz je Pfeife* (spread):
@@ -513,7 +552,8 @@ follow the pipes. Everything is off in older patches.
   (a new random value per key press), *Anschlag* (key velocity 0 … 1, per note – each pipe keeps
   the velocity its key was struck with; global targets follow the last note), *Tonhöhenrad*
   (pitch wheel −1 … +1; it bends nothing by itself – route it to *Pfeife: Tonhöhe*, e.g. 17 %
-  = ±2 semitones, or anywhere else).
+  = ±2 semitones, or anywhere else), *Schwebung* (per pipe: how fast it beats with the other
+  sounding pipes, see Effekte · Stimmung & Belichtung).
 - *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 % (click the
   amount to type it), and **± / +**: ± = bipolar (an LFO swings around the slider value),
   + = unipolar (it only pushes one way, 0 … amount; envelopes and the mod wheel are 0 … 1 anyway).
@@ -600,7 +640,13 @@ aftertouch or MPE), 122 a long walk (four slow random LFOs, never the same), 123
 own phase), 127 the organist has been drinking, 128 every note crumbles on its own (pressure holds
 it together), 129 four organs on the mod wheel, 130 gravity (pitch wheel lifts the pipes into the
 vault), 131 continuum (MPE pressure and slide), 132 slow erosion (ten minutes and more), 133
-explosion (velocity, pitch wheel ±12 semitones). Set 14 also re-issues 70: factory scenes used to
+explosion (velocity, pitch wheel ±12 semitones). Set 15 (134–147): the tuning in space – 134 the tuning dances
+(motion *Schwebung*), 135 wolf howl (beats make the impure intervals crumble), 136 beats as light
+(impure intervals dissolve into clouds), 137 resultant bass, 138 ghosts between the pipes, 139
+ice hall, 140 frozen rotunda, 141 mirror image, 142 echo of the past (double exposure, again and
+again), 143 light trails, 144 twenty seconds (long exposure of jumping pipes), 145 the tuning as a
+map (Tonnetz), 146 the map floats (Tonnetz + beats), 147 the tuning becomes space (everything on
+the mod wheel). Set 14 also re-issues 70: factory scenes used to
 store the routes at 0 %, so moving through the scenes switched the LFO off that moves them.
 
 A patch made with the input on switches the input on when it loads; every other patch leaves
