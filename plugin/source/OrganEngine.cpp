@@ -1,5 +1,6 @@
 #include "OrganEngine.h"
 #include "Kernels.h"
+#include "SamplePitch.h"
 
 namespace rysum
 {
@@ -547,6 +548,16 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     const int src = noteId >= 0 ? key : juce::jlimit (0, kNumKeys - 1, keySource[(size_t) key]);
     const Pipe& pipe = library->pipes[(size_t) stop][(size_t) src];
     if (! pipe.valid || pipe.sample == nullptr) return;
+
+    SamplePitchRequest pitchRequest;
+    pitchRequest.sourceSampleRate = pipe.sample->sampleRate;
+    pitchRequest.outputSampleRate = sr;
+    pitchRequest.nativePitchRatio = pipe.nativePitchRatio;
+
+    const auto nativeRate = samplePlaybackRate(pitchRequest, SampleTuningMode::native);
+
+    if (!nativeRate.has_value()) return;
+
     if (previewSamples < 0 && muted[(size_t) stop][(size_t) key].load()) return;
 
     Voice* v = nullptr;
@@ -572,7 +583,7 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->data = pipe.sample->data.data();
     v->length = pipe.sample->size();
     v->pos = 0.0;
-    v->baseRate = pipe.rate * kSampleFileRate / sr;     // pipe.rate already contains file-rate / 48k
+    v->baseRate = *nativeRate;
     v->looping = pipe.hasLoop();
     if (v->looping)
     {

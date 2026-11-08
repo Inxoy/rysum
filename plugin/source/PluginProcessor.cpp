@@ -2183,7 +2183,7 @@ juce::String RysumProcessor::getTuningStatus() const
         const juce::String name (juce::CharPointer_UTF8 (MTS_GetScaleName (mts)));
         if (MTS_HasMaster (mts)) return u8 ("MTS-ESP: Master verbunden") + (name.isNotEmpty() ? dot + name : juce::String());
         if (MTS_HasReceivedMTSSysEx (mts)) return u8 ("MIDI-Stimmung (MTS-SysEx) empfangen") + (name.isNotEmpty() ? dot + name : juce::String());
-        return u8 ("Kein MTS-ESP-Master verbunden, noch keine MTS-SysEx empfangen \xe2\x80\x93 bis dahin die gew\xc3\xa4hlte Originalstimmung (\xc2\xbc-Komma)");
+        return u8 ("Kein MTS-ESP-Master verbunden, noch keine MTS-SysEx empfangen \xe2\x80\x93 bis dahin die gew\xc3\xa4hlte Originalstimmung");
     }
     if (mtsHasMaster()) return u8 ("Ein MTS-ESP-Master ist verbunden \xe2\x80\x93 \xe2\x80\x9eMTS-ESP\xe2\x80\x9c w\xc3\xa4hlen, um ihm zu folgen");
     return {};

@@ -20,7 +20,10 @@ struct Pipe
 {
     std::shared_ptr<const Sample> sample;
     int onset = 0, attackEnd = 0, release = 0, loopStart = -1, loopEnd = -1;
-    double rate = 1.0;           // != 1 when the pipe is replaced by a pitch-shifted neighbour
+
+    // Native pitch transposition, excluding sample-rate conversion.
+    double nativePitchRatio = 1.0;
+
     bool valid = false;
     bool substituted = false;
     int substituteFrom = -1;     // key index of the source pipe

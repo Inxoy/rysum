@@ -235,6 +235,13 @@ endif()
 # ---------------------------------------------------------------------------
 option(RYSUM_BUILD_TESTS "Build the offline render test" OFF)
 if(RYSUM_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(RysumPitchTest tests/SamplePitchTest.cpp)
+    target_include_directories(RysumPitchTest PRIVATE source)
+
+    add_test(NAME sample_pitch COMMAND RysumPitchTest)
+
     juce_add_console_app(RysumRenderTest PRODUCT_NAME "RysumRenderTest")
     target_sources(RysumRenderTest PRIVATE
         tests/RenderTest.cpp

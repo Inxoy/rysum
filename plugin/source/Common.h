@@ -56,7 +56,7 @@ inline double meantoneHz (int midi) noexcept
 inline juce::StringArray temperamentNames()
 {
     // new entries only at the end: projects and patches store the index
-    return { juce::String::fromUTF8 ("\xc2\xbc-Komma mittelt\xc3\xb6nig (Original)"), juce::String::fromUTF8 ("\xe2\x85\x99-Komma mittelt\xc3\xb6nig"),
+    return { juce::String::fromUTF8 ("Originalstimmung (wie aufgenommen)"), juce::String::fromUTF8 ("\xe2\x85\x99-Komma mittelt\xc3\xb6nig"),
              "Werckmeister III", "Kirnberger III", "Vallotti", "Pythagoreisch", "Gleichstufig",
              "Rein (5-Limit, C-Dur)", "Rein septimal (7-Limit)", juce::String::fromUTF8 ("Naturtonreihe auf C (16.\xe2\x80\x93" "30. Teilton)"),
              "31-EDO (12 aus 31)", "19-EDO (12 aus 19)", "53-EDO (12 aus 53, fast rein)",

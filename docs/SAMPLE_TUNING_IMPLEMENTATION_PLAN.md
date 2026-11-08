@@ -68,6 +68,10 @@ Do not implement a complete GrandOrgue interpreter in the plugin. Use an offline
 
 Start with the overlap of the existing 41-key compass. Preserve extra source note identities, including subsemitones, for later mapping; do not collapse D-sharp/E-flat assets into one ID just because they share a standard MIDI address. Dynamic compass and arbitrary slot counts come later.
 
+### Bound sample range and transposition
+
+Each register should declare its supported sounding range and a conservative maximum transposition from an available source pipe, with per-pipe overrides where needed. Large extensions into higher or lower registers change attack, release, noise and timbre unnaturally; repeatedly reusing an edge sample also cannot represent the locations of additional physical pipes. Select sources by calibrated frequency within those bounds, retain the actual source pipe's spatial identity, and keep any deliberate virtual relocation separate. Outside the supported range, leave that register silent and report the unavailable range rather than silently stretching its end samples. Exact tuning correction does not authorize unlimited compass extension. The current free-tuning path permits shifts of up to two octaves; replace that blanket allowance with register-specific limits chosen by audition and recorded in metadata. Do not impose an arbitrary universal limit before testing the registers, and distinguish supported derived registers, such as the deliberate Praestant 16′, from automatic out-of-range substitution.
+
 ### Audio and releases
 
 Keep source rate and 24-bit resolution through decoding; JUCE float storage can represent PCM24 input without first quantizing it to PCM16. Inspect whether an offline lossless decode is needed, preserving useful RIFF metadata in the import sidecar.

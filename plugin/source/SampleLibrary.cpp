@@ -178,7 +178,7 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load (const juce::File& folder, ju
                     p.loopStart = pv["loop_start"].isVoid() ? -1 : clampI (pv["loop_start"], -1);
                     p.loopEnd   = pv["loop_end"].isVoid()   ? -1 : clampI (pv["loop_end"], -1);
                     if (p.loopEnd > p.release) p.loopEnd = p.release;
-                    p.rate = p.sample->sampleRate / kSampleFileRate;    // 1.0 normally
+                    p.nativePitchRatio = 1.0;
                     p.levelDb = (float) (double) pv["level_db"];
                     p.loopNcc = pv["loop_ncc"].isVoid() ? 0.0f : (float) (double) pv["loop_ncc"];
                     p.nominalHz = (double) pv["nominal_hz"];
@@ -229,7 +229,7 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load (const juce::File& folder, ju
             const bool hadOwn = dst.valid;
             dst = src;
             dst.midi = midi;
-            dst.rate = src.rate * meantoneHz (midi) / meantoneHz (kPhysKeys[(size_t) best]);
+            dst.nativePitchRatio = src.nativePitchRatio * meantoneHz(midi) / meantoneHz(kPhysKeys[(size_t) best]);
             dst.substituted = true;
             dst.substituteFrom = best;
             dst.flags = keepFlags;
@@ -247,7 +247,7 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load (const juce::File& folder, ju
         const auto& src = lib->pipes[0][(size_t) k];
         if (! src.valid) continue;
         dst = src;
-        dst.rate = src.rate * 0.5;
+        dst.nativePitchRatio = src.nativePitchRatio * 0.5;
         dst.midi = src.midi - 12;
         dst.nominalHz = src.nominalHz * 0.5;
         dst.measuredHz = src.measuredHz * 0.5;
