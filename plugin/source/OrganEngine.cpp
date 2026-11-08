@@ -2064,7 +2064,7 @@ void OrganEngine::renderFdn (RoomTail& R, float* const* o, int K, const float* i
     const float modDepth = (float) (8.0 * sr / 48000.0);
     // read position: the integer clock and the fractional delay are kept apart (a float clock would lose
     // the fraction after a few minutes - aliasing, a high ringing)
-    auto readLine = [] (const float* line, uint32_t now, float d)
+    auto readLine = [mask] (const float* line, uint32_t now, float d)
     {
         const int di = (int) d;
         const float fd = d - (float) di;
