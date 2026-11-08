@@ -4,7 +4,7 @@ Run the examples below from the repository root. Python dependencies are separat
 
 | Script | Purpose / output |
 |---|---|
-| `rysum_preprocess.py` | Current preparation pipeline: `raw_unprocessed_files/` → `samples/`, including `rysum_samples.json` and analysis images |
+| `rysum_preprocess.py` | Current preparation pipeline: `raw_unprocessed_files/` → `rysum-samples/`, including `rysum_samples.json` and analysis images |
 | `analyse_sample_pitch.py` | Non-destructive final-WAV audit → `docs/pitch-analysis/` |
 | `test_analyse_sample_pitch.py`, `test_pitch_metadata.py` | Synthetic estimator checks and metadata/evidence validation |
 | `make_photos.py` | Current image preparation → `plugin/resources/`; reads original photos from `_archive/newpics/` and `_archive/photos/` |
@@ -16,14 +16,14 @@ Run the examples below from the repository root. Python dependencies are separat
 Current sample preparation (rewrites the selected output library):
 
 ```sh
-python scripts/rysum_preprocess.py --raw raw_unprocessed_files --out samples
+python scripts/rysum_preprocess.py --raw raw_unprocessed_files --out rysum-samples
 ```
 
 Pitch analysis and validation:
 
 ```sh
 python -m pip install -r scripts/pitch-analysis-requirements.txt
-python scripts/analyse_sample_pitch.py --samples samples --out docs/pitch-analysis
+python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/pitch-analysis
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s scripts -p 'test_*pitch*.py'
 ```
 

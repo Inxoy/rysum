@@ -23,7 +23,7 @@ These are confirmed code paths, not an inference about how a particular controll
 
 ### Available audio
 
-`samples/rysum_samples.json` describes 287 recorded pipe entries: seven recorded stops with 41 keys each. The eighth runtime stop is derived from recorded material. All but one recorded entry have loop markers. The manifest says 48 kHz.
+`rysum-samples/rysum_samples.json` describes 287 recorded pipe entries: seven recorded stops with 41 keys each. The eighth runtime stop is derived from recorded material. All but one recorded entry have loop markers. The manifest says 48 kHz.
 
 Remaining recording length after the release marker:
 

@@ -51,7 +51,7 @@ Either copy the whole `Rysum.vst3` folder to `C:\Program Files\Common Files\VST3
 *Options → Preferences → Plug-ins → VST → Edit path list → add*
 `D:\RYSUM_plugin\rysum_plugin\plugin\build\Rysum_artefacts\Release\VST3`, then *Re-scan*.
 
-The plugin finds the samples by itself in `D:\RYSUM_plugin\rysum_plugin\samples`
+The plugin finds the samples by itself in `D:\RYSUM_plugin\rysum_plugin\rysum-samples`
 (the output of `scripts/rysum_preprocess.py`, run from the repository root). If they are somewhere else, click
 **Samples-Ordner …** on the Spieltisch page and choose the folder that contains
 `rysum_samples.json`.

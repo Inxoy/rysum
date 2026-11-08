@@ -591,7 +591,7 @@ public:
             for (auto [id, v] : { std::pair<const char*, float> { "fxEchoLevel", 0.5f }, { "fxPartSpread", 70.0f }, { "fxEchoTilt", 10.0f } })
                 if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->convertTo0to1 (v));
             {
-                // own sounds from a chosen folder (not samples/noise/eigene): read, kept in the state, back to standard
+                // own sounds from a chosen folder (not <sample-library>/noise/eigene): read, kept in the state, back to standard
                 auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_own_sounds_test");
                 dir.deleteRecursively(); dir.getChildFile ("sub").createDirectory();
                 juce::AudioBuffer<float> snd (1, 9600);

@@ -1,6 +1,6 @@
 # Final WAV pitch analysis
 
-This audit analyses the 287 final pipe WAVs referenced by `samples/rysum_samples.json`. Mechanical noises and wind recordings are excluded: they are not pitched pipe assets. The derived Praestant 16′ has no additional WAVs.
+This audit analyses the 287 final pipe WAVs referenced by `rysum-samples/rysum_samples.json`. Mechanical noises and wind recordings are excluded: they are not pitched pipe assets. The derived Praestant 16′ has no additional WAVs.
 
 ## Method and limits
 
@@ -255,7 +255,7 @@ All 82 compound samples remain `compound_unresolved`. The JSON records up to twe
 From the repository root, using Python with NumPy installed:
 
 ```sh
-python scripts/analyse_sample_pitch.py --samples samples --out docs/pitch-analysis
+python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/pitch-analysis
 ```
 
 Synthetic estimator checks: `python -m unittest discover -s scripts -p 'test_analyse_sample_pitch.py'`.

@@ -55,7 +55,7 @@ Either copy the whole `Rysum.vst3` folder to `C:\Program Files\Common Files\VST3
 *Options → Preferences → Plug-ins → VST → Edit path list → add*
 `D:\RYSUM_plugin\rysum_plugin\plugin\build\Rysum_artefacts\Release\VST3`, then *Re-scan*.
 
-The plugin finds the samples by itself in `D:\RYSUM_plugin\rysum_plugin\samples`
+The plugin finds the samples by itself in `D:\RYSUM_plugin\rysum_plugin\rysum-samples`
 (the output of `scripts/rysum_preprocess.py`, run from the repository root). If they are somewhere else, click
 **Samples-Ordner …** on the Spieltisch page and choose the folder that contains
 `rysum_samples.json`.
@@ -707,7 +707,7 @@ to WAV and checks the encoder maths) and `RysumUiSnapshot`.
 
 CPU benchmark (optional): `cmake -B build-bench -G "Visual Studio 17 2022" -A x64 -DRYSUM_BUILD_BENCH=ON`,
 then `cmake --build build-bench --config Release --target RysumBench`, and run
-`build-bench\RysumBench_artefacts\Release\RysumBench.exe D:\RYSUM_plugin\rysum_plugin\samples 128 8`
+`build-bench\RysumBench_artefacts\Release\RysumBench.exe D:\RYSUM_plugin\rysum_plugin\rysum-samples 128 8`
 (samples folder, block size, seconds per scenario, optionally a filter such as `saal`). It plays all
 eight stops with a ten-note chord and moving pipes through the whole plugin in several set-ups
 (stereo, AmbiX 3 / 5 with an impulse response, binaural, Saal) and prints for each the average load

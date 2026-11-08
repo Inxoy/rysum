@@ -4,7 +4,7 @@
   "python_version": "3.14.8",
   "numpy_version": "2.5.3",
   "manifest_sha256": "9431299467f924ca53c5599a082ab24e70476f0a00cf94032d06875d0b526d4e",
-  "analysis_script_sha256": "c82f642348b87aa3a2dfd26f8d4a0eb43293eda5e0e77fe90ff58447d3c86e8c",
+  "analysis_script_sha256": "35e773d15029d154034bee3159732c26c0a23758f5a89ee301b51d64abcc481a",
   "search_half_width_cents": 100,
   "thresholds": {
     "minimum_windows": 3,

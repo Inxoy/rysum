@@ -38,7 +38,7 @@ What it does differently from note_isolation.py
   --no-clean writes the samples as before.
 
 Usage:  python scripts/rysum_preprocess.py            (run inside rysum_plugin/)
-        python scripts/rysum_preprocess.py --raw raw_unprocessed_files --out samples
+        python scripts/rysum_preprocess.py --raw raw_unprocessed_files --out rysum-samples
 Requires: numpy, scipy, soundfile, librosa, matplotlib (for the report plot)
 """
 import argparse, json, os, math
@@ -609,7 +609,7 @@ def main():
     global MONO, CLEAN, NR_DB
     ap = argparse.ArgumentParser()
     ap.add_argument('--raw', default=str(REPO_ROOT / 'raw_unprocessed_files'))
-    ap.add_argument('--out', default=str(REPO_ROOT / 'samples'))
+    ap.add_argument('--out', default=str(REPO_ROOT / 'rysum-samples'))
     ap.add_argument('--stops', nargs='*', default=list(STOPS))
     ap.add_argument('--stereo', action='store_true', help='keep both microphone channels instead of mono')
     ap.add_argument('--no-clean', action='store_true', help='no high-pass / noise reduction / soft tails')

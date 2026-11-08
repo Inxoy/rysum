@@ -13,7 +13,7 @@ This is a guided build plan. Source changes and full build/runtime checks below 
 - Native Apple Silicon processing already has suitable code paths: PFFFT supports ARM NEON, and the base kernels use portable loops. The baseline kernel label says "SSE2" even on ARM; that is a diagnostic label to correct later, not evidence that ARM uses Intel instructions.
 - MTS-ESP's client loader already supports macOS. On the inspected machine, `/Library/Application Support/MTS-ESP/libMTS.dylib` is installed and includes arm64 and x86_64.
 - Audio input buses are enabled, but the standalone app has no explicit microphone usage description in the CMake configuration.
-- Samples are external. The existing `samples/rysum_samples.json` and WAVs are present; the application has a folder picker and portable search locations.
+- Samples are external. The existing `rysum-samples/rysum_samples.json` and WAVs are present; the application has a folder picker and portable search locations.
 - Earlier syntax-only compiler checks passed for the MTS client, PFFFT, the base kernels, the Intel dispatch branch, and the libmysofa reader. These do not establish that the whole plugin builds or runs.
 
 ## Build concepts
@@ -129,7 +129,7 @@ Verify the actual output locations in the build log. CMake target names remain `
 ## Step 7 — validate samples and audio
 
 1. Launch Rysum Dev from the build output.
-2. If automatic sample discovery fails, select `~/Dev/rysum_plugin/samples`, containing `rysum_samples.json`.
+2. If automatic sample discovery fails, select `~/Dev/rysum_plugin/rysum-samples`, containing `rysum_samples.json`.
 3. Select the intended Core Audio device and an initial buffer size such as 256 frames.
 4. Test note-on/off, sustain and release tails with stereo and binaural output.
 5. Test external audio input separately, including the macOS permission prompt.

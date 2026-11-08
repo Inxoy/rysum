@@ -220,7 +220,7 @@ def write_reports(output, manifest, manifest_path, rows):
         writer.writeheader()
         for r in rows:
             writer.writerow({**r, "flags": ";".join(r["flags"])})
-    lines = ["# Final WAV pitch analysis", "", "This audit analyses the 287 final pipe WAVs referenced by `samples/rysum_samples.json`. Mechanical noises and wind recordings are excluded: they are not pitched pipe assets. The derived Praestant 16′ has no additional WAVs.", "",
+    lines = ["# Final WAV pitch analysis", "", "This audit analyses the 287 final pipe WAVs referenced by `rysum-samples/rysum_samples.json`. Mechanical noises and wind recordings are excluded: they are not pitched pipe assets. The derived Praestant 16′ has no additional WAVs.", "",
              "## Method and limits", "", "The analysis uses final PCM16 audio, five windows of up to 700 ms per single-rank pipe, preferentially within its sustain loop. A Hann-windowed, zero-padded spectrum supplies interpolated harmonic peaks; a robust harmonic fit is cross-checked against normalized autocorrelation. Both searches use a ±100-cent neighbourhood of the declared nominal pitch. This cannot discover a wrongly labelled note or reliably exclude octave errors outside that range.", "",
              "Window spread is the 95th–5th percentile of window estimates, not a confidence interval. Overlapping windows are correlated. `candidate` means the automatic checks passed; it does not mean approved or exact. The method does not remove vibrato, drift, beating or inharmonicity. Independent listening and measurement remain necessary for reviewed entries and compound stops.", "",
              "Review thresholds: fewer than 3 usable windows; median periodicity below 0.85; window spread above 5 cents; median method disagreement above 3 cents; fewer than 3 resolved harmonics in any usable window; difference from legacy measurement above 5 cents; or a short-sustain fallback.", "",
@@ -238,14 +238,14 @@ def write_reports(output, manifest, manifest_path, rows):
             legacy = f"{r['legacy_difference_cents']:+.2f}" if r['legacy_difference_cents'] is not None else "—"
             lines.append(f"| {r['stop_id']} / {r['key']} | {r['measured_hz']:.4f} | {r['deviation_cents']:+.2f} | {legacy} | {r['window_spread_cents']:.2f} | {r['status']}: {', '.join(r['flags']) or 'automatic checks passed'} |")
     lines += ["", "## Compound stops", "", "All 82 compound samples remain `compound_unresolved`. The JSON records up to twelve prominent spectral peaks in a representative sustain window for each. These are not identified ranks or validated fundamentals. Correcting all constituent pitches requires rank identification and, if they differ in tuning, separate rank assets or another decomposition method.", "",
-              "## Reproduction", "", "From the repository root, using Python with NumPy installed:", "", "```sh", "python scripts/analyse_sample_pitch.py --samples samples --out docs/pitch-analysis", "```", "",
+              "## Reproduction", "", "From the repository root, using Python with NumPy installed:", "", "```sh", "python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/pitch-analysis", "```", "",
               "Synthetic estimator checks: `python -m unittest discover -s scripts -p 'test_analyse_sample_pitch.py'`.", ""]
     (output / "final-wav-pitch-analysis.md").write_text("\n".join(lines))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--samples", type=Path, default=REPO_ROOT / "samples")
+    parser.add_argument("--samples", type=Path, default=REPO_ROOT / "rysum-samples")
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "docs/pitch-analysis")
     args = parser.parse_args()
     path = args.samples / "rysum_samples.json"

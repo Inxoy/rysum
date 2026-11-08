@@ -103,13 +103,23 @@ juce::Array<juce::File> SampleLibrary::candidateFolders()
     // next to the plugin / app (VST3 bundles: <...>/Rysum.vst3/Contents/x86_64-win/Rysum.vst3)
     for (auto d = exe.getParentDirectory(); d.exists() && ! d.isRoot(); d = d.getParentDirectory())
     {
+        c.add (d.getChildFile ("rysum-samples"));
         c.add (d.getChildFile ("RysumSamples"));
         c.add (d.getChildFile ("samples"));
-        if (d.getFileName().endsWithIgnoreCase (".vst3")) { c.add (d.getParentDirectory().getChildFile ("RysumSamples")); break; }
+        if (d.getFileName().endsWithIgnoreCase (".vst3"))
+        {
+            c.add (d.getParentDirectory().getChildFile ("rysum-samples"));
+            c.add (d.getParentDirectory().getChildFile ("RysumSamples"));
+            break;
+        }
     }
+    c.add (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rysum").getChildFile ("rysum-samples"));
+    c.add (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("rysum-samples"));
+    // Preserve existing installations using the earlier folder names.
     c.add (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Rysum").getChildFile ("samples"));
     c.add (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("RysumSamples"));
    #if JUCE_WINDOWS
+    c.add (juce::File ("D:\\RYSUM_plugin\\rysum_plugin\\rysum-samples"));
     c.add (juce::File ("D:\\RYSUM_plugin\\rysum_plugin\\samples"));
    #endif
     return c;

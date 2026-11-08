@@ -43,7 +43,7 @@ class PitchMetadataTests(unittest.TestCase):
 
     def test_audit_covers_every_manifest_pipe_and_matches_final_wavs(self):
         audit = json.loads((ROOT / 'docs/pitch-analysis/final-wav-pitch-analysis.json').read_text())
-        manifest_path = ROOT / 'samples/rysum_samples.json'
+        manifest_path = ROOT / 'rysum-samples/rysum_samples.json'
         manifest = json.loads(manifest_path.read_text())
         expected = {(s['id'], p['key'], p['file']) for s in manifest['stops'] for p in s['pipes']}
         actual = {(p['stop_id'], p['key'], p['file']) for p in audit['samples']}
@@ -53,7 +53,7 @@ class PitchMetadataTests(unittest.TestCase):
         self.assertEqual(audit['analysis_script_sha256'], hashlib.sha256((ROOT / 'scripts/analyse_sample_pitch.py').read_bytes()).hexdigest())
         for sample in audit['samples']:
             with self.subTest(file=sample['file']):
-                path = ROOT / 'samples' / sample['file']
+                path = ROOT / 'rysum-samples' / sample['file']
                 self.assertEqual(sample['sha256'], hashlib.sha256(path.read_bytes()).hexdigest())
                 with wave.open(str(path)) as wav:
                     self.assertEqual(sample['sample_rate_hz'], wav.getframerate())

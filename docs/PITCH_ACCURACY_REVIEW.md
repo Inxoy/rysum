@@ -10,7 +10,7 @@ No intermediate conversion of WAVs to 12-EDO is needed. Preserve the recordings 
 
 ## Current data and playback
 
-`samples/rysum_samples.json` contains 287 recordings: seven stops with 41 pipes each. Every entry has `measured_hz`, but compound-stop measurements are not rank identifications. Praestant 16′ is generated from Praestant 8′ at half speed and has no additional WAVs.
+`rysum-samples/rysum_samples.json` contains 287 recordings: seven stops with 41 pipes each. Every entry has `measured_hz`, but compound-stop measurements are not rank identifications. Praestant 16′ is generated from Praestant 8′ at half speed and has no additional WAVs.
 
 `scripts/rysum_preprocess.py::measure_f0` uses a median YIN estimate between 45 and 4800 Hz, taken from a portion of the source recording before final cleaning and WAV export. It stores no estimator confidence or temporal pitch spread. Compound registers deliberately receive no `cents_vs_nominal`.
 

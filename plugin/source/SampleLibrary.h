@@ -64,7 +64,7 @@ public:
 
     /** typical places where the samples folder may live */
     static juce::Array<juce::File> candidateFolders();
-    /** folder for own sounds: <samples>/noise/eigene */
+    /** folder for own sounds: <sample-library>/noise/eigene */
     static juce::File customFolder (const juce::File& sampleFolder) { return sampleFolder.getChildFile ("noise").getChildFile ("eigene"); }
 
     /** reads all audio files of the own-sounds folder (mono, trimmed, peak-normalised) */
