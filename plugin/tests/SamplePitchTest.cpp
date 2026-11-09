@@ -10,11 +10,9 @@ int main()
     request.sourceSampleRate = 44100.0;
     request.outputSampleRate = 48000.0;
 
-    const auto native = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::native);
+    const auto native = rysum::samplePlaybackRate(request, rysum::SampleTuningMode::native);
 
-    if (!native.has_value()
-        || std::abs(*native - 0.91875) > 1.0e-12)
+    if (!native.has_value() || std::abs(*native - 0.91875) > 1.0e-12)
     {
         std::cerr << "Native sample-rate conversion failed\n";
         return 1;
@@ -24,11 +22,9 @@ int main()
     request.measuredReferenceHz = 442.0;
     request.targetKeyboardHz = 440.0;
 
-    const auto corrected = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::corrected);
+    const auto corrected = rysum::samplePlaybackRate(request, rysum::SampleTuningMode::corrected);
 
-    if (!corrected.has_value()
-        || std::abs(*corrected - 220.0 / 221.0) > 1.0e-12)
+    if (!corrected.has_value() || std::abs(*corrected - 220.0 / 221.0) > 1.0e-12)
     {
         std::cerr << "Corrected pitch calculation failed\n";
         return 1;
@@ -37,8 +33,7 @@ int main()
     // Corrected playback requires a measured reference frequency.
     request.measuredReferenceHz.reset();
 
-    const auto missing = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::corrected);
+    const auto missing = rysum::samplePlaybackRate(request, rysum::SampleTuningMode::corrected);
 
     if (missing.has_value())
     {
@@ -49,11 +44,9 @@ int main()
     // Native playback still works without calibration.
     request.nativePitchRatio = 0.5;
 
-    const auto native16 = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::native);
+    const auto native16 = rysum::samplePlaybackRate(request, rysum::SampleTuningMode::native);
 
-    if (!native16.has_value()
-        || std::abs(*native16 - 0.5) > 1.0e-12)
+    if (!native16.has_value() || std::abs(*native16 - 0.5) > 1.0e-12)
     {
         std::cerr << "Native octave transposition failed\n";
         return 1;
@@ -64,11 +57,9 @@ int main()
     request.targetKeyboardHz = 440.0;
     request.targetRankRatio = 2.0;
 
-    const auto corrected4 = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::corrected);
+    const auto corrected4 = rysum::samplePlaybackRate(request, rysum::SampleTuningMode::corrected);
 
-    if (!corrected4.has_value()
-        || std::abs(*corrected4 - 1.0) > 1.0e-12)
+    if (!corrected4.has_value() || std::abs(*corrected4 - 1.0) > 1.0e-12)
     {
         std::cerr << "Corrected register ratio failed\n";
         return 1;
@@ -77,8 +68,7 @@ int main()
     // A zero output rate would cause division by zero.
     request.outputSampleRate = 0.0;
 
-    const auto zeroRate = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::native);
+    const auto zeroRate = rysum::samplePlaybackRate(request, rysum::SampleTuningMode::native);
 
     if (zeroRate.has_value())
     {
@@ -89,11 +79,10 @@ int main()
     request.outputSampleRate = 48000.0;
 
     // NaN means "not a number": present metadata can still be invalid.
-    request.measuredReferenceHz =
-        std::numeric_limits<double>::quiet_NaN();
+    request.measuredReferenceHz = std::numeric_limits<double>::quiet_NaN();
 
-    const auto invalidPitch = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::corrected);
+    const auto invalidPitch =
+        rysum::samplePlaybackRate(request, rysum::SampleTuningMode::corrected);
 
     if (invalidPitch.has_value())
     {
@@ -102,8 +91,8 @@ int main()
     }
 
     // Invalid calibration must not prevent native playback.
-    const auto nativeWithoutCalibration = rysum::samplePlaybackRate(
-        request, rysum::SampleTuningMode::native);
+    const auto nativeWithoutCalibration =
+        rysum::samplePlaybackRate(request, rysum::SampleTuningMode::native);
 
     if (!nativeWithoutCalibration.has_value())
     {

@@ -239,8 +239,11 @@ if(RYSUM_BUILD_TESTS)
 
     add_executable(RysumPitchTest tests/SamplePitchTest.cpp)
     target_include_directories(RysumPitchTest PRIVATE source)
-
     add_test(NAME sample_pitch COMMAND RysumPitchTest)
+
+    add_executable(RysumDsfTest tests/DsfIntegratorTest.cpp)
+    target_include_directories(RysumDsfTest PRIVATE source)
+    add_test(NAME dsf_integrator COMMAND RysumDsfTest)
 
     juce_add_console_app(RysumRenderTest PRODUCT_NAME "RysumRenderTest")
     target_sources(RysumRenderTest PRIVATE
