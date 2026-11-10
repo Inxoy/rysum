@@ -1177,7 +1177,7 @@ static void testRoomsAndSpread (std::shared_ptr<const SampleLibrary> lib)
         }
         for (int s2 = 0; s2 < kNumStops; ++s2) mask[(size_t) s2] = e.soundingMask[(size_t) s2].load();
     };
-    auto count = [] (const std::array<uint64_t, kNumStops>& m) { int c = 0; for (auto v : m) c += __builtin_popcountll (v); return c; };
+    auto count = [] (const std::array<uint64_t, kNumStops>& m) { int c = 0; for (auto v : m) for (uint64_t b = v; b != 0; b &= b - 1) ++c; return c; };
     std::array<uint64_t, kNumStops> m0 {}, m1 {}, m2 {}, m3 {};
     spread (0, { 48, 52, 55, 60 }, m0);
     spread (1, { 48, 52, 55, 60 }, m1);
@@ -3218,6 +3218,166 @@ int main (int argc, char** argv)
                               << " with own reflections), 3rd-order out: " << rt << " x real time" << std::endl;
                     if (stops == 3 && ord == 2) check (rt > 2.0, "room simulation runs in real time (18 pipes)");
                 }
+        }
+
+        // ---------------- the living organ: bellows, pallets, the walking listener, wear, sympathetic pipes, pure tuning, the Tonnetz walker ----------------
+        {
+            // notes held on the Praestant (or what 'setup' pulls); 'each' is called after every block
+            auto play = [&] (OrganEngine& e, std::function<void (EngineParams&)> setup, std::vector<int> midis, double secs, int outMode,
+                             int vel = 100, double offAt = -1.0, std::function<void (int)> each = {})
+            {
+                e.prepare (fsr, B); e.setLibrary (lib);
+                EngineParams p; p.stopOn = {}; p.stopOn[0] = true; p.clickLevel = 0; p.releaseClick = 0; p.wind = 0; p.stopPull = 0;
+                p.outputMode = outMode;
+                setup (p);
+                const int ch = outMode == 0 ? 2 : (outMode + 1) * (outMode + 1);
+                const int total = (int) (secs * fsr);
+                juce::AudioBuffer<float> keep (ch, total), b (ch, B);
+                keep.clear();
+                bool off = false;
+                for (int pos = 0; pos < total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0) for (int m : midis) mb.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) vel), 0);
+                    if (offAt >= 0.0 && ! off && pos >= (int) (offAt * fsr)) { off = true; for (int m : midis) mb.addEvent (juce::MidiMessage::noteOff (1, m), 0); }
+                    b.clear();
+                    e.process (b, mb, p);
+                    for (int c = 0; c < ch; ++c) keep.copyFrom (c, pos, b, c, 0, juce::jmin (B, total - pos));
+                    if (each) each (pos);
+                }
+                return keep;
+            };
+            auto rmsDb = [&] (const juce::AudioBuffer<float>& b, double t0, double t1)
+            {
+                double s = 0; int n = 0;
+                for (int i = (int) (t0 * fsr); i < juce::jmin (b.getNumSamples(), (int) (t1 * fsr)); ++i) { s += (double) b.getSample (0, i) * b.getSample (0, i); ++n; }
+                return 10.0 * std::log10 (juce::jmax (1.0e-30, s / juce::jmax (1, n)));
+            };
+            auto finiteB = [] (const juce::AudioBuffer<float>& b) { for (int c = 0; c < b.getNumChannels(); ++c) for (int i = 0; i < b.getNumSamples(); ++i) if (! std::isfinite (b.getSample (c, i))) return false; return true; };
+            auto allStops = [] (EngineParams& p) { for (int s = 0; s < 4; ++s) p.stopOn[(size_t) s] = true; };
+
+            // Balg, blower: one pipe hardly moves the pressure, a big chord on four stops pulls it down (quieter, flatter)
+            {
+                OrganEngine e1, e2, e0;
+                auto bel = [&] (EngineParams& p) { allStops (p); p.live.bellows = 1.0f; p.live.bellowsSize = 2.0f; };
+                play (e1, [] (EngineParams& p) { p.live.bellows = 1.0f; p.live.bellowsSize = 2.0f; }, { 72 }, 2.0, 0);
+                const auto starved = play (e2, bel, { 41, 48, 55, 60, 64, 67 }, 3.0, 0);
+                const auto full = play (e0, allStops, { 41, 48, 55, 60, 64, 67 }, 3.0, 0);
+                const double drop = rmsDb (starved, 2.0, 3.0) - rmsDb (full, 2.0, 3.0);
+                std::cout << "bellows (blower): pressure with one high pipe " << e1.bellowsNow.load() << ", with 24 pipes " << e2.bellowsNow.load()
+                          << ", level " << drop << " dB; without the bellows " << e0.bellowsNow.load() << std::endl;
+                check (e1.bellowsNow.load() > 0.85f && e2.bellowsNow.load() < 0.6f && e0.bellowsNow.load() == 1.0f, "bellows: big chords pull the shared wind down");
+                check (drop < -3.0 && finiteB (starved), "bellows: the starved organ is quieter");
+                writeWav (outDir.getChildFile ("80_balg_geblaese.wav"), starved, fsr);
+            }
+            // Balg, Kalkant: the bellows sinks while the chord sounds and is lifted again by the tread
+            {
+                OrganEngine e;
+                float lo = 2.0f, hiAfter = 0.0f; int firstTread = -1;
+                const auto b = play (e, [&] (EngineParams& p) { allStops (p); p.live.bellows = 1.0f; p.live.bellowsSize = 1.5f; p.live.blower = 1; p.live.treadRate = 20.0f; },
+                                     { 41, 48, 55, 60, 64, 67 }, 7.0, 0, 100, -1.0, [&] (int pos)
+                                     {
+                                         const float f = e.bellowsFillNow.load();
+                                         if (e.treadCount.load() == 0) lo = juce::jmin (lo, f);
+                                         else { if (firstTread < 0) firstTread = pos; hiAfter = juce::jmax (hiAfter, f); }
+                                     });
+                const double tTread = firstTread / fsr;
+                const double before = rmsDb (b, tTread - 0.4, tTread - 0.05), after = rmsDb (b, tTread + 0.5, tTread + 0.9);
+                std::cout << "bellows (Kalkant): fill down to " << lo << " before the first tread at " << tTread << " s, up to " << hiAfter
+                          << " after it; level before " << before << " dB, after " << after << " dB" << std::endl;
+                check (lo < 0.15f && hiAfter > 0.9f && firstTread > 0, "Kalkant: the bellows empties and is lifted by the tread");
+                check (after > before + 6.0 && finiteB (b), "Kalkant: the organ comes back with the tread");
+                writeWav (outDir.getChildFile ("81_balg_kalkant.wav"), b, fsr);
+            }
+            // Ventil: a slowly pressed key lets the wind in hesitantly, a fast one speaks at once; both arrive at the same tone
+            {
+                OrganEngine es, ef;
+                auto pal = [] (EngineParams& p) { p.live.pallet = 1.0f; };
+                const auto slow = play (es, pal, { 60 }, 3.5, 0, 8), fast = play (ef, pal, { 60 }, 3.5, 0, 127);
+                const double early = rmsDb (slow, 0.1, 0.4) - rmsDb (fast, 0.1, 0.4), late = rmsDb (slow, 2.8, 3.4) - rmsDb (fast, 2.8, 3.4);
+                std::cout << "pallet: slow key against fast key, level at 0.1-0.4 s " << early << " dB, at 2.8-3.4 s " << late << " dB" << std::endl;
+                check (early < -6.0 && std::abs (late) < 1.5 && finiteB (slow), "pallet: a slow key speaks hesitantly and arrives at the full tone");
+                writeWav (outDir.getChildFile ("82_ventil_langsam.wav"), slow, fsr);
+            }
+            // the listener walks to the right: the pipe is heard further to the left; walking in a circle changes the direction all the time
+            {
+                auto azOf = [&] (const juce::AudioBuffer<float>& b, double t0, double t1)
+                {
+                    double y = 0, x = 0;
+                    for (int i = (int) (t0 * fsr); i < (int) (t1 * fsr); ++i) { y += (double) b.getSample (0, i) * b.getSample (1, i); x += (double) b.getSample (0, i) * b.getSample (3, i); }
+                    return juce::radiansToDegrees (std::atan2 (y, x));
+                };
+                OrganEngine e0, e1, e2;
+                const auto here = play (e0, [] (EngineParams&) {}, { 69 }, 1.5, 1);
+                const auto right = play (e1, [] (EngineParams& p) { p.live.listenX = 6.0f; }, { 69 }, 1.5, 1);
+                const auto round = play (e2, [] (EngineParams& p) { p.live.walkShape = 1; p.live.walkSize = 5.0f; p.live.walkRate = 0.5f; }, { 69 }, 2.0, 1);
+                const double a0 = azOf (here, 0.5, 1.4), a1 = azOf (right, 0.8, 1.4), r0 = azOf (round, 0.4, 0.6), r1 = azOf (round, 1.4, 1.6);
+                std::cout << "listener: the pipe from " << a0 << " deg, after 6 m to the right from " << a1 << " deg; walking a circle: " << r0 << " -> " << r1 << " deg" << std::endl;
+                check (std::remainder (a1 - a0, 360.0) > 15.0 && std::abs (std::remainder (r1 - r0, 360.0)) > 20.0 && finiteB (round), "listener: walking changes where the pipes are heard");
+                check (std::abs (e1.listenerXNow.load() - 6.0f) < 0.05f, "listener: arrives where the slider says");
+            }
+            // Verschleiss: a pipe held for half its life is half worn, and sounds different; reset makes it new
+            {
+                OrganEngine e, en;
+                auto wearOn = [] (EngineParams& p) { p.live.wear = 1.0f; p.live.wearMinutes = 0.1f; };
+                play (e, wearOn, { 60 }, 3.0, 0);
+                const float w = e.wear[0][(size_t) keyIndexForMidi (60)].load(), other = e.wear[0][(size_t) keyIndexForMidi (62)].load();
+                // the same engine again (prepare keeps the wear): the worn pipe against a new one
+                const auto worn = play (e, wearOn, { 60 }, 2.0, 0);
+                const auto fresh = play (en, [] (EngineParams&) {}, { 60 }, 2.0, 0);
+                double d = 0, r = 0;
+                for (int i = (int) (0.5 * fsr); i < worn.getNumSamples(); ++i) { const double t = worn.getSample (0, i) - fresh.getSample (0, i); d += t * t; r += (double) fresh.getSample (0, i) * fresh.getSample (0, i); }
+                std::cout << "wear: after 3 s of a 6 s life " << w << " (a pipe not played: " << other << "); worn against new " << 10.0 * std::log10 (d / r) << " dB" << std::endl;
+                check (w > 0.45f && w < 0.55f && other == 0.0f, "wear: a pipe ages while it sounds");
+                check (10.0 * std::log10 (d / r) > -20.0 && finiteB (worn), "wear: the worn pipe sounds different");
+                e.wearReset = true;
+                play (e, [] (EngineParams&) {}, {}, 0.1, 0);
+                check (e.wear[0][(size_t) keyIndexForMidi (60)].load() == 0.0f, "wear: reset makes all pipes new");
+                writeWav (outDir.getChildFile ("83_verschleiss.wav"), worn, fsr);
+            }
+            // sympathetic pipes: silent pipes ring along (more with them than without), and stop some time after the note
+            {
+                OrganEngine e, e0;
+                int ringing = 0;
+                const auto with = play (e, [] (EngineParams& p) { p.live.sympLevel = 2.0f; p.live.sympDecay = 0.8f; }, { 60 }, 4.0, 1, 100, 1.5,
+                                        [&] (int pos) { if (pos < (int) (1.4 * fsr)) ringing = juce::jmax (ringing, e.sympNow.load()); });
+                const auto without = play (e0, [] (EngineParams&) {}, { 60 }, 4.0, 1, 100, 1.5);
+                double d = 0, r = 0;
+                for (int i = (int) (0.5 * fsr); i < (int) (1.4 * fsr); ++i) { const double t = with.getSample (0, i) - without.getSample (0, i); d += t * t; r += (double) without.getSample (0, i) * without.getSample (0, i); }
+                const double rel = 10.0 * std::log10 (juce::jmax (1.0e-30, d) / r);
+                std::cout << "sympathetic pipes: " << ringing << " ring along, " << rel << " dB against the pipe; still ringing at the end: " << e.sympNow.load() << std::endl;
+                check (ringing >= 3 && rel > -50.0 && rel < 0.0 && finiteB (with), "sympathetic pipes ring along");
+                check (e.sympNow.load() == 0, "sympathetic pipes fall silent after the note");
+                writeWav (outDir.getChildFile ("84_mitklingen.wav"), with, fsr);
+            }
+            // Reinheit: the meantone fifth c'-g' (beating at about 2.5 Hz) pulls itself pure; the wolf is tamed too
+            {
+                auto beatOf = [&] (std::vector<int> notes, float pure, float& cents)
+                {
+                    OrganEngine e;
+                    play (e, [&] (EngineParams& p) { p.motionMode[0] = (int) Motion::Beat; p.live.pure = pure; p.live.pureTime = 0.4f; }, notes, 3.0, 1);
+                    cents = e.pureNow.load();
+                    return e.beatMaxNow.load();
+                };
+                float c0, c1, cw;
+                const float b0 = beatOf ({ 60, 67 }, 0.0f, c0), b1 = beatOf ({ 60, 67 }, 1.0f, c1), w0 = beatOf ({ 56, 63 }, 0.0f, c0), w1 = beatOf ({ 56, 63 }, 1.0f, cw);
+                std::cout << "pure tuning: fifth c'-g' beats " << b0 << " -> " << b1 << " Hz (moved " << c1 << " ct), wolf " << w0 << " -> " << w1 << " Hz (moved " << cw << " ct)" << std::endl;
+                check (b0 > 1.5f && b1 < 0.3f && c1 > 1.0f && c1 < 5.0f, "pure tuning: the fifth stops beating");
+                check (w1 < 0.25f * w0 && cw > 10.0f, "pure tuning: the wolf is tamed");
+            }
+            // Tonnetz walker: one key held, the walker goes along the fifths and sounds other keys; all ends after the key is let go
+            {
+                OrganEngine e;
+                uint64_t seen = 0;
+                const auto b = play (e, [] (EngineParams& p) { p.live.netOn = true; p.live.netPath = 0; p.live.netRate = 8.0f; p.live.netGate = 0.6f; }, { 60 }, 4.0, 0, 100, 2.0,
+                                     [&] (int) { seen |= e.soundingMask[0].load(); });
+                int keys = 0; for (int k = 0; k < kNumKeys; ++k) keys += (seen >> k) & 1 ? 1 : 0;
+                const bool g = (seen >> keyIndexForMidi (67)) & 1, d = ((seen >> keyIndexForMidi (62)) & 1) || ((seen >> keyIndexForMidi (74)) & 1);
+                std::cout << "Tonnetz walker (fifths from c'): " << keys << " keys sounded, g' " << g << ", d " << d << "; voices left at the end " << e.activeVoices.load() << std::endl;
+                check (keys >= 8 && g && d && finiteB (b), "Tonnetz walker: walks along the fifths");
+                check (e.activeVoices.load() == 0, "Tonnetz walker: stops when the keys are let go");
+                writeWav (outDir.getChildFile ("85_tonnetz_wanderer.wav"), b, fsr);
+            }
         }
     }
 

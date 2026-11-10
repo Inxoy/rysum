@@ -557,6 +557,59 @@ follow the pipes. Everything is off in older patches.
   them and let it go slowly (*Belichtungszeit* = −60 dB, 0.2–60 s; *Helligkeit der Spuren*):
   moving pipes leave light trails, fast ones paint arcs and rings. Up to 3rd order.
 
+*Effekte · Lebendige Orgel* (third tab, everything off by default) – the organ as one physical
+thing instead of a set of independent samples:
+- **Balg** (bellows) – one finite wind supply for all stops. *Windverbrauch* 0 % = endless wind
+  (as before); above that every sounding pipe draws from the same supply, low pipes and many
+  stops the most. When wind is short, all pipes get flatter, quieter, duller and unsteady
+  together (with the wind model *instabil* also their edge tones). *Windquelle*:
+  - *Gebläse*: a blower feeds steadily; a big chord pulls the pressure down for as long as it
+    sounds, a single pipe hardly at all. *Größe des Balgs* = how slowly the pressure answers.
+  - *Kalkant tritt*: a bellows treader lifts the bellows every few seconds (*Tritte* per minute,
+    or *im Tempo*: every 8 … ¼ bars). In between it sinks as the pipes use the wind
+    (*Größe* = seconds a twelve-pipe chord lasts at 100 %). Play too much and the organ runs out
+    of breath until the next tread. *Trittgeräusch* = the thump at the console.
+  The two bars show the supply and the pressure. The modulation source *Balg (Winddruck)*
+  (0 = empty … 1 = full) lets the pressure drive anything else.
+- **Ventil** (pallet) – the pallet under the pipe no longer opens instantly. *Anschlag*: a slowly
+  pressed key (low velocity) lets the wind in hesitantly – the pipe speaks flat, breathy, with
+  its edge tone, and only then finds its tone (up to 1.6 s); a fast key speaks at once.
+  *Druck* / *Gleiten*: the finger holds the pallet itself (MPE pressure, aftertouch or CC 74) –
+  at 100 % no pressure means no tone. The slider sets how far the pallet can stay closed.
+- **Hörer** (listener) – you leave the usual listening place. *links / rechts* and
+  *zurück / vor* (metres, both can be automated and modulated) set where you stand; *Hörer
+  geht* walks around that place by itself (circle, left / right, forward / back, figure
+  eight; *Tempo*, *Weite*). Pipes you pass get louder, brighter and move past you, with
+  Doppler; in the Saal the early reflections are heard from where you are (the late reverb
+  stays that of the usual place, and the Saal page shows you walking). The little map shows
+  the pipes of the pulled stops and you (red). Clicks stay with you at the console. You keep
+  looking forward – turn the head with *Kopfdrehung* (Klang, binaural).
+- **Mitklingen** (sympathetic pipes) – silent pipes, also those of stops that are not pulled,
+  ring quietly when a partial of a sounding pipe meets their pitch (within 25 ct), each at its
+  own place: up to 16 at once. Pure intervals wake more pipes than impure ones, another tuning
+  wakes others. *Nachklang* = how long they ring on.
+- **Verschleiß** (wear) – every pipe remembers how long it has sounded. *Lebensdauer* = minutes
+  of sounding until a pipe is worn out; *Wie stark man ihn hört* = how much of that is audible.
+  Worn pipes go out of tune (most of them flat), waver, and crumble with the grain / bit depth /
+  sample rate / dropouts set under *Verfall* on the Spieltisch – so the keys a piece uses most
+  fall apart first. The map shows every pipe (one row per stop, red = worn). The wear is saved
+  with the project (not in patches: a patch does not make the instrument young again);
+  *Alle Pfeifen neu* resets it. It only accumulates while the slider is above 0.
+- **Reinheit** (adaptive pure tuning) – held notes pull each other towards pure intervals
+  (springs between every pair of notes, strongest for octaves, fifths and thirds; a weak one
+  holds the chord at its tempered pitch). New notes start in the chosen tuning and glide
+  (*Zeit bis rein*): the beats calm down and the chord locks in. Even the wolf fifth is tamed.
+  With the motion *Schwebung* the pipes stop turning as the chord becomes pure; the difference
+  tones settle too. The title shows the largest correction in cents.
+- **Tonnetz-Wanderer** – while you hold keys, a walker steps through the lattice of the tuning
+  (fifths to the right, major thirds up) and sounds every key it comes to, starting at the key
+  struck last. *Weg*: along the fifths (after eleven steps: the wolf), a chain of thirds
+  (major, minor, major …), random, random with homesickness, or a spiral around the first key.
+  *Schritt*: free (*Tempo*) or a note value of the project tempo. *Tonlänge* above 1 step lets
+  the notes overlap. With the arrangement *Tonnetz* (Raum page) the sound takes the same walk
+  through the room. Your own keys sound as usual. Not available with free tuning (Scala / MTS)
+  or MPE. Patches 148–159 show all of this.
+
 *Saal · Eis* (Saal page, below *Nachhall*): the walls turn to ice – in every early reflection
 the low frequencies travel slower than the high ones (an all-pass chain per Ambisonics channel of
 the reflections), so each reflection becomes a falling chirp from its own direction; the later
@@ -578,7 +631,8 @@ reflections (longer ways) chirp more. *Eis* blends from the plain reflections to
   the velocity its key was struck with; global targets follow the last note), *Tonhöhenrad*
   (pitch wheel −1 … +1; it bends nothing by itself – route it to *Pfeife: Tonhöhe*, e.g. 17 %
   = ±2 semitones, or anywhere else), *Schwebung* (per pipe: how fast it beats with the other
-  sounding pipes, see Effekte · Stimmung & Belichtung).
+  sounding pipes, see Effekte · Stimmung & Belichtung), *Balg (Winddruck)* (the pressure of the shared
+  bellows, 0 … 1, see Effekte · Lebendige Orgel).
 - *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 % (click the
   amount to type it), and **± / +**: ± = bipolar (an LFO swings around the slider value),
   + = unipolar (it only pushes one way, 0 … amount; envelopes and the mod wheel are 0 … 1 anyway).

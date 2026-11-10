@@ -817,6 +817,38 @@ public:
                 else std::cout << "Stimmung & Belichtung tab button not found  FAIL" << std::endl;
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
                 shoot (4, "ui_effekte_stimmung_belichtung.png");
+                {
+                    // third tab: the living organ - a Kalkant, a walking listener, some worn pipes
+                    setV ("lvBellows", 0.8f); setV ("lvBlower", 1.0f); setV ("lvWalkShape", 4.0f); setV ("lvWalkSize", 5.0f); setV ("lvWear", 1.0f);
+                    for (int k = 0; k < rysum::kNumKeys; ++k) proc->engine.wear[0][(size_t) k] = (float) ((k * 7) % 11) / 11.0f;
+                    {
+                        // the wear belongs to the project, not to a patch
+                        juce::MemoryBlock ws; proc->getStateInformation (ws);
+                        proc->engine.wear[0][5] = 0.0f;
+                        proc->setStateInformation (ws.getData(), (int) ws.getSize());
+                        std::cout << "wear in the project state: " << (std::abs (proc->engine.wear[0][5].load() - 2.0f / 11.0f) < 0.001f ? "ok" : "FAIL") << std::endl;
+                    }
+                    juce::AudioBuffer<float> lb (36, 512);
+                    for (int b2 = 0; b2 < 300; ++b2)
+                    {
+                        juce::MidiBuffer mb2;
+                        if (b2 == 0) for (int m : { 48, 55, 60, 64, 67 }) mb2.addEvent (juce::MidiMessage::noteOn (1, m, (juce::uint8) 90), 0);
+                        lb.clear(), proc->processBlock (lb, mb2);
+                    }
+                    if (auto* b = fb (content, "Lebendige Orgel")) b->triggerClick();
+                    else std::cout << "Lebendige Orgel tab button not found  FAIL" << std::endl;
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+                    shoot (4, "ui_effekte_lebendige_orgel.png");
+                    std::cout << "living organ in the plugin: bellows pressure " << proc->engine.bellowsNow.load() << ", listener at " << proc->engine.listenerXNow.load()
+                              << " / " << proc->engine.listenerYNow.load() << " m" << (proc->engine.bellowsNow.load() < 0.999f ? "  ok" : "  FAIL") << std::endl;
+                    juce::MidiBuffer offs;
+                    for (int m : { 48, 55, 60, 64, 67 }) offs.addEvent (juce::MidiMessage::noteOff (1, m), 0);
+                    lb.clear(), proc->processBlock (lb, offs);
+                    for (auto* id : { "lvBellows", "lvBlower", "lvWalkShape", "lvWalkSize", "lvWear" })
+                        if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());
+                    proc->resetWear();
+                    for (int b2 = 0; b2 < 60; ++b2) { juce::MidiBuffer none; lb.clear(), proc->processBlock (lb, none); }
+                }
                 if (auto* b = fb (content, juce::String::fromUTF8 ("Kl\xc3\xa4nge"))) b->triggerClick();
                 for (auto* id : { "fxGhostLevel", "fxDexMix", "fxExpoMix" })
                     if (auto* prm = proc->apvts.getParameter (id)) prm->setValueNotifyingHost (prm->getDefaultValue());

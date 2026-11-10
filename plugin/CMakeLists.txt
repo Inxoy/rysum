@@ -154,6 +154,7 @@ set(RYSUM_PLUGIN_SOURCES
     ${RYSUM_KERNEL_SOURCES}
     source/SampleLibrary.cpp
     source/OrganEngine.cpp
+    source/OrganLive.cpp
     source/Convolver.cpp
     source/Binaural.cpp
     source/RoomTail.cpp
@@ -241,6 +242,7 @@ if(RYSUM_BUILD_TESTS)
         ${RYSUM_KERNEL_SOURCES}
         source/SampleLibrary.cpp
         source/OrganEngine.cpp
+        source/OrganLive.cpp
         source/Convolver.cpp
         source/Binaural.cpp
         source/RoomTail.cpp
@@ -253,12 +255,16 @@ if(RYSUM_BUILD_TESTS)
     target_link_libraries(RysumRenderTest PRIVATE RysumData rysum_mysofa rysum_pffft
         juce::juce_audio_basics juce::juce_audio_formats juce::juce_core juce::juce_events juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+    if(MSVC)
+        # the tests keep many engines on the stack of main(): more than the 1 MB a Windows program gets by default
+        target_link_options(RysumRenderTest PRIVATE /STACK:268435456)
+    endif()
 
     juce_add_gui_app(RysumUiSnapshot PRODUCT_NAME "RysumUiSnapshot")
     target_sources(RysumUiSnapshot PRIVATE
         tests/UiSnapshot.cpp
         ${RYSUM_KERNEL_SOURCES}
-        source/SampleLibrary.cpp source/OrganEngine.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/ProcessorScenes.cpp source/PluginEditor.cpp
+        source/SampleLibrary.cpp source/OrganEngine.cpp source/OrganLive.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/ProcessorScenes.cpp source/PluginEditor.cpp
         source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0

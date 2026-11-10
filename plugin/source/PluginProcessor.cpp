@@ -466,6 +466,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { cloudParamId ("Size", s), 1 }, name + String::fromUTF8 ("Korngr\xc3\xb6\xc3\x9f" "e"), NormalisableRange<float> (10.0f, 500.0f, 0.1f, 0.5f), 80.0f, msA));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { cloudParamId ("Scatter", s), 1 }, name + "Zeitstreuung", NormalisableRange<float> (0.0f, 150.0f, 0.1f), 40.0f, msA));
     }
+    // ---- "Lebendige Orgel" (Effekte, third tab): everything off by default
+    {
+        auto lvSecs = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 1.0f ? String (roundToInt (v * 1000.0f)) + " ms" : String (v, v < 10.0f ? 2 : 1) + " s"; });
+        auto lvMetres = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0.005f ? "+" : "") + String (v, 2) + " m"; });
+        auto lvDbOff = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= -59.9f ? String ("aus") : (v > 0 ? "+" : "") + String (v, 1) + " dB"; });
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvBellows", 1 }, "Balg Windverbrauch", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvBellowsSize", 1 }, String::fromUTF8 ("Balg Gr\xc3\xb6\xc3\x9f" "e"), NormalisableRange<float> (0.3f, 30.0f, 0.01f, 0.4f), 4.0f, lvSecs));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lvBlower", 1 }, "Balg Windquelle",
+                                                       StringArray { String::fromUTF8 ("Gebl\xc3\xa4se (stetig)"), "Kalkant tritt (frei)", "Kalkant tritt im Tempo" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvTreadRate", 1 }, "Kalkant Tritte", NormalisableRange<float> (2.0f, 120.0f, 0.1f, 0.5f), 20.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " /min"; })));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lvTreadDiv", 1 }, "Kalkant Tritt alle",
+                                                       StringArray { "8 Takte", "4 Takte", "2 Takte", "1 Takt", "1/2", "1/4" }, 3));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvTreadNoise", 1 }, String::fromUTF8 ("Kalkant Trittger\xc3\xa4usch"), NormalisableRange<float> (0, 1), 0.3f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvPallet", 1 }, "Ventil", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lvPalletSrc", 1 }, String::fromUTF8 ("Ventil \xc3\xb6" "ffnet durch"),
+                                                       StringArray { String::fromUTF8 ("Anschlag (langsame Taste \xc3\xb6" "ffnet langsam)"), "Druck (MPE / Aftertouch)", "Gleiten (MPE, CC 74)" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvListenX", 1 }, String::fromUTF8 ("H\xc3\xb6rer rechts / links"), NormalisableRange<float> (-20.0f, 20.0f, 0.01f), 0.0f, lvMetres));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvListenY", 1 }, String::fromUTF8 ("H\xc3\xb6rer vor / zur\xc3\xbc" "ck"), NormalisableRange<float> (-20.0f, 20.0f, 0.01f), 0.0f, lvMetres));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lvWalkShape", 1 }, String::fromUTF8 ("H\xc3\xb6rer geht"),
+                                                       StringArray { "steht", "im Kreis", "hin und her (links / rechts)", String::fromUTF8 ("vor und zur\xc3\xbc" "ck"), "eine Acht" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvWalkRate", 1 }, String::fromUTF8 ("H\xc3\xb6rer Tempo"), NormalisableRange<float> (0.002f, 2.0f, 0.0001f, 0.35f), 0.05f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 0.1f ? String (1.0f / v, 1) + " s je Runde" : String (v, 2) + " Hz"; })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvWalkSize", 1 }, String::fromUTF8 ("H\xc3\xb6rer Weite"), NormalisableRange<float> (0.0f, 20.0f, 0.01f, 0.6f), 3.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " m"; })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvWear", 1 }, String::fromUTF8 ("Verschlei\xc3\x9f"), NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvWearTime", 1 }, String::fromUTF8 ("Verschlei\xc3\x9f Lebensdauer"), NormalisableRange<float> (0.1f, 240.0f, 0.01f, 0.35f), 5.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 1.0f ? String (roundToInt (v * 60.0f)) + " s" : String (v, 1) + " min"; })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvSympLevel", 1 }, "Mitklingende Pfeifen", NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), -60.0f, lvDbOff));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvSympDecay", 1 }, "Mitklingen Nachklang", NormalisableRange<float> (0.05f, 6.0f, 0.001f, 0.4f), 0.6f, lvSecs));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvPure", 1 }, "Reinheit", NormalisableRange<float> (0, 1), 0.0f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvPureTime", 1 }, "Reinheit Zeit", NormalisableRange<float> (0.03f, 20.0f, 0.001f, 0.35f), 1.5f, lvSecs));
+        l.add (std::make_unique<AudioParameterBool> (ParameterID { "lvNetOn", 1 }, "Tonnetz-Wanderer", false));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lvNetPath", 1 }, "Wanderer Weg",
+                                                       StringArray { "Quinten (bis zum Wolf)", String::fromUTF8 ("Terzkette (gro\xc3\x9f, klein, gro\xc3\x9f \xe2\x80\xa6)"), String::fromUTF8 ("zuf\xc3\xa4llig"),
+                                                                     String::fromUTF8 ("zuf\xc3\xa4llig mit Heimweh"), "Spirale" }, 0));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lvNetDiv", 1 }, "Wanderer Schritt",
+                                                       StringArray { "frei (Tempo-Regler)", "1/1", "1/2", "1/4", "1/8", "1/16", "1/8 T", "1/16 T" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvNetRate", 1 }, "Wanderer Tempo", NormalisableRange<float> (0.1f, 20.0f, 0.01f, 0.4f), 3.0f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 2) + " /s"; })));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvNetGate", 1 }, String::fromUTF8 ("Wanderer Tonl\xc3\xa4nge"), NormalisableRange<float> (0.05f, 8.0f, 0.01f, 0.5f), 0.9f,
+                                                      AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 2) + String::fromUTF8 (" Schritte"); })));
+    }
     return l;
 }
 
@@ -609,6 +652,7 @@ RysumProcessor::RysumProcessor()
         ix.airInvert = I ("airInvert"); ix.clickRes = I ("clickRes"); ix.clickResDecay = I ("clickResDecay"); ix.clickResBright = I ("clickResBright");
         { const char* g[] { "degStutter", "degSplice", "degZero", "degClip" }; for (int k = 0; k < 4; ++k) ix.glitch[(size_t) k] = I (g[k]); }
         for (int k = 0; k < (int) ix.space2.size(); ++k) ix.space2[(size_t) k] = I (kSpace2Ids[k]);
+        for (int k = 0; k < kNumLive; ++k) ix.live[(size_t) k] = I (kLiveIds[k]);
         for (int st = 0; st < kNumStops; ++st)
             for (int k = 0; k < 5; ++k) ix.cloud[(size_t) st][(size_t) k] = I (cloudParamId (kCloudKeys[k], st));
     }
@@ -761,6 +805,18 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         p.ice = S2 (4); p.iceLen = S2 (5);
         p.dex.mix = S2 (6); p.dex.time = S2 (7); p.dex.turn = S2 (8); p.dex.mirror = juce::roundToInt (S2 (9)); p.dex.fade = S2 (10); p.dex.again = S2 (11);
         p.expo.mix = S2 (12); p.expo.time = S2 (13); p.expo.bright = S2 (14);
+        auto Lv = [&] (int k) { return V (ix.live[(size_t) k]); };
+        auto& lv = p.live;
+        lv.bellows = Lv (lvBellows); lv.bellowsSize = Lv (lvBellowsSize); lv.blower = juce::roundToInt (Lv (lvBlower));
+        lv.treadRate = Lv (lvTreadRate); lv.treadDiv = juce::roundToInt (Lv (lvTreadDiv)); lv.treadNoise = Lv (lvTreadNoise);
+        lv.pallet = Lv (lvPallet); lv.palletSrc = juce::roundToInt (Lv (lvPalletSrc));
+        lv.listenX = Lv (lvListenX); lv.listenY = Lv (lvListenY); lv.walkShape = juce::roundToInt (Lv (lvWalkShape));
+        lv.walkRate = Lv (lvWalkRate); lv.walkSize = Lv (lvWalkSize);
+        lv.wear = Lv (lvWear); lv.wearMinutes = Lv (lvWearTime);
+        lv.sympLevel = Lv (lvSympLevel) <= -59.9f ? 0.0f : dbToGain (Lv (lvSympLevel)); lv.sympDecay = Lv (lvSympDecay);
+        lv.pure = Lv (lvPure); lv.pureTime = Lv (lvPureTime);
+        lv.netOn = Lv (lvNetOn) > 0.5f; lv.netPath = juce::roundToInt (Lv (lvNetPath)); lv.netDiv = juce::roundToInt (Lv (lvNetDiv));
+        lv.netRate = Lv (lvNetRate); lv.netGate = Lv (lvNetGate);
     }
     p.windModel = juce::roundToInt (V (ix.windModel));
 
@@ -1995,6 +2051,14 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
         st.setProperty ("mute", mu.joinIntoString (","), nullptr);
         st.setProperty ("dist", di.joinIntoString (","), nullptr);
         st.setProperty ("distance", L.distance, nullptr);
+        if (! forPatch)
+        {
+            // Verschleiss: how worn every pipe is belongs to the project (a patch leaves the instrument's age alone)
+            juce::StringArray we;
+            bool any = false;
+            for (int k = 0; k < kNumKeys; ++k) { const float w = engine.wear[(size_t) s][(size_t) k].load(); any = any || w > 0.0f; we.add (juce::String (w, 4)); }
+            if (any) st.setProperty ("wear", we.joinIntoString (","), nullptr);
+        }
         const auto& dp = drawnPaths[(size_t) s];
         if (! dp.points.empty())
         {
@@ -2165,6 +2229,12 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
                 if (k < az.size()) engine.baseAz[(size_t) s][(size_t) k] = az[k].getFloatValue();
                 if (k < el.size()) engine.baseEl[(size_t) s][(size_t) k] = el[k].getFloatValue();
                 if (k < mu.size()) engine.muted[(size_t) s][(size_t) k] = mu[k] == "1";
+            }
+            if (! forPatch)
+            {
+                juce::StringArray we;
+                we.addTokens (st["wear"].toString(), ",", {});
+                for (int k = 0; k < kNumKeys; ++k) engine.wear[(size_t) s][(size_t) k] = k < we.size() ? juce::jlimit (0.0f, 1.0f, we[k].getFloatValue()) : 0.0f;
             }
             if (! hasPositions) applyLayout (s);
         }
@@ -2548,7 +2618,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 15;
+    constexpr int kFactoryVersion = 16;
     const auto marker = folder.getChildFile (".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion) return;
@@ -3399,6 +3469,57 @@ void RysumProcessor::writeFactoryPatches()
                 { "master", -20.0f } },
               { { srcModWheel, "fxGhostLevel", 0.85f }, { srcModWheel, "fxDexMix", 0.6f }, { srcModWheel, "fxExpoMix", 0.7f }, { srcModWheel, "simIce", 0.8f },
                 { srcBeat, pipe (tgtCloudMix), 0.5f }, { srcPitchWheel, pipe (tgtPitch), bend2 }, { srcVelocity, pipe (tgtAttack), 0.6f } });
+    }
+
+    // ---- set 16: the living organ (Effekte, third tab) - shared wind, pallets, the walking listener, wear, sympathetic
+    //      pipes, pure tuning, the Tonnetz walker
+    currentSet = 16;
+    {
+        const int beat = (int) Motion::Beat, tonnetz = (int) Layout::Tonnetz;
+        // a Kalkant treads every four seconds: hold a big chord and the wind runs out before he comes back
+        make (u8 ("148 Kalkant \xe2\x80\x93 Der Atem geht aus"),
+              { { "stop7", 1 }, { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "lvBellows", 0.8f }, { "lvBellowsSize", 3.0f }, { "lvBlower", 1 },
+                { "lvTreadRate", 15.0f }, { "lvTreadNoise", 0.5f }, { "windModel", 1 }, { "wind", 0.1f } }, {});
+        // a blower that is too small for the plenum: every pipe more makes all of them flatter; the starving organ crackles
+        make (u8 ("149 Gebl\xc3\xa4se \xe2\x80\x93 Schwere Akkorde"),
+              { { "stop7", 1 }, { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "stop5", 1 }, { "lvBellows", 0.6f }, { "lvBellowsSize", 2.5f },
+                { "fxCrackLevel", 0.5f }, { "fxCrackRate", 14.0f } },
+              { { srcBellows, "fxCrackLevel", -0.5f } });
+        // play softly: the pipes speak late, breathy, with their edge tone; play hard: at once
+        make (u8 ("150 Z\xc3\xb6gernde Tasten"),
+              { { "stop0", 1 }, { "stop1", 1 }, { "lvPallet", 0.9f }, { "lvPalletSrc", 0 } },
+              { { srcVelocity, pipe (tgtAttack), 0.5f } });
+        // for MPE keyboards / aftertouch: the finger holds the pallet - no pressure, no tone
+        make (u8 ("151 Ventil unter dem Finger (Druck)"),
+              { { "stop0", 1 }, { "stop6", 1 }, { "lvPallet", 1.0f }, { "lvPalletSrc", 1 }, { "windModel", 1 } }, {});
+        // the listener walks a figure eight through the pipes: they pass close by, with Doppler
+        make (u8 ("152 Gang durch die Orgel"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "stop3", 1 }, { "lvWalkShape", 4 }, { "lvWalkSize", 7.0f }, { "lvWalkRate", 0.03f }, { "doppler", 1.5f },
+                { "simOn", 1 }, { "simW", 18.0f }, { "simL", 30.0f }, { "simH", 12.0f }, { "master", -18.0f } }, {});
+        make (u8 ("153 Im Kreis um die Pfeifen"),
+              { { "stop1", 1 }, { "stop2", 1 }, { "lvWalkShape", 1 }, { "lvWalkSize", 9.0f }, { "lvWalkRate", 0.06f }, { "doppler", 1.0f } }, {});
+        // three minutes of sounding and a pipe is gone: the keys you use most crumble first (the wear stays with the project)
+        make (u8 ("154 Das St\xc3\xbc" "ck nutzt die Orgel ab"),
+              { { "stop0", 1 }, { "stop1", 1 }, { "lvWear", 1.0f }, { "lvWearTime", 3.0f }, { "degGrain", 0.6f }, { "degBits", 7.0f }, { "degRate", 9000.0f },
+                { "degDropouts", 0.25f } }, {});
+        // only the Gedackt is pulled - the pipes of the other stops answer from their places
+        make (u8 ("155 Mitklingende Pfeifen"),
+              { { "stop1", 1 }, { "lvSympLevel", 0.0f }, { "lvSympDecay", 1.5f } }, {});
+        // hold a chord: it beats, the pipes turn - then it pulls itself pure and the room comes to rest
+        make (u8 ("156 Reinheit \xe2\x80\x93 Der Akkord rastet ein"),
+              { { "stop0", 1 }, { "stop2", 1 }, { "lvPure", 1.0f }, { "lvPureTime", 3.0f }, { "motion0", beat }, { "rate0", 0.08f }, { "motion2", beat }, { "rate2", -0.06f } }, {});
+        // hold one key: a walker goes along the fifths of the Tonnetz - through the room - until he meets the wolf
+        makeFull (u8 ("157 Tonnetz-Wanderer \xe2\x80\x93 Quintenweg"),
+                  { { "stop1", 1 }, { "stop3", 1 }, { "lvNetOn", 1 }, { "lvNetPath", 0 }, { "lvNetRate", 4.0f }, { "lvNetGate", 1.5f } }, {}, {}, false,
+                  { { 1, tonnetz }, { 3, tonnetz } });
+        makeFull (u8 ("158 Tonnetz-Wanderer \xe2\x80\x93 Heimweh"),
+                  { { "stop0", 1 }, { "lvNetOn", 1 }, { "lvNetPath", 3 }, { "lvNetRate", 5.0f }, { "lvNetGate", 2.5f }, { "lvSympLevel", -3.0f }, { "lvPure", 0.6f } }, {}, {}, false,
+                  { { 0, tonnetz } });
+        // all of it, gently: a treading Kalkant, hesitant keys, an ageing organ that rings along and tunes itself, heard while walking
+        make (u8 ("159 Lebendige Orgel"),
+              { { "stop0", 1 }, { "stop1", 1 }, { "stop2", 1 }, { "lvBellows", 0.5f }, { "lvBellowsSize", 5.0f }, { "lvBlower", 1 }, { "lvTreadRate", 10.0f },
+                { "lvPallet", 0.5f }, { "lvWear", 0.6f }, { "lvWearTime", 10.0f }, { "lvSympLevel", -6.0f }, { "lvPure", 0.7f },
+                { "lvWalkShape", 4 }, { "lvWalkSize", 4.0f }, { "lvWalkRate", 0.02f }, { "windModel", 1 } }, {});
     }
 
     marker.replaceWithText (juce::String (kFactoryVersion));

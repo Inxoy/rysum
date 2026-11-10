@@ -92,6 +92,7 @@ OrganEngine::OrganEngine()
             baseDist[(size_t) s][(size_t) k] = pos[(size_t) k].dist;
             muted[(size_t) s][(size_t) k] = false;
             beatTurn[(size_t) s][(size_t) k] = 0.0f;
+            wear[(size_t) s][(size_t) k] = 0.0f;
         }
     }
     uint32_t seed = 1;
@@ -164,6 +165,12 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     lucWet.assign (lucIn.size(), 0.0f);
     lucRunning = false; lucRing = 0; lucDry = 1.0f; lucWetGain = 0.0f;
     zeroIn.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
+    // living organ
+    sympBus.assign ((size_t) juce::jmax (maxBlock, kSubBlock) + 16, 0.0f);
+    for (auto& s : symps) s = Symp {};
+    for (auto& nn : netNotes) nn = NetNote {};
+    netRunning = false; netKeyNow = -1;
+    bellowsP = bellowsV = 1.0f; bellowsRising = false; treadEnv = 0.0f;
     {
         // FDN mixing matrix: a fixed random orthogonal matrix (Gram-Schmidt) instead of a Hadamard matrix (that one
         // left isolated modes around 1.5-2 kHz). Together with a slow, small modulation of every delay (different
@@ -406,6 +413,7 @@ void OrganEngine::hardJumpGains (const Voice& v, const EngineParams& p, double p
     pos.az = wrapAz (pos.az + v.pmAz);
     pos.el = juce::jlimit (-90.0f, 90.0f, pos.el + v.pmEl);
     pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * v.pmDist);
+    pos = heardFrom (pos);
     const float k = v.gainLin * distanceGain (pos.dist, p.distAmount) * v.cloudDry;
     gainsFor (pos, g);
     for (int c = 0; c < kMaxAmbiChannels; ++c) g[c] *= k;
@@ -507,6 +515,27 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
         const float dm = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
         pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * dm);
     }
+    pos = heardFrom (pos);                  // the listener walks: the pipe as heard from there
+    {
+        // Ventil: how far this pipe's pallet is open (a slow key opens it slowly; or the finger's pressure / slide)
+        const auto& lv = p.live;
+        if (lv.pallet <= 0.0001f) v.palOpen = v.palWind = 1.0f;
+        else if (lv.palletSrc == 0)
+        {
+            const float slow = (1.0f - v.velMod) * (1.0f - v.velMod);
+            const float T = 1.6f * lv.pallet * slow;
+            if (v.fresh) v.palOpen = T > 0.002f ? juce::jmax (0.1f, 1.0f - lv.pallet * (0.3f + 0.7f * slow)) : 1.0f;
+            else if (v.palOpen < 1.0f) v.palOpen = T > 0.002f ? juce::jmin (1.0f, v.palOpen + (float) blockSeconds / T) : 1.0f;
+            v.palWind = v.palOpen;
+        }
+        else
+        {
+            const float t = lv.palletSrc == 1 ? voicePressure (v) : voiceSlide (v);
+            if (v.fresh) v.palOpen = t;
+            else v.palOpen += (1.0f - std::exp (-(float) blockSeconds / 0.012f)) * (t - v.palOpen);
+            v.palWind = 1.0f - lv.pallet * (1.0f - v.palOpen);
+        }
+    }
     modAz[(size_t) v.stop][(size_t) v.key] = 180.0f * pm[tgtAz];
     modEl[(size_t) v.stop][(size_t) v.key] = 90.0f * pm[tgtEl];
     modDistMul[(size_t) v.stop][(size_t) v.key] = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
@@ -520,7 +549,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
             ratio = meantoneHz (pp.midi) / meantoneHz (kPhysKeys[(size_t) juce::jlimit (0, kNumKeys - 1, pp.substituteFrom)]);
         const double rec = (pp.measuredHz > 0.0 ? pp.measuredHz : pp.nominalHz) * ratio, ideal = (pp.nominalHz > 0.0 ? pp.nominalHz : pp.measuredHz) * ratio;
         const float cents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t) v.key]) + p.pitchCents + p.detune * v.detuneRnd
-                          + v.modCents1 + (mpeNow ? v.bendSm : 0.0f);
+                          + v.modCents1 + (mpeNow ? v.bendSm : 0.0f) + v.pureC;
         v.hzNow = (float) ((p.beatIdeal ? ideal : rec) * std::exp2 (cents / 1200.0) * (double) v.dop);
     }
     v.pmx = pm;
@@ -734,6 +763,10 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->bendSm = voiceBendTarget (*v);
     v->velMod = keyVelocity[(size_t) key];       // (a stop pulled later takes the velocity the key was struck with)
     v->modCents0 = v->modCents1 = 0.0f;
+    v->palOpen = v->palWind = 1.0f;
+    v->wearNow = wear[(size_t) stop][(size_t) key].load();
+    v->wearSign = hash01 ((uint32_t) (stop * 613 + key * 89 + 11)) < 0.6f ? -1.0f : 1.0f;      // most worn pipes go flat
+    v->pureT = v->pureC = 0.0f;
     v->crkAmp = 0.0f; v->crkEnv = 1.0f; v->crkCount = 1 + (int) (rng.uni() * 0.2f * (float) sr);
     v->partLp = 0.0f;
     v->partSide = (hash01 ((uint32_t) (stop * 977 + key * 31 + 5)) < 0.5f ? -1.0f : 1.0f) * (0.6f + 0.4f * hash01 ((uint32_t) (stop * 13 + key * 101 + 9)));
@@ -901,6 +934,7 @@ void OrganEngine::keyDown (int key, float velocity, const EngineParams& p, int n
     lastRandom = rng.bi();
     lastVelocity = juce::jlimit (0.0f, 1.0f, velocity);
     keyVelocity[(size_t) key] = lastVelocity;
+    lastDownKey = key;
 
     // click: blend between the console position and the average position of the pipes
     std::array<float, kMaxAmbiChannels> console {}, pipes {}, tmp {};
@@ -1112,7 +1146,10 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         const int loopLen = pipe.loopEnd - pipe.loopStart;
         float* buf = scratch.data();
         bool finished = false;
-        const float windTarget = juce::jlimit (0.0f, 1.0f, p.stopWind[(size_t) v.stop] + v.pmWind);
+        // (the shared bellows and this pipe's pallet let only part of the stop's wind through)
+        const float windTarget = juce::jlimit (0.0f, 1.0f, p.stopWind[(size_t) v.stop] + v.pmWind) * juce::jmin (1.0f, bellowsP) * v.palWind;
+        // Verschleiss: a worn pipe crumbles, wavers and goes out of tune
+        const float wr = p.live.wear > 0.0001f ? juce::jlimit (0.0f, 1.0f, v.wearNow * p.live.wear) : 0.0f;
         // Verfall and Windschwankung of this pipe (the global settings, plus its own modulation)
         DegradeParams degV = p.deg;
         degV.amount = juce::jlimit (0.0f, 1.0f, p.deg.amount + v.pmDeg);
@@ -1125,13 +1162,15 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             degV.dropouts = juce::jlimit (0.0f, 1.0f, p.deg.dropouts + v.pmx[tgtDegDrops]);
             degV.prepareBlock (sr);
         }
-        const bool perPipeDeg = p.deg.perPipe && degV.amount > 0.0001f;
-        const float wobAmt = degV.amount * degV.wobble;
+        const float wobAmt = juce::jlimit (0.0f, 1.0f, degV.amount * degV.wobble + 0.45f * wr * wr);
+        if (wr > 0.0f) degV.amount = juce::jlimit (0.0f, 1.0f, (p.deg.perPipe ? degV.amount : 0.0f) + wr);
+        const bool perPipeDeg = (p.deg.perPipe || wr > 0.0f) && degV.amount > 0.0001f;
         // "Windschwankung" gets disproportionately wilder towards 100 %
         const float wobCents = 30.0f * wobAmt + 320.0f * wobAmt * wobAmt * wobAmt * wobAmt;
         const float wobLevel = 0.3f * wobAmt + 0.6f * wobAmt * wobAmt * wobAmt * wobAmt;
         const float wobSpeed = 1.0f + 5.0f * wobAmt * wobAmt * wobAmt;
-        const float tuneCents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t) v.key]) + p.pitchCents + p.detune * v.detuneRnd;
+        const float tuneCents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t) v.key]) + p.pitchCents + p.detune * v.detuneRnd
+                              + v.pureC + 38.0f * wr * wr * v.wearSign * (0.4f + 0.6f * std::abs (v.detuneRnd));
 
         double rate = v.baseRate;
         float amp = 1.0f;
@@ -1145,7 +1184,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
         const float crkDecay = std::exp (-1.0f / juce::jmax (1.0f, p.fx.crackLen * 0.001f * (float) sr));
         const float crkMean = (float) sr / juce::jmax (0.05f, p.fx.crackRate);
         const float crkGain = 0.25f * crkLevel * v.crkEnv;
-        const bool chaosModel = p.windModel == 1;
+        const bool chaosModel = p.windModel == 1 || p.live.pallet > 0.0001f;      // (a half-open pallet: the edge tone belongs to it)
         // ---- the sound of this pipe: Ansprache, Abriss, upper partials; glitches
         const PipeSoundParams ps = pipeSndFor (p.pipeSnd[(size_t) v.stop], v);
         const bool attOn = ps.attOn();
@@ -1489,6 +1528,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             }
         }
         if (v.cloudRing >= 0 || cloudFor (p.cloud[(size_t) v.stop], v).on()) cloudWrite (v, buf, nullptr, n, p);
+        if (sympBusOn) juce::FloatVectorOperations::addWithMultiply (sympBus.data() + start, buf, v.gainLin, n);   // what the silent pipes hear
         {
             // room sends: plain sum + circular harmonics of the pipe direction (start / end of the slice)
             const double a0 = juce::degreesToRadians ((double) v.sendAz0), a1 = juce::degreesToRadians ((double) v.sendAz1);
@@ -2084,6 +2124,13 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
         finishPlan (rr, getDrawnPlan (ri));            // (the shape amount may be modulated: the plan of this block)
         auto& h = heard[(size_t) ri];
         h.W = rr.W(); h.L = rr.L(); h.H = rr.H(); h.Lx = rr.listenerX; h.Ly = rr.listenerY;
+        // the reflections are heard from where the listener has walked to (the late reverb stays that of the usual place)
+        roomsEr[(size_t) ri] = rr;
+        if (liveWalk)
+        {
+            roomsEr[(size_t) ri].listenerX = juce::jlimit (0.02f, 0.98f, rr.listenerX + walkX / rr.W());
+            roomsEr[(size_t) ri].listenerY = juce::jlimit (0.02f, 0.98f, rr.listenerY + walkY / rr.L());
+        }
         h.absW = rr.absWalls; h.absF = rr.absFloor; h.highD = rr.highDamp; h.scat = rr.scatter;
         h.shape = rr.shape; h.shapeAmt = rr.shapeAmt;
     }
@@ -2129,19 +2176,19 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
         if (s.voice >= 0)
         {
             const auto& v = voices[(size_t) s.voice];
-            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p, roomsNow[(size_t) juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop])]);
+            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p, roomsEr[(size_t) juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop])]);
             else { s.voice = -1; s.drain = kErRing; }
         }
         else if (s.noiseVoice >= 0)
         {
             const auto& nv = noise[(size_t) s.noiseVoice];
-            if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p, roomsNow[0]);
+            if (nv.active && nv.erSlot == (int) si) updateSlotTaps (s, nv.where, 1.0f, p, roomsEr[0]);
             else { s.noiseVoice = -1; s.drain = kErRing; }
         }
         else if (s.input >= 0)
         {
             const auto& is = inSrc[(size_t) s.input];
-            if (inRunning && is.erSlot == (int) si) updateSlotTaps (s, is.pos, 1.0f, p, roomsNow[(size_t) juce::jlimit (0, kNumRooms - 1, p.inputRoom)]);
+            if (inRunning && is.erSlot == (int) si) updateSlotTaps (s, is.pos, 1.0f, p, roomsEr[(size_t) juce::jlimit (0, kNumRooms - 1, p.inputRoom)]);
             else { s.input = -1; s.drain = kErRing; }
         }
         else if ((s.drain -= n) <= 0) { s.active = false; continue; }
@@ -2579,6 +2626,7 @@ void OrganEngine::advanceModulation (const EngineParams& p, double dt) noexcept
     globalSrc[srcSlide] = lastSlide;
     globalSrc[srcInput] = inFollowVal;
     globalSrc[srcBeat] = juce::jlimit (0.0f, 1.0f, std::log2 (1.0f + beatMaxNow.load()) / 5.044f);
+    globalSrc[srcBellows] = juce::jlimit (0.0f, 1.0f, bellowsP);
     for (int i = 0; i < kNumSources; ++i) sourceOut[(size_t) i] = globalSrc[(size_t) i];
 }
 
@@ -2614,7 +2662,7 @@ Pos OrganEngine::displayPosition (int stop, int key, const EngineParams& p) cons
             else if (r.src >= srcEnv1 && r.src < srcEnv1 + kNumEnvs)
                 v = p.mod.env[(size_t) (r.src - srcEnv1)].perPipe ? 0.0f : sourceOut[(size_t) r.src].load();
             else if (r.src == srcKey)      v = (float) key / (float) (kNumKeys - 1) * 2.0f - 1.0f;
-            else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity || r.src == srcPressure || r.src == srcSlide || r.src == srcInput)
+            else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity || r.src == srcPressure || r.src == srcSlide || r.src == srcInput || r.src == srcBellows)
                 v = sourceOut[(size_t) r.src].load();
             pm[(size_t) r.target] += r.amount * shapeSource (r.src, v, r.uni);
             any = true;
@@ -2667,6 +2715,7 @@ float OrganEngine::voiceSource (const Voice& v, int src, const EngineParams& p) 
         case srcSlide:    return voiceSlide (v);
         case srcInput:    return inFollowVal;
         case srcBeat:     return v.beatNorm;
+        case srcBellows:  return juce::jlimit (0.0f, 1.0f, bellowsP);
         default:          return 0.0f;
     }
 }
@@ -3266,6 +3315,9 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     updateGrid (p.space.grid);
     pipeSndNow = p.pipeSnd;
     glitchNow = p.glitch;
+    // ---- the living organ: bellows, the walking listener, wear, pure tuning, sympathetic pipes; the Tonnetz walker
+    updateLive (p, blockSeconds);
+    stepWalker (p, numSamples);
     // ---- spatial data for this block (end-of-block targets, ramped from the previous ones)
     for (auto& v : voices)
     {
@@ -3300,6 +3352,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     }
     initFresh();                // voices started by stop changes / previews before any MIDI
     renderRange (out, pos, numSamples, numSamples, p);
+    renderLive (out.getArrayOfWritePointers(), numSamples, p);
     renderLeaks (out, numSamples, p);
     renderInput (out, numSamples, p);       // the audio input: placed like a pipe, then everything below (wear, echoes, room, Lucier)
 

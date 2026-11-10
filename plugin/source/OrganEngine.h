@@ -90,6 +90,39 @@ struct NoteTable
     std::array<uint8_t, kSize> mapped {};            // 0 = this note does not sound (unmapped in the .kbm / by the master)
 };
 
+/** "Lebendige Orgel": the organ as one physical thing - a wind supply shared by all pipes, pallets that open as the key
+    is played, a listener who walks, pipes that wear out, silent pipes that ring along, a tuning that pulls itself pure,
+    and a walker in the Tonnetz. Everything off by default. */
+struct LiveParams
+{
+    // Balg: one finite wind supply for all stops
+    float bellows = 0.0f;              // 0 = endless wind (as before) .. 1 = big chords drain it quickly
+    float bellowsSize = 4.0f;          // s: how long the bellows lasts / how slowly the blower answers
+    int   blower = 0;                  // 0 = blower (steady feed), 1 = Kalkant (treads, free), 2 = Kalkant in tempo
+    float treadRate = 20.0f;           // treads per minute (Kalkant, free)
+    int   treadDiv = 3;                // Kalkant in tempo: a tread every 8 / 4 / 2 / 1 bars, 1/2, 1/4
+    float treadNoise = 0.3f;           // the thump of the tread at the console
+    // Ventil: how far the pallet opens
+    float pallet = 0.0f;               // 0 = always fully open
+    int   palletSrc = 0;               // 0 = velocity (a slow key opens slowly), 1 = pressure, 2 = slide (CC 74)
+    // the listener walks (metres from the usual place; x = to the right, y = forward)
+    float listenX = 0.0f, listenY = 0.0f;
+    int   walkShape = 0;               // 0 = stands, 1 = circle, 2 = left / right, 3 = forward / back, 4 = figure eight
+    float walkRate = 0.05f, walkSize = 3.0f;      // rounds per second, metres
+    // Verschleiss: pipes wear out by being played (the engine keeps the wear per pipe)
+    float wear = 0.0f;                 // how strongly the wear is heard
+    float wearMinutes = 5.0f;          // minutes of sounding until a pipe is fully worn
+    // sympathetic pipes: silent pipes ring when a partial of a sounding one meets their pitch
+    float sympLevel = 0.0f, sympDecay = 0.6f;     // linear, s
+    // Reinheit: held chords pull themselves towards pure intervals
+    float pure = 0.0f, pureTime = 1.5f;           // 0..1, s
+    // Tonnetz-Wanderer: while keys are held, a walker steps through the lattice of fifths and thirds and plays what it passes
+    bool  netOn = false;
+    int   netPath = 0;                 // 0 fifths, 1 chain of thirds, 2 random, 3 random that comes home, 4 spiral
+    int   netDiv = 0;                  // 0 = free (netRate), else a note value
+    float netRate = 3.0f, netGate = 0.9f;         // steps per second, note length in steps
+};
+
 struct EngineParams
 {
     std::array<bool, kNumStops> stopOn {};
@@ -171,6 +204,7 @@ struct EngineParams
     ModParams mod;
 
     FxParams fx;
+    LiveParams live;
 
     InputParams input;
 
@@ -260,6 +294,15 @@ public:
     std::atomic<uint32_t> lucierSerialInUse { 0xffffffffu };
     std::atomic<float> lucierLevel { 0.0f };          // wet peak, for the display
     std::array<std::atomic<uint64_t>, kNumStops> soundingMask {};   // bit k = pipe k of that stop sounds
+
+    // ---- "Lebendige Orgel", for the display and the project state
+    std::atomic<float> bellowsNow { 1.0f }, bellowsFillNow { 1.0f };      // wind pressure, how full the bellows is (0..1)
+    std::atomic<int>   treadCount { 0 };                                  // counts the Kalkant's treads
+    std::atomic<float> listenerXNow { 0.0f }, listenerYNow { 0.0f };      // where the listener is right now (m)
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> wear; // 0 = new .. 1 = worn out (saved with the project)
+    std::atomic<bool>  wearReset { false };                               // UI: all pipes new again
+    std::atomic<int>   sympNow { 0 }, netKeyNow { -1 };                   // pipes ringing along; the key the walker sounds
+    std::atomic<float> pureNow { 0.0f };                                  // largest correction right now (cents)
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
     /** "Raumverfall" on the Ambisonics channels. The processor calls it itself after the impulse response
@@ -364,6 +407,9 @@ private:
         Pos spPos;
         float spK = 0.0f, cloudDry = 1.0f;
         float noteCents = 0.0f;          // free tuning: shift from the pipe's own pitch
+        // living organ: the pallet (how far open, the wind it lets through), the wear of this pipe, the pull towards
+        // pure intervals (cents: target and now)
+        float palOpen = 1.0f, palWind = 1.0f, wearNow = 0.0f, wearSign = 1.0f, pureT = 0.0f, pureC = 0.0f;
         float modCents0 = 0.0f, modCents1 = 0.0f;
         // Ansprache: the attack (gain, sharpness, isolation) and the repeated chiff (a second reader)
         float attLp = 0.0f;
@@ -609,6 +655,7 @@ private:
     uint32_t ageCounter = 0;
     XorShift rng { 4711 };
     int lastDown = -1, lastUp = -1, lastPull = -1;
+    int lastDownKey = -1;               // the key struck last (the Tonnetz walker starts there)
     std::vector<float> scratch, scratchRamp;
     std::array<std::vector<float>, kMaxRoomSends> roomSend;
     int roomSends = 1;                                  // used this block: 2 * roomHarmonics + 1
@@ -675,6 +722,46 @@ private:
     float windGain = 0.0f;
     double gustPhase = 0.0, tremPhase = 0.0;
     std::vector<float> gust, trem;    // one value per 16 samples
+
+    // ---- living organ (OrganLive.cpp)
+    void updateLive (const EngineParams& p, double blockSeconds) noexcept;
+    void renderLive (float* const* outs, int n, const EngineParams& p) noexcept;
+    void updateSympathy (const EngineParams& p) noexcept;
+    void updatePure (const EngineParams& p, double blockSeconds) noexcept;
+    void stepWalker (const EngineParams& p, int numSamples);
+    Pos heardFrom (Pos pos) const noexcept;
+    float pipeHzIdeal (int stop, int key, const EngineParams& p) const noexcept;
+    float bellowsP = 1.0f, bellowsV = 1.0f;
+    bool bellowsRising = false;
+    double treadPhase = 0.0, treadTone = 0.0, treadLast = -1.0e18;
+    float treadEnv = 0.0f, treadLp = 0.0f, treadLp2 = 0.0f;
+    float walkX = 0.0f, walkY = 0.0f;
+    double walkPhase = 0.0;
+    bool liveWalk = false;
+    std::array<RoomParams, kNumRooms> roomsEr {};        // the rooms as the walking listener stands in them
+    // sympathetic pipes
+    static constexpr int kSymp = 16;
+    struct Symp
+    {
+        bool on = false, seen = false;
+        int stop = 0, key = 0;
+        float b1 = 0.0f, b2 = 0.0f, gain = 0.0f, gainT = 0.0f, y1 = 0.0f, y2 = 0.0f, hz = 0.0f, send = 0.0f;
+        std::array<float, kMaxAmbiChannels> g0 {}, g1 {};
+    };
+    std::array<Symp, kSymp> symps {};
+    std::vector<float> sympBus;                          // what the silent pipes hear: all sounding pipes (mono)
+    int sympTick = 0;
+    bool sympBusOn = false;
+    // adaptive tuning
+    uint64_t pureHash = 0;
+    // Tonnetz walker
+    struct NetNote { int key = -1, left = 0; };
+    std::array<NetNote, 8> netNotes {};
+    double netPhase = 0.0, netLastStep = -1.0e18;
+    int netA = 0, netB = 0, netStep = 0, netSeed = -1, netPrev = -1, netLastDir = -1;
+    uint64_t netHeld = 0;                                // the keys the player holds (not the walker's own)
+    bool netRunning = false;
+    XorShift netRng { 0x7e77 };
 
     // sum-mode degradation
     DegradeState sumDeg { 99 };

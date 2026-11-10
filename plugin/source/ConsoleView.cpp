@@ -153,7 +153,8 @@ void KeyStrip::paint (juce::Graphics& g)
     const float gap = 2.0f;
     const float w = ((float) getWidth() - gap * (n - 1)) / (float) n;
     const float keyH = (float) getHeight() - 16.0f;
-    const uint64_t held = proc.engine.heldMask.load();
+    uint64_t held = proc.engine.heldMask.load();
+    if (const int nk = proc.engine.netKeyNow.load(); nk >= 0) held |= (uint64_t) 1 << nk;      // the Tonnetz walker's key
     for (int i = 0; i < n; ++i)
     {
         const int midi = 36 + i;

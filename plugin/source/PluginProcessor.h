@@ -250,6 +250,16 @@ public:
     static constexpr const char* kSpace2Ids[15] { "fxBeatIdeal", "fxGhostLevel", "fxGhostPlace", "fxGhostCons", "simIce", "simIceLen",
                                                   "fxDexMix", "fxDexTime", "fxDexTurn", "fxDexMirror", "fxDexFade", "fxDexAgain",
                                                   "fxExpoMix", "fxExpoTime", "fxExpoBright" };
+    /** "Lebendige Orgel" (Effekte, third tab): bellows, pallets, the walking listener, wear, sympathetic pipes, pure tuning, Tonnetz walker */
+    enum LiveIndex { lvBellows, lvBellowsSize, lvBlower, lvTreadRate, lvTreadDiv, lvTreadNoise, lvPallet, lvPalletSrc,
+                     lvListenX, lvListenY, lvWalkShape, lvWalkRate, lvWalkSize, lvWear, lvWearTime, lvSympLevel, lvSympDecay,
+                     lvPure, lvPureTime, lvNetOn, lvNetPath, lvNetDiv, lvNetRate, lvNetGate, kNumLive };
+    static constexpr const char* kLiveIds[kNumLive] { "lvBellows", "lvBellowsSize", "lvBlower", "lvTreadRate", "lvTreadDiv", "lvTreadNoise",
+                                                      "lvPallet", "lvPalletSrc", "lvListenX", "lvListenY", "lvWalkShape", "lvWalkRate", "lvWalkSize",
+                                                      "lvWear", "lvWearTime", "lvSympLevel", "lvSympDecay", "lvPure", "lvPureTime",
+                                                      "lvNetOn", "lvNetPath", "lvNetDiv", "lvNetRate", "lvNetGate" };
+    /** Verschleiss: all pipes new again (message thread) */
+    void resetWear() { engine.wearReset = true; }
     static constexpr const char* kPipeSndKeys[8] { "Att", "Sharp", "Iso", "Rep", "Puff", "HiFreq", "HiGain", "HiShape" };
     static constexpr const char* kSpcIds[7] { "spcErode", "spcWeather", "spcGrid", "spcBits", "spcRate", "spcDrops", "spcAlias" };
 
@@ -307,6 +317,7 @@ private:
         int airInvert = -1, clickRes = -1, clickResDecay = -1, clickResBright = -1;
         std::array<int, 4> glitch {};
         std::array<int, 15> space2 {};
+        std::array<int, 24> live {};
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex { inpOn, inpLevel, inpMode, inpAz, inpEl, inpDist, inpWidth, inpSpin, inpFollow, inpGate, inpRelease, inpSend, kNumInp };

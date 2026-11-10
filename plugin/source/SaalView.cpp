@@ -205,7 +205,11 @@ void SaalPlan::paint (juce::Graphics& g)
                     juce::Rectangle<float> (200, 12).withCentre ({ room.getCentreX(), room.getBottom() + 14 }), juce::Justification::centred);
     }
 
-    const Vec3f lis = listenerPos (now);
+    Vec3f lis = listenerPos (now);
+    const auto home = P (lis.x, lis.y);          // where the pipes are placed from; the listener may have walked away from it
+    lis.x = juce::jlimit (0.02f * now.W(), 0.98f * now.W(), lis.x + proc.engine.listenerXNow.load());
+    lis.y = juce::jlimit (0.02f * now.L(), 0.98f * now.L(), lis.y + proc.engine.listenerYNow.load());
+    juce::ignoreUnused (home);
     const auto ls = P (lis.x, lis.y);
 
     // pipes (top view, kept inside the walls)
