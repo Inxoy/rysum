@@ -44,7 +44,7 @@ inline double cosineDsf(double phase, double balance, int harmonics)
     const auto ratio = balance * phasePoint;
     const auto denominator = 1.0 - ratio;
 
-    // Near the geomteric formula's singularity, use the finite sum to avoid
+    // Near the geometric formula's singularity, use the finite sum to avoid
     // division by zero and loss of numerical accuracy.
 
     if (std::abs(denominator) < 1.0e-6)

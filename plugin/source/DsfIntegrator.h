@@ -62,10 +62,13 @@ public:
 
         return output;
     }
-    void reset()
+    
+    void reset(
+        double initialOutput = 0.0,
+        double initialPreviousInput = 0.0)
     {
-        output = 0.0;
-        previousInput = 0.0;
+        output = initialOutput;
+        previousInput = initialPreviousInput;
     }
 
 private:
