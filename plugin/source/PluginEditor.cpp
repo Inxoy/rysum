@@ -173,8 +173,9 @@ void RysumContent::resized()
     keysButton.setBounds(462, 14, 74, 28);
     latchButton.setBounds(540, 14, 60, 28);
     const int tw[]{94, 58, 54, 58, 76, 102};
+    const int tabOrder[]{0, 3, 4, 5, 2, 1}; // Spieltisch, Klang, Effekte, Modulation, Saal, Raum
     int x = 608;
-    for (int i = 0; i < 6; ++i)
+    for (const int i : tabOrder)
     {
         tabs[(size_t)i].setBounds(x, 13, tw[i], 30);
         x += tw[i] + 3;

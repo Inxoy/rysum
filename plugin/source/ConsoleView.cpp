@@ -253,6 +253,17 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         addAndMakeVisible(*stopWind.back());
     }
 
+    testToneButton.setClickingTogglesState(true);
+    testToneButton.setTooltip("DSF-Referenzton. Stimmung und Frequenz auf der Seite Klang.");
+    addAndMakeVisible(testToneButton);
+    testToneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        proc.apvts, "dsfOn", testToneButton);
+    testToneLevel =
+        std::make_unique<ParamRow>(proc.apvts, "dsfLevel", u8("Lautst\xc3\xa4rke"), true);
+    testToneColour = std::make_unique<ParamRow>(proc.apvts, "dsfSpectrum", "Klangfarbe", true);
+    addAndMakeVisible(*testToneLevel);
+    addAndMakeVisible(*testToneColour);
+
     const std::pair<const char *, const char *> noise[]{
         {"click", "Tastenklick"},
         {"clickBlend", "Klick \xe2\x86\x92 ins Anschlagen"},
@@ -360,7 +371,8 @@ void ConsoleView::resized()
     {
         auto t = stopsArea.withTrimmedTop(26);
         const int gap = 12;
-        const int w = (t.getWidth() - gap * (kNumStops - 1)) / kNumStops;
+        const int columns = kNumStops + 1;
+        const int w = (t.getWidth() - gap * (columns - 1)) / columns;
         for (int s = 0; s < kNumStops; ++s)
         {
             const int x = t.getX() + displaySlot(s) * (w + gap);
@@ -368,6 +380,10 @@ void ConsoleView::resized()
             stopVol[(size_t)s]->setBounds(x, t.getY() + 150, w, 28);
             stopWind[(size_t)s]->setBounds(x, t.getY() + 177, w, 28);
         }
+        const int testX = t.getX() + kNumStops * (w + gap);
+        testToneButton.setBounds(testX, t.getY() + 44, w, 38);
+        testToneLevel->setBounds(testX, t.getY() + 150, w, 28);
+        testToneColour->setBounds(testX, t.getY() + 177, w, 28);
     }
     r.removeFromTop(12);
     auto panels = r.withTrimmedBottom(14);
@@ -442,6 +458,8 @@ void ConsoleView::refresh()
         r->repaint();
     for (auto &r : stopWind)
         r->repaint();
+    testToneLevel->repaint();
+    testToneColour->repaint();
     keys.repaint();
     sceneMorph->repaint();
     {
@@ -478,7 +496,8 @@ void ConsoleView::paint(juce::Graphics &g)
     for (int s = 0; s < kNumStops; ++s)
         on += proc.apvts.getRawParameterValue(RysumProcessor::stopParamId(s))->load() > 0.5f;
     g.setFont(A.monoFont(11.0f));
-    g.drawText(juce::String(on) + " von 7 gezogen", head, juce::Justification::centredRight);
+    g.drawText(juce::String(on) + " von " + juce::String(kNumStops) + " gezogen", head,
+               juce::Justification::centredRight);
 
     drawSectionTitle(g, noiseArea, "Traktur",
                      juce::String(juce::CharPointer_UTF8("Ger\xc3\xa4uschschicht")));

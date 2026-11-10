@@ -79,6 +79,34 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     smear = &row("freezeSmear", "Verwischen");
     release = &row("freezeRelease", "Ausklang beim Ausschalten");
 
+    dsfOn = &toggle("dsfOn", "Testton an");
+    dsfOn->setTooltip("Referenzton: folgt MIDI und globaler Stimmung, oder kontinuierlich mit "
+                      "eigener Hz-Frequenz.");
+    dsfMidi = &toggle("dsfMidi", "MIDI");
+    dsfMidi->setTooltip("An: letzte gehaltene MIDI-Note, globale Stimmung und eigene Feinstimmung. "
+                        "Aus: kontinuierliche Frequenz in Hz. Originalstimmung verwendet das "
+                        "nominale Viertelkomma-Modell.");
+    dsfOffset = &row("dsfOffset", "Feinstimmung");
+    dsfFrequency = &row("dsfFrequency", "Frequenz");
+    dsfOffset->slider.fineDragIncrement = 0.01;
+    dsfOffset->slider.setDoubleClickReturnValue(true, 0.0);
+    dsfFrequency->slider.fineDragIncrement = 0.1;
+    dsfOffset->setTooltip("0.01 Cent je Pixel oder Mausradschritt. Alt-Ziehen: grob; Doppelklick: "
+                          "0 Cent; Wert anklicken: Eingabe.");
+    dsfFrequency->setTooltip("0.1 Hz je Pixel oder Mausradschritt. Alt-Ziehen: grob; Wert "
+                             "anklicken: genaue Hz-Eingabe.");
+    dsfSpectrum = &row("dsfSpectrum", "Spektrum");
+    dsfSpectrum->setTooltip("0 = Sinus; 100 % = volles integriertes DSF-Spektrum mit bis zu 1024 "
+                            "Teiltoenen. Gleichmaessigere Helligkeitsregelung.");
+    dsfMixtur = &row("dsfMixtur", "Mixtur (x Grundton)");
+    dsfMixtur->setTooltip("MIDI: 1 bis 9 mal Grundfrequenz nach Oktavlage. Mit Klangfarbe 0 einen "
+                          "einzelnen harmonischen Teilton pruefen.");
+    dsfFootage = &row("dsfFootage", "Oktavlage");
+    dsfFootage->setTooltip("MIDI: 32 / 16 / 8 / 4 / 2 Fuss. 8 Fuss ist die globale Tonhoehe; "
+                           "manuelle Hz bleiben absolut.");
+    dsfPartials = &row("dsfPartials", "Number of Harmonic Partials");
+    dsfLevel = &row("dsfLevel", "Pegel");
+
     doppler = &row("doppler", "Doppler");
     distAmount = &row("distAmount", u8("Entfernung \xe2\x86\x92 Lautst\xc3\xa4rke"));
     air = &row("air", u8("Luft (H\xc3\xb6hen in der Ferne)"));
@@ -199,16 +227,18 @@ void KlangView::resized()
 {
     auto r = getLocalBounds().reduced(28, 0).withTrimmedTop(22).withTrimmedBottom(22);
     const int gap = 28;
-    const int cw = (r.getWidth() - 2 * gap) / 3;
+    const int cw = (r.getWidth() - 3 * gap) / 4;
     const int rh = (r.getHeight() - gap) / 2;
     auto cell = [&](int c, int rr)
     { return juce::Rectangle<int>(r.getX() + c * (cw + gap), r.getY() + rr * (rh + gap), cw, rh); };
     tuneBox = cell(0, 0);
-    tremBox = cell(1, 0);
-    freezeBox = cell(2, 0);
-    distBox = cell(0, 1);
-    midiBox = cell(1, 1);
-    binBox = cell(2, 1);
+    dsfBox = cell(1, 0);
+    midiBox = cell(2, 0);
+    freezeBox = cell(3, 0);
+    windBox = cell(0, 1);
+    tremBox = cell(1, 1);
+    distBox = cell(2, 1);
+    binBox = cell(3, 1);
 
     auto body = [](juce::Rectangle<int> b) { return b.withTrimmedTop(40); };
     {
@@ -222,8 +252,8 @@ void KlangView::resized()
         scalaLoad.setBounds(t.removeFromLeft(118));
         t.removeFromLeft(6);
         kbmClear.setBounds(t.removeFromLeft(106));
-        t.removeFromLeft(6);
-        mtsFollow->setBounds(t);
+        b.removeFromTop(6);
+        mtsFollow->setBounds(b.removeFromTop(24));
         b.removeFromTop(6);
         tuningStatusArea = b;
     }
@@ -233,7 +263,7 @@ void KlangView::resized()
         b.removeFromTop(12);
         tremRate->setBounds(b.removeFromTop(38));
         tremDepth->setBounds(b.removeFromTop(38));
-        windBox = tremBox.withTrimmedTop(178);
+
         auto w = body(windBox);
         auto t = w.removeFromTop(26);
         windClassic.setBounds(t.removeFromLeft(110));
@@ -248,6 +278,22 @@ void KlangView::resized()
         b.removeFromTop(12);
         smear->setBounds(b.removeFromTop(38));
         release->setBounds(b.removeFromTop(38));
+        auto tone = body(dsfBox);
+        auto controls = tone.removeFromTop(28);
+        dsfOn->setBounds(controls.removeFromLeft(90));
+        controls.removeFromLeft(4);
+        dsfMidi->setBounds(controls.removeFromLeft(55));
+        controls.removeFromLeft(6);
+
+        tone.removeFromTop(12);
+        const auto frequencyBounds = tone.removeFromTop(36);
+        dsfFrequency->setBounds(frequencyBounds);
+        dsfOffset->setBounds(frequencyBounds);
+        dsfSpectrum->setBounds(tone.removeFromTop(36));
+        dsfLevel->setBounds(tone.removeFromTop(36));
+        dsfPartials->setBounds(tone.removeFromTop(36));
+        dsfFootage->setBounds(tone.removeFromTop(36));
+        dsfMixtur->setBounds(tone.removeFromTop(36));
     }
     {
         auto b = body(distBox);
@@ -279,8 +325,8 @@ void KlangView::resized()
         auto b = body(midiBox);
         auto t = b.removeFromTop(28);
         midiOn->setBounds(t.removeFromLeft(130));
-        t.removeFromLeft(8);
-        syncOn->setBounds(t.removeFromLeft(170));
+        b.removeFromTop(6);
+        syncOn->setBounds(b.removeFromTop(26));
         b.removeFromTop(8);
         t = b.removeFromTop(26);
         midiMapButton.setBounds(t.removeFromLeft(200));
@@ -294,6 +340,10 @@ void KlangView::resized()
 
 void KlangView::refresh()
 {
+    const bool followsMidi = proc.apvts.getRawParameterValue("dsfMidi")->load() > 0.5f;
+    dsfFrequency->setVisible(!followsMidi);
+    dsfOffset->setVisible(followsMidi);
+    repaint(dsfBox);
     {
         const auto st = proc.getTuningStatus() + (proc.hasKbm() ? "k" : "");
         if (st != shownTuningStatus)
@@ -341,6 +391,10 @@ void KlangView::paint(juce::Graphics &g)
     const int fz = proc.engine.frozenVoices.load();
     drawSectionTitle(g, freezeBox, "Freeze",
                      fz > 0 ? juce::String(fz) + " eingefroren" : juce::String("CC 66"));
+    drawSectionTitle(g, dsfBox, "Testton",
+                     proc.getReferenceToneFrequency() > 0.0
+                         ? juce::String(proc.getReferenceToneFrequency(), 6) + " Hz"
+                         : "Referenz");
     drawSectionTitle(g, distBox, u8("Entfernung \xc2\xb7 Doppler"));
     drawSectionTitle(g, midiBox, "MIDI");
     drawSectionTitle(g, binBox, u8("Kopfh\xc3\xb6rer (binaural)"),

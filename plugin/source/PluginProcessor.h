@@ -2,6 +2,7 @@
 
 #include "Binaural.h"
 #include "Convolver.h"
+#include "DsfReferenceInstrument.h"
 #include "Lucier.h"
 #include "LucierPiece.h"
 #include "OrganEngine.h"
@@ -29,6 +30,11 @@ class RysumProcessor : public juce::AudioProcessor,
 public:
     RysumProcessor();
     ~RysumProcessor() override;
+
+    double getReferenceToneFrequency() const
+    {
+        return referenceTone.getFrequency();
+    }
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -784,6 +790,7 @@ private:
     std::shared_ptr<rysum::BinauralDecoder> binActive;  // audio thread
     std::shared_ptr<rysum::BinauralDecoder> pendingBin; // handed over (atomic_store / exchange)
     std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin; // message thread keeps them alive
+    rysum::DsfReferenceInstrument referenceTone;
     juce::AudioBuffer<float> inBuf;
     bool inputThisBlock = false;     // the audio input of the block (main input + side chain)
     juce::AudioBuffer<float> binBuf; // Ambisonics render buffer in binaural mode

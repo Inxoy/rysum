@@ -247,6 +247,18 @@ if(RYSUM_BUILD_TESTS)
     target_link_libraries(RysumDsfTest PRIVATE juce::juce_recommended_warning_flags)
     add_test(NAME dsf_integrator COMMAND RysumDsfTest)
 
+    juce_add_console_app(RysumDsfRendererTest PRODUCT_NAME "RysumDsfRendererTest")
+    target_sources(RysumDsfRendererTest PRIVATE tests/DsfRendererTest.cpp)
+    target_include_directories(RysumDsfRendererTest PRIVATE source)
+    target_compile_definitions(RysumDsfRendererTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+    target_link_libraries(RysumDsfRendererTest PRIVATE
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+    add_test(NAME dsf_renderer COMMAND RysumDsfRendererTest)
+
     juce_add_console_app(RysumRenderTest PRODUCT_NAME "RysumRenderTest")
     target_sources(RysumRenderTest PRIVATE
         tests/RenderTest.cpp

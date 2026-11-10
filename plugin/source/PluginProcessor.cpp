@@ -671,6 +671,40 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add(std::make_unique<AudioParameterBool>(ParameterID{jumpHardParamId(s), 1},
                                                    name + u8(" harte Spr\xc3\xbcnge"), false));
     }
+    // Independent dry reference tone. Append parameters to preserve existing indices.
+    l.add(std::make_unique<AudioParameterBool>(ParameterID{"dsfOn", 1}, "Testton", false));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"dsfFrequency", 1}, "Testton Frequenz",
+        NormalisableRange<float>(20.0f, 20000.0f, 0.1f, 0.25f), 440.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float value, int) { return String(value, 1) + " Hz"; })));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"dsfSpectrum", 1}, "Testton Spektrum",
+                                                NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f,
+                                                pct));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"dsfLevel", 1}, "Testton Pegel", NormalisableRange<float>(-60.0f, -6.0f, 0.1f),
+        -24.0f, AudioParameterFloatAttributes().withLabel("dB")));
+    // Legacy parameter retained for saved state/host indices; playback always uses trapezoidal.
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID{"dsfMethod", 1}, "Testton Integration",
+                                                 StringArray{"Trapez", "Rechteck"}, 0));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID{"dsfMidi", 1}, "Testton folgt MIDI",
+                                               true));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"dsfOffset", 1}, "Testton Feinstimmung",
+        NormalisableRange<float>(-50.0f, 50.0f, 0.01f), 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float value, int)
+            {
+                // Normalised float round trips can leave a tiny negative residue at zero.
+                return String(std::abs(value) < 0.005f ? 0.0f : value, 2) + " ct";
+            })));
+
+    l.add(std::make_unique<AudioParameterInt>(ParameterID{"dsfPartials", 1},
+                                              "Number of Harmonic Partials", 1, 1024, 1024));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID{"dsfFootage", 1}, "Testton Oktavlage",
+                                                 StringArray{"32'", "16'", "8'", "4'", "2'"}, 2));
+    l.add(std::make_unique<AudioParameterInt>(ParameterID{"dsfMixtur", 1}, "Testton Mixtur", 1, 9,
+                                              1));
     return l;
 }
 
@@ -941,6 +975,7 @@ bool RysumProcessor::isBusesLayoutSupported(const BusesLayout &busLayout) const
 void RysumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine.prepare(sampleRate, samplesPerBlock);
+    referenceTone.prepare(sampleRate);
     keyboardState.reset();
     for (auto &b : irInputs)
         b.assign((size_t)juce::jmax(512, samplesPerBlock), 0.0f);
@@ -1496,7 +1531,6 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
 
     engine.process(work, midi, params);
     engine.setInput(nullptr, nullptr, 0);
-    midi.clear();
 
     // ---- room: dry level + convolution with the loaded impulse response
 
@@ -1581,6 +1615,31 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
                          apvts.getRawParameterValue("lucMix")->load());
     }
 
+    // Add the reference after organ effects, before output decoding. It uses its
+    // own level; MIDI follows nominal global tuning, manual Hz is independent.
+    DsfReferenceTuning referenceTuning;
+    referenceTuning.tuning = params.tuning;
+    referenceTuning.temperament = juce::roundToInt(extraParams.at("temperament")->load());
+    referenceTuning.pitchCents = params.pitchCents;
+    referenceTuning.mpe = params.mpe;
+    referenceTuning.mpeBendRange = params.mpeBendRange;
+    if (params.notes != nullptr)
+    {
+        referenceTuning.noteHz = params.notes->hz.data();
+        referenceTuning.mapped = params.notes->mapped.data();
+    }
+    referenceTone.process(
+        work, midi, referenceTuning, apvts.getRawParameterValue("dsfOn")->load() > 0.5f,
+        apvts.getRawParameterValue("dsfMidi")->load() > 0.5f,
+        apvts.getRawParameterValue("dsfFrequency")->load(),
+        apvts.getRawParameterValue("dsfOffset")->load() +
+            1200.0 * (juce::roundToInt(apvts.getRawParameterValue("dsfFootage")->load()) - 2) +
+            1200.0 * std::log2(apvts.getRawParameterValue("dsfMixtur")->load()),
+        apvts.getRawParameterValue("dsfSpectrum")->load(),
+        apvts.getRawParameterValue("dsfLevel")->load(), DsfIntegrationMethod::trapezoidal,
+
+        !stereo, juce::roundToInt(apvts.getRawParameterValue("dsfPartials")->load()));
+
     // ---- binaural decoding (head rotation + HRTF filters)
     if (binaural)
     {
@@ -1607,6 +1666,8 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     if (speakers)
         spkRenderer.process(binBuf.getArrayOfReadPointers(), binBuf.getNumChannels(),
                             buffer.getArrayOfWritePointers(), buffer.getNumChannels(), n);
+
+    midi.clear();
 
     // ---- test noise on one loudspeaker (setting up a layout); straight to its channel, about -20
     // dBFS, pink-ish
@@ -2669,8 +2730,10 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
     const float keepOutput = output->load();
     // kept when a patch loads: headphone settings and the controller setup (MPE) belong to the
     // player, not the sound
-    static const char *const keepIds[]{"binOrder", "binYaw", "binDfEq",  "mpe",
-                                       "mpeBend",  "inpOn",  "spkOrder", "spkDistComp"};
+    static const char *const keepIds[]{
+        "binOrder",  "binYaw",      "binDfEq",   "mpe",          "mpeBend",     "inpOn",
+        "spkOrder",  "spkDistComp", "dsfOn",     "dsfFrequency", "dsfSpectrum", "dsfLevel",
+        "dsfMethod", "dsfMidi",     "dsfOffset", "dsfPartials",  "dsfFootage",  "dsfMixtur"};
     float keepVals[std::size(keepIds)]{};
     for (size_t i = 0; i < std::size(keepIds); ++i)
         keepVals[i] = apvts.getRawParameterValue(keepIds[i])->load();

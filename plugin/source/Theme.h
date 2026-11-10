@@ -468,6 +468,8 @@ private:
 class RowSlider : public juce::Slider
 {
 public:
+    // Optional value-unit raster for precision controls; Alt keeps normal range dragging.
+    double fineDragIncrement = 0.0;
     std::function<void()> onRightClick;
     std::function<bool(const juce::MouseEvent &)> interceptDown; // return true to take the drag
     std::function<void(const juce::MouseEvent &)> interceptDrag, interceptUp;
@@ -481,6 +483,17 @@ public:
             return;
         }
         intercepting = interceptDown && interceptDown(e);
+        if (!intercepting && fineDragIncrement > 0.0 && !e.mods.isAltDown())
+        {
+            fineGesture = std::make_unique<juce::Slider::ScopedDragNotification>(*this);
+            // Track clicks retain the normal absolute jump. A press on the
+            // thumb starts a fine drag without moving the value first.
+            if (std::abs(e.position.x - getPositionOfValue(getValue())) > 6.0f)
+                setValue(proportionOfLengthToValue(proportionAtX(e.position.x)),
+                         juce::sendNotificationSync);
+            fineStartValue = getValue();
+            return;
+        }
         if (!intercepting)
             juce::Slider::mouseDown(e);
     }
@@ -494,10 +507,24 @@ public:
                 interceptDrag(e);
             return;
         }
+        if (fineGesture != nullptr)
+        {
+            const double next =
+                fineStartValue +
+                static_cast<double>(e.getDistanceFromDragStartX()) * fineDragIncrement;
+            setValue(std::round(next / fineDragIncrement) * fineDragIncrement,
+                     juce::sendNotificationSync);
+            return;
+        }
         juce::Slider::mouseDrag(e);
     }
     void mouseUp(const juce::MouseEvent &e) override
     {
+        if (fineGesture != nullptr)
+        {
+            fineGesture.reset();
+            return;
+        }
         if (e.mods.isPopupMenu())
             return;
         if (intercepting)
@@ -509,10 +536,33 @@ public:
         }
         juce::Slider::mouseUp(e);
     }
+    void mouseWheelMove(const juce::MouseEvent &e, const juce::MouseWheelDetails &wheel) override
+    {
+        if (fineDragIncrement <= 0.0 || e.mods.isAltDown())
+        {
+            juce::Slider::mouseWheelMove(e, wheel);
+            return;
+        }
+        if (!isEnabled() || fineGesture != nullptr || e.mods.isAnyMouseButtonDown())
+            return;
+        const double delta =
+            std::abs(wheel.deltaY) >= std::abs(wheel.deltaX) ? wheel.deltaY : wheel.deltaX;
+        if (std::abs(delta) <= 0.0)
+            return;
+        const double direction = (delta > 0.0 ? 1.0 : -1.0) * (wheel.isReversed ? -1.0 : 1.0);
+        juce::Slider::ScopedDragNotification gesture(*this);
+        const double next = getValue() + direction * fineDragIncrement;
+        setValue(std::round(next / fineDragIncrement) * fineDragIncrement,
+                 juce::sendNotificationSync);
+    }
     void mouseDoubleClick(const juce::MouseEvent &e) override
     {
         if (!intercepting)
+        {
+            fineGesture.reset();
             juce::Slider::mouseDoubleClick(e);
+            fineStartValue = getValue();
+        }
     }
 
     /** normalised (0..1 of the parameter) value under an x position */
@@ -523,6 +573,8 @@ public:
     }
 
 private:
+    std::unique_ptr<juce::Slider::ScopedDragNotification> fineGesture;
+    double fineStartValue = 0.0;
     bool intercepting = false;
 };
 

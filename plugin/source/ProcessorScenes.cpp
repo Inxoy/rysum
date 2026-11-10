@@ -16,7 +16,7 @@ bool RysumProcessor::takesPartInScenes(const juce::String &id) const
         "sceneMorph", "output",  "master",  "binOrder",    "binYaw",        "binDfEq",
         "irFuma",     "irN3D",   "irOrder", "temperament", "mtsContinuous", "midiCC",
         "mpe",        "mpeBend", "inpOn",   "spkOrder",    "spkDistComp"};
-    return !never.contains(id);
+    return !id.startsWith("dsf") && !never.contains(id);
 }
 
 void RysumProcessor::storeScene(int slot)

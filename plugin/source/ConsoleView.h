@@ -74,6 +74,9 @@ private:
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>
         tileAttachments;
     std::vector<std::unique_ptr<ParamRow>> noiseRows, decayRows, stopVol, stopWind;
+    juce::TextButton testToneButton{"Testton"};
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> testToneAttachment;
+    std::unique_ptr<ParamRow> testToneLevel, testToneColour;
     juce::TextButton perPipe{"pro Pfeife"}, onSum{"Summe"};
     juce::Slider volume;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAttachment;

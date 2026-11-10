@@ -73,8 +73,50 @@ public:
         balance = spectralBalance;
         harmonics = nextHarmonics;
         integrator = nextIntegrator;
+        integrationMethod = method;
         active = true;
 
+        return true;
+    }
+
+    // Retarget a running oscillator without restarting its phase. Rebuild the
+    // integration constant for the new spectrum to avoid a persistent DC offset.
+    bool updateNote(double frequency, double spectralBalance, int requestedHarmonics = 128)
+    {
+        const double cutoff = outputRate * 0.45;
+        if (!active || !std::isfinite(frequency) || frequency <= 0.0 || frequency >= cutoff ||
+            !std::isfinite(spectralBalance) || spectralBalance < 0.0 || spectralBalance > 1.0 ||
+            requestedHarmonics < 1 || requestedHarmonics > 4096)
+            return false;
+
+        const double nextStep = 2.0 * std::acos(-1.0) * frequency / processingRate;
+        const int nextHarmonics = static_cast<int>(
+            std::min(static_cast<double>(requestedHarmonics), std::floor(cutoff / frequency)));
+        const bool rectangular = integrationMethod == DsfIntegrationMethod::rectangular;
+        const double nextOffset = rectangular ? -nextStep / 2.0 : 0.0;
+        DsfIntegrator nextIntegrator;
+        if (!nextIntegrator.configure(integrationMethod, nextStep))
+            return false;
+
+        double previousOutput = 0.0;
+        double weight = 1.0;
+        for (int harmonic = 1; harmonic <= nextHarmonics && weight > 0.0; ++harmonic)
+        {
+            const double h = static_cast<double>(harmonic);
+            const double amplitude = rectangular
+                                         ? std::sin(nextStep / 2.0) / std::sin(h * nextStep / 2.0)
+                                         : std::tan(nextStep / 2.0) / std::tan(h * nextStep / 2.0);
+            previousOutput += weight * amplitude * std::sin(h * (phase - nextStep));
+            weight *= spectralBalance;
+        }
+        const double previousInput =
+            cosineDsf(phase + nextOffset - nextStep, spectralBalance, nextHarmonics);
+        nextIntegrator.reset(previousOutput, previousInput);
+        integrator = nextIntegrator;
+        phaseStep = nextStep;
+        sourcePhaseOffset = nextOffset;
+        balance = spectralBalance;
+        harmonics = nextHarmonics;
         return true;
     }
 
@@ -115,6 +157,7 @@ private:
 
     bool active = false;
 
+    DsfIntegrationMethod integrationMethod = DsfIntegrationMethod::trapezoidal;
     DsfIntegrator integrator;
 };
 

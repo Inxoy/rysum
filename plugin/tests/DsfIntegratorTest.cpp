@@ -308,6 +308,69 @@ int main()
         return 1;
     }
 
+    // Retargeting must preserve phase and establish the correct integration
+    // constant for the new spectrum, rather than leaving a DC offset.
+    for (const auto retargetMethod :
+         {rysum::DsfIntegrationMethod::rectangular, rysum::DsfIntegrationMethod::trapezoidal})
+    {
+        rysum::DsfOscillator retargeted;
+        if (!retargeted.prepare(192000.0, 48000.0) ||
+            !retargeted.startNote(6000.0, 0.3, retargetMethod, 3))
+            return 1;
+        double phase = 0.0;
+        for (int i = 0; i < 100; ++i)
+        {
+            retargeted.nextSample();
+            phase += 2.0 * pi * 6000.0 / 192000.0;
+            if (phase >= 2.0 * pi)
+                phase -= 2.0 * pi;
+        }
+        if (!retargeted.updateNote(3000.0, 0.8, 3))
+            return 1;
+        const double step = 2.0 * pi * 3000.0 / 192000.0;
+        for (int i = 0; i < 1000; ++i)
+        {
+            double target = 0.0;
+            double weight = 1.0;
+            for (int h = 1; h <= 3; ++h)
+            {
+                const double angle = static_cast<double>(h) * step / 2.0;
+                const double amplitude = retargetMethod == rysum::DsfIntegrationMethod::rectangular
+                                             ? std::sin(step / 2.0) / std::sin(angle)
+                                             : std::tan(step / 2.0) / std::tan(angle);
+                target += weight * amplitude * std::sin(static_cast<double>(h) * phase);
+                weight *= 0.8;
+            }
+            if (!(std::abs(retargeted.nextSample() - target) <= 1.0e-9))
+            {
+                std::cerr << "Retargeting changed phase or introduced DC\n";
+                return 1;
+            }
+            phase += step;
+            if (phase >= 2.0 * pi)
+                phase -= 2.0 * pi;
+        }
+    }
+
+    if (!(std::abs(rysum::dsfBrightnessToBalance(0.0)) <= 1.0e-12) ||
+        !(std::abs(rysum::dsfBrightnessToBalance(1.0) - 1.0) <= 1.0e-12) ||
+        !(std::abs(rysum::dsfBrightnessToBalance(0.5) - 0.75) <= 1.0e-12))
+    {
+        std::cerr << "Brightness mapping endpoints or midpoint are incorrect\n";
+        return 1;
+    }
+    double previousBalance = 0.0;
+    for (int i = 1; i <= 1000; ++i)
+    {
+        const double mapped = rysum::dsfBrightnessToBalance(static_cast<double>(i) / 1000.0);
+        if (!std::isfinite(mapped) || mapped < previousBalance || mapped > 1.0)
+        {
+            std::cerr << "Brightness mapping is not monotonic and bounded\n";
+            return 1;
+        }
+        previousBalance = mapped;
+    }
+
     std::cout << "DSF integrator tests passed\n";
     return 0;
 }

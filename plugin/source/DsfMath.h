@@ -6,6 +6,18 @@
 namespace rysum
 {
 
+// Spread the useful geometric-weight range across the brightness control.
+// r = 1 - (1 - x)^2; exact endpoints retain pure sine and full 1/n weighting.
+inline double dsfBrightnessToBalance(double brightness)
+{
+    if (!std::isfinite(brightness) || brightness <= 0.0)
+        return 0.0;
+    if (brightness >= 1.0)
+        return 1.0;
+    const double remaining = 1.0 - brightness;
+    return 1.0 - remaining * remaining;
+}
+
 // finite integrated-DSF (Discrete Summation Formula) reference sum
 // phase: radians
 // balance: 0 = sine, 1 = harmonics weighted by 1/n

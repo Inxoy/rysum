@@ -43,6 +43,11 @@ private:
     juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr,
                      *mpeOn = nullptr;
     ParamRow *mpeBend = nullptr;
+    ParamRow *dsfFrequency = nullptr, *dsfSpectrum = nullptr, *dsfLevel = nullptr,
+             *dsfOffset = nullptr, *dsfPartials = nullptr, *dsfFootage = nullptr,
+             *dsfMixtur = nullptr;
+    juce::TextButton *dsfOn = nullptr, *dsfMidi = nullptr;
+    juce::Rectangle<int> dsfBox;
     int midiTextTop = 118;
     juce::Rectangle<int> tuneBox, tremBox, freezeBox, distBox, midiBox, binBox;
     // wind model of the stops
