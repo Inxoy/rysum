@@ -409,10 +409,11 @@ void Raster::setSize (int nw, int nh)
     w = nw; h = nh;
     img = juce::Image (juce::Image::ARGB, w, h, false);
     const size_t n = (size_t) (w * h);
-    pix.assign (n, 0u);
-    for (auto* b : { &zbuf, &gu, &gv, &gb, &ge, &gt }) b->assign (n, 0.0f);
-    gm.assign (n, 0);
-    bins.assign ((size_t) ((h + kBandRows - 1) / kBandRows), {});
+    // (resized, never shrunk in memory: stepping the resolution down and up again allocates nothing)
+    pix.resize (n, 0u);
+    for (auto* b : { &zbuf, &gu, &gv, &gb, &ge, &gt }) b->resize (n, 0.0f);
+    gm.resize (n, 0);
+    bins.resize ((size_t) ((h + kBandRows - 1) / kBandRows));
 }
 
 void Raster::setCamera (V3 e, float yawDeg, float pitchDeg, float fovDeg)

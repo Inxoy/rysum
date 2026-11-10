@@ -3337,7 +3337,7 @@ int main (int argc, char** argv)
                         Vec3f L { 0.25f + 0.5f * (float) ix, 0.25f + 0.5f * (float) iy, home.z };
                         if (! insidePlan (g, L.x, L.y) || planEdgeDist (g, L.x, L.y) < 1.0f) continue;
                         float ld, lf; Pos h;
-                        if (diffractedPath (g, corners, L, S, h, ld, lf) && ld > 8.0f) { found = true; wx = L.x - home.x; wy = L.y - home.y; heard = h; lossDb = ld; fc = lf; }
+                        if (diffractedPath (g, corners, L, S, h, ld, lf) && ld > 4.0f) { found = true; wx = L.x - home.x; wy = L.y - home.y; heard = h; lossDb = ld; fc = lf; }
                     }
                 std::cout << "out of sight: " << corners.n << " corners to bend around; from " << wx << " / " << wy << " m off the usual place the pipe is hidden, heard from "
                           << heard.az << " deg over " << heard.dist << " m, " << lossDb << " dB quieter, cut above " << fc << " Hz" << std::endl;
@@ -3354,6 +3354,44 @@ int main (int argc, char** argv)
                 std::cout << "out of sight: " << hidCount << " pipe(s) heard around the corner; level " << dh << " dB against " << db << " dB in plain sight" << std::endl;
                 check (hidCount > 0 && dh < db - 4.0 && finiteB (hidden), "out of sight: a pipe behind the corner is heard around it, quieter");
                 writeWav (outDir.getChildFile ("85_um_die_ecke.wav"), hidden, fsr);
+                // walking to and fro across the shadow's edge: no jump in level (against the same walk in plain sight)
+                {
+                    OrganEngine ew, eo;
+                    for (auto* en : { &ew, &eo })
+                        for (int k = 0; k < kNumKeys; ++k) { en->baseAz[0][(size_t) k] = 0.0f; en->baseEl[0][(size_t) k] = 0.0f; en->baseDist[0][(size_t) k] = 7.0f; }
+                    auto walk = [&] (int shape) { return [&, shape] (EngineParams& p) { roomL (p, shape); p.live.listenX = wx - 2.5f; p.live.listenY = wy;
+                                                                                         p.live.walkShape = 2; p.live.walkSize = 3.5f; p.live.walkRate = 0.15f; }; };          // (running: up to 3.3 m/s)
+                    int changes = 0, last = -1;
+                    juce::String when;
+                    const auto across = play (ew, walk (shapeL), { 69 }, 8.0, 1, 100, -1.0, [&] (int pos)
+                    {
+                        const int now = ew.hiddenNow.load() > 0 ? 1 : 0;
+                        if (last >= 0 && now != last) { ++changes; when << juce::String (pos / fsr, 2) << (now ? " in " : " out "); }
+                        last = now;
+                    });
+                    const auto plain = play (eo, walk (shapeBox), { 69 }, 8.0, 1);
+                    auto maxJumpDb = [&] (const juce::AudioBuffer<float>& b)
+                    {
+                        // the largest change of level from one 5 ms window to the next (W channel), after the attack
+                        const int win = (int) (0.02 * fsr);
+                        double prev = -1000.0, worst = 0.0; double at = 0.0;
+                        for (int i = (int) (0.6 * fsr); i + win < b.getNumSamples(); i += win)
+                        {
+                            double s = 0;
+                            for (int j = 0; j < win; ++j) s += (double) b.getSample (0, i + j) * b.getSample (0, i + j);
+                            const double db = 10.0 * std::log10 (s / win + 1e-12);
+                            if (prev > -900.0 && std::abs (db - prev) > worst) { worst = std::abs (db - prev); at = i / fsr; }
+                            prev = db;
+                        }
+                        std::cout << "  (largest step at " << at << " s)" << std::endl;
+                        return worst;
+                    };
+                    const double jA = maxJumpDb (across), jP = maxJumpDb (plain);
+                    std::cout << "out of sight: walking across the shadow's edge (" << changes << " times in or out of sight): largest step "
+                              << jA << " dB per 20 ms, the same walk in plain sight " << jP << " dB; shadow: " << when << std::endl;
+                    check (changes >= 2 && jA < jP + 1.5 && finiteB (across), "out of sight: stepping in and out of the shadow does not jump");
+                    writeWav (outDir.getChildFile ("86_schattenkante.wav"), across, fsr);
+                }
             }
             // Verschleiss: a pipe held for half its life is half worn, and sounds different; reset makes it new
             {

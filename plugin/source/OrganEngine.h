@@ -748,11 +748,13 @@ private:
     // line of sight: in a plan that is not convex a walking listener can lose sight of a pipe (heard around the corner)
     std::array<PlanGeo, kNumRooms> occGeo {};
     std::array<PlanCorners, kNumRooms> occCorners {};
-    std::array<bool, kNumRooms> occOn {};
+    std::array<bool, kNumRooms> occOn {}, planOn {};
+    std::array<RoomParams, kNumRooms> occUsual {};       // the room with the listener at his usual place (where the pipes are placed from)
+    std::array<Vec3f, kNumRooms> occL {};                // the walked listener in it
     int occCount = 0;
     /** the pipe at 'home' (as placed from the listener's usual place) heard from where the listener stands:
         false if nothing is in the way; else where it is heard from and how much is lost */
-    bool aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept;
+    int aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept;    // 0 = not walking in a shaped room, 1 = in sight, 2 = around a corner
     // sympathetic pipes
     static constexpr int kSymp = 16;
     struct Symp

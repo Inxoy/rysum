@@ -28,9 +28,11 @@ public:
     std::function<void()> onBack;
     /** for the tests: one step of the walk without a timer (dt in seconds, keys as if held) */
     void stepForTest (double dt, bool fwd, bool back, bool left, bool right, float turnDeg);
+    /** tests: stand at an offset from the listener's place (held inside the walls like walking), looking along yaw */
+    void setPoseForTest (float x, float y, float yawDeg) { px = x; py = y; yaw = yawDeg; pitch = 0.0f; keepInside(); pushPose(); }
     void loadModelForTest (const juce::File& f) { loadModel (f); }
     /** tests: a fixed resolution (no adapting to the frame time); how long the last frame took */
-    void setTestMode (bool on) { testMode = on; if (on) resScale = 1.0f; }
+    void setTestMode (bool on) { testMode = on; if (on) { resScale = 1.0f; resLevel = 0; } }
     float frameMs() const noexcept { return lastFrameMs; }
     float geometryMs() const noexcept { return geoMs; }
     int renderWidth() const noexcept { return rast.width(); }
@@ -40,13 +42,19 @@ private:
     enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark };
     struct RTri { Raster::Vert a, b, c; int slot; float tone; };
     void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt);
+    V3 pipeAt (const RoomParams& r, V3 homeP, Pos pos) const;
+    bool pipesInRoom = false;           // this frame: walking in a shaped Saal (see pipeAt)
+    const RoomMesh* slotMesh = nullptr; // the model whose surfaces are sorted into floor / ceiling / walls
+    std::vector<uint8_t> meshSlots;
     float resScale = 1.0f, lastFrameMs = 0.0f, geoMs = 0.0f;
+    int resLevel = 0, slowFrames = 0, quickFrames = 0;
     uint32_t frame = 0;
     bool testMode = false;
     Material::Kind wallLook = Material::plain;
     void timerCallback() override;
     void step (double dt, bool fwd, bool back, bool left, bool right, float turn, bool fast);
     void pushPose();
+    void keepInside();
     RoomParams roomNow() const;
     void buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const;
     void loadModel (const juce::File& f);

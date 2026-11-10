@@ -522,7 +522,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     // 'dpos' is only the direct sound; the reflections and the room send keep the pipe where it is.
     Pos dpos = pos;
     float hidDb = 0.0f, hidFc = 20000.0f;
-    if (aroundCorner (p.stopRoom[(size_t) v.stop], homePos, dpos, hidDb, hidFc)) ++occCount;
+    if (aroundCorner (p.stopRoom[(size_t) v.stop], homePos, dpos, hidDb, hidFc) == 2) ++occCount;
     {
         // Ventil: how far this pipe's pallet is open (a slow key opens it slowly; or the finger's pressure / slide)
         const auto& lv = p.live;

@@ -614,7 +614,7 @@ inline bool diffractedPath (const PlanGeo& g, const PlanCorners& c, Vec3f L, Vec
     out.dist = juce::jmax (horiz, total);
     // (at the shadow's edge the bend is 0: nothing jumps when you step past the corner)
     const float b = juce::jlimit (0.0f, 1.0f, bend / juce::MathConstants<float>::pi);
-    lossDb = 20.0f * std::sqrt (b);
+    lossDb = 20.0f * b;                                   // (10 dB around a right angle, growing gently from the edge)
     cutoffHz = 20000.0f / (1.0f + 40.0f * b);
     return true;
 }

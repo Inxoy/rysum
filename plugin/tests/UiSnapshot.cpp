@@ -1080,14 +1080,34 @@ public:
                 }
                 proc->clearWalkModel();
                 {
-                    // the Saal's own room, all pipes sounding nearby: the frame time at full resolution
+                    // the Saal's own room with all eight stops on and a chord sounding: the frame time at full resolution,
+                    // then the way the app runs it (the resolution adapting), for the Saal and for the largest model
+                    std::array<float, rysum::kNumStops> stopWas {};
+                    for (int s = 0; s < rysum::kNumStops; ++s)
+                    {
+                        stopWas[(size_t) s] = proc->apvts.getRawParameterValue (RysumProcessor::stopParamId (s))->load();
+                        setReal (RysumProcessor::stopParamId (s).toRawUTF8(), 1.0f);
+                    }
+                    run (20, { 48, 55, 60, 64, 67 });
                     if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
                     juce::Image frame (juce::Image::ARGB, wv->getWidth(), wv->getHeight(), true);
-                    const double t0 = juce::Time::getMillisecondCounterHiRes();
+                    double t0 = juce::Time::getMillisecondCounterHiRes();
                     for (int i = 0; i < 20; ++i) { juce::Graphics g (frame); wv->paintEntireComponent (g, false); }
-                    const double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 20.0;
-                    std::cout << "Begehen: the Saal with its pipes: " << ms << " ms per frame (geometry " << wv->geometryMs() << " ms, 3D total " << wv->frameMs() << " ms, " << wv->renderStats() << ", " << wv->renderWidth() << " px wide)"
-                              << (wv->renderWidth() >= wv->getWidth() ? "  ok" : "  FAIL") << std::endl;
+                    double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 20.0;
+                    std::cout << "Begehen: all stops: " << ms << " ms per frame (geometry " << wv->geometryMs() << " ms, 3D total " << wv->frameMs() << " ms, "
+                              << wv->renderStats() << ", " << wv->renderWidth() << " px wide)" << (wv->renderWidth() >= wv->getWidth() ? "  ok" : "  FAIL") << std::endl;
+                    wv->setTestMode (false);
+                    for (int i = 0; i < 100; ++i) { juce::Graphics g (frame); wv->paintEntireComponent (g, false); }
+                    std::cout << "Begehen: adapting, the Saal settles at " << wv->renderWidth() << " px wide (3D " << wv->frameMs() << " ms, geometry " << wv->geometryMs() << " ms)"
+                              << (wv->renderWidth() >= (int) (0.4f * (float) wv->getWidth()) ? "  ok" : "  FAIL") << std::endl;
+                    proc->loadWalkModel (outDir.getChildFile ("test_gross.obj"), true, 1.0f);
+                    for (int i = 0; i < 100; ++i) { juce::Graphics g (frame); wv->paintEntireComponent (g, false); }
+                    std::cout << "Begehen: adapting, 80,000 triangles settle at " << wv->renderWidth() << " px wide (3D " << wv->frameMs() << " ms, geometry " << wv->geometryMs() << " ms)"
+                              << (wv->renderWidth() >= (int) (0.4f * (float) wv->getWidth()) ? "  ok" : "  FAIL") << std::endl;
+                    proc->clearWalkModel();
+                    wv->setTestMode (true);
+                    for (int s = 0; s < rysum::kNumStops; ++s) setReal (RysumProcessor::stopParamId (s).toRawUTF8(), stopWas[(size_t) s]);
+                    shoot (8, "ui_begehen_alle.png");
                 }
                 // what the walls look like follows the absorption (the Saal page's materials)
                 {
@@ -1105,24 +1125,26 @@ public:
                     }
                     setReal ("simAbs", 0.1f); setReal ("simAbsFloor", 0.25f); setReal ("simHigh", 0.5f);
                 }
-                // a cross-shaped church: walked into the left arm, the pipes ahead are out of sight and heard around the corner
+                // a cross-shaped church: walked (held inside the walls, as when walking) into an arm until pipes are out of sight
                 {
                     setReal ("simShape", (float) rysum::shapeCross); setReal ("simShapeAmt", 0.8f);
                     for (int i = 0; i < 4; ++i) proc->walkPose[(size_t) i] = 0.0f;
                     if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
                     run (10, {});
                     int bestHidden = 0; float bx = 0, by = 0;
-                    for (float ox = -6.0f; ox <= 6.0f; ox += 1.0f)
-                        for (float oy = -8.0f; oy <= 2.0f; oy += 1.0f)
+                    for (float ox = -7.0f; ox <= 7.0f; ox += 1.0f)
+                        for (float oy = -10.0f; oy <= 3.0f; oy += 1.0f)
                         {
-                            proc->engine.viewX = ox; proc->engine.viewY = oy;
+                            wv->setPoseForTest (ox, oy, 0.0f);
                             run (12, {});
                             const int hid = proc->engine.hiddenNow.load();
-                            if (hid > bestHidden) { bestHidden = hid; bx = ox; by = oy; }
+                            if (hid > bestHidden) { bestHidden = hid; bx = proc->walkPose[0].load(); by = proc->walkPose[1].load(); }
                         }
-                    proc->walkPose[0] = bx; proc->walkPose[1] = by;
-                    proc->walkPose[2] = bx > 0.0f ? 90.0f : -90.0f;          // down the arm, towards the crossing
-                    if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
+                    // look towards the crossing (the middle of the plan)
+                    const float W = proc->engine.heard[0].W.load(), L = proc->engine.heard[0].L.load();
+                    const float hx = proc->engine.heard[0].Lx.load() * W, hy = proc->engine.heard[0].Ly.load() * L;
+                    const float dx = 0.5f * W - (hx + bx), dy = 0.5f * L - (hy + by);
+                    wv->setPoseForTest (bx, by, juce::radiansToDegrees (std::atan2 (-dx, dy)));
                     run (12, {});
                     std::cout << "Begehen: cross-shaped plan, at " << bx << " / " << by << " m " << proc->engine.hiddenNow.load() << " sounding pipes heard around the corner"
                               << (proc->engine.hiddenNow.load() > 0 ? "  ok" : "  FAIL") << std::endl;

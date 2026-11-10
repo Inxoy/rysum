@@ -173,6 +173,16 @@ void WalkView::step (double dt, bool fwd, bool bwd, bool left, bool right, float
     pushPose();
 }
 
+void WalkView::keepInside()
+{
+    const auto r = roomNow();
+    const auto homeP = listenerPos (r);
+    float x = homeP.x + px, y = homeP.y + py;
+    if (r.box()) { x = juce::jlimit (0.3f, r.W() - 0.3f, x); y = juce::jlimit (0.3f, r.L() - 0.3f, y); }
+    else keepInsidePlan (planGeo (r), x, y, 0.3f);
+    px = x - homeP.x; py = y - homeP.y;
+}
+
 void WalkView::stepForTest (double dt, bool f, bool b, bool l, bool r, float turnDeg) { step (dt, f, b, l, r, turnDeg, false); }
 
 void WalkView::timerCallback()
@@ -391,10 +401,24 @@ void WalkView::addPipe (V3 bottom, float len, float rad, float faceAngle, float 
     }
 }
 
+V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos) const
+{
+    // walking in a shaped Saal the engine hears every pipe where the room simulation has it, inside the walls
+    // (so what you see hidden behind a wall is what you hear around the corner); otherwise where Ambisonics puts it
+    if (pipesInRoom && ! r.box() && r.plan.n >= 3)
+    {
+        const auto q = roomPoint (r, pos);
+        return { q.x, q.y, q.z };
+    }
+    const float a = juce::degreesToRadians (pos.az), e = juce::degreesToRadians (pos.el);
+    return { homeP.x - std::sin (a) * std::cos (e) * pos.dist, homeP.y + std::cos (a) * std::cos (e) * pos.dist, homeP.z + std::sin (e) * pos.dist };
+}
+
 void WalkView::paint (juce::Graphics& g)
 {
     auto& A = Assets::get();
     const auto params = proc.readParams();
+    pipesInRoom = params.room.on && (proc.engine.listenerXNow.load() != 0.0f || proc.engine.listenerYNow.load() != 0.0f);
     const auto r = roomNow();
     const V3 homeP { listenerPos (r).x, listenerPos (r).y, listenerPos (r).z };
     const V3 eye { homeP.x + px, homeP.y + py, homeP.z };
@@ -422,12 +446,26 @@ void WalkView::paint (juce::Graphics& g)
     const auto mesh = proc.getWalkMesh();
     if (mesh != nullptr)
     {
-        // a model in greys: its colours' brightness, the walls' material on top
-        for (const auto& t : mesh->tris)
+        // a model in greys (its colours' brightness): level faces low down get the floor's material, level faces
+        // high up the ceiling's, everything else the walls' (worked out once per model)
+        if (slotMesh != mesh.get() || meshSlots.size() != mesh->tris.size())
         {
+            slotMesh = mesh.get();
+            meshSlots.resize (mesh->tris.size());
+            for (size_t i = 0; i < mesh->tris.size(); ++i)
+            {
+                const auto& t = mesh->tris[i];
+                const V3 n = normalised (cross (t.b - t.a, t.c - t.a));
+                const float zc = (t.a.z + t.b.z + t.c.z) / 3.0f;
+                meshSlots[i] = (uint8_t) (std::abs (n.z) < 0.8f ? kSlotModel : (zc < 0.5f * mesh->size.z ? kSlotFloor : kSlotCeiling));
+            }
+        }
+        for (size_t i = 0; i < mesh->tris.size(); ++i)
+        {
+            const auto& t = mesh->tris[i];
             const auto c = t.colour;
             const float lum = 0.3f + 0.9f * (0.3f * c.getFloatRed() + 0.59f * c.getFloatGreen() + 0.11f * c.getFloatBlue());
-            rast.flatTriangle (t.a, t.b, t.c, kSlotModel, lum);
+            rast.flatTriangle (t.a, t.b, t.c, meshSlots[i], lum);
         }
     }
     else
@@ -451,8 +489,7 @@ void WalkView::paint (juce::Graphics& g)
             auto& gl = glow[(size_t) s][(size_t) k];
             gl = ((sounding >> k) & 1) ? juce::jmin (1.0f, gl + 0.35f) : gl * 0.9f;
             const Pos pos = proc.engine.displayPosition (s, k, params);
-            const float a = juce::degreesToRadians (pos.az), e = juce::degreesToRadians (pos.el);
-            const V3 c { homeP.x - std::sin (a) * std::cos (e) * pos.dist, homeP.y + std::cos (a) * std::cos (e) * pos.dist, homeP.z + std::sin (e) * pos.dist };
+            const V3 c = pipeAt (r, homeP, pos);
             float len, rad;
             pipeSize (s, k, len, rad);
             // floating: a slow breath up and down, each pipe its own
@@ -469,8 +506,20 @@ void WalkView::paint (juce::Graphics& g)
     lastFrameMs = (float) ms;
     if (! testMode)
     {
-        if (ms > 16.0) resScale = juce::jmax (0.4f / phys, resScale * 0.9f);         // (the host shares this thread)
-        else if (ms < 9.0) resScale = juce::jmin (1.0f, resScale * 1.03f);
+        // the resolution in fixed steps, decided by the part that depends on it (drawing the pixels, not the
+        // geometry): down after a few slow frames, up when the next step would still be quick, a while later
+        static constexpr float kSteps[] { 1.0f, 0.85f, 0.7f, 0.55f, 0.42f };
+        const float pixMs = rast.rasterMs;
+        if (pixMs > 11.0f) { ++slowFrames; quickFrames = 0; }
+        else
+        {
+            slowFrames = 0;
+            const float up = resLevel > 0 ? kSteps[resLevel - 1] / kSteps[resLevel] : 1.0f;
+            if (resLevel > 0 && pixMs * up * up < 9.0f) ++quickFrames; else quickFrames = 0;
+        }
+        if (slowFrames >= 6 && resLevel < 4) { ++resLevel; slowFrames = 0; }
+        if (quickFrames >= 45 && resLevel > 0) { --resLevel; quickFrames = 0; }
+        resScale = kSteps[resLevel];
     }
 
     {
@@ -494,9 +543,9 @@ void WalkView::paint (juce::Graphics& g)
         {
             glowSprite = juce::Image (juce::Image::ARGB, 128, 128, true);
             juce::Graphics gg (glowSprite);
-            juce::ColourGradient grad (juce::Colour (0xfffff1dc).withAlpha (0.5f), 64.0f, 64.0f, col::rubric.withAlpha (0.0f), 128.0f, 64.0f, true);
-            grad.addColour (0.3, juce::Colour (0xffe9c9a8).withAlpha (0.2f));
-            grad.addColour (0.65, col::rubric.withAlpha (0.07f));
+            juce::ColourGradient grad (juce::Colour (0xfff6f4f0).withAlpha (0.5f), 64.0f, 64.0f, col::ink.withAlpha (0.0f), 128.0f, 64.0f, true);      // (light, no colour: the room stays grey)
+            grad.addColour (0.3, juce::Colour (0xffdcdad4).withAlpha (0.2f));
+            grad.addColour (0.65, col::dim.withAlpha (0.06f));
             gg.setGradientFill (grad);
             gg.fillEllipse (0.0f, 0.0f, 128.0f, 128.0f);
         }
@@ -601,8 +650,8 @@ void WalkView::drawMap (juce::Graphics& g, juce::Rectangle<float> box, const Roo
         {
             if (proc.engine.muted[(size_t) s][(size_t) k].load()) continue;
             const Pos pos = proc.engine.displayPosition (s, k, params);
-            const float a = juce::degreesToRadians (pos.az), e = juce::degreesToRadians (pos.el);
-            const auto q = P (homeP.x - std::sin (a) * std::cos (e) * pos.dist, homeP.y + std::cos (a) * std::cos (e) * pos.dist);
+            const V3 pw = pipeAt (r, homeP, pos);
+            const auto q = P (pw.x, pw.y);
             const float gl = glow[(size_t) s][(size_t) k];
             g.setColour (gl > 0.05f ? juce::Colour (0xffffd9a0).withAlpha (0.5f + 0.5f * gl) : col::mute.withAlpha (0.6f));
             g.fillEllipse (juce::Rectangle<float> (gl > 0.05f ? 3.5f : 2.2f, gl > 0.05f ? 3.5f : 2.2f).withCentre (q));

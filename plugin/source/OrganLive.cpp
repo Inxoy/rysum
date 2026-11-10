@@ -22,16 +22,17 @@ Pos OrganEngine::heardFrom (Pos pos) const noexcept
     return q;
 }
 
-bool OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept
+int OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept
 {
     const int ri = juce::jlimit (0, kNumRooms - 1, room);
-    if (! occOn[(size_t) ri]) return false;
-    // the pipe where the room simulation has it (from the usual place, inside the walls); the listener where he walked
-    const auto& walked = roomsEr[(size_t) ri];
-    RoomParams usual = walked;
-    usual.listenerX = roomsNow[(size_t) ri].listenerX; usual.listenerY = roomsNow[(size_t) ri].listenerY;
-    const Vec3f S = roomPoint (usual, home), L = listenerPos (walked);
-    return diffractedPath (occGeo[(size_t) ri], occCorners[(size_t) ri], L, S, heard, lossDb, cutoffHz);
+    if (! planOn[(size_t) ri]) return 0;
+    // the pipe where the room simulation (and the 3D view) has it: from the usual place, inside the walls;
+    // the listener where he walked. Heard from there - straight, or around a corner.
+    const Vec3f S = roomPoint (occUsual[(size_t) ri], home), L = occL[(size_t) ri];
+    if (occOn[(size_t) ri] && diffractedPath (occGeo[(size_t) ri], occCorners[(size_t) ri], L, S, heard, lossDb, cutoffHz)) return 2;
+    heard = seenFrom (L, S);
+    heard.dist = juce::jlimit (kMinDist, kMaxDist, heard.dist);
+    return 1;
 }
 
 /** the pitch a pipe has in the current tuning, whether it sounds or not (0 = no such pipe) */
@@ -88,8 +89,13 @@ void OrganEngine::updateLive (const EngineParams& p, double dt) noexcept
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         const auto& r = roomsEr[(size_t) ri];
-        occOn[(size_t) ri] = false;
+        occOn[(size_t) ri] = planOn[(size_t) ri] = false;
         if (! roomOnNow || ! liveWalk || r.box() || r.plan.n < 3) continue;
+        // (walking in a shaped room: the pipes are heard where they stand in it, inside its walls)
+        planOn[(size_t) ri] = true;
+        occUsual[(size_t) ri] = r;
+        occUsual[(size_t) ri].listenerX = roomsNow[(size_t) ri].listenerX; occUsual[(size_t) ri].listenerY = roomsNow[(size_t) ri].listenerY;
+        occL[(size_t) ri] = listenerPos (r);
         occGeo[(size_t) ri] = planGeo (r);
         if (occGeo[(size_t) ri].convex) continue;
         occCorners[(size_t) ri] = planCorners (occGeo[(size_t) ri]);
