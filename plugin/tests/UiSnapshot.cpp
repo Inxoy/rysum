@@ -590,6 +590,17 @@ public:
                 for (auto* ch : c->getChildren()) if (auto* f = findView (ch, console)) return f;
                 return nullptr;
             };
+            // the buttons of the Spieltisch must not cover one another ("pro Pfeife" / "Summe" used to lie over the Glitch tab)
+            if (auto* cv = findView (content, true))
+            {
+                bool clear = true;
+                for (auto* a : cv->getChildren())
+                    for (auto* b : cv->getChildren())
+                        if (a != b && a->isVisible() && b->isVisible() && dynamic_cast<juce::TextButton*> (a) != nullptr
+                            && dynamic_cast<juce::TextButton*> (b) != nullptr && a->getBounds().intersects (b->getBounds()))
+                            clear = false;
+                std::cout << "Spieltisch buttons do not overlap: " << (clear ? "ok" : "FAIL") << std::endl;
+            }
             if (auto* b = findView (content, true) ? findButton (findView (content, true), "Raum") : nullptr) b->triggerClick();
             else std::cout << "Raum tab button not found  FAIL" << std::endl;
             juce::MessageManager::getInstance()->runDispatchLoopUntil (80);

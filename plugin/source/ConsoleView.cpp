@@ -378,11 +378,12 @@ void ConsoleView::resized()
     }
     tabNoise.setBounds (noiseArea.getX() + 104, noiseArea.getY() + 8, 76, 20);
     tabRes.setBounds (tabNoise.getRight() + 4, noiseArea.getY() + 8, 74, 20);
-    perPipe.setBounds (decayArea.getRight() - 150, decayArea.getY() + 8, 80, 20);
-    onSum.setBounds (decayArea.getRight() - 70, decayArea.getY() + 8, 70, 20);
-    tabSound.setBounds (decayArea.getX() + 112, decayArea.getY() + 8, 56, 20);
-    tabSpace.setBounds (tabSound.getRight() + 4, decayArea.getY() + 8, 52, 20);
-    tabGlitch.setBounds (tabSpace.getRight() + 4, decayArea.getY() + 8, 58, 20);
+    // three tabs and the two mode buttons share one line: narrow enough that the mode buttons do not lie over "Glitch"
+    tabSound.setBounds (decayArea.getX() + 112, decayArea.getY() + 8, 50, 20);
+    tabSpace.setBounds (tabSound.getRight() + 3, decayArea.getY() + 8, 46, 20);
+    tabGlitch.setBounds (tabSpace.getRight() + 3, decayArea.getY() + 8, 52, 20);
+    onSum.setBounds (decayArea.getRight() - 49, decayArea.getY() + 8, 49, 20);
+    perPipe.setBounds (juce::jmax (tabGlitch.getRight() + 6, onSum.getX() - 66), decayArea.getY() + 8, 66, 20);
 
     auto o = outArea.withTrimmedTop (40);
     {
