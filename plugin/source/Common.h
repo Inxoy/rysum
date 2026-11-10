@@ -16,6 +16,15 @@ constexpr int kMaxOutChannels = 64;
 constexpr double kSampleFileRate = 48000.0;
 constexpr double kA4 = 444.5; // measured
 
+// The Stimmton parameter stores tenths of a cent. Its 440 Hz detent uses
+// the exact frequency ratio when converted to an effective pitch offset.
+constexpr float kStimmton440Detent = -17.6f;
+inline double effectiveStimmtonCents(float cents)
+{
+    return std::abs(cents - kStimmton440Detent) < 0.001f ? 1200.0 * std::log2(440.0 / kA4)
+                                                         : static_cast<double>(cents);
+}
+
 // physical keys, left to right, as MIDI note of the 8' pitch they sound.
 // short octave: the keys E F F# G G# A Bb B sound C F D G E A Bb B; no g#''.
 constexpr std::array<int, kNumKeys> kPhysKeys{
@@ -55,20 +64,24 @@ inline double meantoneHz(int midi) noexcept
 // Temperaments (cents above C). The samples are in 1/4-comma meantone; another
 // temperament is reached by shifting each pitch class, a' stays where it is.
 // --------------------------------------------------------------------------
+constexpr int kQuarterCommaMeantone = 21;
+constexpr int kFifthCommaMeantone = 22;
+constexpr int kThirdCommaMeantone = 23;
+constexpr int kTwoSeventhsCommaMeantone = 24;
+
 inline juce::StringArray temperamentNames()
 {
     // new entries only at the end: projects and patches store the index
     return {juce::String::fromUTF8("Originalstimmung (wie aufgenommen)"),
-            juce::String::fromUTF8("\xe2\x85\x99-Komma mittelt\xc3\xb6nig"),
+            "1/6-Pythagoreisches Komma",
             "Werckmeister III",
             "Kirnberger III",
             "Vallotti",
             "Pythagoreisch",
             "Gleichstufig",
-            "Rein (5-Limit, C-Dur)",
-            "Rein septimal (7-Limit)",
-            juce::String::fromUTF8("Naturtonreihe auf C (16.\xe2\x80\x93"
-                                   "30. Teilton)"),
+            "Just Intonation 5-Limit (C)",
+            "Just Intonation 7-Limit (C)",
+            "Naturtonreihe (C)",
             "31-EDO (12 aus 31)",
             "19-EDO (12 aus 19)",
             "53-EDO (12 aus 53, fast rein)",
@@ -79,7 +92,11 @@ inline juce::StringArray temperamentNames()
             juce::String::fromUTF8("Bohlen-Pierce \xc2\xb7 13 Stufen pro Duodezime (146,3 ct)"),
             juce::String::fromUTF8("Carlos Alpha \xc2\xb7 jede Taste 78 ct"),
             juce::String::fromUTF8("Scala-Datei (.scl / .kbm)"),
-            juce::String::fromUTF8("MTS-ESP / MIDI-Stimmung (SysEx)")};
+            juce::String::fromUTF8("MTS-ESP / MIDI-Stimmung (SysEx)"),
+            "1/4-Syntonisches Komma",
+            "1/5-Syntonisches Komma",
+            "1/3-Syntonisches Komma",
+            "2/7-Syntonisches Komma"};
 }
 
 /** tunings from index 14 on: every MIDI note is one step of this size (cents), a' stays put */
@@ -107,8 +124,33 @@ inline std::array<double, 12> temperamentCents(int t)
     switch (t)
     {
     case 1:
+    case kQuarterCommaMeantone:
+    case kFifthCommaMeantone:
+    case kThirdCommaMeantone:
+    case kTwoSeventhsCommaMeantone:
     {
-        const double f = 701.955 - 21.506 / 6.0; // 1/6-comma fifth
+        const double pureFifth = 1200.0 * std::log2(1.5);
+        const double syntonicComma = 1200.0 * std::log2(81.0 / 80.0);
+        const double pythagoreanComma = 12.0 * pureFifth - 8400.0;
+        double reduction = pythagoreanComma / 6.0;
+        switch (t)
+        {
+        case kQuarterCommaMeantone:
+            reduction = syntonicComma / 4.0;
+            break;
+        case kFifthCommaMeantone:
+            reduction = syntonicComma / 5.0;
+            break;
+        case kThirdCommaMeantone:
+            reduction = syntonicComma / 3.0;
+            break;
+        case kTwoSeventhsCommaMeantone:
+            reduction = 2.0 * syntonicComma / 7.0;
+            break;
+        default:
+            break;
+        }
+        const double f = pureFifth - reduction;
         auto m = [](double v) { return std::fmod(std::fmod(v, 1200.0) + 1200.0, 1200.0); };
         return {0.0,      m(7 * f), m(2 * f), m(-3 * f), m(4 * f),  m(-1 * f),
                 m(6 * f), m(f),     m(8 * f), m(3 * f),  m(-2 * f), m(5 * f)};
@@ -260,6 +302,7 @@ constexpr std::array<StopInfo, kNumStops> kStops{{
  */
 constexpr std::array<int, kNumStops> kDisplayOrder{7, 0, 1, 2, 3, 4, 5, 6};
 constexpr int kPraestant16 = 7;
+constexpr std::array<int, 6> kDsfReferenceStops{0, 1, 6, 2, 3, kPraestant16};
 
 /** default stop volumes (dB): measured perceived loudness (K-weighted, all pipes) of the cleaned
    samples, including the default distances in the room, so all stops start roughly equally loud */

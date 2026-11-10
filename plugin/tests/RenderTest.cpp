@@ -1666,8 +1666,85 @@ static void testRoomsAndSpread(std::shared_ptr<const SampleLibrary> lib)
           "spread: muted pipes are skipped");
 }
 
+static void testHeldPipeTuning()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double measuredHz = 240.0;
+    constexpr int midi = 60;
+    const int key = keyIndexForMidi(midi);
+    auto library = std::make_shared<SampleLibrary>();
+    auto sample = std::make_shared<Sample>();
+    sample->sampleRate = sampleRate;
+    sample->data.resize(96000);
+    for (std::size_t i = 0; i < sample->data.size(); ++i)
+        sample->data[i] = static_cast<float>(
+            0.5 * std::sin(2.0 * std::acos(-1.0) * measuredHz * static_cast<double>(i) / sampleRate));
+
+    auto &pipe = library->pipes[0][static_cast<std::size_t>(key)];
+    pipe.valid = true;
+    pipe.sample = sample;
+    pipe.midi = midi;
+    pipe.nominalHz = meantoneHz(midi);
+    pipe.calibrationRatio = pipe.nominalHz / measuredHz;
+    pipe.release = 72000;
+    pipe.loopStart = 4800;
+    pipe.loopEnd = 48000;
+
+    OrganEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setLibrary(library);
+    EngineParams params;
+    params.stopOn[0] = true;
+    params.correctSamplePitch = true;
+    params.doppler = 0.0f;
+    params.pitchCents = effectiveStimmtonCents(kStimmton440Detent);
+    params.tuning = makeKeyTuning(6);
+    juce::AudioBuffer<float> audio(2, 512);
+    juce::MidiBuffer midiEvents;
+    midiEvents.addEvent(juce::MidiMessage::noteOn(1, midi, static_cast<juce::uint8>(100)), 0);
+
+    auto renderPitch = [&]()
+    {
+        double first = 0.0, last = 0.0;
+        int crossings = 0;
+        float previous = 0.0f;
+        for (int block = 0; block < 80; ++block)
+        {
+            engine.process(audio, midiEvents, params);
+            midiEvents.clear();
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+            {
+                const float current = audio.getSample(0, i);
+                if (block >= 8 && previous < 0.0f && current >= 0.0f)
+                {
+                    last = static_cast<double>(block * 512 + i - 1) -
+                           previous / static_cast<double>(current - previous);
+                    if (crossings++ == 0)
+                        first = last;
+                }
+                previous = current;
+            }
+        }
+        return crossings > 1 ? sampleRate * (crossings - 1) / (last - first) : 0.0;
+    };
+
+    check(std::abs(renderPitch() - 440.0 * std::exp2(-9.0 / 12.0)) < 0.02,
+          "calibrated pipe follows the 12-EDO target");
+    params.tuning = makeKeyTuning(14);
+    check(params.tuning.source[static_cast<std::size_t>(key)] != key,
+          "31-EDO changes the preferred source pipe");
+    check(std::abs(renderPitch() - 440.0 * std::exp2(-9.0 / 31.0)) < 0.02,
+          "held pipe follows the 31-EDO target across a source mapping change");
+}
+
 int main(int argc, char **argv)
 {
+    if (std::getenv("RYSUM_ONLY_PITCH") != nullptr)
+    {
+        testHeldPipeTuning();
+        return failures;
+    }
+    testHeldPipeTuning();
     const bool onlyRoom =
         std::getenv("RYSUM_ONLY_ROOM") != nullptr; // quick run: just the room tests
     const bool onlyWind = onlyRoom || std::getenv("RYSUM_ONLY_WIND") !=

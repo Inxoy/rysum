@@ -117,6 +117,7 @@ struct EngineParams
     float distAmount = 0.7f; // 0 = distance does not change the level, 1 = 1/r
 
     // tuning
+    bool correctSamplePitch = false;
     KeyTuning tuning = makeKeyTuning(
         0); // per key: shift (cents) from the recorded pipe that is played, and which pipe
     /** not null: free tuning - every MIDI note (and channel) has its own pitch; the recorded pipe
@@ -131,7 +132,7 @@ struct EngineParams
     // pressed and slid on its own
     bool mpe = false;
     float mpeBendRange = 48.0f; // semitones for a full bend on a note channel
-    float pitchCents = 0.0f;    // whole organ
+    double pitchCents = 0.0;    // whole organ
     float detune = 0.0f;        // max random detune per pipe (cents)
 
     // tremulant
@@ -188,6 +189,19 @@ public:
 
     /** call from the audio thread only (the processor swaps the library in at block start) */
     void setLibrary(std::shared_ptr<const SampleLibrary> lib);
+
+    std::array<double, kNumKeys> recordedPipeFrequencies(int stop) const
+    {
+        std::array<double, kNumKeys> frequencies{};
+        if (library != nullptr && stop >= 0 && stop < kNumStops)
+        {
+            const auto &pipes = library->pipes[static_cast<std::size_t>(stop)];
+            for (std::size_t key = 0; key < frequencies.size(); ++key)
+                if (pipes[key].valid)
+                    frequencies[key] = pipes[key].rawReferenceHz * pipes[key].nativePitchRatio;
+        }
+        return frequencies;
+    }
     const SampleLibrary *getLibrary() const noexcept
     {
         return library.get();
@@ -325,7 +339,7 @@ private:
     struct Voice
     {
         bool active = false;
-        int stop = 0, key = 0;
+        int stop = 0, key = 0, sourceKey = 0;
         const Pipe *pipe = nullptr;
         const float *data = nullptr;
         int length = 0;

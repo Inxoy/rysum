@@ -175,7 +175,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             [](float v, int)
             {
                 return juce::String::fromUTF8("a\xe2\x80\xb2 = ") +
-                       String(kA4 * std::pow(2.0, v / 1200.0), 1) + " Hz";
+                       String(kA4 * std::exp2(effectiveStimmtonCents(v) / 1200.0), 1) + " Hz";
             })));
     l.add(std::make_unique<AudioParameterFloat>(
         ParameterID{"detune", 1}, "Verstimmung", NormalisableRange<float>(0.0f, 60.0f, 0.1f, 0.6f),
@@ -705,6 +705,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                  StringArray{"32'", "16'", "8'", "4'", "2'"}, 2));
     l.add(std::make_unique<AudioParameterInt>(ParameterID{"dsfMixtur", 1}, "Testton Mixtur", 1, 9,
                                               1));
+    juce::StringArray referenceRegisters;
+    for (const int stop : kDsfReferenceStops)
+        referenceRegisters.add(kStops[static_cast<std::size_t>(stop)].label);
+    l.add(std::make_unique<AudioParameterChoice>(
+        ParameterID{"dsfRegister", 1}, "Testton Register", referenceRegisters, 0));
     return l;
 }
 
@@ -1033,6 +1038,9 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         const int t = juce::roundToInt(V(ix.temperament));
         if ((t == kScalaTuning && scalaReady.load()) || (t == kMtsTuning && mtsActive()))
             p.notes = &noteTable;
+        p.correctSamplePitch = p.notes != nullptr || (t != 0 && t != kScalaTuning && t != kMtsTuning);
+        p.pitchCents = (t == 0 || t == kMtsTuning) ? 0.0 : effectiveStimmtonCents(V(ix.pitch));
+        p.detune = t == 0 ? 0.0f : V(ix.detune);
         p.notesContinuous = V(ix.mtsCont) > 0.5f;
         p.mpe = V(ix.mpe) > 0.5f;
         p.mpeBendRange = V(ix.mpeBend);
@@ -1040,8 +1048,6 @@ EngineParams RysumProcessor::readParams(const float *vals) const
                      V(ix.lucMode) > 0.5f; // the piece is played by the processor (lucPiece)
         p.lucierMix = V(ix.lucMix);
     }
-    p.pitchCents = V(ix.pitch);
-    p.detune = V(ix.detune);
     p.tremOn = V(ix.tremOn) > 0.5f;
     p.tremRate = V(ix.tremRate);
     p.tremDepth = V(ix.tremDepth);
@@ -1620,6 +1626,15 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     DsfReferenceTuning referenceTuning;
     referenceTuning.tuning = params.tuning;
     referenceTuning.temperament = juce::roundToInt(extraParams.at("temperament")->load());
+    std::array<double, kNumKeys> recordedHz{};
+    if (referenceTuning.temperament == 0)
+    {
+        const int selection = juce::roundToInt(apvts.getRawParameterValue("dsfRegister")->load());
+        const auto index = static_cast<std::size_t>(
+            juce::jlimit(0, static_cast<int>(kDsfReferenceStops.size()) - 1, selection));
+        recordedHz = engine.recordedPipeFrequencies(kDsfReferenceStops[index]);
+        referenceTuning.recordedHz = &recordedHz;
+    }
     referenceTuning.pitchCents = params.pitchCents;
     referenceTuning.mpe = params.mpe;
     referenceTuning.mpeBendRange = params.mpeBendRange;
@@ -2733,7 +2748,7 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
     static const char *const keepIds[]{
         "binOrder",  "binYaw",      "binDfEq",   "mpe",          "mpeBend",     "inpOn",
         "spkOrder",  "spkDistComp", "dsfOn",     "dsfFrequency", "dsfSpectrum", "dsfLevel",
-        "dsfMethod", "dsfMidi",     "dsfOffset", "dsfPartials",  "dsfFootage",  "dsfMixtur"};
+        "dsfMethod", "dsfMidi",     "dsfOffset", "dsfPartials",  "dsfFootage",  "dsfMixtur", "dsfRegister"};
     float keepVals[std::size(keepIds)]{};
     for (size_t i = 0; i < std::size(keepIds); ++i)
         keepVals[i] = apvts.getRawParameterValue(keepIds[i])->load();

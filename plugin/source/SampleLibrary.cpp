@@ -218,10 +218,22 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load(const juce::File &folder, juc
                     if (p.loopEnd > p.release)
                         p.loopEnd = p.release;
                     p.nativePitchRatio = 1.0;
+                    const double calibratedHz = (double)pv["calibrated_hz"];
+                    const double rankRatio = (double)st["footage_mult"];
+                    if (std::isfinite(calibratedHz) && calibratedHz > 0.0 &&
+                        std::isfinite(rankRatio) && rankRatio > 0.0)
+                    {
+                        const double ratio = meantoneHz(p.midi) * rankRatio / calibratedHz;
+                        if (std::isfinite(ratio) && ratio > 0.0)
+                            p.calibrationRatio = ratio;
+                    }
                     p.levelDb = (float)(double)pv["level_db"];
                     p.loopNcc = pv["loop_ncc"].isVoid() ? 0.0f : (float)(double)pv["loop_ncc"];
                     p.nominalHz = (double)pv["nominal_hz"];
                     p.measuredHz = pv["measured_hz"].isVoid() ? 0.0 : (double)pv["measured_hz"];
+                    if (std::isfinite(rankRatio) && rankRatio > 0.0)
+                        p.rawReferenceHz = std::isfinite(calibratedHz) && calibratedHz > 0.0
+                                               ? calibratedHz : p.measuredHz;
                     p.hasCents = !pv["cents_vs_nominal"].isVoid();
                     p.cents = p.hasCents ? (double)pv["cents_vs_nominal"] : 0.0;
                     p.source = pv["source"].toString();

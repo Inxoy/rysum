@@ -35,7 +35,7 @@ private:
     juce::TextButton *dfEq = nullptr;
     juce::Rectangle<int> binStatusArea;
     juce::String shownBinStatus;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> temperamentAtt;
+    std::unique_ptr<juce::ParameterAttachment> temperamentAtt;
 
     ParamRow *pitch = nullptr, *detune = nullptr, *tremRate = nullptr, *tremDepth = nullptr,
              *smear = nullptr, *release = nullptr, *doppler = nullptr, *distAmount = nullptr,
@@ -47,6 +47,8 @@ private:
              *dsfOffset = nullptr, *dsfPartials = nullptr, *dsfFootage = nullptr,
              *dsfMixtur = nullptr;
     juce::TextButton *dsfOn = nullptr, *dsfMidi = nullptr;
+    juce::ComboBox dsfRegister;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dsfRegisterAtt;
     juce::Rectangle<int> dsfBox;
     int midiTextTop = 118;
     juce::Rectangle<int> tuneBox, tremBox, freezeBox, distBox, midiBox, binBox;

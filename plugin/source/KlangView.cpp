@@ -21,16 +21,26 @@ juce::TextButton &KlangView::toggle(const char *id, const juce::String &text)
 
 KlangView::KlangView(RysumProcessor &p) : proc(p)
 {
-    if (auto *choice =
-            dynamic_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("temperament")))
-        temperament.addItemList(choice->choices, 1);
-    temperamentAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        proc.apvts, "temperament", temperament);
-    temperament.setTooltip(u8("Die Aufnahmen sind \xc2\xbc-Komma mittelt\xc3\xb6nig; jede andere "
-                              "Stimmung verschiebt die Pfeifen, a\xe2\x80\xb2 bleibt. "
-                              "Bei den Stufen-Stimmungen (jede Taste ein Schritt) spielt jede "
-                              "Taste die Pfeife, die ihrer Tonh\xc3\xb6he am n\xc3\xa4"
-                              "chsten liegt."));
+    auto &tuningParam =
+        *static_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("temperament"));
+    auto addTuning = [&](int index) { temperament.addItem(tuningParam.choices[index], index + 1); };
+    for (const int index : {0, 5, kQuarterCommaMeantone, kThirdCommaMeantone,
+                            kTwoSeventhsCommaMeantone, kFifthCommaMeantone, 1, 7, 8, 9, 2, 3, 4, 6})
+        addTuning(index);
+    for (int index = 10; index < kQuarterCommaMeantone; ++index)
+        addTuning(index);
+    temperamentAtt = std::make_unique<juce::ParameterAttachment>(
+        tuningParam, [this](float value)
+        { temperament.setSelectedId(juce::roundToInt(value) + 1, juce::dontSendNotification); });
+    temperament.onChange = [this]
+    {
+        if (const int id = temperament.getSelectedId(); id > 0)
+            temperamentAtt->setValueAsCompleteGesture(static_cast<float>(id - 1));
+    };
+    temperamentAtt->sendInitialUpdate();
+    temperament.setTooltip(u8("Originalstimmung spielt die Aufnahmen in ihrer Tonh\xc3\xb6he. "
+                              "Bei den Stufen-Stimmungen spielt jede Taste die n\xc3\xa4"
+                              "chstgelegene aufgenommene Pfeife."));
     addAndMakeVisible(temperament);
     scalaLoad.setTooltip(u8("Eine Skala im Scala-Format (.scl) laden \xe2\x80\x93 danach optional "
                             "eine Tastenzuordnung (.kbm). "
@@ -67,6 +77,7 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
            "jeder Ton beh\xc3\xa4lt die Tonh\xc3\xb6he seines Anschlags."));
 
     pitch = &row("pitch", "Stimmton");
+    pitch->slider.setDoubleClickReturnValue(true, kStimmton440Detent);
     detune = &row("detune", u8("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
 
     tremOn = &toggle("tremOn", "Tremulant");
@@ -85,7 +96,15 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     dsfMidi = &toggle("dsfMidi", "MIDI");
     dsfMidi->setTooltip("An: letzte gehaltene MIDI-Note, globale Stimmung und eigene Feinstimmung. "
                         "Aus: kontinuierliche Frequenz in Hz. Originalstimmung verwendet das "
-                        "nominale Viertelkomma-Modell.");
+                        "ausgewaehlte Register.");
+    const auto &registerParam =
+        *static_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("dsfRegister"));
+    dsfRegister.addItemList(registerParam.choices, 1);
+    dsfRegister.setTooltip(
+        "Register, dessen gemessener Ton in Originalstimmung als Referenz dient.");
+    addAndMakeVisible(dsfRegister);
+    dsfRegisterAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        proc.apvts, "dsfRegister", dsfRegister);
     dsfOffset = &row("dsfOffset", "Feinstimmung");
     dsfFrequency = &row("dsfFrequency", "Frequenz");
     dsfOffset->slider.fineDragIncrement = 0.01;
@@ -221,6 +240,7 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     syncOn = &toggle("motionSync", "Bewegung im Tempo");
     syncOn->setTooltip(u8("Geschwindigkeiten gelten bei 120 BPM, laufen mit dem Projekttempo und "
                           "rasten auf die Taktposition ein."));
+    refresh();
 }
 
 void KlangView::resized()
@@ -249,11 +269,10 @@ void KlangView::resized()
         detune->setBounds(b.removeFromTop(38));
         b.removeFromTop(6);
         auto t = b.removeFromTop(24);
+        mtsFollow->setBounds(t);
         scalaLoad.setBounds(t.removeFromLeft(118));
         t.removeFromLeft(6);
         kbmClear.setBounds(t.removeFromLeft(106));
-        b.removeFromTop(6);
-        mtsFollow->setBounds(b.removeFromTop(24));
         b.removeFromTop(6);
         tuningStatusArea = b;
     }
@@ -284,6 +303,7 @@ void KlangView::resized()
         controls.removeFromLeft(4);
         dsfMidi->setBounds(controls.removeFromLeft(55));
         controls.removeFromLeft(6);
+        dsfRegister.setBounds(controls);
 
         tone.removeFromTop(12);
         const auto frequencyBounds = tone.removeFromTop(36);
@@ -340,6 +360,18 @@ void KlangView::resized()
 
 void KlangView::refresh()
 {
+    const int tuning = juce::roundToInt(proc.apvts.getRawParameterValue("temperament")->load());
+    const bool original = tuning == 0;
+    dsfRegister.setVisible(original);
+    scalaLoad.setVisible(tuning == RysumProcessor::kScalaTuning);
+    kbmClear.setVisible(tuning == RysumProcessor::kScalaTuning);
+    mtsFollow->setVisible(tuning == RysumProcessor::kMtsTuning);
+    const bool mts = tuning == RysumProcessor::kMtsTuning;
+    pitch->setDisabledValueText(mts ? "MTS-ESP" : "Originalstimmung");
+    pitch->setEnabled(!original && !mts);
+    pitch->setAlpha(original || mts ? 0.5f : 1.0f);
+    detune->setEnabled(!original);
+    detune->setAlpha(original ? 0.5f : 1.0f);
     const bool followsMidi = proc.apvts.getRawParameterValue("dsfMidi")->load() > 0.5f;
     dsfFrequency->setVisible(!followsMidi);
     dsfOffset->setVisible(followsMidi);
@@ -352,8 +384,6 @@ void KlangView::refresh()
             repaint(tuneBox);
         }
         kbmClear.setEnabled(proc.hasKbm());
-        const int t = juce::roundToInt(proc.apvts.getRawParameterValue("temperament")->load());
-        mtsFollow->setAlpha(t == RysumProcessor::kMtsTuning ? 1.0f : 0.4f);
     }
     for (auto &r : rows)
         r->repaint();
@@ -380,7 +410,7 @@ void KlangView::paint(juce::Graphics &g)
         g.setOpacity(0.07f);
         drawCover(g, A.wall, getLocalBounds().toFloat(), 0.6f);
     }
-    drawSectionTitle(g, tuneBox, "Stimmung", u8("Original: \xc2\xbc-Komma"));
+    drawSectionTitle(g, tuneBox, "Stimmung");
     {
         g.setFont(A.monoFont(10.5f));
         g.setColour(proc.getTuningStatus().startsWith("Fehler") ? col::rubric.brighter(0.4f)

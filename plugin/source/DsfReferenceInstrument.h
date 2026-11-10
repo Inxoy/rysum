@@ -14,19 +14,27 @@ struct DsfReferenceTuning
 {
     KeyTuning tuning;
     int temperament = 0;
+    const std::array<double, kNumKeys> *recordedHz = nullptr;
     const float *noteHz = nullptr;
     const std::uint8_t *mapped = nullptr;
-    float pitchCents = 0.0f;
+    double pitchCents = 0.0;
     float mpeBendRange = 48.0f;
     bool mpe = false;
 };
 
-// The reference uses nominal tuning, never a sample's measured pitch. In original
-// tuning this deliberately means the current nominal quarter-comma model.
+// Recorded mode supplies one measured frequency per key for the selected register.
 inline double referenceNoteHz(const DsfReferenceTuning &params, int note, int channel)
 {
     if (note < 0 || note > 127 || channel < 1 || channel > 16)
         return 0.0;
+    if (params.recordedHz != nullptr)
+    {
+        const int key = keyIndexForMidi(note);
+        if (key < 0)
+            return 0.0;
+        const double hz = (*params.recordedHz)[static_cast<std::size_t>(key)];
+        return std::isfinite(hz) && hz > 0.0 ? hz : 0.0;
+    }
     double hz = 0.0;
     if (params.noteHz != nullptr && params.mapped != nullptr)
     {

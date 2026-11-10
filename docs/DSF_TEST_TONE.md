@@ -45,11 +45,12 @@ parameters as the Klang page; tuning and frequency settings remain on Klang.
   latest target and finish the current fade before starting another.
 - **Pegel:** independent output gain, initially −24 dB.
 
-For Originalstimmung, the reference uses the existing **nominal quarter-comma
-model at A = 444.5 Hz**, not the measured frequencies of the recordings. It does
-not imply that the original samples are accurately in that temperament. A separate
-nominal tuning option remains a possible future extension. Scala and MTS use the
-same nominal note-frequency table as the organ, including unmapped notes.
+In Originalstimmung, the register menu to the right of MIDI selects the pipe
+whose measured playback frequency Testton follows. It uses the checked
+calibration where available and otherwise the manifest's measured frequency.
+Notes without a measurement are silent. The menu lists single-rank registers,
+including the derived Praestant 16′. Other tunings use their selected target
+frequencies. Testton respects unmapped notes in Scala and MTS.
 
 To check a sample, begin with Spektrum at zero and one organ stop enabled. In
 MIDI mode, hold a note and adjust Feinstimmung to minimise beating; the heading

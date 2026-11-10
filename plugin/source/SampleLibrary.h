@@ -26,6 +26,8 @@ struct Pipe
 
     // Native pitch transposition, excluding sample-rate conversion.
     double nativePitchRatio = 1.0;
+    double rawReferenceHz = 0.0;
+    double calibrationRatio = 1.0; // nominal pitch / checked raw sample frequency
 
     bool valid = false;
     bool substituted = false;

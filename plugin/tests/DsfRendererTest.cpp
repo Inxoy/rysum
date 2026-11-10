@@ -208,6 +208,15 @@ int main()
         }
     }
 
+    const auto quarterComma = rysum::temperamentCents(rysum::kQuarterCommaMeantone);
+    const auto sixthPythagoreanComma = rysum::temperamentCents(1);
+    if (std::abs(std::exp2(quarterComma[4] / 1200.0) - 1.25) > 1.0e-12 ||
+        std::abs(sixthPythagoreanComma[7] - (1400.0 - 1200.0 * std::log2(1.5))) > 1.0e-9)
+    {
+        std::cerr << "Meantone comma sizes do not produce the expected intervals\n";
+        return 1;
+    }
+
     rysum::DsfReferenceTuning tuning;
     tuning.tuning = rysum::makeKeyTuning(0);
     if (!(std::abs(rysum::referenceNoteHz(tuning, 69, 1) - rysum::kA4) <= 1.0e-8))
@@ -222,6 +231,22 @@ int main()
             std::cerr << "Nominal reference rejected a note outside the sample compass\n";
             return 1;
         }
+    std::array<double, rysum::kNumKeys> recorded{};
+    recorded[static_cast<std::size_t>(rysum::keyIndexForMidi(69))] = 443.6542369446447;
+    tuning.recordedHz = &recorded;
+    if (std::abs(rysum::referenceNoteHz(tuning, 69, 1) - 443.6542369446447) > 1.0e-10 ||
+        rysum::referenceNoteHz(tuning, 68, 1) > 0.0 || rysum::referenceNoteHz(tuning, 108, 1) > 0.0)
+    {
+        std::cerr << "Recorded reference did not follow the selected pipe frequencies\n";
+        return 1;
+    }
+    tuning.recordedHz = nullptr;
+    tuning.pitchCents = rysum::effectiveStimmtonCents(rysum::kStimmton440Detent);
+    if (!(std::abs(rysum::referenceNoteHz(tuning, 69, 1) - 440.0) <= 1.0e-10))
+    {
+        std::cerr << "Stimmton detent did not produce 440 Hz\n";
+        return 1;
+    }
     tuning.pitchCents = 1200.0f;
     if (!(std::abs(rysum::referenceNoteHz(tuning, 69, 1) - 2.0 * rysum::kA4) <= 1.0e-8))
         return 1;

@@ -592,6 +592,12 @@ public:
         SettableTooltipClient::setTooltip(t);
         slider.setTooltip(t);
     }
+    void setDisabledValueText(juce::String text)
+    {
+        disabledValueText = std::move(text);
+        repaint();
+    }
+
     ParamRow(juce::AudioProcessorValueTreeState &state, const juce::String &paramId,
              const juce::String &name, bool compactRow = false)
         : title(name), compact(compactRow), id(paramId)
@@ -622,6 +628,12 @@ public:
         g.setFont(compact ? Assets::get().romanFont(11.5f) : Assets::get().sansFont(14.0f));
         g.drawText(title, r, juce::Justification::centredLeft);
         g.setFont(Assets::get().monoFont(compact ? 10.0f : 12.0f));
+        if (!isEnabled() && disabledValueText.isNotEmpty())
+        {
+            g.setColour(col::dim);
+            g.drawText(disabledValueText, r, juce::Justification::centredRight);
+            return;
+        }
         if (dragRoute >= 0 && access != nullptr)
         {
             auto *a = access->routeAmountParam(dragRoute);
@@ -699,7 +711,7 @@ public:
 
     void paintOverChildren(juce::Graphics &g) override
     {
-        if (param == nullptr || !findAccess())
+        if (!isEnabled() || param == nullptr || !findAccess())
             return;
         modNorm = access->modulatedNorm(index);
         const auto sb = slider.getBounds().toFloat();
@@ -838,6 +850,7 @@ private:
         }
     }
 
+    juce::String disabledValueText;
     juce::String title;
     bool compact = false;
     juce::String id;

@@ -769,6 +769,7 @@ void OrganEngine::startVoice(int stop, int key, int previewSamples, int noteId)
     }
     v->stop = stop;
     v->key = key;
+    v->sourceKey = src;
     v->pipe = &pipe;
     v->data = pipe.sample->data.data();
     v->length = pipe.sample->size();
@@ -1282,10 +1283,20 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
         const float wobCents = 30.0f * wobAmt + 320.0f * wobAmt * wobAmt * wobAmt * wobAmt;
         const float wobLevel = 0.3f * wobAmt + 0.6f * wobAmt * wobAmt * wobAmt * wobAmt;
         const float wobSpeed = 1.0f + 5.0f * wobAmt * wobAmt * wobAmt;
-        const float tuneCents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t)v.key]) +
-                                p.pitchCents + p.detune * v.detuneRnd;
+        double tuneCents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t)v.key]) +
+                           p.pitchCents + p.detune * v.detuneRnd;
+        if (v.noteId < 0)
+        {
+            // The tuning describes the target relative to its preferred pipe.
+            // A held voice may still be playing a pipe from the previous tuning.
+            const int targetSource = juce::jlimit(0, kNumKeys - 1, keySource[(size_t)v.key]);
+            if (targetSource != v.sourceKey)
+                tuneCents += 1200.0 * std::log2(
+                    static_cast<double>(slotHz[(size_t)targetSource]) / slotHz[(size_t)v.sourceKey]);
+        }
 
-        double rate = v.baseRate;
+        const double baseRate = v.baseRate * (p.correctSamplePitch ? pipe.calibrationRatio : 1.0);
+        double rate = baseRate;
         float amp = 1.0f;
         // effects: upper partials split off (sent elsewhere), crackle bursts at the pipe
         const bool split = p.fx.partSpread > 0.5f;
@@ -1313,7 +1324,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                     v.windSm = windTarget;
                 v.windSm += 0.03f * (windTarget - v.windSm);
                 const float w = v.windSm, lack = 1.0f - w;
-                float cents = tuneCents - 75.0f * lack * std::sqrt(lack);
+                double cents = tuneCents - 75.0f * lack * std::sqrt(lack);
                 float a = std::pow(w, 1.6f);
                 if (lack > 0.001f)
                 {
@@ -1351,7 +1362,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                     v.bendSm += 0.2f * (voiceBendTarget(v) - v.bendSm);
                     cents += v.bendSm;
                 }
-                rate = v.baseRate * std::exp2(cents / 1200.0f) * v.dop;
+                rate = baseRate * std::exp2(cents / 1200.0f) * v.dop;
                 if (chaosModel)
                 {
                     // wind model 2: the starving pipe's edge tone (steady at steady wind, lower and
