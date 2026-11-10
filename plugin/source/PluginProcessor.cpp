@@ -683,7 +683,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                 pct));
     l.add(std::make_unique<AudioParameterFloat>(
         ParameterID{"dsfLevel", 1}, "Testton Pegel", NormalisableRange<float>(-60.0f, -6.0f, 0.1f),
-        -24.0f, AudioParameterFloatAttributes().withLabel("dB")));
+        -32.0f, AudioParameterFloatAttributes().withLabel("dB")));
     // Legacy parameter retained for saved state/host indices; playback always uses trapezoidal.
     l.add(std::make_unique<AudioParameterChoice>(ParameterID{"dsfMethod", 1}, "Testton Integration",
                                                  StringArray{"Trapez", "Rechteck"}, 0));

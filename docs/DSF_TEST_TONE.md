@@ -43,7 +43,7 @@ parameters as the Klang page; tuning and frequency settings remain on Klang.
   Counts and saved values remain integers. Changes crossfade between phase-aligned
   spectra over 30 ms, before the downsampling filter. Rapid changes retain the
   latest target and finish the current fade before starting another.
-- **Pegel:** independent output gain, initially −24 dB.
+- **Pegel:** independent output gain, initially −32 dB.
 
 In Originalstimmung, the register menu to the right of MIDI selects the pipe
 whose measured playback frequency Testton follows. It uses the checked
