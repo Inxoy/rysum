@@ -12,7 +12,10 @@ struct Sample
 {
     std::vector<float> data;
     double sampleRate = kSampleFileRate;
-    int size() const noexcept { return (int) data.size(); }
+    int size() const noexcept
+    {
+        return (int)data.size();
+    }
 };
 
 /** one pipe of one stop, as described by rysum_samples.json */
@@ -26,7 +29,7 @@ struct Pipe
 
     bool valid = false;
     bool substituted = false;
-    int substituteFrom = -1;     // key index of the source pipe
+    int substituteFrom = -1; // key index of the source pipe
 
     // info for the "Pfeifen" view
     int midi = 0;
@@ -38,7 +41,10 @@ struct Pipe
     juce::StringArray flags;
     int takes = 1;
 
-    bool hasLoop() const noexcept { return loopStart >= 0 && loopEnd > loopStart + 64; }
+    bool hasLoop() const noexcept
+    {
+        return loopStart >= 0 && loopEnd > loopStart + 64;
+    }
 };
 
 struct NoiseSample
@@ -46,7 +52,8 @@ struct NoiseSample
     std::shared_ptr<const Sample> sample;
     juce::String kind;
     float peakDb = 0;
-    float norm = 1.0f;          // gain that brings the sample to a -6 dBFS peak (effects use it, the console clicks don't)
+    float norm = 1.0f; // gain that brings the sample to a -6 dBFS peak (effects use it, the console
+                       // clicks don't)
 };
 
 class SampleLibrary
@@ -54,7 +61,7 @@ class SampleLibrary
 public:
     std::array<std::array<Pipe, kNumKeys>, kNumStops> pipes;
     std::vector<NoiseSample> clicksDown, clicksUp, clicksOther, stopPulls;
-    std::vector<NoiseSample> custom;          // own sounds from noise/eigene (screws, clanks, ...)
+    std::vector<NoiseSample> custom; // own sounds from noise/eigene (screws, clanks, ...)
     std::vector<std::shared_ptr<const Sample>> wind;
     juce::File folder;
     juce::StringArray warnings;
@@ -62,19 +69,27 @@ public:
 
     /** Loads rysum_samples.json and all WAVs from 'folder'. Returns nullptr and fills
         'error' when the folder can't be used. Runs on a background thread. */
-    static std::unique_ptr<SampleLibrary> load (const juce::File& folder, juce::String& error,
-                                                std::function<bool()> shouldExit = {});
+    static std::unique_ptr<SampleLibrary> load(const juce::File &folder, juce::String &error,
+                                               std::function<bool()> shouldExit = {});
 
     /** typical places where the samples folder may live */
     static juce::Array<juce::File> candidateFolders();
     /** folder for own sounds: <sample-library>/noise/eigene */
-    static juce::File customFolder (const juce::File& sampleFolder) { return sampleFolder.getChildFile ("noise").getChildFile ("eigene"); }
+    static juce::File customFolder(const juce::File &sampleFolder)
+    {
+        return sampleFolder.getChildFile("noise").getChildFile("eigene");
+    }
 
     /** reads all audio files of the own-sounds folder (mono, trimmed, peak-normalised) */
-    static std::vector<NoiseSample> loadCustom (const juce::File& sampleFolder, std::function<bool()> shouldExit = {});
+    static std::vector<NoiseSample> loadCustom(const juce::File &sampleFolder,
+                                               std::function<bool()> shouldExit = {});
     /** the same from any folder (with its subfolders) */
-    static std::vector<NoiseSample> loadCustomDir (const juce::File& dir, std::function<bool()> shouldExit = {});
+    static std::vector<NoiseSample> loadCustomDir(const juce::File &dir,
+                                                  std::function<bool()> shouldExit = {});
 
-    static bool looksLikeSampleFolder (const juce::File& f) { return f.getChildFile ("rysum_samples.json").existsAsFile(); }
+    static bool looksLikeSampleFolder(const juce::File &f)
+    {
+        return f.getChildFile("rysum_samples.json").existsAsFile();
+    }
 };
 } // namespace rysum

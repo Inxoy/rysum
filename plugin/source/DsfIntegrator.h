@@ -62,10 +62,8 @@ public:
 
         return output;
     }
-    
-    void reset(
-        double initialOutput = 0.0,
-        double initialPreviousInput = 0.0)
+
+    void reset(double initialOutput = 0.0, double initialPreviousInput = 0.0)
     {
         output = initialOutput;
         previousInput = initialPreviousInput;

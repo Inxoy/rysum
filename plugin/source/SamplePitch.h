@@ -1,7 +1,7 @@
 #pragma once
 
-#include <optional>
 #include <cmath>
+#include <optional>
 
 namespace rysum
 {
@@ -31,17 +31,12 @@ struct SamplePitchRequest
     double targetRankRatio = 1.0;
 };
 
-inline std::optional<double> samplePlaybackRate(
-    const SamplePitchRequest& request,
-    SampleTuningMode mode)
+inline std::optional<double> samplePlaybackRate(const SamplePitchRequest &request,
+                                                SampleTuningMode mode)
 {
-    const auto positiveFinite = [] (double value)
-    {
-        return std::isfinite(value) && value > 0.0;
-    };
+    const auto positiveFinite = [](double value) { return std::isfinite(value) && value > 0.0; };
 
-    if (!positiveFinite(request.sourceSampleRate)
-        || !positiveFinite(request.outputSampleRate))
+    if (!positiveFinite(request.sourceSampleRate) || !positiveFinite(request.outputSampleRate))
         return std::nullopt;
 
     // defensive safeguard, if pitchRatio is left unassigned 0 value will be rejected
@@ -49,28 +44,27 @@ inline std::optional<double> samplePlaybackRate(
 
     switch (mode)
     {
-        case SampleTuningMode::native:
-            if (!positiveFinite(request.nativePitchRatio))
-                return std::nullopt;
-
-            pitchRatio = request.nativePitchRatio;
-            break;
-
-        case SampleTuningMode::corrected:
-            if (!request.measuredReferenceHz.has_value())
-                return std::nullopt;
-
-            if (!positiveFinite(*request.measuredReferenceHz)
-                || !positiveFinite(request.targetKeyboardHz)
-                || !positiveFinite(request.targetRankRatio))
-                return std::nullopt;
-
-            pitchRatio =
-                (request.targetKeyboardHz / *request.measuredReferenceHz) * request.targetRankRatio;
-            break;
-
-        default:
+    case SampleTuningMode::native:
+        if (!positiveFinite(request.nativePitchRatio))
             return std::nullopt;
+
+        pitchRatio = request.nativePitchRatio;
+        break;
+
+    case SampleTuningMode::corrected:
+        if (!request.measuredReferenceHz.has_value())
+            return std::nullopt;
+
+        if (!positiveFinite(*request.measuredReferenceHz) ||
+            !positiveFinite(request.targetKeyboardHz) || !positiveFinite(request.targetRankRatio))
+            return std::nullopt;
+
+        pitchRatio =
+            (request.targetKeyboardHz / *request.measuredReferenceHz) * request.targetRankRatio;
+        break;
+
+    default:
+        return std::nullopt;
     }
 
     const double rate = (request.sourceSampleRate / request.outputSampleRate) * pitchRatio;

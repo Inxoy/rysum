@@ -261,68 +261,46 @@ int main()
 
     const double errorStep = pi / 4.0;
 
-    const double rectangularError = rysum::integrationErrorDb(
-        rysum::DsfIntegrationMethod::rectangular,
-        errorStep,
-        2);
+    const double rectangularError =
+        rysum::integrationErrorDb(rysum::DsfIntegrationMethod::rectangular, errorStep, 2);
 
-    const double trapezoidalError = rysum::integrationErrorDb(
-        rysum::DsfIntegrationMethod::trapezoidal,
-        errorStep,
-        2);
+    const double trapezoidalError =
+        rysum::integrationErrorDb(rysum::DsfIntegrationMethod::trapezoidal, errorStep, 2);
 
     const double expectedRectangularError =
         20.0 * std::log10(std::sqrt(4.0 - 2.0 * std::sqrt(2.0)));
 
-    const double expectedTrapezoidalError =
-        20.0 * std::log10(2.0 * (std::sqrt(2.0) - 1.0));
+    const double expectedTrapezoidalError = 20.0 * std::log10(2.0 * (std::sqrt(2.0) - 1.0));
 
-    if (!(std::abs(rectangularError - expectedRectangularError)
-          <= 1.0e-12)
-        || !(std::abs(trapezoidalError - expectedTrapezoidalError)
-             <= 1.0e-12))
+    if (!(std::abs(rectangularError - expectedRectangularError) <= 1.0e-12) ||
+        !(std::abs(trapezoidalError - expectedTrapezoidalError) <= 1.0e-12))
     {
         std::cerr << "Integration error calculation failed\n";
         return 1;
     }
 
-    const auto selected = rysum::chooseDsfOversampling(
-        rysum::DsfIntegrationMethod::trapezoidal,
-        6000.0,
-        48000.0,
-        3,
-        0.25);
+    const auto selected = rysum::chooseDsfOversampling(rysum::DsfIntegrationMethod::trapezoidal,
+                                                       6000.0, 48000.0, 3, 0.25);
 
-    if (!selected.has_value()
-        || selected->factor != 4
-        || !selected->meetsTolerance
-        || !(std::abs(selected->errorDb) <= 0.25))
+    if (!selected.has_value() || selected->factor != 4 || !selected->meetsTolerance ||
+        !(std::abs(selected->errorDb) <= 0.25))
     {
         std::cerr << "Oversampling selection failed\n";
         return 1;
     }
 
-    const auto fallback = rysum::chooseDsfOversampling(
-        rysum::DsfIntegrationMethod::trapezoidal,
-        6000.0,
-        48000.0,
-        3,
-        1.0e-6);
+    const auto fallback = rysum::chooseDsfOversampling(rysum::DsfIntegrationMethod::trapezoidal,
+                                                       6000.0, 48000.0, 3, 1.0e-6);
 
-    if (!fallback.has_value()
-        || fallback->factor != 8
-        || fallback->meetsTolerance
-        || !(std::abs(fallback->errorDb) > 1.0e-6))
+    if (!fallback.has_value() || fallback->factor != 8 || fallback->meetsTolerance ||
+        !(std::abs(fallback->errorDb) > 1.0e-6))
     {
         std::cerr << "Oversampling fallback failed\n";
         return 1;
     }
 
-    const auto invalidSpectrum = rysum::chooseDsfOversampling(
-        rysum::DsfIntegrationMethod::trapezoidal,
-        6000.0,
-        48000.0,
-        4);
+    const auto invalidSpectrum =
+        rysum::chooseDsfOversampling(rysum::DsfIntegrationMethod::trapezoidal, 6000.0, 48000.0, 4);
 
     if (invalidSpectrum.has_value())
     {

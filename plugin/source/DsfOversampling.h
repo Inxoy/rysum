@@ -56,25 +56,17 @@ struct DsfOversamplingChoice
     bool meetsTolerance = false;
 };
 
-inline std::optional<DsfOversamplingChoice> chooseDsfOversampling(
-    DsfIntegrationMethod method,
-    double frequency,
-    double outputSampleRate,
-    int highestHarmonic,
-    double maximumErrorDb = 0.25)
+inline std::optional<DsfOversamplingChoice>
+chooseDsfOversampling(DsfIntegrationMethod method, double frequency, double outputSampleRate,
+                      int highestHarmonic, double maximumErrorDb = 0.25)
 {
-    if (!std::isfinite(frequency)
-        || !std::isfinite(outputSampleRate)
-        || !std::isfinite(maximumErrorDb)
-        || frequency <= 0.0
-        || outputSampleRate <= 0.0
-        || highestHarmonic < 1
-        || maximumErrorDb < 0.0)
+    if (!std::isfinite(frequency) || !std::isfinite(outputSampleRate) ||
+        !std::isfinite(maximumErrorDb) || frequency <= 0.0 || outputSampleRate <= 0.0 ||
+        highestHarmonic < 1 || maximumErrorDb < 0.0)
         return std::nullopt;
 
     // Oversampling must not permit partials above output Nyquist.
-    if (frequency >= outputSampleRate * 0.5
-            / static_cast<double>(highestHarmonic))
+    if (frequency >= outputSampleRate * 0.5 / static_cast<double>(highestHarmonic))
         return std::nullopt;
 
     const double twoPi = 2.0 * std::acos(-1.0);
@@ -84,23 +76,16 @@ inline std::optional<DsfOversamplingChoice> chooseDsfOversampling(
 
     for (int factor : factors)
     {
-        const double internalRate =
-            outputSampleRate * static_cast<double>(factor);
+        const double internalRate = outputSampleRate * static_cast<double>(factor);
 
-        const double phaseStep =
-            twoPi * (frequency / internalRate);
+        const double phaseStep = twoPi * (frequency / internalRate);
 
-        const double error =
-            integrationErrorDb(method, phaseStep, highestHarmonic);
+        const double error = integrationErrorDb(method, phaseStep, highestHarmonic);
 
         if (!std::isfinite(error))
             return std::nullopt;
 
-        choice = {
-            factor,
-            error,
-            std::abs(error) <= maximumErrorDb
-        };
+        choice = {factor, error, std::abs(error) <= maximumErrorDb};
 
         if (choice.meetsTolerance)
             return choice;

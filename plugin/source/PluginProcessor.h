@@ -1,19 +1,19 @@
 #pragma once
 
-#include "OrganEngine.h"
-#include "Convolver.h"
 #include "Binaural.h"
-#include "Scala.h"
+#include "Convolver.h"
 #include "Lucier.h"
 #include "LucierPiece.h"
+#include "OrganEngine.h"
+#include "Scala.h"
 #include "Speakers.h"
 #include <map>
 
 // the effect version ("Rysum FX", for audio tracks) is the same code built with IsSynth = 0
-#if defined (JucePlugin_IsSynth) && ! JucePlugin_IsSynth
- #define RYSUM_FX 1
+#if defined(JucePlugin_IsSynth) && !JucePlugin_IsSynth
+#define RYSUM_FX 1
 #else
- #define RYSUM_FX 0
+#define RYSUM_FX 0
 #endif
 #include <deque>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -30,29 +30,56 @@ public:
     RysumProcessor();
     ~RysumProcessor() override;
 
-    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
-    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
-    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    bool isBusesLayoutSupported(const BusesLayout &layouts) const override;
+    void processBlock(juce::AudioBuffer<float> &, juce::MidiBuffer &) override;
     using AudioProcessor::processBlock;
 
-    juce::AudioProcessorEditor* createEditor() override;
-    bool hasEditor() const override { return true; }
+    juce::AudioProcessorEditor *createEditor() override;
+    bool hasEditor() const override
+    {
+        return true;
+    }
 
-    const juce::String getName() const override { return "Rysum"; }
-    bool acceptsMidi() const override { return true; }
-    bool producesMidi() const override { return false; }
-    bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 2.0; }
+    const juce::String getName() const override
+    {
+        return "Rysum";
+    }
+    bool acceptsMidi() const override
+    {
+        return true;
+    }
+    bool producesMidi() const override
+    {
+        return false;
+    }
+    bool isMidiEffect() const override
+    {
+        return false;
+    }
+    double getTailLengthSeconds() const override
+    {
+        return 2.0;
+    }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return "Rysum"; }
-    void changeProgramName (int, const juce::String&) override {}
+    int getNumPrograms() override
+    {
+        return 1;
+    }
+    int getCurrentProgram() override
+    {
+        return 0;
+    }
+    void setCurrentProgram(int) override {}
+    const juce::String getProgramName(int) override
+    {
+        return "Rysum";
+    }
+    void changeProgramName(int, const juce::String &) override {}
 
-    void getStateInformation (juce::MemoryBlock& destData) override;
-    void setStateInformation (const void* data, int sizeInBytes) override;
+    void getStateInformation(juce::MemoryBlock &destData) override;
+    void setStateInformation(const void *data, int sizeInBytes) override;
 
     // ------------------------------------------------------------------
     juce::AudioProcessorValueTreeState apvts;
@@ -60,333 +87,630 @@ public:
     juce::MidiKeyboardState keyboardState;
 
     /** current parameters as the engine sees them (also used by the UI for positions) */
-    rysum::EngineParams readParams (const float* values = nullptr) const;
+    rysum::EngineParams readParams(const float *values = nullptr) const;
 
     // ---- modulation (routes: message thread writes, audio thread reads)
-    int getParamIndex (const juce::String& id) const;
-    juce::RangedAudioParameter* getParamAt (int i) const { return i >= 0 && i < (int) prmList.size() ? prmList[(size_t) i] : nullptr; }
-    int getNumParams() const { return (int) prmList.size(); }
-    bool isModTarget (int i) const { return i >= 0 && i < (int) prmList.size() && isFloatParam[(size_t) i]; }
+    int getParamIndex(const juce::String &id) const;
+    juce::RangedAudioParameter *getParamAt(int i) const
+    {
+        return i >= 0 && i < (int)prmList.size() ? prmList[(size_t)i] : nullptr;
+    }
+    int getNumParams() const
+    {
+        return (int)prmList.size();
+    }
+    bool isModTarget(int i) const
+    {
+        return i >= 0 && i < (int)prmList.size() && isFloatParam[(size_t)i];
+    }
     /** normalised value after modulation, NaN if the parameter is not modulated right now */
-    float getModulatedNorm (int index) const;
-    int getRouteSrc (int r) const { return routeSrc[(size_t) r].load(); }
-    int getRouteTgt (int r) const { return routeTgt[(size_t) r].load(); }
-    void setRoute (int r, int src, int target);
-    int addRoute (int src, int target, float amount);     // first free slot, -1 if full
-    void clearRoute (int r);
-    bool getRouteUni (int r) const { return routeUni[(size_t) r].load(); }
-    void setRouteUni (int r, bool uni);
-    juce::String targetId (int target) const;
-    int targetFromId (const juce::String& id) const;
-    juce::String getModAmountId (int r) const { return "mod" + juce::String (r + 1) + "Amt"; }
-    std::atomic<int> routeVersion { 0 };
+    float getModulatedNorm(int index) const;
+    int getRouteSrc(int r) const
+    {
+        return routeSrc[(size_t)r].load();
+    }
+    int getRouteTgt(int r) const
+    {
+        return routeTgt[(size_t)r].load();
+    }
+    void setRoute(int r, int src, int target);
+    int addRoute(int src, int target, float amount); // first free slot, -1 if full
+    void clearRoute(int r);
+    bool getRouteUni(int r) const
+    {
+        return routeUni[(size_t)r].load();
+    }
+    void setRouteUni(int r, bool uni);
+    juce::String targetId(int target) const;
+    int targetFromId(const juce::String &id) const;
+    juce::String getModAmountId(int r) const
+    {
+        return "mod" + juce::String(r + 1) + "Amt";
+    }
+    std::atomic<int> routeVersion{0};
 
-    // ---- MIDI learn: knobs / faders / buttons of a controller -> any parameter (message thread writes, audio thread reads)
+    // ---- MIDI learn: knobs / faders / buttons of a controller -> any parameter (message thread
+    // writes, audio thread reads)
     static constexpr int kNumMidiMaps = 32;
     struct MidiMap
     {
-        int cc = -1;             // controller number, -1 = not assigned (yet)
-        int channel = 0;         // 1..16, 0 = any channel
-        int param = -1;          // index into the parameter table
-        float lo = 0.0f, hi = 1.0f;   // range (normalised): the controller's 0..127 sweeps lo..hi
-        bool toggle = false;     // buttons: every press switches between lo and hi
-        bool used() const noexcept { return param >= 0 || cc >= 0; }
+        int cc = -1;                // controller number, -1 = not assigned (yet)
+        int channel = 0;            // 1..16, 0 = any channel
+        int param = -1;             // index into the parameter table
+        float lo = 0.0f, hi = 1.0f; // range (normalised): the controller's 0..127 sweeps lo..hi
+        bool toggle = false;        // buttons: every press switches between lo and hi
+        bool used() const noexcept
+        {
+            return param >= 0 || cc >= 0;
+        }
     };
-    MidiMap getMidiMap (int slot) const;
-    void setMidiMap (int slot, const MidiMap& m);
-    void clearMidiMap (int slot);
+    MidiMap getMidiMap(int slot) const;
+    void setMidiMap(int slot, const MidiMap &m);
+    void clearMidiMap(int slot);
     /** waits for the next controller that moves and gives it to this slot (-1 = stop waiting) */
-    void learnMidi (int slot);
-    int getLearningSlot() const { return mmLearn.load(); }
-    /** new mapping for a parameter, waiting for a controller; returns the slot (-1 = all slots used) */
-    int learnMidiFor (int prmIdx);
+    void learnMidi(int slot);
+    int getLearningSlot() const
+    {
+        return mmLearn.load();
+    }
+    /** new mapping for a parameter, waiting for a controller; returns the slot (-1 = all slots
+     * used) */
+    int learnMidiFor(int prmIdx);
     /** slots that drive this parameter */
-    juce::Array<int> midiMapsFor (int prmIdx) const;
+    juce::Array<int> midiMapsFor(int prmIdx) const;
     /** the last controller that came in: cc | channel << 8 | value << 16, -1 = none yet */
-    int getLastController() const { return lastCc.load(); }
-    std::atomic<int> midiMapVersion { 0 };
+    int getLastController() const
+    {
+        return lastCc.load();
+    }
+    std::atomic<int> midiMapVersion{0};
 
     // ---- free tuning: Scala files, MTS-ESP (message thread)
-    static constexpr int kScalaTuning = 19, kMtsTuning = 20;     // entries of the tuning list
-    /** a .scl (scale) or .kbm (keyboard mapping) file; selects the Scala tuning. false + status text on errors */
-    bool loadTuningFile (const juce::File& f);
+    static constexpr int kScalaTuning = 19, kMtsTuning = 20; // entries of the tuning list
+    /** a .scl (scale) or .kbm (keyboard mapping) file; selects the Scala tuning. false + status
+     * text on errors */
+    bool loadTuningFile(const juce::File &f);
     void clearKbm();
     juce::String getTuningStatus() const;
-    bool hasScala() const { return scalaReady.load(); }
-    bool hasKbm() const { return kbmText.isNotEmpty(); }
+    bool hasScala() const
+    {
+        return scalaReady.load();
+    }
+    bool hasKbm() const
+    {
+        return kbmText.isNotEmpty();
+    }
     bool mtsHasMaster() const;
 
     // ---- patches (message thread)
     static juce::File getPatchFolder();
     static juce::Array<juce::File> getPatchFiles();
-    static juce::String cleanPatchName (const juce::String&);
-    bool savePatch (const juce::String& name);
-    bool loadPatch (const juce::File& f);
-    juce::String getPatchName() const { return patchName; }
+    static juce::String cleanPatchName(const juce::String &);
+    bool savePatch(const juce::String &name);
+    bool loadPatch(const juce::File &f);
+    juce::String getPatchName() const
+    {
+        return patchName;
+    }
     int patchVersion = 0;
-    juce::StringArray factoryWarnings;      // filled while writing the factory patches (tests)
+    juce::StringArray factoryWarnings; // filled while writing the factory patches (tests)
 
     // samples
-    void loadSamples (const juce::File& folder);
-    juce::File getSamplesFolder() const { return samplesFolder; }
+    void loadSamples(const juce::File &folder);
+    juce::File getSamplesFolder() const
+    {
+        return samplesFolder;
+    }
     /** own sounds: <samples>/noise/eigene (empty File when no samples are loaded) */
     juce::File getCustomFolder() const;
-    /** own sounds from any folder (empty = the standard one, samples/noise/eigene); saved in the project and in patches */
-    void setCustomFolder (const juce::File& dir);
-    bool hasOwnCustomFolder() const { return customOverride != juce::File(); }
+    /** own sounds from any folder (empty = the standard one, samples/noise/eigene); saved in the
+     * project and in patches */
+    void setCustomFolder(const juce::File &dir);
+    bool hasOwnCustomFolder() const
+    {
+        return customOverride != juce::File();
+    }
     int getNumCustomSounds() const;
     /** re-reads the own sounds folder in the background, keeps everything else */
     void reloadCustomSounds();
-    std::shared_ptr<const rysum::SampleLibrary> getLibrary() const { return std::atomic_load (&uiLibrary); }
-    juce::String getLoadStatus() const { const juce::ScopedLock sl (statusLock); return loadStatus; }
-    bool isLoading() const { return loading.load(); }
+    std::shared_ptr<const rysum::SampleLibrary> getLibrary() const
+    {
+        return std::atomic_load(&uiLibrary);
+    }
+    juce::String getLoadStatus() const
+    {
+        const juce::ScopedLock sl(statusLock);
+        return loadStatus;
+    }
+    bool isLoading() const
+    {
+        return loading.load();
+    }
 
     // Lucier mode (message thread): what the room does to the sound after n passes
     struct LucierView
     {
-        std::vector<float> curve;          // dB, LucierResult::kCurvePoints
-        std::vector<float> peaks;          // Hz
+        std::vector<float> curve; // dB, LucierResult::kCurvePoints
+        std::vector<float> peaks; // Hz
         float generation = 0.0f;
         juce::String what, status;
         int version = 0;
     };
-    const LucierView& getLucierView() const { return lucView; }
+    const LucierView &getLucierView() const
+    {
+        return lucView;
+    }
 
-    // scenes (message thread): up to four snapshots of all sound settings, "Szene" blends between them
+    // scenes (message thread): up to four snapshots of all sound settings, "Szene" blends between
+    // them
     static constexpr int kNumScenes = 4;
-    void storeScene (int slot);
-    void clearScene (int slot);
-    bool isSceneStored (int slot) const { return slot >= 0 && slot < kNumScenes && ! scenes[(size_t) slot].empty(); }
-    void goToScene (int slot);
-    int getSceneVersion() const { return sceneVersion; }
+    void storeScene(int slot);
+    void clearScene(int slot);
+    bool isSceneStored(int slot) const
+    {
+        return slot >= 0 && slot < kNumScenes && !scenes[(size_t)slot].empty();
+    }
+    void goToScene(int slot);
+    int getSceneVersion() const
+    {
+        return sceneVersion;
+    }
 
-    // dice (message thread): random settings within the chosen groups, gently or wildly; one step undo
-    enum DiceGroup { dgRegister, dgRaum, dgSaal, dgKlang, dgSpieltisch, dgEffekte, dgModulation, dgLucier, dgEingang, kNumDiceGroups };
+    // dice (message thread): random settings within the chosen groups, gently or wildly; one step
+    // undo
+    enum DiceGroup
+    {
+        dgRegister,
+        dgRaum,
+        dgSaal,
+        dgKlang,
+        dgSpieltisch,
+        dgEffekte,
+        dgModulation,
+        dgLucier,
+        dgEingang,
+        kNumDiceGroups
+    };
     static juce::StringArray diceGroupNames();
-    bool isDiceGroupOn (int g) const { return g >= 0 && g < kNumDiceGroups && diceGroups[(size_t) g]; }
-    void setDiceGroupOn (int g, bool on) { if (g >= 0 && g < kNumDiceGroups) diceGroups[(size_t) g] = on; }
-    void dice (bool wild);
-    bool canUndoDice() const { return diceUndo.isValid(); }
+    bool isDiceGroupOn(int g) const
+    {
+        return g >= 0 && g < kNumDiceGroups && diceGroups[(size_t)g];
+    }
+    void setDiceGroupOn(int g, bool on)
+    {
+        if (g >= 0 && g < kNumDiceGroups)
+            diceGroups[(size_t)g] = on;
+    }
+    void dice(bool wild);
+    bool canUndoDice() const
+    {
+        return diceUndo.isValid();
+    }
     void undoDice();
-    float getLucierGeneration() const { return lucEffective; }
-    void resetLucierGrowth() { lucGrown = 0.0f; }
+    float getLucierGeneration() const
+    {
+        return lucEffective;
+    }
+    void resetLucierGrowth()
+    {
+        lucGrown = 0.0f;
+    }
     // Lucier as a piece: record, then generation after generation by itself (message thread)
-    rysum::LucierPiece& getLucierPiece() { return lucPiece; }
-    void lucierRecord();                               // starts recording (switches Lucier on, mode "Stueck")
-    void lucierStopRecording();                        // ... and the piece begins
-    void lucierPlay() { lucPiece.play(); }
-    void lucierStop() { lucPiece.stop(); }
-    bool loadLucierRecording (const juce::File& f, juce::String& error);
-    void exportLucierPiece (const juce::File& f);
-    bool isLucierPieceMode() const { return apvts.getRawParameterValue ("lucMode")->load() < 0.5f; }
+    rysum::LucierPiece &getLucierPiece()
+    {
+        return lucPiece;
+    }
+    void lucierRecord();        // starts recording (switches Lucier on, mode "Stueck")
+    void lucierStopRecording(); // ... and the piece begins
+    void lucierPlay()
+    {
+        lucPiece.play();
+    }
+    void lucierStop()
+    {
+        lucPiece.stop();
+    }
+    bool loadLucierRecording(const juce::File &f, juce::String &error);
+    void exportLucierPiece(const juce::File &f);
+    bool isLucierPieceMode() const
+    {
+        return apvts.getRawParameterValue("lucMode")->load() < 0.5f;
+    }
 
     // room / impulse response (message thread)
-    void loadIr (const juce::File& file);
+    void loadIr(const juce::File &file);
     void clearIr();
-    juce::File getIrFile() const { return irFile; }
-    juce::String getIrStatus() const { const juce::ScopedLock sl (statusLock); return irStatus; }
+    juce::File getIrFile() const
+    {
+        return irFile;
+    }
+    juce::String getIrStatus() const
+    {
+        const juce::ScopedLock sl(statusLock);
+        return irStatus;
+    }
 
     // playing helpers
     /** "Halten": a note struck twice quickly keeps sounding as if held, until it is struck again */
-    std::atomic<bool> latchOn { false };
-    std::atomic<int> latchedCount { 0 };
-    std::atomic<bool> releaseLatched { false };       // UI: let all held notes go
+    std::atomic<bool> latchOn{false};
+    std::atomic<int> latchedCount{0};
+    std::atomic<bool> releaseLatched{false}; // UI: let all held notes go
     /** computer keyboard as MIDI keyboard (UI state; kept while the editor is closed) */
     bool computerKeys = false;
-    int keysOctave = 4;                                // the A key plays C of this octave (C4 = MIDI 60)
+    int keysOctave = 4; // the A key plays C of this octave (C4 = MIDI 60)
 
     // binaural / headphones (message thread)
-    static constexpr int kBinauralOutput = 6;                 // index of "Binaural" in the output choice
-    static constexpr int kSpeakerOutput = 7;                  // "Lautsprecher": AllRAD decoding to a loudspeaker layout
-    bool isSpeakers() const { return juce::roundToInt (output->load()) == kSpeakerOutput; }
+    static constexpr int kBinauralOutput = 6; // index of "Binaural" in the output choice
+    static constexpr int kSpeakerOutput =
+        7; // "Lautsprecher": AllRAD decoding to a loudspeaker layout
+    bool isSpeakers() const
+    {
+        return juce::roundToInt(output->load()) == kSpeakerOutput;
+    }
     // ---- loudspeakers (message thread)
-    const rysum::SpeakerLayout& getSpeakerLayout() const { return spkLayout; }
-    void setSpeakerLayout (const rysum::SpeakerLayout& l, bool rememberAsDefault = true);
-    std::shared_ptr<const rysum::AllRadDecoder> getSpeakerDecoder() const { return spkUi; }
-    int speakerVersion() const { return spkVersion; }
+    const rysum::SpeakerLayout &getSpeakerLayout() const
+    {
+        return spkLayout;
+    }
+    void setSpeakerLayout(const rysum::SpeakerLayout &l, bool rememberAsDefault = true);
+    std::shared_ptr<const rysum::AllRadDecoder> getSpeakerDecoder() const
+    {
+        return spkUi;
+    }
+    int speakerVersion() const
+    {
+        return spkVersion;
+    }
     /** test noise: -1 = off, else the index of a loudspeaker in the layout */
-    std::atomic<int> speakerTest { -1 };
+    std::atomic<int> speakerTest{-1};
     static juce::File speakerDefaultFile();
-    bool isBinaural() const { return juce::roundToInt (output->load()) == kBinauralOutput; }
+    bool isBinaural() const
+    {
+        return juce::roundToInt(output->load()) == kBinauralOutput;
+    }
     /** own HRTF set (SOFA); an empty File = the built-in FABIAN */
-    void setSofaFile (const juce::File& f);
-    juce::File getSofaFile() const { return sofaFile; }
-    juce::String getRoomStatus() const { const juce::ScopedLock sl (statusLock); return roomStatus; }
-    juce::String getBinauralStatus() const { const juce::ScopedLock sl (statusLock); return binStatus; }
-    bool binauralReady() const { return binUi != nullptr; }
+    void setSofaFile(const juce::File &f);
+    juce::File getSofaFile() const
+    {
+        return sofaFile;
+    }
+    juce::String getRoomStatus() const
+    {
+        const juce::ScopedLock sl(statusLock);
+        return roomStatus;
+    }
+    juce::String getBinauralStatus() const
+    {
+        const juce::ScopedLock sl(statusLock);
+        return binStatus;
+    }
+    bool binauralReady() const
+    {
+        return binUi != nullptr;
+    }
 
     // layouts (message thread)
     std::array<rysum::LayoutSettings, rysum::kNumStops> layouts;
-    void applyLayout (int stop);
-    void setPipePosition (int stop, int key, rysum::Pos p);
+    void applyLayout(int stop);
+    void setPipePosition(int stop, int key, rysum::Pos p);
 
-    static juce::String stopParamId (int s)   { return "stop" + juce::String (s); }
-    static juce::String motionParamId (int s) { return "motion" + juce::String (s); }
-    static juce::String volParamId (int s)    { return "vol" + juce::String (s); }
-    static juce::String windParamId (int s)   { return "swind" + juce::String (s); }
-    static juce::String rateParamId (int s)   { return "rate" + juce::String (s); }
-    static juce::String depthParamId (int s)  { return "depth" + juce::String (s); }
-    static juce::String ellipseParamId (int s) { return "ellipse" + juce::String (s); }
-    static juce::String ellDirParamId (int s)   { return "ellDir" + juce::String (s); }
-    static juce::String ellTiltParamId (int s)  { return "ellTilt" + juce::String (s); }
-    static juce::String ellFormParamId (int s)  { return "ellForm" + juce::String (s); }
-    static juce::String pathSpreadParamId (int s) { return "pathSpread" + juce::String (s); }
-    static juce::String jumpHardParamId (int s) { return "jumpHard" + juce::String (s); }
+    static juce::String stopParamId(int s)
+    {
+        return "stop" + juce::String(s);
+    }
+    static juce::String motionParamId(int s)
+    {
+        return "motion" + juce::String(s);
+    }
+    static juce::String volParamId(int s)
+    {
+        return "vol" + juce::String(s);
+    }
+    static juce::String windParamId(int s)
+    {
+        return "swind" + juce::String(s);
+    }
+    static juce::String rateParamId(int s)
+    {
+        return "rate" + juce::String(s);
+    }
+    static juce::String depthParamId(int s)
+    {
+        return "depth" + juce::String(s);
+    }
+    static juce::String ellipseParamId(int s)
+    {
+        return "ellipse" + juce::String(s);
+    }
+    static juce::String ellDirParamId(int s)
+    {
+        return "ellDir" + juce::String(s);
+    }
+    static juce::String ellTiltParamId(int s)
+    {
+        return "ellTilt" + juce::String(s);
+    }
+    static juce::String ellFormParamId(int s)
+    {
+        return "ellForm" + juce::String(s);
+    }
+    static juce::String pathSpreadParamId(int s)
+    {
+        return "pathSpread" + juce::String(s);
+    }
+    static juce::String jumpHardParamId(int s)
+    {
+        return "jumpHard" + juce::String(s);
+    }
 
     // ---- drawn trajectories (message thread)
     struct DrawnPath
     {
-        struct Pt { float az, el, t; };      // degrees, seconds since the start of drawing
+        struct Pt
+        {
+            float az, el, t;
+        }; // degrees, seconds since the start of drawing
         std::vector<Pt> points;
-        bool pingPong = false;               // there and back (else a loop)
-        bool drawnTiming = false;            // the speed as it was drawn (else even)
+        bool pingPong = false;    // there and back (else a loop)
+        bool drawnTiming = false; // the speed as it was drawn (else even)
     };
-    const DrawnPath& getDrawnPath (int stop) const { return drawnPaths[(size_t) stop]; }
-    void setDrawnPath (int stop, std::vector<DrawnPath::Pt> points);
-    void setPathOptions (int stop, bool pingPong, bool drawnTiming);
+    const DrawnPath &getDrawnPath(int stop) const
+    {
+        return drawnPaths[(size_t)stop];
+    }
+    void setDrawnPath(int stop, std::vector<DrawnPath::Pt> points);
+    void setPathOptions(int stop, bool pingPong, bool drawnTiming);
 
     // ---- drawn floor plans of the simulated rooms (message thread; fractions of width / length)
-    const rysum::FloorPlan& getDrawnPlan (int room) const { return drawnPlans[(size_t) juce::jlimit (0, rysum::kNumRooms - 1, room)]; }
-    void setDrawnPlan (int room, const rysum::FloorPlan& f);
+    const rysum::FloorPlan &getDrawnPlan(int room) const
+    {
+        return drawnPlans[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, room)];
+    }
+    void setDrawnPlan(int room, const rysum::FloorPlan &f);
     static juce::StringArray roomShapeNames();
 
     /** bumps whenever the library, positions or mutes change (UI repaint hint) */
-    std::atomic<int> changeCounter { 0 };
+    std::atomic<int> changeCounter{0};
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     static BusesProperties makeBuses();
     void timerCallback() override;
     void handleAsyncUpdate() override;
-    void applyCcOverrides (rysum::EngineParams&) const;
-    void modulate (rysum::EngineParams& p, const float* globalSources) override;
-    juce::ValueTree makeState (bool forPatch);
-    void applyState (juce::ValueTree state, bool forPatch);
+    void applyCcOverrides(rysum::EngineParams &) const;
+    void modulate(rysum::EngineParams &p, const float *globalSources) override;
+    juce::ValueTree makeState(bool forPatch);
+    void applyState(juce::ValueTree state, bool forPatch);
     void writeFactoryPatches();
     juce::String patchName;
 
     struct Indices
     {
-        std::array<int, rysum::kNumStops> stop {}, vol {}, swind {}, motion {}, rate {}, depth {}, ellipse {},
-                                          ellDir {}, ellTilt {}, ellForm {}, pathSpread {}, jumpHard {};
-        int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0, tremOn = 0, tremRate = 0, tremDepth = 0,
-            freeze = 0, freezeSmear = 0, freezeRelease = 0, motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0,
-            releaseClick = 0, stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0, degWobble = 0,
-            degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0, windModel = 0, mtsCont = 0, mpe = 0, mpeBend = 0, lucOn = 0, lucMix = 0, lucMode = 0;
-        std::array<int, rysum::kNumLfos> lfoShape {}, lfoRate {}, lfoSync {}, lfoDiv {}, lfoSpread {}, lfoSpreadMode {};
-        std::array<int, rysum::kNumEnvs> envMode {}, envDelay {}, envAttack {}, envDecay {}, envSustain {}, envRelease {};
-        std::array<int, rysum::kNumRoutes> modAmt {};
-        std::array<int, 32> fx {};
-        std::array<int, 16> sim {};
-        std::array<int, 16> inp {};
-        std::array<std::array<int, 12>, rysum::kNumRooms> room {};
-        std::array<int, rysum::kNumStops> stopRoom {};
+        std::array<int, rysum::kNumStops> stop{}, vol{}, swind{}, motion{}, rate{}, depth{},
+            ellipse{}, ellDir{}, ellTilt{}, ellForm{}, pathSpread{}, jumpHard{};
+        int doppler = 0, air = 0, distAmount = 0, temperament = 0, pitch = 0, detune = 0,
+            tremOn = 0, tremRate = 0, tremDepth = 0, freeze = 0, freezeSmear = 0, freezeRelease = 0,
+            motionSync = 0, master = 0, output = 0, click = 0, clickBlend = 0, releaseClick = 0,
+            stopPull = 0, wind = 0, degAmount = 0, degGrain = 0, degBits = 0, degRate = 0,
+            degWobble = 0, degDropouts = 0, degMode = 0, irDry = 0, irWet = 0, binYaw = 0,
+            windModel = 0, mtsCont = 0, mpe = 0, mpeBend = 0, lucOn = 0, lucMix = 0, lucMode = 0;
+        std::array<int, rysum::kNumLfos> lfoShape{}, lfoRate{}, lfoSync{}, lfoDiv{}, lfoSpread{},
+            lfoSpreadMode{};
+        std::array<int, rysum::kNumEnvs> envMode{}, envDelay{}, envAttack{}, envDecay{},
+            envSustain{}, envRelease{};
+        std::array<int, rysum::kNumRoutes> modAmt{};
+        std::array<int, 32> fx{};
+        std::array<int, 16> sim{};
+        std::array<int, 16> inp{};
+        std::array<std::array<int, 12>, rysum::kNumRooms> room{};
+        std::array<int, rysum::kNumStops> stopRoom{};
         int inputRoom = 0, noteSpread = 0;
     } ix;
-    enum InpIndex { inpOn, inpLevel, inpMode, inpAz, inpEl, inpDist, inpWidth, inpSpin, inpFollow, inpGate, inpRelease, inpSend, kNumInp };
-    static constexpr const char* kInpIds[kNumInp] { "inpOn", "inpLevel", "inpMode", "inpAz", "inpEl", "inpDist", "inpWidth", "inpSpin",
-                                                    "inpFollow", "inpGate", "inpRelease", "inpSend" };
-    enum SimIndex { simOn, simW, simL, simH, simSize, simLx, simLy, simAbs, simAbsFloor, simHigh, simScatter, simOrder, simEr, simTail, simTailModel, kNumSim };
-    static constexpr const char* kSimIds[kNumSim] { "simOn", "simW", "simL", "simH", "simSize", "simLx", "simLy", "simAbs", "simAbsFloor",
-                                                    "simHigh", "simScatter", "simOrder", "simEr", "simTail", "simTailModel" };
+    enum InpIndex
+    {
+        inpOn,
+        inpLevel,
+        inpMode,
+        inpAz,
+        inpEl,
+        inpDist,
+        inpWidth,
+        inpSpin,
+        inpFollow,
+        inpGate,
+        inpRelease,
+        inpSend,
+        kNumInp
+    };
+    static constexpr const char *kInpIds[kNumInp]{"inpOn",     "inpLevel", "inpMode",    "inpAz",
+                                                  "inpEl",     "inpDist",  "inpWidth",   "inpSpin",
+                                                  "inpFollow", "inpGate",  "inpRelease", "inpSend"};
+    enum SimIndex
+    {
+        simOn,
+        simW,
+        simL,
+        simH,
+        simSize,
+        simLx,
+        simLy,
+        simAbs,
+        simAbsFloor,
+        simHigh,
+        simScatter,
+        simOrder,
+        simEr,
+        simTail,
+        simTailModel,
+        kNumSim
+    };
+    static constexpr const char *kSimIds[kNumSim]{
+        "simOn",      "simW",     "simL",   "simH",        "simSize",
+        "simLx",      "simLy",    "simAbs", "simAbsFloor", "simHigh",
+        "simScatter", "simOrder", "simEr",  "simTail",     "simTailModel"};
     // late reverb of the simulated room: built in the background from the room as heard
     juce::String roomStatus;
     std::array<juce::String, rysum::kNumRooms> builtTailKey;
-    std::array<bool, rysum::kNumRooms> tailBuilding {};
+    std::array<bool, rysum::kNumRooms> tailBuilding{};
     uint32_t tailSerial = 0;
-    std::array<std::deque<std::shared_ptr<const rysum::TailIR>>, rysum::kNumRooms> tailKeepAlive;   // message thread owns the last references
-    std::array<std::shared_ptr<const rysum::TailIR>, rysum::kNumRooms> pendingTail;                // handed to the audio thread
-    rysum::RoomParams heardRoom (int room) const;
-    juce::String roomKey (int room) const;
-    void buildTailNow (int room, const juce::String& key);
+    std::array<std::deque<std::shared_ptr<const rysum::TailIR>>, rysum::kNumRooms>
+        tailKeepAlive; // message thread owns the last references
+    std::array<std::shared_ptr<const rysum::TailIR>, rysum::kNumRooms>
+        pendingTail; // handed to the audio thread
+    rysum::RoomParams heardRoom(int room) const;
+    juce::String roomKey(int room) const;
+    void buildTailNow(int room, const juce::String &key);
+
 public:
-    /** parameter ids of the simulated rooms: room 0 = the original "simW" ..., rooms 1..3 = "sim2W" ...
-        keys: W L H Size Lx Ly Abs AbsFloor High Scatter Shape ShapeAmt */
-    static juce::String roomParamId (int room, const char* key) { return room <= 0 ? juce::String ("sim") + key : "sim" + juce::String (room + 1) + key; }
-    static juce::String stopRoomParamId (int s) { return "simRoom" + juce::String (s); }
+    /** parameter ids of the simulated rooms: room 0 = the original "simW" ..., rooms 1..3 = "sim2W"
+       ... keys: W L H Size Lx Ly Abs AbsFloor High Scatter Shape ShapeAmt */
+    static juce::String roomParamId(int room, const char *key)
+    {
+        return room <= 0 ? juce::String("sim") + key : "sim" + juce::String(room + 1) + key;
+    }
+    static juce::String stopRoomParamId(int s)
+    {
+        return "simRoom" + juce::String(s);
+    }
     /** pipes on / off (muted) per stop and key (message thread) */
-    void setPipeMuted (int stop, int key, bool mutedNow) { if (stop >= 0 && stop < rysum::kNumStops && key >= 0 && key < rysum::kNumKeys) { engine.muted[(size_t) stop][(size_t) key] = mutedNow; ++changeCounter; } }
-    bool isPipeMuted (int stop, int key) const { return engine.muted[(size_t) stop][(size_t) key].load(); }
+    void setPipeMuted(int stop, int key, bool mutedNow)
+    {
+        if (stop >= 0 && stop < rysum::kNumStops && key >= 0 && key < rysum::kNumKeys)
+        {
+            engine.muted[(size_t)stop][(size_t)key] = mutedNow;
+            ++changeCounter;
+        }
+    }
+    bool isPipeMuted(int stop, int key) const
+    {
+        return engine.muted[(size_t)stop][(size_t)key].load();
+    }
+
 private:
-    void setRoomStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); roomStatus = s; }
+    void setRoomStatus(const juce::String &s)
+    {
+        const juce::ScopedLock sl(statusLock);
+        roomStatus = s;
+    }
     enum FxIndex
     {
-        fxCustLevel, fxCustDown, fxCustUp, fxCustPlace, fxCustPitch, fxCustScatter, fxCustWander,
-        fxPathLevel, fxPathTime, fxPathTicks, fxPathSpread, fxPathWait,
-        fxCrackLevel, fxCrackRate, fxCrackLen,
-        fxLeakLevel, fxLeakCount, fxLeakFreq, fxLeakWander, fxWindRound,
-        fxPartSpread, fxPartSplit, fxPartTurn,
-        fxEchoLevel, fxEchoTime, fxEchoSync, fxEchoDiv, fxEchoRepeats, fxEchoFeedback, fxEchoTurn, fxEchoTilt, fxEchoDamp,
+        fxCustLevel,
+        fxCustDown,
+        fxCustUp,
+        fxCustPlace,
+        fxCustPitch,
+        fxCustScatter,
+        fxCustWander,
+        fxPathLevel,
+        fxPathTime,
+        fxPathTicks,
+        fxPathSpread,
+        fxPathWait,
+        fxCrackLevel,
+        fxCrackRate,
+        fxCrackLen,
+        fxLeakLevel,
+        fxLeakCount,
+        fxLeakFreq,
+        fxLeakWander,
+        fxWindRound,
+        fxPartSpread,
+        fxPartSplit,
+        fxPartTurn,
+        fxEchoLevel,
+        fxEchoTime,
+        fxEchoSync,
+        fxEchoDiv,
+        fxEchoRepeats,
+        fxEchoFeedback,
+        fxEchoTurn,
+        fxEchoTilt,
+        fxEchoDamp,
         kNumFx
     };
-    static constexpr const char* kFxIds[kNumFx] {
-        "fxCustLevel", "fxCustDown", "fxCustUp", "fxCustPlace", "fxCustPitch", "fxCustScatter", "fxCustWander",
-        "fxPathLevel", "fxPathTime", "fxPathTicks", "fxPathSpread", "fxPathWait",
-        "fxCrackLevel", "fxCrackRate", "fxCrackLen",
-        "fxLeakLevel", "fxLeakCount", "fxLeakFreq", "fxLeakWander", "fxWindRound",
-        "fxPartSpread", "fxPartSplit", "fxPartTurn",
-        "fxEchoLevel", "fxEchoTime", "fxEchoSync", "fxEchoDiv", "fxEchoRepeats", "fxEchoFeedback", "fxEchoTurn", "fxEchoTilt", "fxEchoDamp" };
-    static_assert (kNumFx <= 32);
-    std::vector<juce::RangedAudioParameter*> prmList;
-    std::vector<std::atomic<float>*> rawList;
+    static constexpr const char *kFxIds[kNumFx]{
+        "fxCustLevel",   "fxCustDown",   "fxCustUp",      "fxCustPlace",    "fxCustPitch",
+        "fxCustScatter", "fxCustWander", "fxPathLevel",   "fxPathTime",     "fxPathTicks",
+        "fxPathSpread",  "fxPathWait",   "fxCrackLevel",  "fxCrackRate",    "fxCrackLen",
+        "fxLeakLevel",   "fxLeakCount",  "fxLeakFreq",    "fxLeakWander",   "fxWindRound",
+        "fxPartSpread",  "fxPartSplit",  "fxPartTurn",    "fxEchoLevel",    "fxEchoTime",
+        "fxEchoSync",    "fxEchoDiv",    "fxEchoRepeats", "fxEchoFeedback", "fxEchoTurn",
+        "fxEchoTilt",    "fxEchoDamp"};
+    static_assert(kNumFx <= 32);
+    std::vector<juce::RangedAudioParameter *> prmList;
+    std::vector<std::atomic<float> *> rawList;
     std::vector<char> isFloatParam;
     std::map<juce::String, int> paramIndex;
-    std::array<std::atomic<int>, rysum::kNumRoutes> routeSrc {}, routeTgt {};
-    std::array<std::atomic<bool>, rysum::kNumRoutes> routeUni {};
-    std::vector<float> modVals, modOff;              // audio thread
+    std::array<std::atomic<int>, rysum::kNumRoutes> routeSrc{}, routeTgt{};
+    std::array<std::atomic<bool>, rysum::kNumRoutes> routeUni{};
+    std::vector<float> modVals, modOff; // audio thread
     std::vector<char> modHitFlag;
     std::vector<int> hits, prevHits;
     std::unique_ptr<std::atomic<float>[]> modNorm;
     bool haveModVals = false;
-    std::vector<juce::RangedAudioParameter*> ccTargets;
+    std::vector<juce::RangedAudioParameter *> ccTargets;
     // MIDI learn
-    std::array<std::atomic<int>, kNumMidiMaps> mmCc {}, mmChan {}, mmParam {};
-    std::array<std::atomic<float>, kNumMidiMaps> mmLo {}, mmHi {}, mmPending {};
-    std::array<std::atomic<bool>, kNumMidiMaps> mmToggle {};
-    std::array<bool, kNumMidiMaps> mmPressed {};                       // audio thread (toggle buttons)
-    std::atomic<int> mmLearn { -1 }, lastCc { -1 };
+    std::array<std::atomic<int>, kNumMidiMaps> mmCc{}, mmChan{}, mmParam{};
+    std::array<std::atomic<float>, kNumMidiMaps> mmLo{}, mmHi{}, mmPending{};
+    std::array<std::atomic<bool>, kNumMidiMaps> mmToggle{};
+    std::array<bool, kNumMidiMaps> mmPressed{}; // audio thread (toggle buttons)
+    std::atomic<int> mmLearn{-1}, lastCc{-1};
     int savedMapVersion = 0;
     juce::ValueTree midiMapState() const;
-    void applyMidiMapState (const juce::ValueTree&);
+    void applyMidiMapState(const juce::ValueTree &);
     static juce::File midiMapFile();
     void saveMidiMapDefault();
-    bool handleLearnedCc (int cc, int channel, int value);            // audio thread; true = this controller is mapped
-    std::array<std::atomic<float>, 3 + 2 * rysum::kNumStops> ccPending {};
-    std::map<std::string, std::atomic<float>*> extraParams;
+    bool handleLearnedCc(int cc, int channel,
+                         int value); // audio thread; true = this controller is mapped
+    std::array<std::atomic<float>, 3 + 2 * rysum::kNumStops> ccPending{};
+    std::map<std::string, std::atomic<float> *> extraParams;
     void startAutoLoad();
-    void setStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); loadStatus = s; }
-    void onLoaded (std::shared_ptr<const rysum::SampleLibrary> lib, const juce::String& err, const juce::File& folder);
-    void setIrStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); irStatus = s; }
+    void setStatus(const juce::String &s)
+    {
+        const juce::ScopedLock sl(statusLock);
+        loadStatus = s;
+    }
+    void onLoaded(std::shared_ptr<const rysum::SampleLibrary> lib, const juce::String &err,
+                  const juce::File &folder);
+    void setIrStatus(const juce::String &s)
+    {
+        const juce::ScopedLock sl(statusLock);
+        irStatus = s;
+    }
 
     juce::File irFile;
-    juce::File customOverride;           // chosen folder for own sounds (empty = samples/noise/eigene)
+    juce::File customOverride; // chosen folder for own sounds (empty = samples/noise/eigene)
     bool customReloading = false;
-    juce::String irStatus { juce::String::fromUTF8 ("keine \xe2\x80\x93 nur trocken") };
-    juce::ThreadPool irPool { 1 };
+    juce::String irStatus{juce::String::fromUTF8("keine \xe2\x80\x93 nur trocken")};
+    juce::ThreadPool irPool{1};
     // scenes: per slot (param index, normalised value); empty = not stored
     std::array<std::vector<std::pair<int, float>>, kNumScenes> scenes;
     int sceneVersion = 0, sceneVersionApplied = 0;
     float morphApplied = -1.0f;
-    bool takesPartInScenes (const juce::String& id) const;
+    bool takesPartInScenes(const juce::String &id) const;
     void applySceneMorph();
     juce::ValueTree scenesState() const;
-    void applyScenesState (const juce::ValueTree& t);
+    void applyScenesState(const juce::ValueTree &t);
     struct MorphTimer : juce::Timer
     {
-        explicit MorphTimer (RysumProcessor& p) : proc (p) {}
-        void timerCallback() override { proc.applySceneMorph(); }
-        RysumProcessor& proc;
-    } morphTimer { *this };
+        explicit MorphTimer(RysumProcessor &p) : proc(p) {}
+        void timerCallback() override
+        {
+            proc.applySceneMorph();
+        }
+        RysumProcessor &proc;
+    } morphTimer{*this};
     // dice
-    std::array<bool, kNumDiceGroups> diceGroups { true, true, false, true, true, true, true, false, false };
+    std::array<bool, kNumDiceGroups> diceGroups{true, true, false, true, true,
+                                                true, true, false, false};
     juce::ValueTree diceUndo;
     juce::Random diceRng;
-    int diceGroupOf (const juce::String& id) const;
+    int diceGroupOf(const juce::String &id) const;
     // Lucier mode: responses built on their own thread
-    juce::ThreadPool lucPool { 1 };
-    juce::ThreadPool piecePool { 2 };                  // generations of the piece, export
+    juce::ThreadPool lucPool{1};
+    juce::ThreadPool piecePool{2}; // generations of the piece, export
     rysum::LucierPiece lucPiece;
-    std::vector<float> lucRecScratch;                  // audio thread: the mono signal recorded
+    std::vector<float> lucRecScratch; // audio thread: the mono signal recorded
     int savedRecordingVersion = 0;
     void saveLucierRecording();
     bool savedFromFile = false;
@@ -394,97 +718,110 @@ private:
     float lucGrown = 0.0f, lucEffective = 1.0f;
     bool lucBuilding = false;
     juce::String builtLucKey, lucBaseKey;
-    std::shared_ptr<const rysum::LucierBase> lucBase;          // the pool thread reads it, the message thread swaps it
+    std::shared_ptr<const rysum::LucierBase>
+        lucBase; // the pool thread reads it, the message thread swaps it
     uint32_t lucSerial = 0;
     std::deque<std::shared_ptr<const rysum::TailIR>> lucKeepAlive;
     std::shared_ptr<const rysum::TailIR> pendingLucier;
-    void updateLucier (double dtSeconds);
-    std::shared_ptr<rysum::Convolver> irActive;          // audio thread
-    std::shared_ptr<rysum::Convolver> pendingIr;         // handed over (atomic_store / exchange)
-    std::shared_ptr<rysum::Convolver> irUi, retiredIr;   // message thread keeps them alive
-    std::atomic<bool> irClearRequest { false };
-    std::atomic<double> hostRate { 0.0 };
+    void updateLucier(double dtSeconds);
+    std::shared_ptr<rysum::Convolver> irActive;        // audio thread
+    std::shared_ptr<rysum::Convolver> pendingIr;       // handed over (atomic_store / exchange)
+    std::shared_ptr<rysum::Convolver> irUi, retiredIr; // message thread keeps them alive
+    std::atomic<bool> irClearRequest{false};
+    std::atomic<double> hostRate{0.0};
     std::array<std::vector<float>, rysum::OrganEngine::kMaxRoomSends> irInputs;
     rysum::Convolver::Settings currentIrSettings() const;
-    static juce::String irSettingsKey (const rysum::Convolver::Settings&);
+    static juce::String irSettingsKey(const rysum::Convolver::Settings &);
     juce::String builtIrKey, pendingIrKey;
     int irKeyTicks = 0;
     float drySmoothed = 1.0f, wetSmoothed = 0.0f;
-    std::atomic<float> *irDry = nullptr, *irWet = nullptr, *irFumaParam = nullptr, *irN3DParam = nullptr,
-                       *irFollowParam = nullptr, *irEnvelopParam = nullptr, *irDirectParam = nullptr;
-    void applyLatch (juce::MidiBuffer& midi, int numSamples);
-    std::array<bool, 128> latched {};
-    std::array<int64_t, 128> lastOnAt {};
+    std::atomic<float> *irDry = nullptr, *irWet = nullptr, *irFumaParam = nullptr,
+                       *irN3DParam = nullptr, *irFollowParam = nullptr, *irEnvelopParam = nullptr,
+                       *irDirectParam = nullptr;
+    void applyLatch(juce::MidiBuffer &midi, int numSamples);
+    std::array<bool, 128> latched{};
+    std::array<int64_t, 128> lastOnAt{};
     int64_t sampleClock = 0;
     bool latchWasOn = false;
     juce::MidiBuffer latchMidi;
 
-    std::vector<rysum::KeyTuning> tunings;                      // every entry of the tuning list, computed once
+    std::vector<rysum::KeyTuning> tunings; // every entry of the tuning list, computed once
     std::array<DrawnPath, rysum::kNumStops> drawnPaths;
     std::array<rysum::FloorPlan, rysum::kNumRooms> drawnPlans;
-    void sendPath (int stop);
+    void sendPath(int stop);
     // free tuning
-    rysum::ScalaTuning scala;                                    // message thread
+    rysum::ScalaTuning scala; // message thread
     juce::String sclText, sclName, kbmText, kbmName, tuningError;
-    std::atomic<bool> scalaReady { false };
-    bool setScala (const juce::String& scl, const juce::String& sName, const juce::String& kbm, const juce::String& kName);
-    rysum::NoteTable scalaShared;                                // written by the message thread under scalaLock
+    std::atomic<bool> scalaReady{false};
+    bool setScala(const juce::String &scl, const juce::String &sName, const juce::String &kbm,
+                  const juce::String &kName);
+    rysum::NoteTable scalaShared; // written by the message thread under scalaLock
     juce::SpinLock scalaLock;
-    std::atomic<int> scalaVersion { 0 };
+    std::atomic<int> scalaVersion{0};
     int scalaVersionSeen = -1;
-    rysum::NoteTable noteTable;                                  // audio thread: what the engine plays
-    MTSClient* mts = nullptr;
+    rysum::NoteTable noteTable; // audio thread: what the engine plays
+    MTSClient *mts = nullptr;
     bool mtsActive() const;
 
     // binaural
     juce::File sofaFile;
-    std::shared_ptr<const rysum::HrirSet> hrirSet;               // message thread: the loaded set (FABIAN or SOFA)
-    juce::File hrirSetFile;                                       // which file hrirSet came from (empty = FABIAN)
+    std::shared_ptr<const rysum::HrirSet>
+        hrirSet;            // message thread: the loaded set (FABIAN or SOFA)
+    juce::File hrirSetFile; // which file hrirSet came from (empty = FABIAN)
     // loudspeakers
     rysum::SpeakerLayout spkLayout;
     std::shared_ptr<const rysum::AllRadDecoder> spkUi, pendingSpk;
     std::deque<std::shared_ptr<const rysum::AllRadDecoder>> spkKeepAlive;
-    rysum::SpeakerRenderer spkRenderer;                           // audio thread
+    rysum::SpeakerRenderer spkRenderer; // audio thread
     juce::String spkBuiltKey;
     uint32_t spkSerial = 0;
     int spkVersion = 0;
-    std::atomic<int> spkOrderNow { 3 };
-    rysum::XorShift testNoise { 17 };
+    std::atomic<int> spkOrderNow{3};
+    rysum::XorShift testNoise{17};
     float testLp1 = 0.0f, testLp2 = 0.0f;
-    void rebuildSpeakers (bool force);
+    void rebuildSpeakers(bool force);
     juce::ValueTree speakersState() const;
-    std::shared_ptr<rysum::BinauralDecoder> binActive;           // audio thread
-    std::shared_ptr<rysum::BinauralDecoder> pendingBin;          // handed over (atomic_store / exchange)
-    std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin;   // message thread keeps them alive
+    std::shared_ptr<rysum::BinauralDecoder> binActive;  // audio thread
+    std::shared_ptr<rysum::BinauralDecoder> pendingBin; // handed over (atomic_store / exchange)
+    std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin; // message thread keeps them alive
     juce::AudioBuffer<float> inBuf;
-    bool inputThisBlock = false;                               // the audio input of the block (main input + side chain)
-    juce::AudioBuffer<float> binBuf;                              // Ambisonics render buffer in binaural mode
-    juce::String binStatus { juce::String::fromUTF8 ("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e" "Binaural\xe2\x80\x9c stellen") };
+    bool inputThisBlock = false;     // the audio input of the block (main input + side chain)
+    juce::AudioBuffer<float> binBuf; // Ambisonics render buffer in binaural mode
+    juce::String binStatus{juce::String::fromUTF8("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e"
+                                                  "Binaural\xe2\x80\x9c stellen")};
     juce::String builtBinKey, pendingBinKey;
     int binKeyTicks = 0;
     std::atomic<float> *binOrderParam = nullptr, *binYawParam = nullptr, *binDfParam = nullptr;
     juce::String binauralKey() const;
     void rebuildBinaural();
-    void setBinStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); binStatus = s; }
+    void setBinStatus(const juce::String &s)
+    {
+        const juce::ScopedLock sl(statusLock);
+        binStatus = s;
+    }
 
-    std::shared_ptr<std::atomic<bool>> aliveFlag = std::make_shared<std::atomic<bool>> (true);
+    std::shared_ptr<std::atomic<bool>> aliveFlag = std::make_shared<std::atomic<bool>>(true);
 
     class Loader;
     std::unique_ptr<Loader> loader;
     juce::File samplesFolder;
-    std::shared_ptr<const rysum::SampleLibrary> pendingLibrary;     // handed to the audio thread
-    std::shared_ptr<const rysum::SampleLibrary> uiLibrary;          // used by the editor
-    std::shared_ptr<const rysum::SampleLibrary> retiredLibrary;     // kept alive briefly (freed off the audio thread)
+    std::shared_ptr<const rysum::SampleLibrary> pendingLibrary; // handed to the audio thread
+    std::shared_ptr<const rysum::SampleLibrary> uiLibrary;      // used by the editor
+    std::shared_ptr<const rysum::SampleLibrary>
+        retiredLibrary; // kept alive briefly (freed off the audio thread)
     int retireCountdown = 0;
     juce::CriticalSection statusLock;
-    juce::String loadStatus { "Samples werden gesucht ..." };
-    std::atomic<bool> loading { false };
+    juce::String loadStatus{"Samples werden gesucht ..."};
+    std::atomic<bool> loading{false};
     bool autoLoadDone = false;
 
-    std::array<std::atomic<float>*, rysum::kNumStops> stopParams {}, motionParams {}, rateParams {}, depthParams {}, volParams {}, windParams {}, ellipseParams {};
-    std::atomic<float> *master = nullptr, *output = nullptr, *click = nullptr, *clickBlend = nullptr, *releaseClick = nullptr,
-                       *stopPull = nullptr, *wind = nullptr, *degAmount = nullptr, *degGrain = nullptr, *degBits = nullptr,
-                       *degRate = nullptr, *degWobble = nullptr, *degDropouts = nullptr, *degMode = nullptr;
+    std::array<std::atomic<float> *, rysum::kNumStops> stopParams{}, motionParams{}, rateParams{},
+        depthParams{}, volParams{}, windParams{}, ellipseParams{};
+    std::atomic<float> *master = nullptr, *output = nullptr, *click = nullptr,
+                       *clickBlend = nullptr, *releaseClick = nullptr, *stopPull = nullptr,
+                       *wind = nullptr, *degAmount = nullptr, *degGrain = nullptr,
+                       *degBits = nullptr, *degRate = nullptr, *degWobble = nullptr,
+                       *degDropouts = nullptr, *degMode = nullptr;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RysumProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RysumProcessor)
 };

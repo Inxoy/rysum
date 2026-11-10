@@ -9,67 +9,76 @@ namespace rysum::ui
 class StopTile : public juce::Button
 {
 public:
-    StopTile (int stopIndex) : juce::Button (prettyLabel (kStops[(size_t) stopIndex].label)), stop (stopIndex)
+    StopTile(int stopIndex)
+        : juce::Button(prettyLabel(kStops[(size_t)stopIndex].label)), stop(stopIndex)
     {
-        setClickingTogglesState (true);
-        setTooltip (prettyLabel (kStops[(size_t) stopIndex].label));
+        setClickingTogglesState(true);
+        setTooltip(prettyLabel(kStops[(size_t)stopIndex].label));
     }
-    void paintButton (juce::Graphics&, bool over, bool down) override;
+    void paintButton(juce::Graphics &, bool over, bool down) override;
 
 private:
     int stop;
 };
 
-/** the 46 semitones C..a'' with the short-octave gaps; shows held keys, can be played with the mouse */
+/** the 46 semitones C..a'' with the short-octave gaps; shows held keys, can be played with the
+ * mouse */
 class KeyStrip : public juce::Component
 {
 public:
-    explicit KeyStrip (RysumProcessor& p) : proc (p) {}
-    void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseDrag (const juce::MouseEvent&) override;
-    void mouseUp (const juce::MouseEvent&) override;
+    explicit KeyStrip(RysumProcessor &p) : proc(p) {}
+    void paint(juce::Graphics &) override;
+    void mouseDown(const juce::MouseEvent &) override;
+    void mouseDrag(const juce::MouseEvent &) override;
+    void mouseUp(const juce::MouseEvent &) override;
 
 private:
-    int midiAt (juce::Point<int>) const;
-    void play (int midi);
-    RysumProcessor& proc;
+    int midiAt(juce::Point<int>) const;
+    void play(int midi);
+    RysumProcessor &proc;
     int playing = -1;
 };
 
-/** a scene slot A..D: click = go there (an empty one stores the sound), right-click = store / clear */
+/** a scene slot A..D: click = go there (an empty one stores the sound), right-click = store / clear
+ */
 class SceneButton : public juce::Button
 {
 public:
-    SceneButton (RysumProcessor& p, int s) : juce::Button (juce::String::charToString ((juce::juce_wchar) ('A' + s))), proc (p), slot (s) {}
-    void paintButton (juce::Graphics&, bool over, bool down) override;
+    SceneButton(RysumProcessor &p, int s)
+        : juce::Button(juce::String::charToString((juce::juce_wchar)('A' + s))), proc(p), slot(s)
+    {
+    }
+    void paintButton(juce::Graphics &, bool over, bool down) override;
     using juce::Button::clicked;
-    void clicked (const juce::ModifierKeys&) override;
-    void mouseDown (const juce::MouseEvent&) override;
+    void clicked(const juce::ModifierKeys &) override;
+    void mouseDown(const juce::MouseEvent &) override;
     bool current = false;
+
 private:
     void showMenu();
-    RysumProcessor& proc;
+    RysumProcessor &proc;
     int slot;
 };
 
 class ConsoleView : public juce::Component
 {
 public:
-    explicit ConsoleView (RysumProcessor&);
-    void paint (juce::Graphics&) override;
+    explicit ConsoleView(RysumProcessor &);
+    void paint(juce::Graphics &) override;
     void resized() override;
-    void refresh();                 // called by the editor's timer
+    void refresh(); // called by the editor's timer
 
 private:
-    RysumProcessor& proc;
+    RysumProcessor &proc;
     std::vector<std::unique_ptr<StopTile>> tiles;
-    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> tileAttachments;
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>
+        tileAttachments;
     std::vector<std::unique_ptr<ParamRow>> noiseRows, decayRows, stopVol, stopWind;
-    juce::TextButton perPipe { "pro Pfeife" }, onSum { "Summe" };
+    juce::TextButton perPipe{"pro Pfeife"}, onSum{"Summe"};
     juce::Slider volume;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAttachment;
-    juce::TextButton folderButton { juce::String (juce::CharPointer_UTF8 ("Samples-Ordner \xe2\x80\xa6")) };
+    juce::TextButton folderButton{
+        juce::String(juce::CharPointer_UTF8("Samples-Ordner \xe2\x80\xa6"))};
     std::unique_ptr<juce::FileChooser> chooser;
     KeyStrip keys;
     // scenes
@@ -78,8 +87,9 @@ private:
     juce::Rectangle<int> scenesArea, outInfoArea;
     int shownSceneVersion = -1;
     float shownMorph = -1.0f;
-    juce::Rectangle<int> stopsArea, noiseArea, decayArea, outArea, keyboardArea, meterArea, photoArea;
-    juce::ComboBox spreadChoice;                  // notes to single pipes
+    juce::Rectangle<int> stopsArea, noiseArea, decayArea, outArea, keyboardArea, meterArea,
+        photoArea;
+    juce::ComboBox spreadChoice; // notes to single pipes
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> spreadAtt;
     juce::Rectangle<int> spreadLabel;
     float meterL = 0, meterR = 0;
