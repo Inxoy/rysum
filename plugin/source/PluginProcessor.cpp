@@ -52,7 +52,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "master", 1 }, u8 ("Lautst\xc3\xa4rke"), NormalisableRange<float> (-60.0f, 12.0f, 0.1f), -12.0f,
                                                   AudioParameterFloatAttributes().withLabel ("dB")));
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "output", 1 }, "Ausgabe",
-                                                   StringArray { "Stereo", "AmbiX 1", "AmbiX 2", "AmbiX 3", "AmbiX 4", "AmbiX 5", "Binaural", "Lautsprecher" }, 0));
+                                                   StringArray { "Stereo", "AmbiX 1", "AmbiX 2", "AmbiX 3", "AmbiX 4", "AmbiX 5", "Binaural", "Lautsprecher", "Transaural (2 LS)" }, 0));
     // loudspeakers: AllRAD decoding of this order to the layout set up on the page "Lautsprecher"
     l.add (std::make_unique<AudioParameterChoice> (ParameterID { "spkOrder", 1 }, "Lautsprecher-Ordnung",
                                                    StringArray { "1. Ordnung", "2. Ordnung", "3. Ordnung", "4. Ordnung", "5. Ordnung" }, 2));
@@ -64,6 +64,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                   AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
                                                   { return std::abs (v) < 0.05f ? String ("geradeaus") : String (roundToInt (std::abs (v))) + juce::String::fromUTF8 ("\xc2\xb0 ") + (v > 0 ? "links" : "rechts"); })));
     l.add (std::make_unique<AudioParameterBool> (ParameterID { "binDfEq", 1 }, "Diffusfeld-Entzerrung", true));
+    // transaural: the binaural signal over two loudspeakers, symmetric at +-angle (90 = on opposite sides of the room)
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "trAngle", 1 }, "Transaural Lautsprecherwinkel", NormalisableRange<float> (10.0f, 150.0f, 1.0f), 90.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+                                                  { return juce::String::fromUTF8 ("\xc2\xb1") + String (roundToInt (v)) + juce::String::fromUTF8 ("\xc2\xb0"); })));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "trAmount", 1 }, juce::String::fromUTF8 ("Transaural \xc3\x9c" "bersprech-Unterdr\xc3\xbc" "ckung"), NormalisableRange<float> (0, 1), 1.0f, pct));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { "trBoost", 1 }, juce::String::fromUTF8 ("Transaural h\xc3\xb6" "chste Anhebung"), NormalisableRange<float> (3.0f, 20.0f, 0.1f), 10.0f,
+                                                  AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " dB"; })));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "trSideEq", 1 }, "Transaural Seitenklang ausgleichen", true));
 
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "click", 1 },        "Tastenklick",        NormalisableRange<float> (0, 1), 0.2f, pct));
     l.add (std::make_unique<AudioParameterFloat> (ParameterID { "clickBlend", 1 },   "Klick ins Anschlagen", NormalisableRange<float> (0, 1), 0.45f, pct));
@@ -661,6 +669,8 @@ void RysumProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     if (irActive != nullptr) irActive->reset();
     binBuf.setSize (kMaxAmbiChannels, juce::jmax (512, samplesPerBlock), false, true, false);   // reserved once (see processBlock)
     spkRenderer.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
+    trCtc.prepare (sampleRate, juce::jmax (512, samplesPerBlock));
+    trBuiltKey.clear();                                              // (re)loaded by the timer at this rate
     lucPiece.prepare (sampleRate);
     lucRecScratch.assign ((size_t) juce::jmax (512, samplesPerBlock), 0.0f);
     inBuf.setSize (2, juce::jmax (512, samplesPerBlock), false, true, false);
@@ -713,7 +723,8 @@ EngineParams RysumProcessor::readParams (const float* vals) const
     p.sync = V (ix.motionSync) > 0.5f;
     p.masterGain = dbToGain (V (ix.master));
     p.outputMode = juce::roundToInt (V (ix.output));
-    if (p.outputMode == kBinauralOutput) p.outputMode = 1 + juce::roundToInt (binOrderParam->load());   // processBlock uses the decoder's order
+    if (p.outputMode == kBinauralOutput || p.outputMode == kTransauralOutput)
+        p.outputMode = 1 + juce::roundToInt (binOrderParam->load());   // processBlock uses the decoder's order
     if (p.outputMode == kSpeakerOutput) p.outputMode = spkOrderNow.load();       // processBlock uses the decoder's order
     p.clickLevel = V (ix.click);
     p.clickBlend = V (ix.clickBlend);
@@ -1030,9 +1041,10 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     if (auto pending = std::atomic_exchange (&pendingBin, std::shared_ptr<rysum::BinauralDecoder>()))
         binActive = std::move (pending);                 // the old one is still referenced by retiredBin
     const int n = buffer.getNumSamples();
-    const bool binaural = juce::roundToInt (output->load()) == kBinauralOutput && binActive != nullptr && buffer.getNumChannels() > 0;
-    if (juce::roundToInt (output->load()) == kBinauralOutput)
+    const bool binaural = isBinaural() && binActive != nullptr && buffer.getNumChannels() > 0;
+    if (isBinaural())
         params.outputMode = binaural ? binActive->getOrder() : 0;
+    const bool transaural = binaural && isTransaural() && buffer.getNumChannels() > 1;
     // loudspeakers: the same Ambisonics buffer, decoded with AllRAD to the layout's channels
     if (auto pending = std::atomic_exchange (&pendingSpk, std::shared_ptr<const rysum::AllRadDecoder>()))
         spkRenderer.setDecoder (std::move (pending));                 // still referenced by spkKeepAlive
@@ -1158,6 +1170,8 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             for (int i = 0; i < n; ++i) l[i] = 0.5f * (l[i] + r[i]);
         }
         for (int c = 2; c < buffer.getNumChannels(); ++c) buffer.clear (c, 0, n);
+        // transaural: the ear signals become two loudspeaker feeds (each speaker's way to the far ear cancelled)
+        if (transaural) trCtc.process (buffer.getWritePointer (0), buffer.getWritePointer (1), n);
     }
 
     // ---- loudspeakers (AllRAD)
@@ -1672,6 +1686,37 @@ void RysumProcessor::rebuildBinaural()
     });
 }
 
+juce::String RysumProcessor::transauralKey() const
+{
+    auto v = [&] (const char* id) { return juce::String (apvts.getRawParameterValue (id)->load(), 3); };
+    return juce::String::toHexString ((juce::pointer_sized_int) hrirSet.get()) + "|" + v ("trAngle") + "|" + v ("trAmount") + "|" + v ("trBoost")
+         + "|" + v ("trSideEq") + "|" + juce::String (hostRate.load() > 0 ? hostRate.load() : 48000.0, 0);
+}
+
+void RysumProcessor::rebuildTransaural()
+{
+    const auto key = transauralKey();
+    trBuiltKey = key;
+    auto set = hrirSet;
+    if (set == nullptr) return;
+    const float angle = apvts.getRawParameterValue ("trAngle")->load(), amount = apvts.getRawParameterValue ("trAmount")->load();
+    const float boost = apvts.getRawParameterValue ("trBoost")->load();
+    const bool eq = apvts.getRawParameterValue ("trSideEq")->load() > 0.5f;
+    const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    irPool.addJob ([this, key, set, angle, amount, boost, eq, rate, alive = aliveFlag]
+    {
+        auto f = rysum::TransauralFilters::design (*set, angle, amount, boost, eq, rate);
+        juce::MessageManager::callAsync ([this, key, f, alive]
+        {
+            if (! alive->load() || key != trBuiltKey || f == nullptr) return;
+            trUi = f;
+            trCtc.load (*f);
+            const juce::ScopedLock sl (statusLock);
+            trStatus = f->description;
+        });
+    });
+}
+
 void RysumProcessor::clearIr()
 {
     irFile = juce::File();
@@ -1833,6 +1878,17 @@ void RysumProcessor::timerCallback()
             if (binUi == nullptr && builtBinKey.isEmpty()) rebuildBinaural();         // first time: right away
             else if (key != pendingBinKey) { pendingBinKey = key; binKeyTicks = 0; }
             else if (++binKeyTicks >= 2) { rebuildBinaural(); pendingBinKey.clear(); }
+        }
+    }
+    // transaural: the crosstalk filters follow the HRTF set and the settings (~0.5 s debounce)
+    if (autoLoadDone && isTransaural() && hrirSet != nullptr)
+    {
+        const auto key = transauralKey();
+        if (key != trBuiltKey)
+        {
+            if (trUi == nullptr && trBuiltKey.isEmpty()) rebuildTransaural();
+            else if (key != trPendingKey) { trPendingKey = key; trKeyTicks = 0; }
+            else if (++trKeyTicks >= 2) { rebuildTransaural(); trPendingKey.clear(); }
         }
     }
     // IR settings / output format changed: rebuild the room once the values have settled (~0.5 s)
@@ -2000,7 +2056,8 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
     auto extra = state.getChildWithName ("EXTRA");
     const float keepOutput = output->load();
     // kept when a patch loads: headphone settings and the controller setup (MPE) belong to the player, not the sound
-    static const char* const keepIds[] { "binOrder", "binYaw", "binDfEq", "mpe", "mpeBend", "inpOn", "spkOrder", "spkDistComp" };
+    static const char* const keepIds[] { "binOrder", "binYaw", "binDfEq", "mpe", "mpeBend", "inpOn", "spkOrder", "spkDistComp",
+                                         "trAngle", "trAmount", "trBoost", "trSideEq" };
     float keepVals[std::size (keepIds)] {};
     for (size_t i = 0; i < std::size (keepIds); ++i) keepVals[i] = apvts.getRawParameterValue (keepIds[i])->load();
     if (forPatch)

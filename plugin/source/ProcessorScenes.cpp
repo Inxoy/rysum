@@ -11,7 +11,7 @@ using namespace rysum;
 bool RysumProcessor::takesPartInScenes (const juce::String& id) const
 {
     // the player's setup and the output stay as they are; switching the tuning would cut the notes
-    static const juce::StringArray never { "sceneMorph", "output", "master", "binOrder", "binYaw", "binDfEq", "irFuma", "irN3D", "irOrder",
+    static const juce::StringArray never { "sceneMorph", "output", "master", "binOrder", "binYaw", "binDfEq", "trAngle", "trAmount", "trBoost", "trSideEq", "irFuma", "irN3D", "irOrder",
                                            "temperament", "mtsContinuous", "midiCC", "mpe", "mpeBend", "inpOn", "spkOrder", "spkDistComp" };
     return ! never.contains (id);
 }

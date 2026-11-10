@@ -10,6 +10,7 @@
 #include "Lucier.h"
 #include "LucierPiece.h"
 #include "Speakers.h"
+#include "Transaural.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <chrono>
 #include <complex>
@@ -316,6 +317,104 @@ static void testBinaural (const juce::File& sofa)
         const double rt = 10.0 / std::chrono::duration<double> (std::chrono::high_resolution_clock::now() - t0).count();
         std::cout << "binaural decoder 5th order: " << rt << " x real time" << std::endl;
         check (rt > 8.0, "binaural decoder is cheap");
+    }
+}
+
+// transaural: binaural over two loudspeakers - the crosstalk to the far ear cancelled
+static void testTransaural()
+{
+    juce::String err;
+    auto fab = HrirSet::fabian (err);
+    if (fab == nullptr) { check (false, "transaural: FABIAN " + err); return; }
+    const double fs = 48000.0;
+    // the acoustic way: speaker feeds -> ears (FABIAN at +-angle), by direct convolution
+    auto conv = [] (const std::vector<float>& x, const float* h, int hl)
+    {
+        std::vector<float> y (x.size() + (size_t) hl, 0.0f);
+        for (size_t i = 0; i < x.size(); ++i) if (x[i] != 0.0f) for (int k = 0; k < hl; ++k) y[i + (size_t) k] += x[i] * h[k];
+        return y;
+    };
+    auto nearest = [&] (float az)
+    {
+        int best = 0; float bd = 1e9f;
+        for (int d = 0; d < fab->numDirections(); ++d)
+        {
+            const float da = std::abs (std::remainder (fab->az[(size_t) d] - az, 360.0f)), de = std::abs (fab->el[(size_t) d]);
+            if (da + de < bd) { bd = da + de; best = d; }
+        }
+        return best;
+    };
+    auto band = [&] (std::vector<float> x, double lo, double hi)
+    {
+        juce::IIRFilter a, b; a.setCoefficients (juce::IIRCoefficients::makeHighPass (fs, lo)); b.setCoefficients (juce::IIRCoefficients::makeLowPass (fs, hi));
+        double e = 0; for (auto v : x) { const double y = b.processSingleSampleRaw (a.processSingleSampleRaw (v)); e += y * y; } return e;
+    };
+    for (float angle : { 90.0f, 60.0f, 30.0f })
+    {
+        auto run = [&] (float amount, double& farOverNearDb, double& nearDbRel)
+        {
+            auto f = TransauralFilters::design (*fab, angle, amount, 10.0f, false, fs);
+            // a click meant only for the left ear (binaural L = impulse, R = 0)
+            std::vector<float> L ((size_t) 4096, 0.0f), R ((size_t) 4096, 0.0f);
+            L[0] = 1.0f;
+            std::vector<float> mid ((size_t) 4096), side ((size_t) 4096);
+            for (size_t i = 0; i < L.size(); ++i) { mid[i] = 0.5f * (L[i] + R[i]); side[i] = 0.5f * (L[i] - R[i]); }
+            const auto m = conv (mid, f->cs.data(), f->length), sd = conv (side, f->cd.data(), f->length);
+            std::vector<float> spL (m.size()), spR (m.size());
+            for (size_t i = 0; i < m.size(); ++i) { spL[i] = m[i] + sd[i]; spR[i] = m[i] - sd[i]; }
+            const int dl = nearest (angle), dr = nearest (-angle);
+            const int hl = fab->length;
+            auto add = [] (std::vector<float> a, const std::vector<float>& b) { for (size_t i = 0; i < a.size() && i < b.size(); ++i) a[i] += b[i]; return a; };
+            const auto earL = add (conv (spL, fab->get (dl, 0), hl), conv (spR, fab->get (dr, 0), hl));
+            const auto earR = add (conv (spL, fab->get (dl, 1), hl), conv (spR, fab->get (dr, 1), hl));
+            const double nearE = band (earL, 250.0, 6000.0), farE = band (earR, 250.0, 6000.0);
+            farOverNearDb = 10.0 * std::log10 (farE / juce::jmax (1e-30, nearE));
+            nearDbRel = 10.0 * std::log10 (nearE);
+            return f;
+        };
+        double plainX, plainN, ctcX, ctcN;
+        auto f0 = run (0.0f, plainX, plainN);
+        auto f1 = run (1.0f, ctcX, ctcN);
+        std::cout << "transaural +-" << angle << " deg: far ear / near ear " << plainX << " dB plain, " << ctcX << " dB cancelled (design says "
+                  << f1->crossDb << " dB); ITD " << f1->itdMs << " ms; near ear level change " << (ctcN - plainN) << " dB" << std::endl;
+        check (std::isfinite (ctcX) && ctcX < plainX - (angle >= 60.0f ? 10.0 : 6.0), juce::String ("transaural: crosstalk cancelled at +-") + juce::String (angle, 0) + " deg");
+        // amount 0 = a pure delay (the plain binaural signal over the speakers)
+        if (angle == 90.0f)
+        {
+            double off = 0; for (int i = 0; i < f0->length; ++i) if (i != f0->delay) off = juce::jmax (off, (double) std::abs (f0->cs[(size_t) i]) + std::abs (f0->cd[(size_t) i]));
+            std::cout << "transaural amount 0: tap at " << f0->delay << " = " << f0->cs[(size_t) f0->delay] << " / " << f0->cd[(size_t) f0->delay] << ", elsewhere at most " << off << std::endl;
+            check (std::abs (f0->cs[(size_t) f0->delay] - 1.0f) < 1e-3f && std::abs (f0->cd[(size_t) f0->delay] - 1.0f) < 1e-3f && off < 1e-3,
+                   "transaural: amount 0 = the binaural signal, only delayed");
+            // the boost limit holds (side filter, the low end)
+            for (float lim : { 6.0f, 15.0f })
+            {
+                auto fl = TransauralFilters::design (*fab, 90.0f, 1.0f, lim, false, fs);
+                juce::dsp::FFT fft (13);
+                std::vector<float> b ((size_t) 16384, 0.0f);
+                std::copy (fl->cd.begin(), fl->cd.end(), b.begin());
+                fft.performFrequencyOnlyForwardTransform (b.data());
+                float mx = 0; for (int k = 0; k <= 4096; ++k) mx = juce::jmax (mx, b[(size_t) k]);
+                std::cout << "transaural limit " << lim << " dB: side filter peaks at " << juce::Decibels::gainToDecibels (mx) << " dB" << std::endl;
+                check (juce::Decibels::gainToDecibels (mx) < lim + 1.5f, juce::String ("transaural: boost limited to ") + juce::String (lim, 0) + " dB");
+            }
+            // real time: the convolutions run (filters loaded in the background), output finite and the click comes through
+            auto ff = TransauralFilters::design (*fab, 90.0f, 1.0f, 10.0f, true, fs);
+            TransauralCtc ctc;
+            ctc.prepare (fs, 512);
+            ctc.load (*ff);
+            std::vector<float> l (512), r (512);
+            double e = 0; bool fin = true;
+            for (int b = 0; b < 400; ++b)
+            {
+                std::fill (l.begin(), l.end(), 0.0f); std::fill (r.begin(), r.end(), 0.0f);
+                if (b % 50 == 0) l[0] = 1.0f;
+                ctc.process (l.data(), r.data(), 512);
+                for (int i = 0; i < 512; ++i) { e += l[(size_t) i] * l[(size_t) i]; fin = fin && std::isfinite (l[(size_t) i]) && std::isfinite (r[(size_t) i]); }
+                if (b % 50 == 0) juce::Thread::sleep (20);
+            }
+            std::cout << "transaural real time: " << ff->description << ", energy out " << e << std::endl;
+            check (fin && e > 1e-3, "transaural: real-time convolution runs");
+        }
     }
 }
 
@@ -1102,6 +1201,7 @@ int main (int argc, char** argv)
     const bool onlyWind = onlyRoom || std::getenv ("RYSUM_ONLY_WIND") != nullptr;   // quick run: just the wind model tests
     const bool onlyLucier = std::getenv ("RYSUM_ONLY_LUCIER") != nullptr;
     const bool onlyInput = std::getenv ("RYSUM_ONLY_INPUT") != nullptr;
+    if (std::getenv ("RYSUM_ONLY_TRANSAURAL") != nullptr) { testTransaural(); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (std::getenv ("RYSUM_ONLY_SPEAKERS") != nullptr) { testSpeakers(); std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << std::endl; return failures; }
     if (! onlyWind && ! onlyLucier && ! onlyInput)
     {
@@ -1110,6 +1210,7 @@ int main (int argc, char** argv)
         testTailConvolver();
         testMotion();
         testBinaural (argc > 3 ? juce::File (argv[3]) : juce::File());      // optional 3rd argument: a SOFA file to test with
+        testTransaural();
         testSpeakers();
     }
     if (argc < 3) { std::cout << "usage: RysumRenderTest <samples> <outdir> [hrtf.sofa]" << std::endl; return failures; }

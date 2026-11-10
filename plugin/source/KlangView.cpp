@@ -56,6 +56,29 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     smear    = &row ("freezeSmear", "Verwischen");
     release  = &row ("freezeRelease", "Ausklang beim Ausschalten");
 
+    // two loudspeakers (transaural): the binaural signal with the crosstalk cancelled
+    trOn.setClickingTogglesState (false);
+    trOn.setTooltip (u8 ("Schaltet die Ausgabe auf Transaural: der Kopfh\xc3\xb6rer-Klang \xc3\xbc" "ber zwei Lautsprecher, "
+                         "das \xc3\x9c" "bersprechen zum jeweils anderen Ohr wird ausgel\xc3\xb6scht. Ordnung, HRTF und Kopfdrehung wie bei Binaural."));
+    trOn.onClick = [this]
+    {
+        if (auto* o = proc.apvts.getParameter ("output"))
+            o->setValueNotifyingHost (o->convertTo0to1 (proc.isTransaural() ? 0.0f : (float) RysumProcessor::kTransauralOutput));
+    };
+    addAndMakeVisible (trOn);
+    trAngle = &row ("trAngle", "Lautsprecher bei");
+    trAngle->setTooltip (u8 ("Wo die beiden Lautsprecher stehen, von vorn gemessen (symmetrisch). 90\xc2\xb0 = links und rechts, "
+                             "einander gegen\xc3\xbc" "ber, du in der Mitte zwischen ihnen."));
+    trAmount = &row ("trAmount", u8 ("\xc3\x9c" "bersprechen aus"));
+    trAmount->setTooltip (u8 ("0 % = einfach der Kopfh\xc3\xb6rer-Klang auf die Lautsprecher, 100 % = das \xc3\x9c" "bersprechen ganz ausgel\xc3\xb6scht "
+                              "(das Bild wird r\xc3\xa4umlicher, aber empfindlicher f\xc3\xbcr die Sitzposition)"));
+    trBoost = &row ("trBoost", u8 ("h\xc3\xb6" "chste Anhebung"));
+    trBoost->setTooltip (u8 ("Die Ausl\xc3\xb6schung hebt die Tiefen im Seitensignal an (der Kopf ist klein gegen\xc3\xbc" "ber langen Wellen). "
+                             "Mehr = genauer, aber mehr Bass-Hub und Schwanken bei Kopfbewegung."));
+    trEq = &toggle ("trSideEq", "Seitenklang ausgleichen");
+    trEq->setTooltip (u8 ("Nimmt auch die Klangf\xc3\xa4rbung der Lautsprecher-Richtung heraus (die Ohrmuschel h\xc3\xb6rt sie von der Seite): "
+                          "die Ohren bekommen den Kopfh\xc3\xb6rer-Klang, nicht Kopfh\xc3\xb6rer-Klang mal Seite. Gegl\xc3\xa4ttet, h\xc3\xb6" "chstens \xc2\xb1" "10 dB."));
+
     doppler    = &row ("doppler", "Doppler");
     distAmount = &row ("distAmount", u8 ("Entfernung \xe2\x86\x92 Lautst\xc3\xa4rke"));
     air        = &row ("air", u8 ("Luft (H\xc3\xb6hen in der Ferne)"));
@@ -73,7 +96,7 @@ KlangView::KlangView (RysumProcessor& p) : proc (p)
     binOn.onClick = [this]
     {
         if (auto* o = proc.apvts.getParameter ("output"))
-            o->setValueNotifyingHost (o->convertTo0to1 (proc.isBinaural() ? 0.0f : (float) RysumProcessor::kBinauralOutput));
+            o->setValueNotifyingHost (o->convertTo0to1 (proc.isHeadphones() ? 0.0f : (float) RysumProcessor::kBinauralOutput));
     };
     addAndMakeVisible (binOn);
     sofaLoad.setTooltip (u8 ("Eigene HRTF im SOFA-Format (SimpleFreeFieldHRIR), z. B. eine individuell gemessene"));
@@ -174,9 +197,28 @@ void KlangView::resized()
     {
         auto b = body (freezeBox);
         freezeOn->setBounds (b.removeFromTop (28).withWidth (140));
-        b.removeFromTop (12);
-        smear->setBounds (b.removeFromTop (38));
-        release->setBounds (b.removeFromTop (38));
+        b.removeFromTop (8);
+        auto line = b.removeFromTop (38);
+        const int hw = (line.getWidth() - 14) / 2;
+        smear->setBounds (line.removeFromLeft (hw));
+        line.removeFromLeft (14);
+        release->setBounds (line);
+        // two loudspeakers (transaural) below
+        trBox = freezeBox.withTrimmedTop (130);
+        auto t = body (trBox);
+        auto top = t.removeFromTop (26);
+        trOn.setBounds (top.removeFromLeft (140));
+        top.removeFromLeft (8);
+        trEq->setBounds (top.removeFromLeft (200));
+        t.removeFromTop (6);
+        auto l1 = t.removeFromTop (38);
+        trAngle->setBounds (l1.removeFromLeft (hw));
+        l1.removeFromLeft (14);
+        trAmount->setBounds (l1);
+        auto l2 = t.removeFromTop (38);
+        trBoost->setBounds (l2.removeFromLeft (hw));
+        l2.removeFromLeft (14);
+        trStatusArea = l2.reduced (0, 2);
     }
     {
         auto b = body (distBox);
@@ -233,8 +275,12 @@ void KlangView::refresh()
     }
     for (auto& r : rows) r->repaint();
     repaint (freezeBox);
-    const bool on = proc.isBinaural();
+    const bool on = proc.isHeadphones();
     if (binOn.getToggleState() != on) { binOn.setToggleState (on, juce::dontSendNotification); repaint (binBox); }
+    const bool trNow = proc.isTransaural();
+    if (trOn.getToggleState() != trNow) { trOn.setToggleState (trNow, juce::dontSendNotification); repaint (trBox); }
+    const auto ts = proc.getTransauralStatus();
+    if (ts != shownTrStatus) { shownTrStatus = ts; repaint (trBox); }
     const auto st = proc.getBinauralStatus() + "|" + proc.getSofaFile().getFullPathName();
     if (st != shownBinStatus) { shownBinStatus = st; repaint (binBox); }
 }
@@ -258,7 +304,16 @@ void KlangView::paint (juce::Graphics& g)
     drawSectionTitle (g, freezeBox, "Freeze", fz > 0 ? juce::String (fz) + " eingefroren" : juce::String ("CC 66"));
     drawSectionTitle (g, distBox, u8 ("Entfernung \xc2\xb7 Doppler"));
     drawSectionTitle (g, midiBox, "MIDI");
-    drawSectionTitle (g, binBox, u8 ("Kopfh\xc3\xb6rer (binaural)"), proc.isBinaural() ? juce::String ("aktiv") : juce::String ("aus"));
+    drawSectionTitle (g, binBox, u8 ("Kopfh\xc3\xb6rer (binaural)"), proc.isHeadphones() ? juce::String ("aktiv")
+                                                                     : proc.isTransaural() ? juce::String (u8 ("f\xc3\xbcr Transaural")) : juce::String ("aus"));
+    drawSectionTitle (g, trBox, "Zwei Lautsprecher", proc.isTransaural() ? juce::String (u8 ("transaural \xc2\xb7 aktiv")) : juce::String ("transaural"));
+    {
+        g.setFont (A.monoFont (10.0f));
+        g.setColour (proc.isTransaural() ? col::dim : col::mute);
+        const auto st = proc.isTransaural() ? proc.getTransauralStatus()
+                                            : juce::String (u8 ("Lautsprecher links und rechts einander gegen\xc3\xbc" "ber, du dazwischen"));
+        g.drawFittedText (st.replace (juce::String::fromUTF8 (" \xc2\xb7 "), "\n"), trStatusArea, juce::Justification::topLeft, 4);
+    }
 
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::dim);

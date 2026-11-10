@@ -677,6 +677,17 @@ public:
         }
         shoot (3, "ui_klang.png");
         {
+            // two loudspeakers (transaural): the output switched, the HRTF decoder and then the crosstalk filters designed
+            if (auto* o = proc->apvts.getParameter ("output")) o->setValueNotifyingHost (o->convertTo0to1 ((float) RysumProcessor::kTransauralOutput));
+            for (int t = 0; t < 300 && proc->getTransauralFilters() == nullptr; ++t) juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+            shoot (3, "ui_klang_transaural.png");
+            const auto f = proc->getTransauralFilters();
+            std::cout << "transaural in the plugin: " << (f != nullptr ? f->description : juce::String ("not designed  FAIL")) << std::endl;
+            if (auto* o = proc->apvts.getParameter ("output")) o->setValueNotifyingHost (o->getDefaultValue());
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+        }
+        {
             // loudspeakers: 7.1.4 at 3rd order through the processor - sound on the layout's channels only, the LFE channel silent
             auto l714 = rysum::speakerPresets()[3];
             proc->setSpeakerLayout (l714, false);

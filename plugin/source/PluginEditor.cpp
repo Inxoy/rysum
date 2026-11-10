@@ -336,12 +336,13 @@ void RysumContent::paint (juce::Graphics& g)
     g.setFont (A.monoFont (11.0f));
 
     const int out = (int) proc.apvts.getRawParameterValue ("output")->load();
-    const bool bin = out == RysumProcessor::kBinauralOutput, spk = out == RysumProcessor::kSpeakerOutput;
+    const bool tr = out == RysumProcessor::kTransauralOutput;
+    const bool bin = out == RysumProcessor::kBinauralOutput || tr, spk = out == RysumProcessor::kSpeakerOutput;
     auto dec = proc.getSpeakerDecoder();
     const int spkCh = dec != nullptr ? dec->numOutChannels : 0;
     const int needed = out == 0 || bin ? 2 : spk ? spkCh : (out + 1) * (out + 1);
     const int have = proc.getTotalNumOutputChannels();
-    juce::String o = bin ? (proc.binauralReady() ? juce::String ("2 ch HRTF") : juce::String::fromUTF8 ("HRTF \xe2\x80\xa6"))
+    juce::String o = bin ? (proc.binauralReady() ? juce::String (tr ? "2 LS" : "2 ch HRTF") : juce::String::fromUTF8 ("HRTF \xe2\x80\xa6"))
                    : spk ? (dec != nullptr && dec->error.isEmpty() ? juce::String (spkCh) + " ch LS" : juce::String ("LS: Fehler")) : juce::String (needed) + " ch";
     if (have < needed) o = u8 ("nur ") + juce::String (have) + " ch!";
     g.setColour (have < needed ? col::white : col::faint);

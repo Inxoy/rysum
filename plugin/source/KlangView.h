@@ -51,5 +51,11 @@ private:
     juce::Rectangle<int> tuningStatusArea;
     juce::String shownTuningStatus;
     juce::TextButton midiMapButton { juce::String::fromUTF8 ("Eigene Zuordnungen \xe2\x80\xa6") };
+    // two loudspeakers (transaural): below Freeze
+    juce::TextButton trOn { "Transaural an" };
+    juce::TextButton* trEq = nullptr;
+    ParamRow *trAngle = nullptr, *trAmount = nullptr, *trBoost = nullptr;
+    juce::Rectangle<int> trBox, trStatusArea;
+    juce::String shownTrStatus;
 };
 } // namespace rysum::ui

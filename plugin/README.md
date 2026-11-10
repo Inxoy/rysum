@@ -98,6 +98,31 @@ the order, the HRTF or the sample rate changes. The built-in HRTF is the **FABIA
 torso simulator of the TU Berlin (2000 of the 11 950 measured directions). Latency of the
 binaural decoder: 128 samples.
 
+### Two loudspeakers (transaural) – the binaural image over a pair of speakers
+
+Output *Transaural (2 LS)*, or *Transaural an* on the Klang page (box *Zwei Lautsprecher*, below
+Freeze). It is the binaural mode – same order, HRTF (FABIAN or an own SOFA file), Kopfdrehung,
+Diffusfeld-Entzerrung – followed by a crosstalk cancellation: each speaker also reaches the far
+ear, a little later (the ITD) and quieter (the head shadow); two filters (on (L+R)/2 and (L−R)/2)
+cancel that path, so each ear gets (nearly) only its own binaural channel.
+- *Lautsprecher bei* ±10…150° (default ±90°: the two speakers on opposite sides of the room,
+  facing each other, you in the middle between them – a good layout for this, because the head
+  already shades each ear from the far speaker);
+- *Übersprechen aus* 0–100 %: 0 % = the binaural signal plainly over the speakers, 100 % = full
+  cancellation (more spatial, more sensitive to where you sit);
+- *höchste Anhebung* 3–20 dB: cancellation needs a bass lift in the side signal (the head is
+  small against long waves); this limits it (regularised inverse). Below ~80 Hz and above ~12 kHz
+  the filters fade to plain;
+- *Seitenklang ausgleichen*: also takes out the colour of the speakers' own direction (the
+  near-ear HRTF at the angle, 1/3 octave smoothed, at most ±10 dB).
+
+The filters come from the HRTF in use at the set angle: the measured far-ear/near-ear ratio with
+the ITD taken out, smoothed over 1/12 octave, regularised; designed in the background (a few
+hundred ms) and crossfaded in. Extra delay: 5.3 ms. Against FABIAN itself the far ear drops from
+−13 dB to −28 dB at ±90° (250 Hz–6 kHz; −13 → −26 dB at ±60°, −7 → −20 dB at ±30°) – with a real
+head and a real room expect less, and the effect is best on the line between the speakers,
+equally far from both.
+
 ### Loudspeakers (AllRAD) – a speaker array straight from the plugin or the standalone app
 Output "Lautsprecher". The plugin decodes its Ambisonics to your loudspeaker layout, the
 approach of the IEM *AllRADecoder* (Zotter & Frank 2012): a dense virtual sphere (5000

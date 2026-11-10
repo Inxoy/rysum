@@ -3,6 +3,7 @@
 #include "OrganEngine.h"
 #include "Convolver.h"
 #include "Binaural.h"
+#include "Transaural.h"
 #include "Scala.h"
 #include "Lucier.h"
 #include "LucierPiece.h"
@@ -198,7 +199,11 @@ public:
     // binaural / headphones (message thread)
     static constexpr int kBinauralOutput = 6;                 // index of "Binaural" in the output choice
     static constexpr int kSpeakerOutput = 7;                  // "Lautsprecher": AllRAD decoding to a loudspeaker layout
+    static constexpr int kTransauralOutput = 8;               // "Transaural": binaural over two loudspeakers, crosstalk cancelled
     bool isSpeakers() const { return juce::roundToInt (output->load()) == kSpeakerOutput; }
+    bool isTransaural() const { return juce::roundToInt (output->load()) == kTransauralOutput; }
+    juce::String getTransauralStatus() const { const juce::ScopedLock sl (statusLock); return trStatus; }
+    std::shared_ptr<const rysum::TransauralFilters> getTransauralFilters() const { return trUi; }
     // ---- loudspeakers (message thread)
     const rysum::SpeakerLayout& getSpeakerLayout() const { return spkLayout; }
     void setSpeakerLayout (const rysum::SpeakerLayout& l, bool rememberAsDefault = true);
@@ -207,7 +212,9 @@ public:
     /** test noise: -1 = off, else the index of a loudspeaker in the layout */
     std::atomic<int> speakerTest { -1 };
     static juce::File speakerDefaultFile();
-    bool isBinaural() const { return juce::roundToInt (output->load()) == kBinauralOutput; }
+    /** binaural decoding is running: headphones, or transaural (the same decoder, then crosstalk cancellation) */
+    bool isBinaural() const { const int o = juce::roundToInt (output->load()); return o == kBinauralOutput || o == kTransauralOutput; }
+    bool isHeadphones() const { return juce::roundToInt (output->load()) == kBinauralOutput; }
     /** own HRTF set (SOFA); an empty File = the built-in FABIAN */
     void setSofaFile (const juce::File& f);
     juce::File getSofaFile() const { return sofaFile; }
@@ -485,6 +492,14 @@ private:
     juce::String binauralKey() const;
     void rebuildBinaural();
     void setBinStatus (const juce::String& s) { const juce::ScopedLock sl (statusLock); binStatus = s; }
+    // transaural: the crosstalk cancellation after the binaural decoder (filters designed on the pool, loaded on the message thread)
+    rysum::TransauralCtc trCtc;
+    std::shared_ptr<const rysum::TransauralFilters> trUi;
+    juce::String trBuiltKey, trPendingKey;
+    int trKeyTicks = 0;
+    juce::String trStatus { juce::String::fromUTF8 ("aus \xe2\x80\x93 Ausgabe auf \xe2\x80\x9eTransaural\xe2\x80\x9c stellen") };
+    juce::String transauralKey() const;
+    void rebuildTransaural();
 
     std::shared_ptr<std::atomic<bool>> aliveFlag = std::make_shared<std::atomic<bool>> (true);
 
