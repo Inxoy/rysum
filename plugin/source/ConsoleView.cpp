@@ -452,20 +452,12 @@ void ConsoleView::refresh()
     onSum.setToggleState (sum, juce::dontSendNotification);
     meterL = proc.engine.meterL.load();
     meterR = proc.engine.meterR.load();
-    for (auto& r : noiseRows) r->repaint();
-    if (resTab) for (auto& r : resRows) r->repaint();
-    if (decayTab == 2) for (auto& r : glitchRows) r->repaint();
-    for (auto& r : decayRows) r->repaint();
     if (spaceTab)
     {
-        for (auto& r : spaceRows) r->repaint();
         const auto si = spaceInfo();
         if (si != shownSpaceInfo) { shownSpaceInfo = si; repaint (decayArea.withHeight (36)); }
     }
-    for (auto& r : stopVol) r->repaint();
-    for (auto& r : stopWind) r->repaint();
-    keys.repaint();
-    sceneMorph->repaint();
+    keys.refresh();
     {
         const float x = proc.apvts.getRawParameterValue ("sceneMorph")->load();
         if (proc.getSceneVersion() != shownSceneVersion || std::abs (x - shownMorph) > 0.001f)

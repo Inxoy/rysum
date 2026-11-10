@@ -273,6 +273,33 @@ inline float planEdgeDist (const PlanGeo& g, float x, float y, int* which = null
     return best;
 }
 
+/** inside the plan and at least 'margin' from every wall */
+inline bool planFree (const PlanGeo& g, float x, float y, float margin) noexcept
+{
+    return insidePlan (g, x, y) && planEdgeDist (g, x, y) >= margin;
+}
+
+/** walking from (x, y) towards (tx, ty) without ever jumping: small steps, sliding along a wall that is in the
+    way (first both axes, then each alone), stopping where neither works. Returns false if (x, y) was not free. */
+inline bool planSlide (const PlanGeo& g, float& x, float& y, float tx, float ty, float margin, float maxDist = 1.0e9f) noexcept
+{
+    if (g.n < 3 || ! planFree (g, x, y, 0.95f * margin)) return false;           // (a hair of tolerance: it stood exactly at the margin)
+    float dx = tx - x, dy = ty - y;
+    float d = std::sqrt (dx * dx + dy * dy);
+    if (d < 1.0e-6f) return true;
+    if (d > maxDist) { dx *= maxDist / d; dy *= maxDist / d; d = maxDist; }       // (no faster than walking: never through a gap at once)
+    const int n = juce::jlimit (1, 400, (int) std::ceil (d / 0.08f));
+    const float sx = dx / (float) n, sy = dy / (float) n;
+    for (int i = 0; i < n; ++i)
+    {
+        if (planFree (g, x + sx, y + sy, margin)) { x += sx; y += sy; }
+        else if (planFree (g, x + sx, y, margin)) x += sx;
+        else if (planFree (g, x, y + sy, margin)) y += sy;
+        else break;
+    }
+    return true;
+}
+
 /** a point moved inside the plan, at least 'margin' from the walls */
 inline void keepInsidePlan (const PlanGeo& g, float& x, float& y, float margin) noexcept
 {

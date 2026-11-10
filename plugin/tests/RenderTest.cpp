@@ -3390,6 +3390,57 @@ int main (int argc, char** argv)
                     std::cout << "out of sight: walking across the shadow's edge (" << changes << " times in or out of sight): largest step "
                               << jA << " dB per 20 ms, the same walk in plain sight " << jP << " dB; shadow: " << when << std::endl;
                     check (changes >= 2 && jA < jP + 1.5 && finiteB (across), "out of sight: stepping in and out of the shadow does not jump");
+                    // ... and does not click: the sharpest sample-to-sample bend (2nd difference, all four channels)
+                    // against the same walk in plain sight
+                    auto sharpest = [&] (const juce::AudioBuffer<float>& b, double& at)
+                    {
+                        double worst = 0.0;
+                        for (int c = 0; c < juce::jmin (4, b.getNumChannels()); ++c)
+                            for (int i = (int) (0.6 * fsr); i < b.getNumSamples(); ++i)
+                            {
+                                const double d2 = std::abs ((double) b.getSample (c, i) - 2.0 * b.getSample (c, i - 1) + b.getSample (c, i - 2));
+                                if (d2 > worst) { worst = d2; at = i / fsr; }
+                            }
+                        return worst;
+                    };
+                    double atA = 0, atP = 0;
+                    const double sA = sharpest (across, atA), sP = sharpest (plain, atP);
+                    std::cout << "out of sight: sharpest 2nd difference " << sA << " at " << atA << " s, in plain sight " << sP << " at " << atP << " s" << std::endl;
+                    check (sA < 1.3 * sP, "out of sight: stepping in and out of the shadow does not click");
+                    // the hard case: a cross-shaped church with its reflections, all stops, a chord, walking a circle through
+                    // the arms (pipes vanish behind one corner, then two) - against the very same run with no hiding
+                    OrganEngine ec, en;
+                    en.occlusionEnabled = false;
+                    auto cross = [] (EngineParams& p)
+                    {
+                        p.room.on = true; p.room.width = 14; p.room.length = 28; p.room.height = 11; p.room.order = 2; p.room.tailGain = 0.0f;
+                        p.room.shape = shapeCross; p.room.shapeAmt = 0.8f; p.room.erGain = 1.0f;
+                        for (int s = 0; s < kNumStops; ++s) p.stopOn[(size_t) s] = true;
+                        p.live.walkShape = 1; p.live.walkSize = 6.0f; p.live.walkRate = 0.08f;
+                    };
+                    int crossChanges = 0, lastHid = -1, maxHid = 0;
+                    const auto withWalls = play (ec, cross, { 48, 55, 60, 64, 67 }, 12.0, 1, 100, -1.0, [&] (int)
+                    {
+                        const int h = ec.hiddenNow.load();
+                        if (lastHid >= 0 && h != lastHid) ++crossChanges;
+                        lastHid = h; maxHid = juce::jmax (maxHid, h);
+                    });
+                    const auto noWalls = play (en, cross, { 48, 55, 60, 64, 67 }, 12.0, 1);
+                    double atC = 0, atN = 0;
+                    const double sC = sharpest (withWalls, atC), sN = sharpest (noWalls, atN);
+                    std::cout << "out of sight: cross, walking a circle: up to " << maxHid << " pipes hidden, " << crossChanges << " changes; sharpest 2nd difference "
+                              << sC << " at " << atC << " s, without hiding " << sN << " at " << atN << " s" << std::endl;
+                    check (maxHid > 0 && crossChanges > 4 && sC < 1.3 * sN && finiteB (withWalls), "out of sight: walking through a cross-shaped church does not click");
+                    writeWav (outDir.getChildFile ("87_kreuz_rundgang.wav"), withWalls, fsr);
+                    // the same chord standing still in the cross: walking must not be sharper than that (it clicked before:
+                    // the listener jumped at the inner corners, the pipe was placed by a ray from where it walked to)
+                    {
+                        OrganEngine es;
+                        const auto standing = play (es, [&] (EngineParams& p) { cross (p); p.live.walkShape = 0; }, { 48, 55, 60, 64, 67 }, 12.0, 1);
+                        double atS = 0; const double sS = sharpest (standing, atS);
+                        std::cout << "out of sight: cross, sharpest 2nd difference walking " << sC << ", standing still " << sS << std::endl;
+                        check (sC < 1.5 * sS, "out of sight: walking through the cross is as smooth as standing in it");
+                    }
                     writeWav (outDir.getChildFile ("86_schattenkante.wav"), across, fsr);
                 }
             }

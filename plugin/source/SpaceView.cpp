@@ -926,17 +926,11 @@ void SpaceView::refresh()
         jumpHard.setAlpha (mode == (int) Motion::Jumps ? 1.0f : 0.45f);
         if (depthRow) depthRow->setAlpha (mode == (int) Motion::Drawn || mode == (int) Motion::Rotation || mode == (int) Motion::Vertical || mode == (int) Motion::Beat ? 0.45f : 1.0f);
     }
-    irDry->repaint();
-    irWet->repaint();
-    if (pipeTab) for (auto& r : pipeRows) if (r) r->repaint();
     if (cloudTab)
     {
-        for (auto& r : cloudRows) if (r) r->repaint();
         const int n = proc.engine.cloudGrainsNow.load();
         if (n != shownGrains) { shownGrains = n; repaint (tabBox.withHeight (36)); }
     }
-    irEnvelop->repaint();
-    irDirect->repaint();
     const auto mnames = motionNames();
     for (int s = 0; s < kNumStops; ++s)
     {
@@ -959,12 +953,7 @@ void SpaceView::refresh()
         if (inputRow.status != st || inputRow.on != on) { inputRow.status = st; inputRow.on = on; inputRow.repaint(); }
         const float pk = proc.engine.inPeak.load();
         inMeterShown = juce::jmax (pk, inMeterShown * 0.85f);
-        if (inputSel)
-            for (auto* r : { inLevel.get(), inSend.get(), inAz.get(), inEl.get(), inDist.get(), inWidth.get(), inSpin.get(), inRelease.get() }) r->repaint();
     }
-    if (rateRow) rateRow->repaint();
-    if (depthRow) depthRow->repaint();
-    for (auto* r : { ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get() }) if (r) r->repaint();
     circle.repaint();
     pipeStrip.repaint();
     repaint (right);

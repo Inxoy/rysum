@@ -101,6 +101,13 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
         g.setGradientFill (grad);
         g.fillRect (0, 0, kW, kH);
     }
+    // ... both in one image: every repainted area draws one overlay instead of two (in full screen that counts)
+    {
+        juce::Graphics g (vignette);
+        g.setOpacity (0.22f);
+        g.drawImageAt (grainLayer, 0, 0);
+    }
+    grainLayer = {};
     setSize (kW, kH);
 }
 
@@ -445,9 +452,7 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
 
 void RysumContent::paintOverChildren (juce::Graphics& g)
 {
-    g.drawImageAt (vignette, 0, 0);
-    g.setOpacity (0.22f);
-    g.drawImageAt (grainLayer, 0, 0);
+    g.drawImageAt (vignette, 0, 0);          // darkened edges and the grain, blended once in the constructor
 }
 
 // ---------------------------------------------------------------------------

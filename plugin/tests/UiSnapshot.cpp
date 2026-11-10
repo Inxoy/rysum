@@ -1132,11 +1132,13 @@ public:
                     if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
                     run (10, {});
                     int bestHidden = 0; float bx = 0, by = 0;
-                    for (float ox = -7.0f; ox <= 7.0f; ox += 1.0f)
-                        for (float oy = -10.0f; oy <= 3.0f; oy += 1.0f)
+                    // (a snake over the grid: the listener walks - at most 6 m/s - from one point to the next)
+                    for (int ix = 0; ix <= 14; ++ix)
+                        for (int j = 0; j <= 13; ++j)
                         {
+                            const float ox = -7.0f + (float) ix, oy = (ix % 2 == 0) ? -10.0f + (float) j : 3.0f - (float) j;
                             wv->setPoseForTest (ox, oy, 0.0f);
-                            run (12, {});
+                            run (24, {});
                             const int hid = proc->engine.hiddenNow.load();
                             if (hid > bestHidden) { bestHidden = hid; bx = proc->walkPose[0].load(); by = proc->walkPose[1].load(); }
                         }
@@ -1145,7 +1147,7 @@ public:
                     const float hx = proc->engine.heard[0].Lx.load() * W, hy = proc->engine.heard[0].Ly.load() * L;
                     const float dx = 0.5f * W - (hx + bx), dy = 0.5f * L - (hy + by);
                     wv->setPoseForTest (bx, by, juce::radiansToDegrees (std::atan2 (-dx, dy)));
-                    run (12, {});
+                    run (400, {});                  // (walks back there)
                     std::cout << "Begehen: cross-shaped plan, at " << bx << " / " << by << " m " << proc->engine.hiddenNow.load() << " sounding pipes heard around the corner"
                               << (proc->engine.hiddenNow.load() > 0 ? "  ok" : "  FAIL") << std::endl;
                     shoot (8, "ui_begehen_kreuz.png");

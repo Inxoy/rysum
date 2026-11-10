@@ -1006,7 +1006,6 @@ void SaalView::refresh()
     }
     plan.repaint();
     shapes.refresh();
-    for (auto& r : rows) r->repaint();
     const auto st = proc.getRoomStatus();
     if (st != shownStatus) { shownStatus = st; repaint (saalBox); }
     const auto& lv = proc.getLucierView();

@@ -308,6 +308,7 @@ public:
     std::atomic<bool>  viewWalkOn { false };
     std::atomic<float> viewX { 0.0f }, viewY { 0.0f }, viewYaw { 0.0f };
     std::atomic<int>   hiddenNow { 0 };          // sounding pipes heard around a corner (out of sight)
+    bool occlusionEnabled = true;                 // (tests: the same walk with and without the walls hiding pipes)
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
     /** "Raumverfall" on the Ambisonics channels. The processor calls it itself after the impulse response
@@ -387,7 +388,7 @@ private:
         float windSm = -1.0f;            // smoothed stop wind (-1 = take target directly)
         float lp = 0.0f, lpA = 1.0f;     // tone filter for under-winded pipes
         float lpAir = 0.0f, airA = 1.0f; // air absorption by distance
-        float hidLp = 0.0f, hidA = 1.0f;  // out of sight: the direct sound comes around a corner, duller (1 = open)
+        float hidLp = 0.0f, hidA = 1.0f, hidAc = 1.0f;  // out of sight: the direct sound comes around a corner, duller (1 = open; target, now)
         WindChaos chaos;                 // wind model 2: resonances, intermittent jet, hiss
         float chAir = 0.0f;              // its own air filter
         float prevDist = -1.0f, dop = 1.0f, dopTarget = 1.0f;
@@ -577,8 +578,9 @@ private:
     void resetFdn (RoomTail& R) noexcept;
     int  allocSlot (int voice, int noiseVoice) noexcept;
     void releaseSlot (int& slot) noexcept;
-    void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room) noexcept;
-    void updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room) noexcept;
+    /** placeFrom: the room as seen from the listener's usual place, where srcPos is measured from (null = room itself) */
+    void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room, const RoomParams* placeFrom = nullptr) noexcept;
+    void updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room, const RoomParams* placeFrom) noexcept;
     void renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
     void renderInput (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept;
     void followInput (int start, int len, const EngineParams& p) noexcept;
@@ -745,11 +747,13 @@ private:
     double walkPhase = 0.0;
     bool liveWalk = false;
     std::array<RoomParams, kNumRooms> roomsEr {};        // the rooms as the walking listener stands in them
+    std::array<Vec3f, kNumRooms> walkSlid {};            // where the listener stands in a shaped room (slid along its walls)
+    std::array<bool, kNumRooms> walkSlidOk {};
     // line of sight: in a plan that is not convex a walking listener can lose sight of a pipe (heard around the corner)
     std::array<PlanGeo, kNumRooms> occGeo {};
     std::array<PlanCorners, kNumRooms> occCorners {};
     std::array<bool, kNumRooms> occOn {}, planOn {};
-    std::array<RoomParams, kNumRooms> occUsual {};       // the room with the listener at his usual place (where the pipes are placed from)
+    std::array<RoomParams, kNumRooms> occUsual {};       // the room with the listener at the usual place (where the pipes are placed from)
     std::array<Vec3f, kNumRooms> occL {};                // the walked listener in it
     int occCount = 0;
     /** the pipe at 'home' (as placed from the listener's usual place) heard from where the listener stands:

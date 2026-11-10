@@ -164,10 +164,15 @@ void WalkView::step (double dt, bool fwd, bool bwd, bool left, bool right, float
     {
         const auto r = roomNow();
         const auto homeP = listenerPos (r);
-        float x = homeP.x + px + dx / l * v, y = homeP.y + py + dy / l * v;
-        // the walls hold you (as they hold the listener of the room simulation)
-        if (r.box()) { x = juce::jlimit (0.3f, r.W() - 0.3f, x); y = juce::jlimit (0.3f, r.L() - 0.3f, y); }
-        else keepInsidePlan (planGeo (r), x, y, 0.3f);
+        const float tx = homeP.x + px + dx / l * v, ty = homeP.y + py + dy / l * v;
+        // the walls hold you and you slide along them (as the listener of the room simulation does); never a jump
+        float x = homeP.x + px, y = homeP.y + py;
+        if (r.box() || r.plan.n < 3) { x = juce::jlimit (0.3f, r.W() - 0.3f, tx); y = juce::jlimit (0.3f, r.L() - 0.3f, ty); }
+        else
+        {
+            const auto geo = planGeo (r);
+            if (! planSlide (geo, x, y, tx, ty, 0.3f)) { x = tx; y = ty; keepInsidePlan (geo, x, y, 0.3f); }   // (not inside yet: the room changed)
+        }
         px = x - homeP.x; py = y - homeP.y;
     }
     pushPose();

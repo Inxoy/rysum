@@ -25,6 +25,13 @@ class KeyStrip : public juce::Component
 {
 public:
     explicit KeyStrip (RysumProcessor& p) : proc (p) {}
+    /** repaints only when the keys shown down changed */
+    void refresh()
+    {
+        uint64_t held = proc.engine.heldMask.load();
+        if (const int nk = proc.engine.netKeyNow.load(); nk >= 0) held |= (uint64_t) 1 << nk;
+        if (held != shownHeld) { shownHeld = held; repaint(); }
+    }
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -35,6 +42,7 @@ private:
     void play (int midi);
     RysumProcessor& proc;
     int playing = -1;
+    uint64_t shownHeld = ~(uint64_t) 0;
 };
 
 /** a scene slot A..D: click = go there (an empty one stores the sound), right-click = store / clear */

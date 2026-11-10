@@ -27,7 +27,7 @@ int OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, fl
     const int ri = juce::jlimit (0, kNumRooms - 1, room);
     if (! planOn[(size_t) ri]) return 0;
     // the pipe where the room simulation (and the 3D view) has it: from the usual place, inside the walls;
-    // the listener where he walked. Heard from there - straight, or around a corner.
+    // the listener where it has walked to. Heard from there - straight, or around a corner.
     const Vec3f S = roomPoint (occUsual[(size_t) ri], home), L = occL[(size_t) ri];
     if (occOn[(size_t) ri] && diffractedPath (occGeo[(size_t) ri], occCorners[(size_t) ri], L, S, heard, lossDb, cutoffHz)) return 2;
     heard = seenFrom (L, S);
@@ -90,7 +90,7 @@ void OrganEngine::updateLive (const EngineParams& p, double dt) noexcept
     {
         const auto& r = roomsEr[(size_t) ri];
         occOn[(size_t) ri] = planOn[(size_t) ri] = false;
-        if (! roomOnNow || ! liveWalk || r.box() || r.plan.n < 3) continue;
+        if (! occlusionEnabled || ! roomOnNow || ! liveWalk || r.box() || r.plan.n < 3) continue;
         // (walking in a shaped room: the pipes are heard where they stand in it, inside its walls)
         planOn[(size_t) ri] = true;
         occUsual[(size_t) ri] = r;

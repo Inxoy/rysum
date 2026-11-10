@@ -273,7 +273,6 @@ void KlangView::refresh()
         const int t = juce::roundToInt (proc.apvts.getRawParameterValue ("temperament")->load());
         mtsFollow->setAlpha (t == RysumProcessor::kMtsTuning ? 1.0f : 0.4f);
     }
-    for (auto& r : rows) r->repaint();
     repaint (freezeBox);
     const bool on = proc.isHeadphones();
     if (binOn.getToggleState() != on) { binOn.setToggleState (on, juce::dontSendNotification); repaint (binBox); }

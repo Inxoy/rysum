@@ -601,7 +601,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     v.crkEnv = v.held ? 1.0f : v.crkEnv * (float) std::exp (-blockSeconds / 0.15);
     v.send1 = sg * lvl * distanceGain (pos.dist, p.distAmount * 0.35f);       // the room fades much less with distance
     v.erBase = sg * lvl;
-    v.erPos = pos;
+    v.erPos = homePos;                      // (from the usual place: the reflections place it from there)
     v.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
     if (anyMod && pm[tgtSend] != 0.0f) v.send1 *= dbToGain (juce::jlimit (-100.0f, 24.0f, 24.0f * pm[tgtSend]));
 
@@ -754,7 +754,7 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->fresh = true;
     v->env = 0.0f; v->held1 = 0.0f;
     v->windSm = -1.0f; v->lp = 0.0f; v->lpA = 1.0f;
-    v->lpAir = 0.0f; v->airA = 1.0f; v->hidLp = 0.0f; v->hidA = 1.0f;
+    v->lpAir = 0.0f; v->airA = 1.0f; v->hidLp = 0.0f; v->hidA = 1.0f; v->hidAc = 1.0f;
     v->chaos.reset ((uint32_t) (stop * 7919 + key * 104729) ^ (ageCounter * 2654435761u), (uint32_t) (stop * 131 + key + 1),
                     (float) (pipe.measuredHz > 0.0 ? pipe.measuredHz : pipe.nominalHz), (float) sr);
     v->chAir = 0.0f;
@@ -1515,12 +1515,16 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             // out of sight: the direct sound through its own low-pass (the room sends below keep 'buf')
             float* dirBuf = buf;
             float* dirRamp = bufRamp;
-            if (v.hidA < 1.0f && (int) hidBuf.size() >= 2 * n)
+            // (its strength glides over ~30 ms: switched on or off at once the duller signal would jump to the clear one)
+            const float hA0 = v.hidAc, hA1 = hA0 + (v.hidA - hA0) * (1.0f - std::exp (-(float) n / (0.03f * (float) sr)));
+            v.hidAc = hA1 > 0.9995f && v.hidA >= 1.0f ? 1.0f : hA1;
+            if ((hA0 < 1.0f || v.hidAc < 1.0f) && (int) hidBuf.size() >= 2 * n)
             {
                 dirBuf = hidBuf.data();
                 dirRamp = hidBuf.data() + hidBuf.size() / 2;
                 float s = v.hidLp;
-                for (int i = 0; i < n; ++i) { s += v.hidA * (buf[i] - s); dirBuf[i] = s; dirRamp[i] = s * (float) i; }
+                const float da = (v.hidAc - hA0) / (float) juce::jmax (1, n);
+                for (int i = 0; i < n; ++i) { const float a = hA0 + da * (float) (i + 1); s += a * (buf[i] - s); dirBuf[i] = s; dirRamp[i] = s * (float) i; }
                 v.hidLp = s;
             }
             else if (n > 0) v.hidLp = buf[n - 1];          // (follows, so hiding starts without a click)
@@ -1919,9 +1923,9 @@ void OrganEngine::releaseSlot (int& slot) noexcept
     slot = -1;
 }
 
-void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r) noexcept
+void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r, const RoomParams* placeFrom) noexcept
 {
-    if (! r.box()) { updateSlotTapsPlan (s, srcPos, base, p, r); return; }
+    if (! r.box()) { updateSlotTapsPlan (s, srcPos, base, p, r, placeFrom); return; }
     {
         // a source that has not moved in an unchanged room: the taps are still right
         const std::array<float, ErSlot::kKey> key { srcPos.az, srcPos.el, srcPos.dist, base, r.W(), r.L(), r.H(), r.listenerX, r.listenerY,
@@ -1930,7 +1934,7 @@ void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const Engin
         if (! s.fresh && s.keyValid && key == s.key) return;
         s.key = key; s.keyValid = true;
     }
-    const Vec3f L = listenerPos (r), S = roomPoint (r, srcPos);
+    const Vec3f L = listenerPos (r), S = roomPoint (placeFrom != nullptr ? *placeFrom : r, srcPos);
     const float rd = seenFrom (L, S).dist;
     std::array<ImageSource, kMaxTaps> ims;
     const int n = imageSources (r, S, r.order, ims.data(), kMaxTaps);
@@ -1962,7 +1966,8 @@ void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const Engin
         const int hw = juce::jlimit (0, 3, im.hitsWalls), hf = juce::jlimit (0, 3, im.hitsFloor);
         float delay = (seen.dist - rd) / kSpeedOfSoundRoom * (float) sr;
         float gain = base * distanceGain (seen.dist, distAmountNow) * r.erGain * powW[hw] * powF[hf];
-        if (delay > maxDelay) { delay = maxDelay; gain = 0.0f; }       // longer than the buffer: left to the tail
+        gain *= juce::jlimit (0.0f, 1.0f, (maxDelay - delay) / (0.15f * maxDelay));   // longer than the buffer: left to the tail (faded out before it, no click)
+        delay = juce::jmin (delay, maxDelay);
         auto& t = s.taps[(size_t) i];
         t.d1 = juce::jmax (0.0f, delay);
         t.g1 = gain;
@@ -1989,7 +1994,7 @@ void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const Engin
     room changed or a new sound starts - and at most a few times per block (the rest wait for the next block).
     In between, every tap keeps its path and only the image position is recomputed (cheap and smooth). Paths that
     appear or disappear fade in / out over 25 ms, like a reflection that slides past the end of a wall. */
-void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r) noexcept
+void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r, const RoomParams* placeFrom) noexcept
 {
     const std::array<float, ErSlot::kKey> key { srcPos.az, srcPos.el, srcPos.dist, base, r.W(), r.L(), r.H(), r.listenerX, r.listenerY,
                                                 r.absWalls, r.absFloor, r.highDamp, r.scatter, (float) r.order, r.erGain,
@@ -2001,7 +2006,9 @@ void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const E
     s.key = key; s.keyValid = true;
 
     const auto g = planGeo (r);
-    const Vec3f L = listenerPos (r), S = roomPoint (r, srcPos);
+    // the pipe placed from the usual place (a ray from where the listener walked to would end on other walls
+    // behind every corner: the pipe and all its reflections would jump), heard from where the listener stands
+    const Vec3f L = listenerPos (r), S = roomPoint (placeFrom != nullptr ? *placeFrom : r, srcPos);
     const float rd = seenFrom (L, S).dist;
     const bool topo = s.visShape != r.shape || s.visN != r.plan.n;          // other walls: the old paths mean nothing any more
     const float moved = std::sqrt ((S.x - s.visSrc.x) * (S.x - s.visSrc.x) + (S.y - s.visSrc.y) * (S.y - s.visSrc.y) + (S.z - s.visSrc.z) * (S.z - s.visSrc.z));
@@ -2100,7 +2107,8 @@ void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const E
             const float dist = std::sqrt (dx * dx + dy * dy + dz * dz);
             float delay = (dist - rd) / kSpeedOfSoundRoom * (float) sr;
             float gain = base * distanceGain (dist, distAmountNow) * r.erGain * powW[t.hw] * powF[t.hf];
-            if (delay > maxDelay) { delay = maxDelay; gain = 0.0f; }
+            gain *= juce::jlimit (0.0f, 1.0f, (maxDelay - delay) / (0.15f * maxDelay));   // (faded out before the end of the buffer)
+            delay = juce::jmin (delay, maxDelay);
             t.d1 = juce::jmax (0.0f, delay);
             t.gFull = gain;
             t.g1 = gain * t.vis;
@@ -2147,11 +2155,26 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
         h.W = rr.W(); h.L = rr.L(); h.H = rr.H(); h.Lx = rr.listenerX; h.Ly = rr.listenerY;
         // the reflections are heard from where the listener has walked to (the late reverb stays that of the usual place)
         roomsEr[(size_t) ri] = rr;
-        if (liveWalk)
+        if (liveWalk && ! rr.box() && rr.plan.n >= 3)
         {
+            // a shaped room: the listener walks there and slides along the walls - pushed back onto the nearest
+            // wall instead, it would jump at the inner corners (and every reflection with it: a click)
+            const auto geo = planGeo (rr);
+            const Vec3f home = listenerPos (rr);
+            auto& sp = walkSlid[(size_t) ri];
+            if (! walkSlidOk[(size_t) ri]) { sp = home; walkSlidOk[(size_t) ri] = true; }           // starts walking: from the usual place
+            else if (! planFree (geo, sp.x, sp.y, 0.28f)) keepInsidePlan (geo, sp.x, sp.y, 0.3f);    // (the room changed under the listener: a nudge, not a restart)
+            planSlide (geo, sp.x, sp.y, home.x + walkX, home.y + walkY, 0.3f, juce::jmax (0.02f, 6.0f * (float) n / (float) sr));   // (at most 6 m/s)
+            roomsEr[(size_t) ri].listenerX = juce::jlimit (0.0f, 1.0f, sp.x / rr.W());
+            roomsEr[(size_t) ri].listenerY = juce::jlimit (0.0f, 1.0f, sp.y / rr.L());
+        }
+        else if (liveWalk)
+        {
+            walkSlidOk[(size_t) ri] = false;
             roomsEr[(size_t) ri].listenerX = juce::jlimit (0.02f, 0.98f, rr.listenerX + walkX / rr.W());
             roomsEr[(size_t) ri].listenerY = juce::jlimit (0.02f, 0.98f, rr.listenerY + walkY / rr.L());
         }
+        else walkSlidOk[(size_t) ri] = false;
         h.absW = rr.absWalls; h.absF = rr.absFloor; h.highD = rr.highDamp; h.scat = rr.scatter;
         h.shape = rr.shape; h.shapeAmt = rr.shapeAmt;
     }
@@ -2197,7 +2220,11 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
         if (s.voice >= 0)
         {
             const auto& v = voices[(size_t) s.voice];
-            if (v.active && v.erSlot == (int) si) updateSlotTaps (s, v.erPos, v.erBase, p, roomsEr[(size_t) juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop])]);
+            if (v.active && v.erSlot == (int) si)
+            {
+                const int vr = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop]);
+                updateSlotTaps (s, v.erPos, v.erBase, p, roomsEr[(size_t) vr], &roomsNow[(size_t) vr]);
+            }
             else { s.voice = -1; s.drain = kErRing; }
         }
         else if (s.noiseVoice >= 0)

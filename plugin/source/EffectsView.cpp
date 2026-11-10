@@ -368,7 +368,6 @@ void EffectsView::refresh()
     const int n = proc.getNumCustomSounds();
     if (n != shownCustom) { shownCustom = n; repaint (custBox); }
     if (tab == 0 && resetFolder.isVisible() != proc.hasOwnCustomFolder()) { resetFolder.setVisible (proc.hasOwnCustomFolder()); repaint (custBox); }
-    for (auto& r : rows) r->repaint();
     repaint (echoCompass.expanded (14));
     repaint (partCompass.expanded (14));
     if (tab == 2)
