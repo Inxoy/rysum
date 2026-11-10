@@ -132,6 +132,18 @@ private:
     int current = 0;
     bool speakerPageShown = false;
     juce::Image grainLayer, vignette;
+    // performance readout (Ctrl+Shift+P): what a repaint costs, how often, how much of the window; logged to a file
+    struct PaintStats
+    {
+        bool on = false;
+        double paintStart = 0.0, secondStart = 0.0, lastTick = 0.0;
+        int paints = 0, ticks = 0;
+        double paintMs = 0.0, paintMax = 0.0, area = 0.0, tickMax = 0.0;
+        juce::String shown;
+    } stats;
+    void updateStats();
+    void tickBody();
+    void cycleRenderer();
 };
 
 class RysumEditor : public juce::AudioProcessorEditor,
