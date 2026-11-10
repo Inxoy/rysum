@@ -22,6 +22,18 @@ Pos OrganEngine::heardFrom (Pos pos) const noexcept
     return q;
 }
 
+bool OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept
+{
+    const int ri = juce::jlimit (0, kNumRooms - 1, room);
+    if (! occOn[(size_t) ri]) return false;
+    // the pipe where the room simulation has it (from the usual place, inside the walls); the listener where he walked
+    const auto& walked = roomsEr[(size_t) ri];
+    RoomParams usual = walked;
+    usual.listenerX = roomsNow[(size_t) ri].listenerX; usual.listenerY = roomsNow[(size_t) ri].listenerY;
+    const Vec3f S = roomPoint (usual, home), L = listenerPos (walked);
+    return diffractedPath (occGeo[(size_t) ri], occCorners[(size_t) ri], L, S, heard, lossDb, cutoffHz);
+}
+
 /** the pitch a pipe has in the current tuning, whether it sounds or not (0 = no such pipe) */
 float OrganEngine::pipeHzIdeal (int stop, int key, const EngineParams& p) const noexcept
 {
@@ -68,6 +80,20 @@ void OrganEngine::updateLive (const EngineParams& p, double dt) noexcept
         if (std::abs (tx) + std::abs (ty) < 1.0e-4f && std::abs (walkX) + std::abs (walkY) < 0.003f) walkX = walkY = 0.0f;
         liveWalk = walkX != 0.0f || walkY != 0.0f;
         listenerXNow = walkX; listenerYNow = walkY;
+    }
+
+    // ---- line of sight: which rooms can hide a pipe from the walked listener (the plan's walls, floor to ceiling)
+    hiddenNow = occCount;
+    occCount = 0;
+    for (int ri = 0; ri < kNumRooms; ++ri)
+    {
+        const auto& r = roomsEr[(size_t) ri];
+        occOn[(size_t) ri] = false;
+        if (! roomOnNow || ! liveWalk || r.box() || r.plan.n < 3) continue;
+        occGeo[(size_t) ri] = planGeo (r);
+        if (occGeo[(size_t) ri].convex) continue;
+        occCorners[(size_t) ri] = planCorners (occGeo[(size_t) ri]);
+        occOn[(size_t) ri] = occCorners[(size_t) ri].n > 0;
     }
 
     // ---- Balg: every sounding pipe takes wind from the same supply (low pipes much more than high ones)

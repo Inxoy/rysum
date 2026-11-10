@@ -112,6 +112,7 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     maxBlock = juce::jmax (1, maxBlockSize);
     scratch.assign ((size_t) maxBlock, 0.0f);
     scratchRamp.assign ((size_t) maxBlock, 0.0f);
+    hidBuf.assign (2 * (size_t) maxBlock, 0.0f);
     for (auto& r : roomSend) r.assign ((size_t) maxBlock, 0.0f);
     gust.assign ((size_t) (maxBlock / 16 + 4), 0.0f);
     trem.assign ((size_t) (maxBlock / 16 + 4), 0.0f);
@@ -515,7 +516,13 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
         const float dm = std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist]));
         pos.dist = juce::jlimit (kMinDist, kMaxDist, pos.dist * dm);
     }
+    const Pos homePos = pos;
     pos = heardFrom (pos);                  // the listener walks: the pipe as heard from there
+    // out of sight (a corner of the plan in between): the direct sound comes around the corner, quieter and duller.
+    // 'dpos' is only the direct sound; the reflections and the room send keep the pipe where it is.
+    Pos dpos = pos;
+    float hidDb = 0.0f, hidFc = 20000.0f;
+    if (aroundCorner (p.stopRoom[(size_t) v.stop], homePos, dpos, hidDb, hidFc)) ++occCount;
     {
         // Ventil: how far this pipe's pallet is open (a slow key opens it slowly; or the finger's pressure / slide)
         const auto& lv = p.live;
@@ -566,7 +573,7 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
             v.pos = (double) rng.uni() * gl.zero * (v.pipe->onset + 0.03 * kSampleFileRate);
     }
 
-    gainsFor (pos, v.g1.data());
+    gainsFor (dpos, v.g1.data());
     const float sg = p.stopGain[(size_t) v.stop];
     const float lvl = anyMod ? dbToGain (juce::jlimit (-100.0f, 12.0f, 36.0f * pm[tgtLevel])) : 1.0f;
     v.hard = (Motion) p.motionMode[(size_t) v.stop] == Motion::Jumps && p.jumpHard[(size_t) v.stop];
@@ -574,9 +581,9 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     v.pmEl = anyMod ? 90.0f * pm[tgtEl] : 0.0f;
     v.pmDist = anyMod ? std::exp2 (3.0f * juce::jlimit (-2.0f, 2.0f, pm[tgtDist])) : 1.0f;
     v.gainLin = sg * lvl;
-    float g = sg * lvl * distanceGain (pos.dist, p.distAmount);
+    float g = sg * lvl * distanceGain (dpos.dist, p.distAmount) * (hidDb > 0.0f ? dbToGain (-hidDb) : 1.0f);
     // grain cloud: where the pipe is (the grains scatter around it); the pipe itself fades as it dissolves (equal power)
-    v.spPos = pos; v.spK = g;
+    v.spPos = dpos; v.spK = g;
     {
         const auto cl = cloudFor (p.cloud[(size_t) v.stop], v);
         v.cloudDry = cl.on() ? std::cos (0.5f * juce::MathConstants<float>::pi * juce::jlimit (0.0f, 1.0f, cl.mix)) : 1.0f;
@@ -585,8 +592,8 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     for (int c = 0; c < kMaxAmbiChannels; ++c) v.g1[(size_t) c] *= g;
     if (p.fx.partSpread > 0.5f)
     {
-        Pos ph = pos;
-        ph.az = wrapAz (pos.az + p.fx.partSpread * v.partSide + (float) partRot);
+        Pos ph = dpos;
+        ph.az = wrapAz (dpos.az + p.fx.partSpread * v.partSide + (float) partRot);
         gainsFor (ph, v.gh1.data());
         for (int c = 0; c < kMaxAmbiChannels; ++c) v.gh1[(size_t) c] *= g;
     }
@@ -609,6 +616,8 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     float fc = juce::jlimit (1200.0f, 20000.0f, 20000.0f / (1.0f + p.air * pos.dist / 5.0f));
     if (anyMod && pm[tgtBright] != 0.0f) fc = juce::jlimit (40.0f, 20000.0f, fc * std::exp2 (6.0f * pm[tgtBright]));
     v.airA = fc >= 19999.0f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / (float) sr);
+    // around a corner: the direct sound alone gets duller (the reflections reach the listener's side as they are)
+    v.hidA = hidFc >= 19999.0f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmax (200.0f, hidFc) / (float) sr);
 
     // Doppler from the radial speed (not for teleporting pipes)
     if (v.prevDist < 0.0f || (Motion) p.motionMode[(size_t) v.stop] == Motion::Jumps || p.doppler <= 0.0f || blockSeconds <= 0.0)
@@ -745,7 +754,7 @@ void OrganEngine::startVoice (int stop, int key, int previewSamples, int noteId)
     v->fresh = true;
     v->env = 0.0f; v->held1 = 0.0f;
     v->windSm = -1.0f; v->lp = 0.0f; v->lpA = 1.0f;
-    v->lpAir = 0.0f; v->airA = 1.0f;
+    v->lpAir = 0.0f; v->airA = 1.0f; v->hidLp = 0.0f; v->hidA = 1.0f;
     v->chaos.reset ((uint32_t) (stop * 7919 + key * 104729) ^ (ageCounter * 2654435761u), (uint32_t) (stop * 131 + key + 1),
                     (float) (pipe.measuredHz > 0.0 ? pipe.measuredHz : pipe.nominalHz), (float) sr);
     v->chAir = 0.0f;
@@ -1503,6 +1512,18 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
             // add to the output with the gain ramp of this block:
             // o += buf * (ga + d*i)  ==  o += ga*buf + d*(buf*i)   (two vectorised passes per channel)
             for (int i = 0; i < n; ++i) bufRamp[i] = buf[i] * (float) i;
+            // out of sight: the direct sound through its own low-pass (the room sends below keep 'buf')
+            float* dirBuf = buf;
+            float* dirRamp = bufRamp;
+            if (v.hidA < 1.0f && (int) hidBuf.size() >= 2 * n)
+            {
+                dirBuf = hidBuf.data();
+                dirRamp = hidBuf.data() + hidBuf.size() / 2;
+                float s = v.hidLp;
+                for (int i = 0; i < n; ++i) { s += v.hidA * (buf[i] - s); dirBuf[i] = s; dirRamp[i] = s * (float) i; }
+                v.hidLp = s;
+            }
+            else if (n > 0) v.hidLp = buf[n - 1];          // (follows, so hiding starts without a click)
             float ga[kMaxAmbiChannels], dg[kMaxAmbiChannels];
             for (int c = 0; c < usedChannels; ++c)
             {
@@ -1510,7 +1531,7 @@ void OrganEngine::renderRange (juce::AudioBuffer<float>& out, int start, int end
                 ga[c] = a + (b - a) * (float) start * inv;
                 dg[c] = (b - a) * inv;
             }
-            mixInto (outs, start, usedChannels, buf, bufRamp, ga, dg, n);
+            mixInto (outs, start, usedChannels, dirBuf, dirRamp, ga, dg, n);
             if (split)
             {
                 // upper partials with their own direction; afterwards both parts go to the room together
@@ -3154,7 +3175,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     if (numSamples <= 0) return;
     if ((int) scratch.size() < numSamples)       // safety (should not happen: prepare() sizes them)
     {
-        scratch.assign ((size_t) numSamples, 0.0f); scratchRamp.assign ((size_t) numSamples, 0.0f);
+        scratch.assign ((size_t) numSamples, 0.0f); scratchRamp.assign ((size_t) numSamples, 0.0f); hidBuf.assign (2 * (size_t) numSamples, 0.0f);
     }
     roomSends = 2 * juce::jlimit (0, kMaxOrder, p.roomHarmonics) + 1;
     for (int k = 0; k < roomSends; ++k)

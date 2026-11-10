@@ -275,18 +275,19 @@ void WalkView::loadModel (const juce::File& f)
     repaint();
 }
 
-void WalkView::buildRoomTris (const RoomParams& r, std::vector<Tri>& out) const
+void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
 {
     out.clear();
     const float W = r.W(), L = r.L(), H = r.H();
     const bool box = r.box() || r.plan.n < 3;
     auto inside = [&] (float x, float y) { return box ? (x >= 0 && x <= W && y >= 0 && y <= L) : insidePlan (r.plan, W, L, x, y); };
-    auto quad = [&] (V3 a, V3 b, V3 c, V3 d, juce::Colour col)
+    auto quad = [&] (Raster::Vert a, Raster::Vert b, Raster::Vert c, Raster::Vert d, int slot, float tone)
     {
-        out.push_back ({ a, b, c, col });
-        out.push_back ({ a, c, d, col });
+        out.push_back ({ a, b, c, slot, tone });
+        out.push_back ({ a, c, d, slot, tone });
     };
-    // floor: boards in two shades; the ceiling darker, in bigger fields
+    auto vt = [] (V3 p, V3 n, float u, float v) { Raster::Vert q; q.p = p; q.n = n; q.u = u; q.v = v; return q; };
+    // floor and ceiling in fields of a metre or more (their texture: slabs, boards, carpet, plaster)
     const float tile = juce::jmax (1.0f, std::ceil (juce::jmax (W, L) / 30.0f));
     float x0 = 0, x1 = W, y0 = 0, y1 = L;
     if (! box)
@@ -298,49 +299,96 @@ void WalkView::buildRoomTris (const RoomParams& r, std::vector<Tri>& out) const
             y0 = juce::jmin (y0, r.plan.y[(size_t) i] * L); y1 = juce::jmax (y1, r.plan.y[(size_t) i] * L);
         }
     }
-    int ix = 0;
-    for (float x = x0; x < x1 - 1.0e-3f; x += tile, ++ix)
-    {
-        int iy = 0;
-        for (float y = y0; y < y1 - 1.0e-3f; y += tile, ++iy)
+    const V3 nz { 0, 0, 1 };
+    for (float x = x0; x < x1 - 1.0e-3f; x += tile)
+        for (float y = y0; y < y1 - 1.0e-3f; y += tile)
         {
             const float xe = juce::jmin (x1, x + tile), ye = juce::jmin (y1, y + tile);
             if (! inside (0.5f * (x + xe), 0.5f * (y + ye))) continue;
-            const bool odd = ((ix + iy) & 1) != 0;
-            quad ({ x, y, 0 }, { xe, y, 0 }, { xe, ye, 0 }, { x, ye, 0 }, odd ? juce::Colour (0xff4a4238) : juce::Colour (0xff3d362e));
-            quad ({ x, y, H }, { xe, y, H }, { xe, ye, H }, { x, ye, H }, odd ? juce::Colour (0xff2c2a26) : juce::Colour (0xff302d29));
+            quad (vt ({ x, y, 0 }, nz, x, y), vt ({ xe, y, 0 }, nz, xe, y), vt ({ xe, ye, 0 }, nz, xe, ye), vt ({ x, ye, 0 }, nz, x, ye), 1, 1.0f);
+            quad (vt ({ x, y, H }, nz, x, y), vt ({ xe, y, H }, nz, xe, y), vt ({ xe, ye, H }, nz, xe, ye), vt ({ x, ye, H }, nz, x, ye), 2, 1.0f);
         }
-    }
-    // walls: plastered panels, a darker plinth
-    auto wall = [&] (float ax, float ay, float bx, float by, int wi)
+    // walls: the material from the absorption; a darker plinth of the same stuff
+    float along = 0.0f;
+    auto wall = [&] (float ax, float ay, float bx, float by)
     {
         const float len = std::hypot (bx - ax, by - ay);
+        if (len < 1.0e-3f) return;
+        const V3 n = normalised ({ -(by - ay), bx - ax, 0.0f });
         const int nSeg = juce::jmax (1, (int) std::ceil (len / 2.5f));
+        const float plinth = juce::jmin (0.9f, H * 0.2f);
         for (int i = 0; i < nSeg; ++i)
         {
             const float t0 = (float) i / (float) nSeg, t1 = (float) (i + 1) / (float) nSeg;
             const V3 p0 { ax + (bx - ax) * t0, ay + (by - ay) * t0, 0 }, p1 { ax + (bx - ax) * t1, ay + (by - ay) * t1, 0 };
-            const float plinth = juce::jmin (0.9f, H * 0.2f);
-            quad (p0, p1, p1 + V3 { 0, 0, plinth }, p0 + V3 { 0, 0, plinth }, juce::Colour (0xff3a3630));
-            const auto c = ((i + wi) & 1) ? juce::Colour (0xff9c958a) : juce::Colour (0xff958e83);
+            const float u0 = along + len * t0, u1 = along + len * t1;
+            quad (vt (p0, n, u0, 0), vt (p1, n, u1, 0), vt (p1 + V3 { 0, 0, plinth }, n, u1, plinth), vt (p0 + V3 { 0, 0, plinth }, n, u0, plinth), 0, 0.55f);
             const int bands = juce::jmax (1, (int) std::ceil ((H - plinth) / 3.0f));
             for (int b = 0; b < bands; ++b)
             {
                 const float z0 = plinth + (H - plinth) * (float) b / (float) bands, z1 = plinth + (H - plinth) * (float) (b + 1) / (float) bands;
-                quad (p0 + V3 { 0, 0, z0 }, p1 + V3 { 0, 0, z0 }, p1 + V3 { 0, 0, z1 }, p0 + V3 { 0, 0, z1 }, c.darker (0.12f * (float) b));
+                quad (vt (p0 + V3 { 0, 0, z0 }, n, u0, z0), vt (p1 + V3 { 0, 0, z0 }, n, u1, z0),
+                      vt (p1 + V3 { 0, 0, z1 }, n, u1, z1), vt (p0 + V3 { 0, 0, z1 }, n, u0, z1), 0, 1.0f - 0.06f * (float) b / (float) bands);
             }
         }
+        along += len;
     };
     if (box)
     {
-        wall (0, 0, W, 0, 0); wall (W, 0, W, L, 1); wall (W, L, 0, L, 2); wall (0, L, 0, 0, 3);
+        wall (0, 0, W, 0); wall (W, 0, W, L); wall (W, L, 0, L); wall (0, L, 0, 0);
     }
     else
         for (int i = 0; i < r.plan.n; ++i)
         {
             const int j = (i + 1) % r.plan.n;
-            wall (r.plan.x[(size_t) i] * W, r.plan.y[(size_t) i] * L, r.plan.x[(size_t) j] * W, r.plan.y[(size_t) j] * L, i);
+            wall (r.plan.x[(size_t) i] * W, r.plan.y[(size_t) i] * L, r.plan.x[(size_t) j] * W, r.plan.y[(size_t) j] * L);
         }
+}
+
+void WalkView::addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt)
+{
+    // a real pipe: a conical foot (to 16 % of its length), the round body, an open dark top; the mouth (in the
+    // texture) turned towards the listener's place. Fewer sides when it is small on screen.
+    const float depth = rast.viewDepth (bottom + V3 { 0, 0, 0.5f * len });
+    if (depth < -len) return;
+    const float px = rad / juce::jmax (0.1f, depth) * 0.5f * (float) rast.width();
+    const int segs = px < 1.5f ? 5 : (px < 5.0f ? 8 : (px < 14.0f ? 12 : 18));
+    const float rFoot = rad * 0.22f, zFoot = 0.16f * len;
+    const float slope = (rad - rFoot) / juce::jmax (1.0e-4f, zFoot);
+    const float em = 0.75f * glowAmt;
+    Raster::Vert ring[3][20];
+    for (int i = 0; i <= segs; ++i)
+    {
+        const float a = faceAngle + juce::MathConstants<float>::twoPi * (float) i / (float) segs;
+        const float ca = std::cos (a), sa = std::sin (a);
+        const float u = (float) i / (float) segs;
+        const V3 nb { ca, sa, 0.0f };
+        const V3 nf = normalised ({ ca, sa, -slope });
+        auto& r0 = ring[0][i]; r0.p = bottom + V3 { ca * rFoot, sa * rFoot, 0.0f }; r0.n = nf; r0.u = u; r0.v = 0.0f;
+        auto& r1 = ring[1][i]; r1.p = bottom + V3 { ca * rad, sa * rad, zFoot }; r1.n = nb; r1.u = u; r1.v = 0.16f;
+        auto& r2 = ring[2][i]; r2.p = bottom + V3 { ca * rad, sa * rad, len }; r2.n = nb; r2.u = u; r2.v = 1.0f;
+    }
+    for (int i = 0; i < segs; ++i)
+    {
+        // the foot (its own normals, so the cone catches the light differently)
+        Raster::Vert f1 = ring[1][i], f2 = ring[1][i + 1];
+        f1.n = ring[0][i].n; f2.n = ring[0][i + 1].n;
+        rast.triangle (ring[0][i], ring[0][i + 1], f2, kSlotMetal, tone, em);
+        rast.triangle (ring[0][i], f2, f1, kSlotMetal, tone, em);
+        rast.triangle (ring[1][i], ring[1][i + 1], ring[2][i + 1], kSlotMetal, tone, em);
+        rast.triangle (ring[1][i], ring[2][i + 1], ring[2][i], kSlotMetal, tone, em);
+    }
+    // looking into the open top (only seen from above): dark
+    if (rast.eyePos().z > bottom.z + len)
+    {
+        Raster::Vert c; c.p = bottom + V3 { 0, 0, len - 0.3f * rad }; c.n = { 0, 0, 1 };
+        for (int i = 0; i < segs; ++i)
+        {
+            Raster::Vert a = ring[2][i], b = ring[2][i + 1];
+            a.n = b.n = c.n;
+            rast.triangle (a, b, c, kSlotDark, 1.0f, 0.3f * em);
+        }
+    }
 }
 
 void WalkView::paint (juce::Graphics& g)
@@ -352,18 +400,40 @@ void WalkView::paint (juce::Graphics& g)
     const V3 eye { homeP.x + px, homeP.y + py, homeP.z };
     const auto area = getLocalBounds();
 
-    rast.setSize (area.getWidth() / 2, area.getHeight() / 2);
+    // as sharp as the screen allows (in full screen the window is scaled up), less when a frame takes too long
+    const float phys = juce::jlimit (1.0f, 2.5f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    const float sc = juce::jlimit (0.4f, 2.5f, phys * resScale);
+    const double t0 = juce::Time::getMillisecondCounterHiRes();
+    rast.setSize (juce::roundToInt ((float) area.getWidth() * sc), juce::roundToInt ((float) area.getHeight() * sc));
     rast.setCamera (eye, yaw, pitch, fov);
     const float fogDist = juce::jmax (8.0f, 0.9f * juce::jmax (r.W(), r.L()));
-    rast.clear (juce::Colour (0xff0b0b0a), juce::Colour (0xff17140f), fogDist);
+    rast.begin (0.07f, fogDist, 0.12f, ++frame);
+
+    // the surfaces from the Saal's absorption, scatter and high damping
+    const auto wm = wallMaterial (r.absWalls, r.highDamp, r.scatter);
+    rast.setMaterial (kSlotWall, wm);
+    rast.setMaterial (kSlotFloor, floorMaterial (r.absFloor, r.highDamp, r.scatter, false));
+    rast.setMaterial (kSlotCeiling, floorMaterial (r.absFloor, r.highDamp, r.scatter, true));
+    rast.setMaterial (kSlotModel, wm);
+    { Material m; m.kind = Material::metal; m.tone = 1.0f; m.gloss = 1.0f; m.rough = 0.1f; rast.setMaterial (kSlotMetal, m); }
+    { Material m; m.kind = Material::dark; m.tone = 1.0f; m.gloss = 0.0f; rast.setMaterial (kSlotDark, m); }
+    wallLook = wm.kind;
 
     const auto mesh = proc.getWalkMesh();
     if (mesh != nullptr)
-        for (const auto& t : mesh->tris) rast.drawTri (t);
+    {
+        // a model in greys: its colours' brightness, the walls' material on top
+        for (const auto& t : mesh->tris)
+        {
+            const auto c = t.colour;
+            const float lum = 0.3f + 0.9f * (0.3f * c.getFloatRed() + 0.59f * c.getFloatGreen() + 0.11f * c.getFloatBlue());
+            rast.flatTriangle (t.a, t.b, t.c, kSlotModel, lum);
+        }
+    }
     else
     {
         buildRoomTris (r, roomTris);
-        for (const auto& t : roomTris) rast.drawTri (t);
+        for (const auto& t : roomTris) rast.triangle (t.a, t.b, t.c, t.slot, t.tone);
     }
 
     // the pipes, where Ambisonics puts them (as heard from the listener's place; you walk among them)
@@ -374,6 +444,7 @@ void WalkView::paint (juce::Graphics& g)
     {
         if (! params.stopOn[(size_t) s]) { for (auto& v : glow[(size_t) s]) v = 0.0f; continue; }
         const uint64_t sounding = proc.engine.soundingMask[(size_t) s].load();
+        const float metalTone = kMetal[s].getPerceivedBrightness() * 1.05f;
         for (int k = 0; k < kNumKeys; ++k)
         {
             if (proc.engine.muted[(size_t) s][(size_t) k].load()) continue;
@@ -387,18 +458,27 @@ void WalkView::paint (juce::Graphics& g)
             // floating: a slow breath up and down, each pipe its own
             const float bob = 0.06f * (float) std::sin (now * 0.7 + (double) (s * 41 + k) * 1.37);
             const V3 bottom { c.x, c.y, c.z - 0.5f * len + bob };
-            rast.drawPipe (bottom, len, rad, kMetal[s], gl);
+            const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x);       // the mouth towards the listener's place
+            addPipe (bottom, len, rad, face, metalTone, gl);
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });
         }
     }
+    geoMs = (float) (juce::Time::getMillisecondCounterHiRes() - t0);
     rast.finish();
+    const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+    lastFrameMs = (float) ms;
+    if (! testMode)
+    {
+        if (ms > 16.0) resScale = juce::jmax (0.4f / phys, resScale * 0.9f);         // (the host shares this thread)
+        else if (ms < 9.0) resScale = juce::jmin (1.0f, resScale * 1.03f);
+    }
 
     {
         juce::Graphics::ScopedSaveState ss (g);
         g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
         g.drawImage (rast.image(), area.toFloat());
     }
-    const float sc = (float) area.getWidth() / (float) rast.width();
+    const float isc = (float) area.getWidth() / (float) rast.width();
 
     // the sounding pipes shine (where they are not hidden behind a wall)
     for (const auto& gw : glows)
@@ -408,12 +488,22 @@ void WalkView::paint (juce::Graphics& g)
         const float zd = rast.depthAt ((int) sx, (int) sy);
         if (zd > 0.0f && zd < d * 0.95f - 0.4f) continue;         // (the pipe itself is drawn a little nearer than its axis)
         const float rad = juce::jlimit (6.0f, 260.0f, (0.6f + 0.35f * gw.size) / d * 0.5f * (float) area.getWidth());
-        const juce::Point<float> c (sx * sc, sy * sc);
-        juce::ColourGradient grad (juce::Colour (0xffffd9a0).withAlpha (0.38f * gw.amount), c.x, c.y,
-                                   juce::Colour (0xffa8442e).withAlpha (0.0f), c.x + rad, c.y, true);
-        grad.addColour (0.35, juce::Colour (0xffe08a50).withAlpha (0.16f * gw.amount));
-        g.setGradientFill (grad);
-        g.fillEllipse (juce::Rectangle<float> (2.0f * rad, 2.0f * rad).withCentre (c));
+        const juce::Point<float> c (sx * isc, sy * isc);
+        // (a glow drawn once, only stretched here: gradients per frame cost several milliseconds)
+        if (! glowSprite.isValid())
+        {
+            glowSprite = juce::Image (juce::Image::ARGB, 128, 128, true);
+            juce::Graphics gg (glowSprite);
+            juce::ColourGradient grad (juce::Colour (0xfffff1dc).withAlpha (0.5f), 64.0f, 64.0f, col::rubric.withAlpha (0.0f), 128.0f, 64.0f, true);
+            grad.addColour (0.3, juce::Colour (0xffe9c9a8).withAlpha (0.2f));
+            grad.addColour (0.65, col::rubric.withAlpha (0.07f));
+            gg.setGradientFill (grad);
+            gg.fillEllipse (0.0f, 0.0f, 128.0f, 128.0f);
+        }
+        juce::Graphics::ScopedSaveState ss (g);
+        g.setOpacity (juce::jlimit (0.0f, 1.0f, gw.amount));
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+        g.drawImage (glowSprite, juce::Rectangle<float> (2.0f * rad, 2.0f * rad).withCentre (c));
     }
 
     // with a model: the room the sound is computed in, as a faint outline
@@ -426,7 +516,7 @@ void WalkView::paint (juce::Graphics& g)
         for (auto& e : ed)
         {
             juce::Point<float> a, b;
-            if (rast.projectLine (cn[e[0]], cn[e[1]], a, b)) g.drawLine ({ a * sc, b * sc }, 1.0f);
+            if (rast.projectLine (cn[e[0]], cn[e[1]], a, b)) g.drawLine ({ a * isc, b * isc }, 1.0f);
         }
     }
 
@@ -449,7 +539,9 @@ void WalkView::paint (juce::Graphics& g)
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::mute);
     const auto info = U ("Begehen \xc2\xb7 ") + (mesh != nullptr ? mesh->name : U ("Saal ") + juce::String (r.W(), 1) + U (" \xc3\x97 ") + juce::String (r.L(), 1) + U (" \xc3\x97 ") + juce::String (r.H(), 1) + " m")
-                    + U ("   \xc2\xb7   Platz ") + juce::String (eye.x, 1) + " / " + juce::String (eye.y, 1) + U (" m   Blick ") + juce::String (juce::roundToInt (-yaw)) + U ("\xc2\xb0");
+                    + U ("   \xc2\xb7   Platz ") + juce::String (eye.x, 1) + " / " + juce::String (eye.y, 1) + U (" m   Blick ") + juce::String (juce::roundToInt (-yaw)) + U ("\xc2\xb0")
+                    + U ("   \xc2\xb7   W\xc3\xa4nde: ") + materialName (wallLook)
+                    + (proc.engine.hiddenNow.load() > 0 ? U ("   \xc2\xb7   ") + juce::String (proc.engine.hiddenNow.load()) + U (" Pfeifen um die Ecke geh\xc3\xb6rt") : juce::String());
     g.drawText (info, area.reduced (18, 0).withTrimmedTop (44).removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (col::faint);
     g.drawText (U ("W A S D gehen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  Q E / \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"

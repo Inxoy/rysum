@@ -29,13 +29,26 @@ public:
     /** for the tests: one step of the walk without a timer (dt in seconds, keys as if held) */
     void stepForTest (double dt, bool fwd, bool back, bool left, bool right, float turnDeg);
     void loadModelForTest (const juce::File& f) { loadModel (f); }
+    /** tests: a fixed resolution (no adapting to the frame time); how long the last frame took */
+    void setTestMode (bool on) { testMode = on; if (on) resScale = 1.0f; }
+    float frameMs() const noexcept { return lastFrameMs; }
+    float geometryMs() const noexcept { return geoMs; }
+    int renderWidth() const noexcept { return rast.width(); }
+    juce::String renderStats() const { return "raster + shade " + juce::String (rast.rasterMs, 1) + " ms, " + juce::String (rast.workerCount()) + " workers, " + juce::String (rast.trianglesDrawn) + " triangles"; }
 
 private:
+    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark };
+    struct RTri { Raster::Vert a, b, c; int slot; float tone; };
+    void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt);
+    float resScale = 1.0f, lastFrameMs = 0.0f, geoMs = 0.0f;
+    uint32_t frame = 0;
+    bool testMode = false;
+    Material::Kind wallLook = Material::plain;
     void timerCallback() override;
     void step (double dt, bool fwd, bool back, bool left, bool right, float turn, bool fast);
     void pushPose();
     RoomParams roomNow() const;
-    void buildRoomTris (const RoomParams& r, std::vector<Tri>& out) const;
+    void buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const;
     void loadModel (const juce::File& f);
     void chooseModel();
     void updateButtons();
@@ -43,7 +56,7 @@ private:
 
     RysumProcessor& proc;
     Raster rast;
-    std::vector<Tri> roomTris;
+    std::vector<RTri> roomTris;
     float px = 0.0f, py = 0.0f, yaw = 0.0f, pitch = 0.0f, fov = 80.0f;    // pose (offset from the listener's place)
     juce::Point<float> lastMouse;
     bool looking = false;
@@ -54,6 +67,7 @@ private:
                      zUp { "Z oben" }, home { "Zum Platz" };
     juce::ComboBox units;
     std::unique_ptr<juce::FileChooser> chooser;
+    juce::Image glowSprite;
     juce::String status;
     double statusUntil = 0.0;
 };

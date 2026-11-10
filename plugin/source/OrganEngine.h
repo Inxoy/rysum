@@ -307,6 +307,7 @@ public:
     //      in the room (m, like listenX / listenY) and where the head points (degrees, + = left, like binYaw)
     std::atomic<bool>  viewWalkOn { false };
     std::atomic<float> viewX { 0.0f }, viewY { 0.0f }, viewYaw { 0.0f };
+    std::atomic<int>   hiddenNow { 0 };          // sounding pipes heard around a corner (out of sight)
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
     /** "Raumverfall" on the Ambisonics channels. The processor calls it itself after the impulse response
@@ -386,6 +387,7 @@ private:
         float windSm = -1.0f;            // smoothed stop wind (-1 = take target directly)
         float lp = 0.0f, lpA = 1.0f;     // tone filter for under-winded pipes
         float lpAir = 0.0f, airA = 1.0f; // air absorption by distance
+        float hidLp = 0.0f, hidA = 1.0f;  // out of sight: the direct sound comes around a corner, duller (1 = open)
         WindChaos chaos;                 // wind model 2: resonances, intermittent jet, hiss
         float chAir = 0.0f;              // its own air filter
         float prevDist = -1.0f, dop = 1.0f, dopTarget = 1.0f;
@@ -660,7 +662,7 @@ private:
     XorShift rng { 4711 };
     int lastDown = -1, lastUp = -1, lastPull = -1;
     int lastDownKey = -1;               // the key struck last (the Tonnetz walker starts there)
-    std::vector<float> scratch, scratchRamp;
+    std::vector<float> scratch, scratchRamp, hidBuf;          // hidBuf: the direct sound of a pipe heard around a corner (and its ramp)
     std::array<std::vector<float>, kMaxRoomSends> roomSend;
     int roomSends = 1;                                  // used this block: 2 * roomHarmonics + 1
     std::array<float, kMaxRoomSends> noiseRoomW {};     // room weights of the click / pull sounds
@@ -743,6 +745,14 @@ private:
     double walkPhase = 0.0;
     bool liveWalk = false;
     std::array<RoomParams, kNumRooms> roomsEr {};        // the rooms as the walking listener stands in them
+    // line of sight: in a plan that is not convex a walking listener can lose sight of a pipe (heard around the corner)
+    std::array<PlanGeo, kNumRooms> occGeo {};
+    std::array<PlanCorners, kNumRooms> occCorners {};
+    std::array<bool, kNumRooms> occOn {};
+    int occCount = 0;
+    /** the pipe at 'home' (as placed from the listener's usual place) heard from where the listener stands:
+        false if nothing is in the way; else where it is heard from and how much is lost */
+    bool aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept;
     // sympathetic pipes
     static constexpr int kSymp = 16;
     struct Symp

@@ -631,6 +631,19 @@ import. The model is only seen: the sound keeps using the Saal's room, drawn as 
 *Maße übernehmen* gives the Saal the model's width, length and height (as a rectangle).
 *Zum Platz* goes back to the listener's place. The model's file and where you stand are saved
 with the project (not with patches); a missing file is kept by name.
+The room is drawn in greys like an old print, with moving film grain, and its surfaces follow
+the Saal's acoustics: the wall absorption and high damping pick the nearest of the Saal page's
+materials (*Stein*: ashlar blocks, *Putz*: plaster, *Holz*: panelling, *Glas*: leaded panes,
+*Vorhang*: heavy folds, *Spiegel*: bright and smooth); the more a surface swallows, the darker it
+is, *Streuung* makes it rougher, high damping duller. The floor and ceiling follow their own
+absorption (stone slabs, boards, carpet). The pipes are real 3D pipes – a conical foot, the
+round body, the mouth turned towards the listener's place. The view is drawn on several
+threads at the screen's full resolution and lowers it by itself when a frame takes too long.
+*Out of sight* (floor plans that are not convex: L, cross, apse …, also when walking with
+*Hörer*): when a wall stands between you and a pipe, its direct sound comes around the corner –
+from the corner's direction, over the longer way, quieter and duller the sharper it bends
+(over two corners into the far arm of a cross). The reflections still come from where they
+reach you. The 3D view shows how many sounding pipes are heard around a corner.
 
 **Modulation**
 - *LFO 1–4*: shape (sine, triangle, saw, square, random steps, smooth random), *Tempo*

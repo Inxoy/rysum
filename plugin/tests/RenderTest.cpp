@@ -3316,6 +3316,45 @@ int main (int argc, char** argv)
                 check (std::remainder (a1 - a0, 360.0) > 15.0 && std::abs (std::remainder (r1 - r0, 360.0)) > 20.0 && finiteB (round), "listener: walking changes where the pipes are heard");
                 check (std::abs (e1.listenerXNow.load() - 6.0f) < 0.05f, "listener: arrives where the slider says");
             }
+            // out of sight: in an L-shaped room the listener walks round the corner; the pipe is heard around it
+            {
+                auto roomL = [] (EngineParams& p, int shape)
+                {
+                    p.room.on = true; p.room.width = 16; p.room.length = 22; p.room.height = 8; p.room.order = 1;
+                    p.room.shape = shape; p.room.shapeAmt = 1.0f; p.room.erGain = 0.0f; p.room.tailGain = 0.0f;   // the direct sound alone
+                };
+                // the geometry first: find a place in the plan from where the pipe (straight ahead, 7 m) is hidden
+                RoomParams r; r.width = 16; r.length = 22; r.height = 8; r.shape = shapeL; r.shapeAmt = 1.0f;
+                finishPlan (r, defaultDrawnPlan());
+                const auto g = planGeo (r);
+                const auto corners = planCorners (g);
+                Pos pipe; pipe.az = 0.0f; pipe.el = 0.0f; pipe.dist = 7.0f;
+                const Vec3f S = roomPoint (r, pipe), home = listenerPos (r);
+                float wx = 0.0f, wy = 0.0f; bool found = false; Pos heard; float lossDb = 0.0f, fc = 20000.0f;
+                for (int iy = 0; iy < 44 && ! found; ++iy)
+                    for (int ix = 0; ix < 32 && ! found; ++ix)
+                    {
+                        Vec3f L { 0.25f + 0.5f * (float) ix, 0.25f + 0.5f * (float) iy, home.z };
+                        if (! insidePlan (g, L.x, L.y) || planEdgeDist (g, L.x, L.y) < 1.0f) continue;
+                        float ld, lf; Pos h;
+                        if (diffractedPath (g, corners, L, S, h, ld, lf) && ld > 8.0f) { found = true; wx = L.x - home.x; wy = L.y - home.y; heard = h; lossDb = ld; fc = lf; }
+                    }
+                std::cout << "out of sight: " << corners.n << " corners to bend around; from " << wx << " / " << wy << " m off the usual place the pipe is hidden, heard from "
+                          << heard.az << " deg over " << heard.dist << " m, " << lossDb << " dB quieter, cut above " << fc << " Hz" << std::endl;
+                check (found && corners.n > 0 && heard.dist > std::sqrt ((S.x - home.x - wx) * (S.x - home.x - wx) + (S.y - home.y - wy) * (S.y - home.y - wy)) - 0.01f,
+                       "out of sight: an L-shaped plan hides the pipe from somewhere, and the way around is longer");
+                // the engine: the same walk, in the L and in a plain rectangle of the same size
+                OrganEngine eh, eb;
+                for (auto* en : { &eh, &eb })
+                    for (int k = 0; k < kNumKeys; ++k) { en->baseAz[0][(size_t) k] = 0.0f; en->baseEl[0][(size_t) k] = 0.0f; en->baseDist[0][(size_t) k] = 7.0f; }
+                const auto hidden = play (eh, [&] (EngineParams& p) { roomL (p, shapeL); p.live.listenX = wx; p.live.listenY = wy; }, { 69 }, 2.0, 1);
+                const int hidCount = eh.hiddenNow.load();
+                const auto open = play (eb, [&] (EngineParams& p) { roomL (p, shapeBox); p.live.listenX = wx; p.live.listenY = wy; }, { 69 }, 2.0, 1);
+                const double dh = rmsDb (hidden, 1.0, 1.8), db = rmsDb (open, 1.0, 1.8);
+                std::cout << "out of sight: " << hidCount << " pipe(s) heard around the corner; level " << dh << " dB against " << db << " dB in plain sight" << std::endl;
+                check (hidCount > 0 && dh < db - 4.0 && finiteB (hidden), "out of sight: a pipe behind the corner is heard around it, quieter");
+                writeWav (outDir.getChildFile ("85_um_die_ecke.wav"), hidden, fsr);
+            }
             // Verschleiss: a pipe held for half its life is half worn, and sounds different; reset makes it new
             {
                 OrganEngine e, en;

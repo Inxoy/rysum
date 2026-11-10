@@ -1005,6 +1005,7 @@ public:
                 return nullptr;
             };
             auto* wv = findWalk (content);
+            if (wv != nullptr) wv->setTestMode (true);
             for (int i = 0; i < 4; ++i) proc->walkPose[(size_t) i] = 0.0f;
             proc->clearWalkModel();
             if (auto* c = dynamic_cast<RysumContent*> (content)) c->showView (8);
@@ -1075,9 +1076,60 @@ public:
                     for (int i = 0; i < 20; ++i) { juce::Graphics g (frame); wv->paintEntireComponent (g, false); }
                     const double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 20.0;
                     std::cout << "Begehen: " << (mb3 ? (int) mb3->tris.size() : 0) << " triangles: " << ms << " ms per frame ("
-                              << wv->getWidth() << " x " << wv->getHeight() << ")" << (mb3 && mb3->tris.size() == 80000 ? "  ok" : "  FAIL") << std::endl;
+                              << wv->renderWidth() << " px wide)" << (mb3 && mb3->tris.size() == 80000 ? "  ok" : "  FAIL") << std::endl;
                 }
                 proc->clearWalkModel();
+                {
+                    // the Saal's own room, all pipes sounding nearby: the frame time at full resolution
+                    if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
+                    juce::Image frame (juce::Image::ARGB, wv->getWidth(), wv->getHeight(), true);
+                    const double t0 = juce::Time::getMillisecondCounterHiRes();
+                    for (int i = 0; i < 20; ++i) { juce::Graphics g (frame); wv->paintEntireComponent (g, false); }
+                    const double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 20.0;
+                    std::cout << "Begehen: the Saal with its pipes: " << ms << " ms per frame (geometry " << wv->geometryMs() << " ms, 3D total " << wv->frameMs() << " ms, " << wv->renderStats() << ", " << wv->renderWidth() << " px wide)"
+                              << (wv->renderWidth() >= wv->getWidth() ? "  ok" : "  FAIL") << std::endl;
+                }
+                // what the walls look like follows the absorption (the Saal page's materials)
+                {
+                    const bool okM = rysum::wallMaterial (0.5f, 0.85f, 0.3f).kind == rysum::Material::curtain && rysum::wallMaterial (0.12f, 0.55f, 0.3f).kind == rysum::Material::wood
+                                  && rysum::wallMaterial (0.02f, 0.3f, 0.3f).kind == rysum::Material::stone && rysum::wallMaterial (0.04f, 0.1f, 0.3f).kind == rysum::Material::glass
+                                  && rysum::wallMaterial (0.0f, 0.0f, 0.0f).kind == rysum::Material::mirror
+                                  && rysum::wallMaterial (0.5f, 0.85f, 0.3f).tone < rysum::wallMaterial (0.02f, 0.3f, 0.3f).tone;
+                    std::cout << "Begehen: materials from the absorption (curtain, wood, stone, glass, mirror; curtain darker than stone)" << (okM ? "  ok" : "  FAIL") << std::endl;
+                    const struct { float aw, af, hi; const char* name; } looks[] { { 0.5f, 0.35f, 0.85f, "vorhang" }, { 0.12f, 0.15f, 0.55f, "holz" }, { 0.04f, 0.06f, 0.1f, "glas" } };
+                    for (auto& lk : looks)
+                    {
+                        setReal ("simAbs", lk.aw); setReal ("simAbsFloor", lk.af); setReal ("simHigh", lk.hi);
+                        run (4, {});
+                        shoot (8, juce::String ("ui_begehen_") + lk.name + ".png");
+                    }
+                    setReal ("simAbs", 0.1f); setReal ("simAbsFloor", 0.25f); setReal ("simHigh", 0.5f);
+                }
+                // a cross-shaped church: walked into the left arm, the pipes ahead are out of sight and heard around the corner
+                {
+                    setReal ("simShape", (float) rysum::shapeCross); setReal ("simShapeAmt", 0.8f);
+                    for (int i = 0; i < 4; ++i) proc->walkPose[(size_t) i] = 0.0f;
+                    if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
+                    run (10, {});
+                    int bestHidden = 0; float bx = 0, by = 0;
+                    for (float ox = -6.0f; ox <= 6.0f; ox += 1.0f)
+                        for (float oy = -8.0f; oy <= 2.0f; oy += 1.0f)
+                        {
+                            proc->engine.viewX = ox; proc->engine.viewY = oy;
+                            run (12, {});
+                            const int hid = proc->engine.hiddenNow.load();
+                            if (hid > bestHidden) { bestHidden = hid; bx = ox; by = oy; }
+                        }
+                    proc->walkPose[0] = bx; proc->walkPose[1] = by;
+                    proc->walkPose[2] = bx > 0.0f ? 90.0f : -90.0f;          // down the arm, towards the crossing
+                    if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
+                    run (12, {});
+                    std::cout << "Begehen: cross-shaped plan, at " << bx << " / " << by << " m " << proc->engine.hiddenNow.load() << " sounding pipes heard around the corner"
+                              << (proc->engine.hiddenNow.load() > 0 ? "  ok" : "  FAIL") << std::endl;
+                    shoot (8, "ui_begehen_kreuz.png");
+                    setReal ("simShape", 0.0f); setReal ("simShapeAmt", 0.5f);
+                    for (int i = 0; i < 4; ++i) proc->walkPose[(size_t) i] = 0.0f;
+                }
             }
             if (auto* c = dynamic_cast<RysumContent*> (content)) c->showView (2);
             std::cout << "Begehen: leaving the view gives the listener back " << (proc->engine.viewWalkOn.load() ? "no" : "yes")
