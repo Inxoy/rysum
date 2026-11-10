@@ -57,7 +57,9 @@ public:
             juce::Random rnd(5);
             for (int c = 0; c < 4; ++c)
                 for (int i = 0; i < 48000; ++i)
-                    ir.setSample(c, i, (rnd.nextFloat() * 2 - 1) * std::exp(-5.0f * i / 48000.0f));
+                    ir.setSample(c, i,
+                                 (rnd.nextFloat() * 2 - 1) *
+                                     std::exp(-5.0f * static_cast<float>(i) / 48000.0f));
             irFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
                          .getChildFile("Testkirche_ambix.wav");
             irFile.deleteFile();
@@ -342,7 +344,8 @@ public:
                       << ((loaded && proc->getRouteSrc(0) == rysum::srcLfo2 &&
                            proc->getRouteTgt(0) == rysum::tgtAz &&
                            proc->apvts.getRawParameterValue("stop0")->load() > 0.5f &&
-                           proc->apvts.getRawParameterValue("output")->load() == outBefore)
+                           juce::exactlyEqual(proc->apvts.getRawParameterValue("output")->load(),
+                                              outBefore))
                               ? "ok"
                               : "FAIL")
                       << std::endl;
@@ -427,8 +430,8 @@ public:
                     juce::MidiBuffer none;
                     buf.clear(), proc->processBlock(buf, none);
                 } // let tails / freeze die
-                const float rmsDb =
-                    juce::Decibels::gainToDecibels((float)std::sqrt(e / juce::jmax(1L, cnt)));
+                const float rmsDb = juce::Decibels::gainToDecibels(
+                    (float)std::sqrt(e / static_cast<double>(juce::jmax(1L, cnt))));
                 const bool ok = finite && peak > 1.0e-4f;
                 allOk = allOk && ok;
                 if (feedInput && std::getenv("RYSUM_DEBUG_INPUT") != nullptr)
@@ -883,11 +886,11 @@ public:
             for (int b = 0; b < 20; ++b)
             {
                 io.clear();
-                juce::MidiBuffer mb;
+                juce::MidiBuffer noteOffs;
                 if (b == 0)
                     for (int m : {48, 55, 60, 64})
-                        mb.addEvent(juce::MidiMessage::noteOff(1, m), 0);
-                proc->processBlock(io, mb);
+                        noteOffs.addEvent(juce::MidiMessage::noteOff(1, m), 0);
+                proc->processBlock(io, noteOffs);
             }
             o->setValueNotifyingHost(outBefore);
             proc->setSpeakerLayout(rysum::speakerPresets()[4], false);
@@ -947,13 +950,26 @@ public:
                 dir.getChildFile("sub").createDirectory();
                 juce::AudioBuffer<float> snd(1, 9600);
                 for (int i = 0; i < 9600; ++i)
-                    snd.setSample(0, i, 0.3f * std::exp(-i / 900.0f) * std::sin(i * 0.7f));
+                    snd.setSample(0, i,
+                                  0.3f * std::exp(-static_cast<float>(i) / 900.0f) *
+                                      std::sin(static_cast<float>(i) * 0.7f));
                 for (auto name : {"a.wav", "sub/b.wav"})
                 {
                     juce::WavAudioFormat wav;
-                    std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(
-                        new juce::FileOutputStream(dir.getChildFile(name)), 48000.0, 1, 24, {}, 0));
-                    w->writeFromAudioSampleBuffer(snd, 0, 9600);
+                    std::unique_ptr<juce::OutputStream> stream(
+                        dir.getChildFile(name).createOutputStream());
+                    const auto options = juce::AudioFormatWriterOptions{}
+                                             .withSampleRate(48000.0)
+                                             .withNumChannels(1)
+                                             .withBitsPerSample(24);
+                    auto writer = wav.createWriterFor(stream, options);
+                    if (writer == nullptr || !writer->writeFromAudioSampleBuffer(snd, 0, 9600))
+                    {
+                        std::cerr << "Failed to write custom sound fixture: " << name << std::endl;
+                        setApplicationReturnValue(1);
+                        quit();
+                        return;
+                    }
                 }
                 auto waitFor = [&](int n)
                 {
@@ -1266,7 +1282,8 @@ public:
                 proc->isSceneStored(0) && proc->isSceneStored(1) && !proc->isSceneStored(2);
             std::cout << "scenes: at 25 % vol " << v25 << " dB trem " << t25 << ", at 75 % vol "
                       << v75 << " dB trem " << t75 << " leaks " << l75 << ", master unchanged "
-                      << (real("master") == master0) << ", kept in the state " << kept
+                      << juce::exactlyEqual(real("master"), master0) << ", kept in the state "
+                      << kept
                       << ((std::abs(v25 - (-7.0f)) < 0.6f && t25 < 0.5f &&
                            std::abs(v75 - (-1.0f)) < 0.6f && t75 > 0.5f && kept)
                               ? "  ok"
@@ -1307,10 +1324,12 @@ public:
             }
             const bool restored = worstUndo < 1.0e-4f;
             std::cout << "dice: changed " << changed << ", stops pulled " << stops
-                      << ", master kept " << (real("master") == m0) << ", undo restores (worst "
-                      << worstUndo << ")"
-                      << ((changed && stops > 0 && real("master") == m0 && restored) ? "  ok"
-                                                                                     : "  FAIL")
+                      << ", master kept " << juce::exactlyEqual(real("master"), m0)
+                      << ", undo restores (worst " << worstUndo << ")"
+                      << ((changed && stops > 0 && juce::exactlyEqual(real("master"), m0) &&
+                           restored)
+                              ? "  ok"
+                              : "  FAIL")
                       << std::endl;
             if (!restored)
             {
