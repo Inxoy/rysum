@@ -2627,7 +2627,10 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
     auto state = apvts.copyState();
     juce::ValueTree extra("EXTRA");
     if (!forPatch)
+    {
         extra.setProperty("samplesFolder", samplesFolder.getFullPathName(), nullptr);
+        extra.setProperty("loadPresetTuning", loadPresetTuning.load(), nullptr);
+    }
     extra.setProperty("irFile", irFile.getFullPathName(), nullptr);
     extra.setProperty("customFolder", customOverride.getFullPathName(), nullptr);
     if (!forPatch)
@@ -2742,6 +2745,9 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
     if (!state.hasType(apvts.state.getType()))
         return;
     auto extra = state.getChildWithName("EXTRA");
+    const bool loadTuning = !forPatch || loadPresetTuning.load();
+    if (!forPatch)
+        loadPresetTuning.store(static_cast<bool>(extra.getProperty("loadPresetTuning", true)));
     const float keepOutput = output->load();
     // kept when a patch loads: headphone settings and the controller setup (MPE) belong to the
     // player, not the sound
@@ -2764,6 +2770,12 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                 t.setProperty("id", prm->getParameterID(), nullptr);
                 t.setProperty("value", prm->convertFrom0to1(prm->getDefaultValue()), nullptr);
                 state.appendChild(t, nullptr);
+            }
+        if (!loadTuning)
+            for (const auto *id : {"temperament", "pitch", "mtsContinuous"})
+            {
+                auto parameter = state.getChildWithProperty("id", id);
+                parameter.setProperty("value", apvts.getRawParameterValue(id)->load(), nullptr);
             }
     }
     apvts.replaceState(state);
@@ -2809,7 +2821,7 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                                 : rysum::defaultDrawnPlan());
         }
     }
-    if (extra.hasProperty("scl"))
+    if (loadTuning && extra.hasProperty("scl"))
         setScala(extra["scl"].toString(), extra["sclName"].toString(), extra["kbm"].toString(),
                  extra["kbmName"].toString());
     else if (!forPatch && sclText.isNotEmpty())

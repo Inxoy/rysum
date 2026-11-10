@@ -177,6 +177,7 @@ public:
      * text on errors */
     bool loadTuningFile(const juce::File &f);
     void clearKbm();
+    std::atomic<bool> loadPresetTuning{true};
     juce::String getTuningStatus() const;
     bool hasScala() const
     {

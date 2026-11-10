@@ -5,6 +5,7 @@
 #include <cmath>
 #include <functional>
 #include <juce_core/juce_core.h>
+#include <optional>
 
 namespace rysum
 {
@@ -68,6 +69,7 @@ constexpr int kQuarterCommaMeantone = 21;
 constexpr int kFifthCommaMeantone = 22;
 constexpr int kThirdCommaMeantone = 23;
 constexpr int kTwoSeventhsCommaMeantone = 24;
+constexpr int kJustBohlenPierce = 25;
 
 inline juce::StringArray temperamentNames()
 {
@@ -78,25 +80,26 @@ inline juce::StringArray temperamentNames()
             "Kirnberger III",
             "Vallotti",
             "Pythagoreisch",
-            "Gleichstufig",
+            "Gleichstufig (12edo)",
             "Just Intonation 5-Limit (C)",
             "Just Intonation 7-Limit (C)",
             "Naturtonreihe (C)",
-            "31-EDO (12 aus 31)",
-            "19-EDO (12 aus 19)",
-            "53-EDO (12 aus 53, fast rein)",
+            "31edo (12 aus 31)",
+            "19edo (12 aus 19)",
+            "53edo (12 aus 53, fast rein)",
             juce::String::fromUTF8("Maqam Rast (E und H \xc2\xbc-Ton tiefer)"),
-            juce::String::fromUTF8("31-EDO \xc2\xb7 jede Taste ein Schritt (38,7 ct)"),
-            juce::String::fromUTF8("19-EDO \xc2\xb7 jede Taste ein Schritt (63,2 ct)"),
-            juce::String::fromUTF8("24-EDO \xc2\xb7 Viertelt\xc3\xb6ne (50 ct)"),
-            juce::String::fromUTF8("Bohlen-Pierce \xc2\xb7 13 Stufen pro Duodezime (146,3 ct)"),
+            juce::String::fromUTF8("31edo \xc2\xb7 jede Taste ein Schritt (38,7 ct)"),
+            juce::String::fromUTF8("19edo \xc2\xb7 jede Taste ein Schritt (63,2 ct)"),
+            juce::String::fromUTF8("24edo \xc2\xb7 Viertelt\xc3\xb6ne (50 ct)"),
+            "Bohlen-Pierce (13ed3, 146,3 ct)",
             juce::String::fromUTF8("Carlos Alpha \xc2\xb7 jede Taste 78 ct"),
             juce::String::fromUTF8("Scala-Datei (.scl / .kbm)"),
             juce::String::fromUTF8("MTS-ESP / MIDI-Stimmung (SysEx)"),
             "1/4-Syntonisches Komma",
             "1/5-Syntonisches Komma",
             "1/3-Syntonisches Komma",
-            "2/7-Syntonisches Komma"};
+            "2/7-Syntonisches Komma",
+            "Bohlen-Pierce (JI) 13 Stufen pro Duodezime"};
 }
 
 /** tunings from index 14 on: every MIDI note is one step of this size (cents), a' stays put */
@@ -117,6 +120,27 @@ inline double tuningStepCents(int t) noexcept
     default:
         return 0.0;
     }
+}
+
+// Stepped tunings are anchored at MIDI 69 and repeat in both directions.
+inline std::optional<double> steppedTuningCents(int tuning, int midi)
+{
+    const int offset = midi - 69;
+    if (tuning == kJustBohlenPierce)
+    {
+        // Chromatic just scale. The period is 3:1, with degree zero at A4.
+        constexpr std::array<double, 13> ratios{
+            1.0,     27.0 / 25, 25.0 / 21, 9.0 / 7, 7.0 / 5,   75.0 / 49, 5.0 / 3,
+            9.0 / 5, 49.0 / 25, 15.0 / 7,  7.0 / 3, 63.0 / 25, 25.0 / 9};
+        const int degree = (offset % 13 + 13) % 13;
+        const int tritave = (offset - degree) / 13;
+        return 1200.0 *
+               (std::log2(ratios[static_cast<std::size_t>(degree)]) + tritave * std::log2(3.0));
+    }
+    const double step = tuningStepCents(tuning);
+    if (step > 0.0)
+        return offset * step;
+    return std::nullopt;
 }
 
 inline std::array<double, 12> temperamentCents(int t)
@@ -236,8 +260,7 @@ inline KeyTuning makeKeyTuning(int t)
     KeyTuning kt;
     auto recorded = [](int midi)
     { return 1200.0 * std::log2(meantoneHz(midi) / meantoneHz(69)); }; // cents from a'
-    const double step = tuningStepCents(t);
-    if (step <= 0.0)
+    if (!steppedTuningCents(t, 69).has_value())
     {
         const auto sh = temperamentShift(t);
         for (int k = 0; k < kNumKeys; ++k)
@@ -249,7 +272,7 @@ inline KeyTuning makeKeyTuning(int t)
     }
     for (int k = 0; k < kNumKeys; ++k)
     {
-        const double target = (kPhysKeys[(size_t)k] - 69) * step;
+        const double target = *steppedTuningCents(t, kPhysKeys[(size_t)k]);
         int best = k;
         double bd = 1e9;
         for (int s = 0; s < kNumKeys; ++s)

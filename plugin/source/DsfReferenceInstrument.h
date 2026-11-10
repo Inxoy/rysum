@@ -48,9 +48,9 @@ inline double referenceNoteHz(const DsfReferenceTuning &params, int note, int ch
         const int key = keyIndexForMidi(note);
         if (key < 0)
         {
-            const double step = tuningStepCents(params.temperament);
-            hz = step > 0.0
-                     ? kA4 * std::exp2((note - 69) * step / 1200.0)
+            const auto targetCents = steppedTuningCents(params.temperament, note);
+            hz = targetCents.has_value()
+                     ? kA4 * std::exp2(*targetCents / 1200.0)
                      : meantoneHz(note) *
                            std::exp2(temperamentShift(
                                          params.temperament)[static_cast<std::size_t>(note % 12)] /

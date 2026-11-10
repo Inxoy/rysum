@@ -217,6 +217,21 @@ int main()
         return 1;
     }
 
+    rysum::DsfReferenceTuning justBp;
+    justBp.temperament = rysum::kJustBohlenPierce;
+    justBp.tuning = rysum::makeKeyTuning(justBp.temperament);
+    justBp.pitchCents = rysum::effectiveStimmtonCents(rysum::kStimmton440Detent);
+    for (const auto &[midi, ratio] :
+         {std::pair{56, 1.0 / 3}, std::pair{68, 25.0 / 27}, std::pair{69, 1.0},
+          std::pair{75, 5.0 / 3}, std::pair{79, 7.0 / 3}, std::pair{82, 3.0}})
+    {
+        if (std::abs(rysum::referenceNoteHz(justBp, midi, 1) - 440.0 * ratio) > 1.0e-4)
+        {
+            std::cerr << "Just Bohlen-Pierce target is incorrect at MIDI " << midi << '\n';
+            return 1;
+        }
+    }
+
     rysum::DsfReferenceTuning tuning;
     tuning.tuning = rysum::makeKeyTuning(0);
     if (!(std::abs(rysum::referenceNoteHz(tuning, 69, 1) - rysum::kA4) <= 1.0e-8))

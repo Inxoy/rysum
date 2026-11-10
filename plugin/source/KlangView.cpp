@@ -24,11 +24,15 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     auto &tuningParam =
         *static_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("temperament"));
     auto addTuning = [&](int index) { temperament.addItem(tuningParam.choices[index], index + 1); };
-    for (const int index : {0, 5, kQuarterCommaMeantone, kThirdCommaMeantone,
-                            kTwoSeventhsCommaMeantone, kFifthCommaMeantone, 1, 7, 8, 9, 2, 3, 4, 6})
+    for (const int index : {0, 5, 7, 8, 9, kQuarterCommaMeantone, kThirdCommaMeantone,
+                            kTwoSeventhsCommaMeantone, kFifthCommaMeantone, 1, 2, 3, 4, 6})
         addTuning(index);
     for (int index = 10; index < kQuarterCommaMeantone; ++index)
+    {
+        if (index == 17) // tempered Bohlen-Pierce
+            addTuning(kJustBohlenPierce);
         addTuning(index);
+    }
     temperamentAtt = std::make_unique<juce::ParameterAttachment>(
         tuningParam, [this](float value)
         { temperament.setSelectedId(juce::roundToInt(value) + 1, juce::dontSendNotification); });
@@ -75,6 +79,11 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     mtsFollow->setTooltip(
         u8("MTS-ESP: gehaltene T\xc3\xb6ne folgen einer ge\xc3\xa4nderten Stimmung sofort. Aus: "
            "jeder Ton beh\xc3\xa4lt die Tonh\xc3\xb6he seines Anschlags."));
+
+    loadPresetTuning.setClickingTogglesState(true);
+    loadPresetTuning.onClick = [this]
+    { proc.loadPresetTuning.store(loadPresetTuning.getToggleState()); };
+    addAndMakeVisible(loadPresetTuning);
 
     pitch = &row("pitch", "Stimmton");
     pitch->slider.setDoubleClickReturnValue(true, kStimmton440Detent);
@@ -274,6 +283,8 @@ void KlangView::resized()
         t.removeFromLeft(6);
         kbmClear.setBounds(t.removeFromLeft(106));
         b.removeFromTop(6);
+        loadPresetTuning.setBounds(b.removeFromTop(24));
+        b.removeFromTop(6);
         tuningStatusArea = b;
     }
     {
@@ -362,6 +373,7 @@ void KlangView::refresh()
 {
     const int tuning = juce::roundToInt(proc.apvts.getRawParameterValue("temperament")->load());
     const bool original = tuning == 0;
+    loadPresetTuning.setToggleState(proc.loadPresetTuning.load(), juce::dontSendNotification);
     dsfRegister.setVisible(original);
     scalaLoad.setVisible(tuning == RysumProcessor::kScalaTuning);
     kbmClear.setVisible(tuning == RysumProcessor::kScalaTuning);
