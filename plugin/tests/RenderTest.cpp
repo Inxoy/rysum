@@ -1677,8 +1677,8 @@ static void testHeldPipeTuning()
     sample->sampleRate = sampleRate;
     sample->data.resize(96000);
     for (std::size_t i = 0; i < sample->data.size(); ++i)
-        sample->data[i] = static_cast<float>(
-            0.5 * std::sin(2.0 * std::acos(-1.0) * measuredHz * static_cast<double>(i) / sampleRate));
+        sample->data[i] = static_cast<float>(0.5 * std::sin(2.0 * std::acos(-1.0) * measuredHz *
+                                                            static_cast<double>(i) / sampleRate));
 
     auto &pipe = library->pipes[0][static_cast<std::size_t>(key)];
     pipe.valid = true;
@@ -1689,6 +1689,14 @@ static void testHeldPipeTuning()
     pipe.release = 72000;
     pipe.loopStart = 4800;
     pipe.loopEnd = 48000;
+    for (const int neighbour : {36, 38})
+    {
+        auto &adjacent = library->pipes[0][static_cast<std::size_t>(keyIndexForMidi(neighbour))];
+        adjacent = pipe;
+        adjacent.midi = neighbour;
+        adjacent.nominalHz = meantoneHz(neighbour);
+        adjacent.calibrationRatio = adjacent.nominalHz / measuredHz;
+    }
 
     OrganEngine engine;
     engine.prepare(sampleRate, 512);
@@ -1735,6 +1743,20 @@ static void testHeldPipeTuning()
           "31-EDO changes the preferred source pipe");
     check(std::abs(renderPitch() - 440.0 * std::exp2(-9.0 / 31.0)) < 0.02,
           "held pipe follows the 31-EDO target across a source mapping change");
+
+    engine.setLibrary(library);
+    params.correctSamplePitch = false;
+    params.tuning = makeKeyTuning(0);
+    params.pitchCents = 0.0;
+    midiEvents.addEvent(juce::MidiMessage::noteOn(2, 37, static_cast<juce::uint8>(100)), 0);
+    check(renderPitch() <= 0.0, "recorded tuning leaves the short-octave C-sharp silent");
+
+    params.correctSamplePitch = true;
+    params.tuning = makeKeyTuning(6);
+    params.pitchCents = effectiveStimmtonCents(kStimmton440Detent);
+    midiEvents.addEvent(juce::MidiMessage::noteOn(2, 37, static_cast<juce::uint8>(100)), 0);
+    check(std::abs(renderPitch() - 440.0 * std::exp2(-32.0 / 12.0)) < 0.02,
+          "retuned short-octave C-sharp uses a neighbouring pipe at the target pitch");
 }
 
 int main(int argc, char **argv)

@@ -218,8 +218,7 @@ int main()
     }
 
     rysum::DsfReferenceTuning justBp;
-    justBp.temperament = rysum::kJustBohlenPierce;
-    justBp.tuning = rysum::makeKeyTuning(justBp.temperament);
+    justBp.tuning = rysum::makeKeyTuning(rysum::kJustBohlenPierce);
     justBp.pitchCents = rysum::effectiveStimmtonCents(rysum::kStimmton440Detent);
     for (const auto &[midi, ratio] :
          {std::pair{56, 1.0 / 3}, std::pair{68, 25.0 / 27}, std::pair{69, 1.0},

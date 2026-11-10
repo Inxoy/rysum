@@ -1625,9 +1625,8 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     // own level; MIDI follows nominal global tuning, manual Hz is independent.
     DsfReferenceTuning referenceTuning;
     referenceTuning.tuning = params.tuning;
-    referenceTuning.temperament = juce::roundToInt(extraParams.at("temperament")->load());
     std::array<double, kNumKeys> recordedHz{};
-    if (referenceTuning.temperament == 0)
+    if (params.tuning.temperament == 0)
     {
         const int selection = juce::roundToInt(apvts.getRawParameterValue("dsfRegister")->load());
         const auto index = static_cast<std::size_t>(

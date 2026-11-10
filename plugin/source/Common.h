@@ -251,6 +251,7 @@ inline std::array<float, 12> temperamentShift(int t)
     shifted far (except outside the organ's range). */
 struct KeyTuning
 {
+    int temperament = 0;
     std::array<float, kNumKeys> cents{};
     std::array<int, kNumKeys> source{};
 };
@@ -258,6 +259,7 @@ struct KeyTuning
 inline KeyTuning makeKeyTuning(int t)
 {
     KeyTuning kt;
+    kt.temperament = t;
     auto recorded = [](int midi)
     { return 1200.0 * std::log2(meantoneHz(midi) / meantoneHz(69)); }; // cents from a'
     if (!steppedTuningCents(t, 69).has_value())
@@ -288,6 +290,24 @@ inline KeyTuning makeKeyTuning(int t)
         kt.cents[(size_t)k] = (float)(target - recorded(kPhysKeys[(size_t)best]));
     }
     return kt;
+}
+
+// Nominal keyboard pitch before the selected Stimmton offset.
+inline double keyboardTuningHz(const KeyTuning &tuning, int midi)
+{
+    const int key = keyIndexForMidi(midi);
+    if (key >= 0)
+    {
+        const auto k = static_cast<std::size_t>(key);
+        const auto source =
+            static_cast<std::size_t>(juce::jlimit(0, kNumKeys - 1, tuning.source[k]));
+        return meantoneHz(kPhysKeys[source]) * std::exp2(tuning.cents[k] / 1200.0);
+    }
+    if (const auto cents = steppedTuningCents(tuning.temperament, midi))
+        return kA4 * std::exp2(*cents / 1200.0);
+    return meantoneHz(midi) *
+           std::exp2(temperamentShift(tuning.temperament)[static_cast<std::size_t>(midi % 12)] /
+                     1200.0);
 }
 
 inline juce::String helmholtzName(int midi)

@@ -169,7 +169,7 @@ void KeyStrip::play(int midi)
     if (playing >= 0)
         proc.keyboardState.noteOff(1, playing, 0.0f);
     playing = -1;
-    if (keyIndexForMidi(midi) >= 0)
+    if (keyIndexForMidi(midi) >= 0 || proc.apvts.getRawParameterValue("temperament")->load() > 0.5f)
     {
         proc.keyboardState.noteOn(1, midi, 0.8f);
         playing = midi;
@@ -199,6 +199,7 @@ void KeyStrip::paint(juce::Graphics &g)
     const float gap = 2.0f;
     const float w = ((float)getWidth() - gap * (n - 1)) / (float)n;
     const float keyH = (float)getHeight() - 16.0f;
+    const bool chromatic = proc.apvts.getRawParameterValue("temperament")->load() > 0.5f;
     const uint64_t held = proc.engine.heldMask.load();
     for (int i = 0; i < n; ++i)
     {
@@ -206,7 +207,7 @@ void KeyStrip::paint(juce::Graphics &g)
         const int k = keyIndexForMidi(midi);
         const bool black = juce::Array<int>{1, 3, 6, 8, 10}.contains(midi % 12);
         juce::Rectangle<float> r((float)i * (w + gap), 0.0f, w, black ? keyH * 0.64f : keyH);
-        if (k < 0)
+        if (k < 0 && !chromatic)
         {
             g.setColour(col::border);
             const float dash[]{3.0f, 3.0f};
@@ -216,7 +217,8 @@ void KeyStrip::paint(juce::Graphics &g)
             g.fillPath(p);
             continue;
         }
-        const bool on = (held >> k) & 1;
+        const bool on =
+            chromatic ? proc.keyboardState.isNoteOnForChannels(0xffff, midi) : (held >> k) & 1;
         g.setColour(on ? col::white
                        : (black ? juce::Colour(0xff2b2b28) : juce::Colour(0xffbdbbb5)));
         g.fillRect(r);
@@ -568,8 +570,10 @@ void ConsoleView::paint(juce::Graphics &g)
         keyboardArea.withTrimmedLeft(270).withTrimmedRight(20).withTrimmedTop(12).withHeight(16);
     g.setFont(A.monoFont(11.0f));
     g.setColour(col::mute);
-    g.drawText(juce::String(juce::CharPointer_UTF8(
-                   "C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 kurze Oktave \xc2\xb7 41 Tasten")),
+    const bool chromatic = proc.apvts.getRawParameterValue("temperament")->load() > 0.5f;
+    g.drawText(chromatic
+                   ? u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 chromatisch")
+                   : u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 kurze Oktave \xc2\xb7 41 Tasten"),
                kh, juce::Justification::centredLeft);
     g.drawText("MIDI 36-81", kh, juce::Justification::centredRight);
 }

@@ -894,21 +894,26 @@ void OrganEngine::noteOnFree(const juce::MidiMessage &m, const EngineParams &p)
     const float hz = notesNow->hz[(size_t)tableIndex(id)];
     if (!(hz > 1.0f))
         return;
-    // the pipe nearest to the wanted pitch plays (beyond the organ's compass: shifted, up to two
-    // octaves)
+    const int key = keyIndexForMidi(m.getNoteNumber());
     int k = 0;
-    float best = 1.0e9f;
-    for (int i = 0; i < kNumKeys; ++i)
+    if (notesNow == &keyboardTable && key >= 0)
+        k = juce::jlimit(0, kNumKeys - 1, p.tuning.source[static_cast<std::size_t>(key)]);
+    else
     {
-        const float c = std::abs(std::log2(hz / slotHz[(size_t)i]));
-        if (c < best)
+        // For a chromatic gap or external tuning, use the nearest pipe.
+        float best = 1.0e9f;
+        for (int i = 0; i < kNumKeys; ++i)
         {
-            best = c;
-            k = i;
+            const float distance = std::abs(std::log2(hz / slotHz[static_cast<std::size_t>(i)]));
+            if (distance < best)
+            {
+                best = distance;
+                k = i;
+            }
         }
+        if (best > 2.0f)
+            return;
     }
-    if (best * 1200.0f > 2400.0f)
-        return;
     auto &fn = freeNotes[(size_t)id];
     if (fn.held)
         keyUp(fn.key, p, id); // struck again without a note-off
@@ -1291,8 +1296,8 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
             // A held voice may still be playing a pipe from the previous tuning.
             const int targetSource = juce::jlimit(0, kNumKeys - 1, keySource[(size_t)v.key]);
             if (targetSource != v.sourceKey)
-                tuneCents += 1200.0 * std::log2(
-                    static_cast<double>(slotHz[(size_t)targetSource]) / slotHz[(size_t)v.sourceKey]);
+                tuneCents += 1200.0 * std::log2(static_cast<double>(slotHz[(size_t)targetSource]) /
+                                                slotHz[(size_t)v.sourceKey]);
         }
 
         const double baseRate = v.baseRate * (p.correctSamplePitch ? pipe.calibrationRatio : 1.0);
@@ -3370,34 +3375,36 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
             }
     keySource = p.tuning.source;
     {
-        // free tuning on / off: let go of everything first (notes are counted differently)
-        // MPE needs every note apart (its channel says whose bend it is): without a free tuning the
-        // organ's own tuning becomes a note table
+        // Per-note routing keeps two MIDI keys independent when they share a pipe.
         mpeNow = p.mpe;
         mpeBendCents = 100.0f * p.mpeBendRange;
         const NoteTable *table = p.notes;
-        if (mpeNow && table == nullptr)
+        const bool fillChromaticGaps = p.correctSamplePitch;
+        if (table == nullptr && (mpeNow || fillChromaticGaps))
         {
-            for (int n = 0; n < 128; ++n)
+            for (int n = kPhysKeys.front(); n <= kPhysKeys.back(); ++n)
             {
-                const int k = keyIndexForMidi(n);
-                mpeTable.mapped[(size_t)n] = k >= 0 ? 1 : 0;
-                mpeTable.hz[(size_t)n] =
-                    k >= 0 ? slotHz[(size_t)juce::jlimit(0, kNumKeys - 1,
-                                                         p.tuning.source[(size_t)k])] *
-                                 std::exp2(p.tuning.cents[(size_t)k] / 1200.0f)
-                           : 0.0f;
+                const auto index = static_cast<std::size_t>(n);
+                const bool mapped = fillChromaticGaps || keyIndexForMidi(n) >= 0;
+                keyboardTable.mapped[index] = mapped ? 1 : 0;
+                keyboardTable.hz[index] =
+                    mapped ? static_cast<float>(keyboardTuningHz(p.tuning, n)) : 0.0f;
             }
-            table = &mpeTable;
+            table = &keyboardTable;
         }
         const bool fm = table != nullptr;
-        if (fm != freeMode || (fm && (table == &mpeTable) != (notesNow == &mpeTable)))
+        if (fm != freeMode || (fm && (table == &keyboardTable) != (notesNow == &keyboardTable)))
         {
             releaseAllKeys(p);
             freeMode = fm;
         }
+        if (table == &keyboardTable && notesNow == table && !fillChromaticGaps)
+            for (int id = 0; id < NoteTable::kSize; ++id)
+                if (freeNotes[static_cast<std::size_t>(id)].held &&
+                    !keyboardTable.mapped[static_cast<std::size_t>(id & 127)])
+                    keyUp(freeNotes[static_cast<std::size_t>(id)].key, p, id);
         notesNow = table;
-        notesContinuous = p.notesContinuous;
+        notesContinuous = table == &keyboardTable || p.notesContinuous;
     }
     roomFollowNow = p.roomFollow;
     roomBaseAzNow = p.roomBaseAz;

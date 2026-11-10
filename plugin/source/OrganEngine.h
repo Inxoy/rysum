@@ -505,7 +505,7 @@ private:
     // (polyphonic aftertouch)
     bool mpeNow = false;
     float mpeBendCents = 4800.0f;
-    NoteTable mpeTable; // MPE without a free tuning: the organ's own tuning as a note table
+    NoteTable keyboardTable; // built-in tuning, shared across MIDI channels
     std::array<float, 16> chBend{}, chPress{}, chSlide{};
     std::array<float, NoteTable::kSize> notePress{};
     std::array<float, kNumKeys> keyPress{};
@@ -516,7 +516,7 @@ private:
     }
     int tableIndex(int noteId) const noexcept
     {
-        return mpeNow ? (noteId & 127) : noteId;
+        return mpeNow || notesNow == &keyboardTable ? (noteId & 127) : noteId;
     } // MPE: one tuning for all channels
     float voicePressure(const Voice &v) const noexcept;
     float voiceSlide(const Voice &v) const noexcept;
@@ -555,7 +555,7 @@ private:
     static float clickCurve(float v) noexcept
     {
         return 0.04f + 0.96f * v * std::sqrt(v);
-    }                                       // velocity -> level
+    } // velocity -> level
     float clickTone(float v) const noexcept // velocity -> one-pole coefficient
     {
         const float fc = 900.0f * std::pow(20000.0f / 900.0f, juce::jlimit(0.0f, 1.0f, v * 1.25f));

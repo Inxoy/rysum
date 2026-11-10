@@ -13,7 +13,6 @@ namespace rysum
 struct DsfReferenceTuning
 {
     KeyTuning tuning;
-    int temperament = 0;
     const std::array<double, kNumKeys> *recordedHz = nullptr;
     const float *noteHz = nullptr;
     const std::uint8_t *mapped = nullptr;
@@ -47,26 +46,7 @@ inline double referenceNoteHz(const DsfReferenceTuning &params, int note, int ch
         hz = params.noteHz[index];
     }
     else
-    {
-        const int key = keyIndexForMidi(note);
-        if (key < 0)
-        {
-            const auto targetCents = steppedTuningCents(params.temperament, note);
-            hz = targetCents.has_value()
-                     ? kA4 * std::exp2(*targetCents / 1200.0)
-                     : meantoneHz(note) *
-                           std::exp2(temperamentShift(
-                                         params.temperament)[static_cast<std::size_t>(note % 12)] /
-                                     1200.0);
-            return hz * std::exp2(params.pitchCents / 1200.0);
-        }
-        const auto k = static_cast<std::size_t>(key);
-        const int source = params.tuning.source[k];
-        if (source < 0 || source >= kNumKeys)
-            return 0.0;
-        hz = meantoneHz(kPhysKeys[static_cast<std::size_t>(source)]) *
-             std::exp2(params.tuning.cents[k] / 1200.0);
-    }
+        hz = keyboardTuningHz(params.tuning, note);
     return std::isfinite(hz) && hz > 0.0 ? hz * std::exp2(params.pitchCents / 1200.0) : 0.0;
 }
 
