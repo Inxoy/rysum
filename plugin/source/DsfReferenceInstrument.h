@@ -22,10 +22,13 @@ struct DsfReferenceTuning
     bool mpe = false;
 };
 
+inline constexpr int kDsfLowestMidiNote = 24;
+inline constexpr int kDsfHighestMidiNote = 108;
+
 // Recorded mode supplies one measured frequency per key for the selected register.
 inline double referenceNoteHz(const DsfReferenceTuning &params, int note, int channel)
 {
-    if (note < 0 || note > 127 || channel < 1 || channel > 16)
+    if (note < kDsfLowestMidiNote || note > kDsfHighestMidiNote || channel < 1 || channel > 16)
         return 0.0;
     if (params.recordedHz != nullptr)
     {
@@ -113,7 +116,8 @@ public:
                         bend[static_cast<std::size_t>(newest / 128)] * params.mpeBendRange * 100.0;
                 hz *= std::exp2(cents / 1200.0);
             }
-            const bool sounding = enabled && std::isfinite(hz) && hz >= 10.0 && hz <= maximumHz;
+            const bool sounding =
+                enabled && std::isfinite(hz) && hz >= kDsfMinimumHz && hz <= maximumHz;
             shownHz.store(sounding ? hz : 0.0);
             // A released/unmapped MIDI note fades at its previous frequency.
             tone.process(output, sounding, sounding ? hz : lastHz, balance, levelDb, method,

@@ -5,6 +5,8 @@
 namespace rysum
 {
 
+inline constexpr double kDsfMinimumHz = 20.0;
+
 // A continuous, dry reference for comparing sample pitch by ear. All state is
 // audio-thread owned; prepare is the only method that allocates.
 class DsfReferenceTone
@@ -35,7 +37,7 @@ public:
             return;
 
         partials = juce::jlimit(1, 1024, partials);
-        hz = juce::jlimit(10.0, std::min(20000.0, rate * 0.44), hz);
+        hz = juce::jlimit(kDsfMinimumHz, std::min(20000.0, rate * 0.44), hz);
         brightness = juce::jlimit(0.0, 1.0, brightness);
         frequency.setTargetValue(hz);
         spectrum.setTargetValue(brightness);

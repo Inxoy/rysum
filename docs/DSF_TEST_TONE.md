@@ -50,7 +50,8 @@ whose measured playback frequency Testton follows. It uses the checked
 calibration where available and otherwise the manifest's measured frequency.
 Notes without a measurement are silent. The menu lists single-rank registers,
 including the derived Praestant 16′. Other tunings use their selected target
-frequencies. Testton respects unmapped notes in Scala and MTS.
+frequencies from MIDI 24 to 108, inclusive. Testton respects unmapped notes in
+Scala and MTS and plays frequencies of 20 Hz or higher.
 
 To check a sample, begin with Spektrum at zero and one organ stop enabled. In
 MIDI mode, hold a note and adjust Feinstimmung to minimise beating; the heading

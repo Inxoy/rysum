@@ -23,10 +23,11 @@ RysumContent::RysumContent(RysumProcessor &p)
                                                  "ck)"));
     logoButton.onClick = [this] { showView(current == 6 ? viewBeforeOrgan : 6); };
     addAndMakeVisible(logoButton);
-    diceButton.setTooltip(juce::String::fromUTF8("WÃ¼rfeln: zufÃ¤llige Einstellungen â sanft "
-                                                 "oder wild, nur in den gewÃ¤hlten Bereichen. "
-                                                 "Ein Schritt zurÃ¼"
-                                                 "ck ist mÃ¶glich."));
+    diceButton.setTooltip(
+        juce::String::fromUTF8("WÃ¼rfeln: zufÃ¤llige Einstellungen â sanft "
+                               "oder wild, nur in den gewÃ¤hlten Bereichen. "
+                               "Ein Schritt zurÃ¼"
+                               "ck ist mÃ¶glich."));
     diceButton.onClick = [this] { showDiceMenu(); };
     addAndMakeVisible(diceButton);
     addChildComponent(space);
@@ -228,7 +229,8 @@ bool RysumContent::keyPressed(const juce::KeyPress &k)
     if (c == 'y' || c == 'x')
     {
         releaseComputerKeys();
-        proc.keysOctave = juce::jlimit(2, 5, proc.keysOctave + (c == 'x' ? 1 : -1));
+        proc.keysOctave = juce::jlimit(kDsfLowestMidiNote / 12 - 1, kDsfHighestMidiNote / 12 - 1,
+                                       proc.keysOctave + (c == 'x' ? 1 : -1));
         updatePlayButtons();
         return true;
     }

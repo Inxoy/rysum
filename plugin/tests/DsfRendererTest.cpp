@@ -239,18 +239,24 @@ int main()
         std::cerr << "Original reference is not nominal meantone\n";
         return 1;
     }
-    for (const int note : {80, 82, 84, 96, 108})
+    for (const int note : {24, 25, 35, 80, 82, 84, 96, 108})
         if (!(std::abs(rysum::referenceNoteHz(tuning, note, 1) - rysum::meantoneHz(note)) <=
               1.0e-6))
         {
             std::cerr << "Nominal reference rejected a note outside the sample compass\n";
             return 1;
         }
+    if (rysum::referenceNoteHz(tuning, 23, 1) > 0.0 || rysum::referenceNoteHz(tuning, 109, 1) > 0.0)
+    {
+        std::cerr << "Reference sounded outside the C24–C108 MIDI compass\n";
+        return 1;
+    }
     std::array<double, rysum::kNumKeys> recorded{};
     recorded[static_cast<std::size_t>(rysum::keyIndexForMidi(69))] = 443.6542369446447;
     tuning.recordedHz = &recorded;
     if (std::abs(rysum::referenceNoteHz(tuning, 69, 1) - 443.6542369446447) > 1.0e-10 ||
-        rysum::referenceNoteHz(tuning, 68, 1) > 0.0 || rysum::referenceNoteHz(tuning, 108, 1) > 0.0)
+        rysum::referenceNoteHz(tuning, 68, 1) > 0.0 ||
+        rysum::referenceNoteHz(tuning, 24, 1) > 0.0 || rysum::referenceNoteHz(tuning, 108, 1) > 0.0)
     {
         std::cerr << "Recorded reference did not follow the selected pipe frequencies\n";
         return 1;
