@@ -44,8 +44,19 @@ std::shared_ptr<RoomMesh> loadObjRoom (const juce::File& file, bool zUp, float s
 {
     juce::MemoryBlock mb;
     if (! file.loadFileAsData (mb) || mb.getSize() == 0) { error = juce::String::fromUTF8 ("Datei nicht lesbar: ") + file.getFileName(); return nullptr; }
+    const size_t len = mb.getSize();
+    mb.append ("\n", 2);                     // a final line end and a terminating zero: the number readers stop there
     const char* p = static_cast<const char*> (mb.getData());
-    const char* const end = p + mb.getSize();
+    const char* const end = p + len;
+    // numbers with a decimal point whatever the host's locale is (strtof would read "1.5" as 1 with a decimal comma)
+    auto readF = [] (const char*& s) -> float
+    {
+        while (*s == ' ' || *s == '\t') ++s;
+        juce::CharPointer_ASCII c (s);
+        const double v = juce::CharacterFunctions::readDoubleValue (c);
+        s = c.getAddress();
+        return (float) v;
+    };
 
     std::vector<V3> verts;
     verts.reserve (4096);
@@ -64,10 +75,10 @@ std::shared_ptr<RoomMesh> loadObjRoom (const juce::File& file, bool zUp, float s
         const char* q = skipSpace (p, lineEnd);
         if (q + 1 < lineEnd && q[0] == 'v' && (q[1] == ' ' || q[1] == '\t'))
         {
-            char* e = nullptr;
-            const float x = std::strtof (q + 2, &e);
-            const float y = std::strtof (e, &e);
-            const float z = std::strtof (e, &e);
+            const char* e = q + 2;
+            const float x = readF (e);
+            const float y = readF (e);
+            const float z = readF (e);
             verts.push_back (zUp ? V3 { x * scale, y * scale, z * scale } : V3 { x * scale, -z * scale, y * scale });
         }
         else if (q + 1 < lineEnd && q[0] == 'f' && (q[1] == ' ' || q[1] == '\t'))
@@ -236,11 +247,19 @@ bool Raster::projectLine (V3 a, V3 b, juce::Point<float>& pa, juce::Point<float>
 
 void Raster::drawTri (const Tri& t, float emissive)
 {
+    const VV v[3] { toView (t.a), toView (t.b), toView (t.c) };
+    // outside the view (behind, or wholly beyond one side of it): nothing to shade
+    if (v[0].z < kNear && v[1].z < kNear && v[2].z < kNear) return;
+    {
+        const float kx = 0.5f * (float) w / focal * 1.02f, ky = 0.5f * (float) h / focal * 1.02f;
+        auto allOut = [&] (auto test) { return test (v[0]) && test (v[1]) && test (v[2]); };
+        if (allOut ([&] (const VV& q) { return q.x > q.z * kx; }) || allOut ([&] (const VV& q) { return q.x < -q.z * kx; })
+            || allOut ([&] (const VV& q) { return q.y > q.z * ky; }) || allOut ([&] (const VV& q) { return q.y < -q.z * ky; })) return;
+    }
     const V3 n = normalised (cross (t.b - t.a, t.c - t.a));
     const V3 toEye = normalised (eye - (t.a + t.b + t.c) * (1.0f / 3.0f));
     // seen from both sides: the walls are looked at from inside, and OBJ windings are not to be trusted
     const float bright = juce::jlimit (0.0f, 1.6f, 0.26f + 0.46f * std::abs (dot (n, lightDir)) + 0.28f * std::abs (dot (n, toEye)) + emissive);
-    const VV v[3] { toView (t.a), toView (t.b), toView (t.c) };
     fillClipped (v, 3, t.colour.getARGB(), bright);
 }
 

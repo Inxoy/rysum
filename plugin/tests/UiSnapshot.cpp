@@ -1039,6 +1039,44 @@ public:
                 proc->setStateInformation (mb.getData(), (int) mb.getSize());
                 std::cout << "Begehen: model after the state round trip " << (proc->getWalkMesh() != nullptr ? "loaded" : "missing")
                           << (proc->getWalkMesh() != nullptr && proc->walkZUp ? "  ok" : "  FAIL") << std::endl;
+                {
+                    // the same file read with Y up (the usual OBJ convention): its height becomes the length
+                    juce::String e;
+                    auto m2 = rysum::loadObjRoom (objFile, false, 1.0f, e);
+                    std::cout << "Begehen: read with Y up " << (m2 ? m2->size.x : 0.0f) << " x " << (m2 ? m2->size.y : 0.0f) << " x " << (m2 ? m2->size.z : 0.0f) << " m"
+                              << (m2 && std::abs (m2->size.x - 12.8f) < 0.01f && std::abs (m2->size.y - 9.2f) < 0.01f && std::abs (m2->size.z - 24.8f) < 0.01f ? "  ok" : "  FAIL") << std::endl;
+                    // no line end after the last face, decimals (read the same whatever the locale)
+                    auto f2 = outDir.getChildFile ("test_dreieck.obj");
+                    f2.replaceWithText ("v 0 0 0\nv 1.5 0 0\nv 0 2.25 0.5\nf 1 2 3");
+                    auto m3 = rysum::loadObjRoom (f2, true, 1.0f, e);
+                    std::cout << "Begehen: one triangle without a final line end: " << (m3 ? (int) m3->tris.size() : 0) << ", " << (m3 ? m3->size.x : 0.0f) << " x "
+                              << (m3 ? m3->size.y : 0.0f) << " x " << (m3 ? m3->size.z : 0.0f)
+                              << (m3 && m3->tris.size() == 1 && std::abs (m3->size.x - 1.5f) < 1e-4f && std::abs (m3->size.y - 2.25f) < 1e-4f ? "  ok" : "  FAIL") << std::endl;
+                }
+                {
+                    // speed: a model at the limit (200 x 200 quads = 80,000 triangles, a wavy floor over 24 m), painted 20 times
+                    juce::MemoryOutputStream os;
+                    const int N = 200;
+                    for (int y = 0; y <= N; ++y)
+                        for (int x = 0; x <= N; ++x)
+                            os << "v " << juce::String (x * 0.12f, 3) << " " << juce::String (y * 0.12f, 3) << " " << juce::String (0.4f * std::sin (x * 0.2f) * std::cos (y * 0.17f), 3) << "\n";
+                    for (int y = 0; y < N; ++y)
+                        for (int x = 0; x < N; ++x)
+                        {
+                            const int a = y * (N + 1) + x + 1;
+                            os << "f " << a << " " << a + 1 << " " << a + N + 2 << " " << a + N + 1 << "\n";
+                        }
+                    auto big = outDir.getChildFile ("test_gross.obj");
+                    big.replaceWithText (os.toString());
+                    proc->loadWalkModel (big, true, 1.0f);
+                    auto mb3 = proc->getWalkMesh();
+                    juce::Image frame (juce::Image::ARGB, wv->getWidth(), wv->getHeight(), true);
+                    const double t0 = juce::Time::getMillisecondCounterHiRes();
+                    for (int i = 0; i < 20; ++i) { juce::Graphics g (frame); wv->paintEntireComponent (g, false); }
+                    const double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 20.0;
+                    std::cout << "Begehen: " << (mb3 ? (int) mb3->tris.size() : 0) << " triangles: " << ms << " ms per frame ("
+                              << wv->getWidth() << " x " << wv->getHeight() << ")" << (mb3 && mb3->tris.size() == 80000 ? "  ok" : "  FAIL") << std::endl;
+                }
                 proc->clearWalkModel();
             }
             if (auto* c = dynamic_cast<RysumContent*> (content)) c->showView (2);

@@ -2257,16 +2257,22 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
             const auto wk = extra.getChildWithName ("WALK");
             if (wk.isValid())
             {
-                walkZUp = (bool) wk.getProperty ("zUp", false);
-                walkScale = (float) wk.getProperty ("scale", 1.0f);
+                const bool zUp = (bool) wk.getProperty ("zUp", false);
+                const float scale = (float) wk.getProperty ("scale", 1.0f);
                 for (int i = 0; i < 4; ++i) walkPose[(size_t) i] = (float) wk.getProperty (juce::StringArray { "x", "y", "yaw", "pitch" }[i], 0.0f);
                 const juce::File mf (wk["model"].toString());
-                if (mf != juce::File() && mf != walkModelFile)
+                const bool same = mf == walkModelFile && zUp == walkZUp && std::abs (scale - walkScale) < 1.0e-6f && getWalkMesh() != nullptr;
+                walkZUp = zUp; walkScale = scale;
+                if (mf == juce::File()) clearWalkModel();
+                else if (! same)
                 {
-                    if (mf.existsAsFile()) loadWalkModel (mf, walkZUp, walkScale);
-                    else walkModelFile = mf;          // gone (another computer): kept, so saving does not lose it
+                    if (! mf.existsAsFile() || loadWalkModel (mf, zUp, scale).isNotEmpty())
+                    {
+                        // gone (another computer) or unreadable: nothing shown, the name kept so saving does not lose it
+                        clearWalkModel();
+                        walkModelFile = mf;
+                    }
                 }
-                else if (mf == juce::File()) clearWalkModel();
             }
         }
         const juce::File irf (extra["irFile"].toString());

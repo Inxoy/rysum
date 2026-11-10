@@ -120,7 +120,7 @@ void WalkView::visibilityChanged()
         pushPose();
         updateButtons();
         lastTime = juce::Time::getMillisecondCounterHiRes();
-        startTimerHz (60);
+        startTimerHz (30);          // (the message thread is the host's too: a full model takes ~14 ms a frame)
         if (isShowing()) grabKeyboardFocus();
     }
     else
@@ -262,6 +262,14 @@ void WalkView::loadModel (const juce::File& f)
     else if (m != nullptr)
         status = m->name + ": " + juce::String ((int) m->tris.size()) + U (" Dreiecke, ") + juce::String (m->size.x, 1) + U (" \xc3\x97 ")
                + juce::String (m->size.y, 1) + U (" \xc3\x97 ") + juce::String (m->size.z, 1) + " m" + (m->message.isNotEmpty() ? " - " + m->message : juce::String());
+    if (m != nullptr && err.isEmpty())
+    {
+        // you stand and are stopped by the Saal's walls, not the model's: say so when they differ
+        const auto r = roomNow();
+        if (std::abs (m->size.x - r.W()) > 1.0f || std::abs (m->size.y - r.L()) > 1.0f || std::abs (m->size.z - r.H()) > 1.0f)
+            status << U ("  \xc2\xb7  der Saal ist ") << juce::String (r.W(), 1) << U (" \xc3\x97 ") << juce::String (r.L(), 1) << U (" \xc3\x97 ")
+                   << juce::String (r.H(), 1) << U (" m: \xe2\x80\x9eMa\xc3\x9f" "e \xc3\xbc" "bernehmen\xe2\x80\x9c passt ihn an");
+    }
     statusUntil = juce::Time::getMillisecondCounterHiRes() + 5000;
     updateButtons();
     repaint();
@@ -398,7 +406,7 @@ void WalkView::paint (juce::Graphics& g)
         float sx, sy, d;
         if (! rast.project (gw.at, sx, sy, d)) continue;
         const float zd = rast.depthAt ((int) sx, (int) sy);
-        if (zd > 0.0f && zd < d - 0.4f) continue;
+        if (zd > 0.0f && zd < d * 0.95f - 0.4f) continue;         // (the pipe itself is drawn a little nearer than its axis)
         const float rad = juce::jlimit (6.0f, 260.0f, (0.6f + 0.35f * gw.size) / d * 0.5f * (float) area.getWidth());
         const juce::Point<float> c (sx * sc, sy * sc);
         juce::ColourGradient grad (juce::Colour (0xffffd9a0).withAlpha (0.38f * gw.amount), c.x, c.y,
