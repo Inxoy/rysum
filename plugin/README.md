@@ -927,6 +927,12 @@ and the worst blocks in % of one core's real-time budget. The worst blocks are w
 
 ## 6. CPU
 
+**The picture**: the interface draws 60 times a second (the 3D view lowers its resolution by itself when a
+frame gets slow). **Ctrl+Shift+P** shows a readout: pictures per second, milliseconds per picture, how
+much of the window is redrawn, whether the interface thread falls behind, the renderer (Direct2D or
+software) and the pixel scale; once a second it is also written to `Documents/Rysum/paint-stats.txt`.
+**Ctrl+Shift+R** switches the renderer (for comparing; Direct2D is the fast one).
+
 What costs the most, roughly in this order: the simulated room (*Saal*, every sounding pipe has its
 own early reflections - up to 48 sounds × 24 or 62 mirror images), a long impulse response at a high
 Ambisonics order, the number of sounding pipes × output channels (8 stops × 10 notes = 80 pipes, each

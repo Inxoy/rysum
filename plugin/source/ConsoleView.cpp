@@ -35,7 +35,7 @@ void StopTile::paintButton (juce::Graphics& g, bool over, bool)
         auto knob = t.withSizeKeepingCentre (58.0f, 58.0f).translated (0.0f, 4.0f);
         juce::Path clip; clip.addEllipse (knob.reduced (2.0f));
         juce::Graphics::ScopedSaveState ss (g);
-        g.reduceClipRegion (clip);
+        if (! (dbg::skip & dbg::skipClipPath)) g.reduceClipRegion (clip);
         drawCover (g, A.knobBare, knob.expanded (12.0f).translated (0.0f, -3.0f));
     }
     drawGrain (g, tile.toNearestInt(), 0.35f);
@@ -476,6 +476,7 @@ void ConsoleView::refresh()
 void ConsoleView::paint (juce::Graphics& g)
 {
     auto& A = Assets::get();
+    if (! (dbg::skip & dbg::skipTranslucent))
     {
         juce::Graphics::ScopedSaveState ss (g);
         g.setOpacity (0.09f);

@@ -1,4 +1,5 @@
 #include <functional>
+#include <thread>
 // Renders the three views of the editor into PNG files (for checking the UI without a host).
 //   RysumUiSnapshot <samples folder> <output folder>
 #include "PluginProcessor.h"
@@ -556,6 +557,128 @@ public:
         }
 
         editor.reset (dynamic_cast<RysumEditor*> (proc->createEditor()));
+        if (std::getenv ("RYSUM_D2D_BENCH") != nullptr)
+        {
+            // a real window at full-HD size (the interface 1.5x, as in full screen): how many whole repaints per
+            // second each renderer manages per page, and what leaving out single drawing effects gains
+            editor->setSize (1920, 1080);
+            editor->addToDesktop (juce::ComponentPeer::windowAppearsOnTaskbar);
+            editor->setTopLeftPosition (juce::SystemStats::getEnvironmentVariable ("RYSUM_BENCH_X", "0").getIntValue(), 0);
+            editor->setVisible (true);
+            auto* c = dynamic_cast<RysumContent*> (editor->getChildComponent (0));
+            auto* peer = editor->getPeer();
+            if (c == nullptr || peer == nullptr) { std::cout << "BENCH: no window" << std::endl; std::_Exit (1); }
+            const auto engines = peer->getAvailableRenderingEngines();
+            auto measure = [&] (int view, int skip, const juce::String& label)
+            {
+                rysum::ui::dbg::skip = skip;
+                c->showView (view);
+                auto spin = [&] (double ms)
+                {
+                    const double end = juce::Time::getMillisecondCounterHiRes() + ms;
+                    while (juce::Time::getMillisecondCounterHiRes() < end) { editor->repaint(); c->tick(); juce::MessageManager::getInstance()->runDispatchLoopUntil (2); }
+                };
+                spin (400);
+                const int p0 = c->paintsDone;
+                const double t0 = juce::Time::getMillisecondCounterHiRes();
+                spin (1500);
+                const double fps = (c->paintsDone - p0) / ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                std::cout << "BENCH " << engines[peer->getCurrentRenderingEngine()] << "  " << label << ": " << fps << " repaints/s" << std::endl;
+            };
+            const char* names[] { "Spieltisch", "Raum", "Saal", "Klang", "Effekte", "Modulation", "", "", "Begehen" };
+            {
+                // as in the app: audio running in real time (a held chord), repaints only from the interface's own timers
+                std::atomic<bool> audioRun { true };
+                std::thread audio ([&]
+                {
+                    juce::AudioBuffer<float> b (16, 512);
+                    bool first = true;
+                    double next = juce::Time::getMillisecondCounterHiRes();
+                    while (audioRun.load())
+                    {
+                        juce::MidiBuffer mb;
+                        if (first) { for (int n : { 48, 55, 60, 64, 67 }) mb.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0); first = false; }
+                        b.clear(); proc->processBlock (b, mb);
+                        next += 512.0 / 48.0;
+                        const double wait = next - juce::Time::getMillisecondCounterHiRes();
+                        if (wait > 0) std::this_thread::sleep_for (std::chrono::microseconds ((int) (wait * 1000.0)));
+                    }
+                });
+                for (int e = 0; e < engines.size(); ++e)
+                {
+                    peer->setCurrentRenderingEngine (e);
+                    for (int v : { 0, 5, 8 })
+                    {
+                        c->showView (v);
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil (600);
+                        const int p0 = c->paintsDone;
+                        const double t0 = juce::Time::getMillisecondCounterHiRes();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil (2000);
+                        const double fps = (c->paintsDone - p0) / ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                        std::cout << "BENCH natural, audio running, " << engines[e] << "  " << names[v] << ": " << fps << " paints/s" << std::endl;
+                    }
+                }
+                // the full-screen window (kiosk mode), as F11 opens it
+                if (c->onToggleFullscreen) c->onToggleFullscreen();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (800);
+                if (auto* fp = c->getPeer())
+                {
+                    const auto fe = fp->getAvailableRenderingEngines();
+                    for (int e = 0; e < fe.size(); ++e)
+                    {
+                        fp->setCurrentRenderingEngine (e);
+                        for (int v : { 0, 5, 8 })
+                        {
+                            c->showView (v);
+                            juce::MessageManager::getInstance()->runDispatchLoopUntil (600);
+                            const int p0 = c->paintsDone;
+                            const double t0 = juce::Time::getMillisecondCounterHiRes();
+                            juce::MessageManager::getInstance()->runDispatchLoopUntil (2000);
+                            const double fps = (c->paintsDone - p0) / ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                            std::cout << "BENCH full screen, audio running, " << fe[e] << "  " << names[v] << ": " << fps << " paints/s   (screen "
+                                      << fp->getBounds().getWidth() << " x " << fp->getBounds().getHeight() << ", scale " << fp->getPlatformScaleFactor() << ")" << std::endl;
+                        }
+                    }
+                    fp->setCurrentRenderingEngine (fe.indexOf ("Direct2D") >= 0 ? fe.indexOf ("Direct2D") : 0);
+                }
+                if (c->onToggleFullscreen) c->onToggleFullscreen();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (800);
+                audioRun = false;
+                audio.join();
+                for (int e = 0; e < engines.size(); ++e)
+                {
+                    peer->setCurrentRenderingEngine (e);
+                    for (int v : { 0, 5 })
+                    {
+                        c->showView (v);
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil (600);
+                        const int p0 = c->paintsDone;
+                        const double t0 = juce::Time::getMillisecondCounterHiRes();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil (2000);
+                        const double fps = (c->paintsDone - p0) / ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                        std::cout << "BENCH natural, no audio, " << engines[e] << "  " << names[v] << ": " << fps << " paints/s" << std::endl;
+                    }
+                }
+            }
+            for (int e = 0; e < engines.size(); ++e)
+            {
+                peer->setCurrentRenderingEngine (e);
+                for (int v : { 0, 1, 2, 3, 4, 5, 8 }) measure (v, 0, names[v]);
+            }
+            peer->setCurrentRenderingEngine (engines.indexOf ("Direct2D") >= 0 ? engines.indexOf ("Direct2D") : 0);
+            namespace D = rysum::ui::dbg;
+            for (int v : { 0, 5 })
+            {
+                measure (v, D::skipOverlay, juce::String (names[v]) + " without the overlay");
+                measure (v, D::skipCover, juce::String (names[v]) + " without photos (drawCover)");
+                measure (v, D::skipGrain, juce::String (names[v]) + " without grain tiles");
+                measure (v, D::skipClipPath, juce::String (names[v]) + " without round clips");
+                measure (v, D::skipTranslucent, juce::String (names[v]) + " without the faint wall");
+                measure (v, 31, juce::String (names[v]) + " without all of these");
+            }
+            std::cout.flush();
+            std::_Exit (0);
+        }
         editor->setSize (1280, 720);
         auto* content = editor->getChildComponent (0);
         auto shoot = [&] (int view, const juce::String& name)

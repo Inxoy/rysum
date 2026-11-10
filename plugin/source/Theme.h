@@ -101,9 +101,13 @@ struct Assets
     }
 };
 
+/** benchmark switches: drawing effects that can be left out, to measure what each one costs (0 = draw all) */
+namespace dbg { inline int skip = 0; enum { skipOverlay = 1, skipCover = 2, skipGrain = 4, skipClipPath = 8, skipTranslucent = 16 }; }
+
 /** draws an image like CSS object-fit: cover */
 inline void drawCover (juce::Graphics& g, const juce::Image& img, juce::Rectangle<float> r, float yAlign = 0.5f)
 {
+    if (dbg::skip & dbg::skipCover) return;
     if (! img.isValid()) return;
     const float s = juce::jmax (r.getWidth() / (float) img.getWidth(), r.getHeight() / (float) img.getHeight());
     const float w = (float) img.getWidth() * s, h = (float) img.getHeight() * s;
@@ -113,9 +117,11 @@ inline void drawCover (juce::Graphics& g, const juce::Image& img, juce::Rectangl
                  juce::RectanglePlacement::stretchToFit);
 }
 
+
 /** tiles the grain texture over an area */
 inline void drawGrain (juce::Graphics& g, juce::Rectangle<int> r, float opacity)
 {
+    if (dbg::skip & dbg::skipGrain) return;
     auto& t = Assets::get().grainTile;
     if (! t.isValid()) return;
     g.setTiledImageFill (t, 0, 0, opacity);

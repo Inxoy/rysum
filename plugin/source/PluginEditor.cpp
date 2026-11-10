@@ -186,11 +186,7 @@ bool RysumContent::keyPressed (const juce::KeyPress& k)
         if (k.getKeyCode() == 'R') cycleRenderer();
         else
         {
-            stats.on = ! stats.on;
-            stats.secondStart = juce::Time::getMillisecondCounterHiRes(); stats.lastTick = 0.0; stats.paints = stats.ticks = 0;
-            stats.paintMs = stats.paintMax = stats.area = stats.tickMax = 0.0;
-            stats.shown = "Messe ...";
-            if (stats.on) paintStatsFile().appendText ("---- " + juce::Time::getCurrentTime().toString (true, true) + "\n");
+            if (stats.on) stats.on = false; else startStats();
             repaint();
         }
         return true;
@@ -476,7 +472,8 @@ void RysumContent::showModMenu (juce::Component& target, const juce::String& par
 
 void RysumContent::paintOverChildren (juce::Graphics& g)
 {
-    g.drawImageAt (vignette, 0, 0);          // darkened edges and the grain, blended once in the constructor
+    ++paintsDone;
+    if (! (dbg::skip & dbg::skipOverlay)) g.drawImageAt (vignette, 0, 0);          // darkened edges and the grain, blended once in the constructor
     if (stats.on)
     {
         // the time from paint() to here covers every child painted in this repaint
@@ -529,6 +526,15 @@ void RysumContent::updateStats()
     paintStatsFile().appendText (juce::Time::getCurrentTime().toString (false, true, true, true) + "  " + stats.shown.replace ("\n", "  |  ") + "\n");
     stats.secondStart = now; stats.paints = 0; stats.ticks = 0; stats.paintMs = stats.paintMax = stats.area = stats.tickMax = 0.0;
     repaint (kW - 430, kHeader + 4, 424, 54);
+}
+
+void RysumContent::startStats()
+{
+    stats.on = true;
+    stats.secondStart = juce::Time::getMillisecondCounterHiRes(); stats.lastTick = 0.0; stats.paints = stats.ticks = 0;
+    stats.paintMs = stats.paintMax = stats.area = stats.tickMax = 0.0;
+    stats.shown = "Messe ...";
+    paintStatsFile().appendText ("---- " + juce::Time::getCurrentTime().toString (true, true) + "\n");
 }
 
 void RysumContent::cycleRenderer()
@@ -591,7 +597,19 @@ RysumEditor::RysumEditor (RysumProcessor& p) : AudioProcessorEditor (p), content
     {
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->toggleFullscreen(); });
     };
-    startTimer (0, 33);
+    startTimer (0, 16);          // 60 times a second: on fast screens 30 looked choppy (the paints are cheap: 0.5 - 3 ms)
+    // (measuring: RYSUM_PAINT_STATS=1 switches the readout on at start, RYSUM_PAINT_STATS=fs also goes full screen,
+    //  RYSUM_PAINT_VIEW=n opens page n)
+    const auto ps = juce::SystemStats::getEnvironmentVariable ("RYSUM_PAINT_STATS", {});
+    if (ps.isNotEmpty())
+    {
+        content.startStats();
+        const auto pv = juce::SystemStats::getEnvironmentVariable ("RYSUM_PAINT_VIEW", {});
+        if (pv.isNotEmpty()) content.showView (pv.getIntValue());
+        if (juce::SystemStats::getEnvironmentVariable ("RYSUM_PAINT_CHORD", {}).isNotEmpty())
+            for (int n : { 48, 55, 60, 64, 67 }) static_cast<RysumProcessor&> (processor).keyboardState.noteOn (1, n, 0.8f);   // a held chord, as when playing
+        if (ps == "fs") juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<RysumEditor> (this)] { if (safe != nullptr && safe->fullscreen == nullptr) safe->toggleFullscreen(); });
+    }
 }
 
 RysumEditor::~RysumEditor()

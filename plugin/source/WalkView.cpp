@@ -120,7 +120,7 @@ void WalkView::visibilityChanged()
         pushPose();
         updateButtons();
         lastTime = juce::Time::getMillisecondCounterHiRes();
-        startTimerHz (30);          // (the message thread is the host's too: a full model takes ~14 ms a frame)
+        startTimerHz (60);          // (smooth looking around; the resolution adapts so a frame stays within ~8 ms of drawing)
         if (isShowing()) grabKeyboardFocus();
     }
     else
@@ -515,15 +515,15 @@ void WalkView::paint (juce::Graphics& g)
         // geometry): down after a few slow frames, up when the next step would still be quick, a while later
         static constexpr float kSteps[] { 1.0f, 0.85f, 0.7f, 0.55f, 0.42f };
         const float pixMs = rast.rasterMs;
-        if (pixMs > 11.0f) { ++slowFrames; quickFrames = 0; }
+        if (pixMs > 8.0f) { ++slowFrames; quickFrames = 0; }
         else
         {
             slowFrames = 0;
             const float up = resLevel > 0 ? kSteps[resLevel - 1] / kSteps[resLevel] : 1.0f;
-            if (resLevel > 0 && pixMs * up * up < 9.0f) ++quickFrames; else quickFrames = 0;
+            if (resLevel > 0 && pixMs * up * up < 6.5f) ++quickFrames; else quickFrames = 0;
         }
-        if (slowFrames >= 6 && resLevel < 4) { ++resLevel; slowFrames = 0; }
-        if (quickFrames >= 45 && resLevel > 0) { --resLevel; quickFrames = 0; }
+        if (slowFrames >= 10 && resLevel < 4) { ++resLevel; slowFrames = 0; }
+        if (quickFrames >= 90 && resLevel > 0) { --resLevel; quickFrames = 0; }
         resScale = kSteps[resLevel];
     }
 

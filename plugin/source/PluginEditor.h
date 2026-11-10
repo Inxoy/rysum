@@ -143,7 +143,13 @@ private:
     } stats;
     void updateStats();
     void tickBody();
+public:
+    int paintsDone = 0;                          // (counted for the benchmark)
+private:
     void cycleRenderer();
+public:
+    void startStats();
+private:
 };
 
 class RysumEditor : public juce::AudioProcessorEditor,
