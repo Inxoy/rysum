@@ -12,7 +12,10 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
     addAndMakeVisible (console);
     addChildComponent (organ);
     addChildComponent (speakers);
+    addChildComponent (walk);
     klang.onOpenSpeakers = [this] { showView (7); };
+    saal.onOpenWalk = [this] { releaseComputerKeys(); showView (8); };
+    walk.onBack = [this] { showView (2); };
     outInfoButton.setTooltip (juce::String::fromUTF8 ("Lautsprecher einrichten (AllRAD)"));
     outInfoButton.setAlpha (0.0f);
     outInfoButton.onClick = [this] { showView (current == 7 ? viewBeforeOrgan : 7); };
@@ -103,10 +106,12 @@ RysumContent::RysumContent (RysumProcessor& p) : proc (p), console (p), space (p
 
 void RysumContent::showView (int v)
 {
-    if ((v == 6 || v == 7) && current != 6 && current != 7) viewBeforeOrgan = current;
+    if ((v == 6 || v == 7) && current != 6 && current != 7 && current != 8) viewBeforeOrgan = current;
+    if (v == 8 && current != 8) viewBeforeOrgan = 2;
     current = v;
     organ.setVisible (v == 6);
     speakers.setVisible (v == 7);
+    walk.setVisible (v == 8);
     console.setVisible (v == 0);
     space.setVisible (v == 1);
     saal.setVisible (v == 2);
@@ -114,7 +119,8 @@ void RysumContent::showView (int v)
     fx.setVisible (v == 4);
     mod.setVisible (v == 5);
     for (int i = 0; i < 6; ++i) tabs[(size_t) i].setToggleState (i == v, juce::dontSendNotification);
-    if (proc.computerKeys) grabKeyboardFocus();
+    if (v == 8) { if (walk.isShowing()) walk.grabKeyboardFocus(); }
+    else if (proc.computerKeys) grabKeyboardFocus();
 }
 
 void RysumContent::resized()
@@ -128,6 +134,7 @@ void RysumContent::resized()
     saal.setBounds (body);
     organ.setBounds (body);
     speakers.setBounds (body);
+    walk.setBounds (body);
     outInfoButton.setBounds (kOutX + kOutW + 2, 8, kFullX - 5 - (kOutX + kOutW + 2), kHeader - 16);
     logoButton.setBounds (24, 6, 116, 44);
     patchPrev.setBounds (152, 14, 22, 28);

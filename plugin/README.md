@@ -616,6 +616,22 @@ the reflections), so each reflection becomes a falling chirp from its own direct
 reflections (longer ways) chirp more. *Eis* blends from the plain reflections to only the chirps,
 *Eis Länge* sets how long a chirp is (about 5–50 ms).
 
+*Saal · Begehen* (button *3D begehen* on the floor plan): the Saal in 3D, seen through your own
+eyes. The pipes float where Ambisonics places them (with their motion and modulation); sounding
+pipes glow. **W A S D** walk, **dragging the mouse** looks around, **Q / E** or the arrow keys
+turn, **Shift** runs, the **mouse wheel** changes the field of view, **Esc** goes back. The
+camera is the listener: walking moves the listener of the room simulation and the direct sound
+(as *Hörer* on the living-organ tab does), the walls stop you. Turning your head is heard with
+headphones (binaural, transaural) only; with the Ambisonics or loudspeaker outputs the field
+stays still. A small map (bottom right) is turned with your view. While the view has the keyboard
+the walking keys do not play notes: play over MIDI, or hold a chord with *Halten*.
+*Raummodell laden …* takes an OBJ file (with its MTL colours, up to 80,000 triangles) as the
+room you see; *Meter / Zentimeter / …* and *Z oben* (Z instead of Y as the up axis) fix the
+import. The model is only seen: the sound keeps using the Saal's room, drawn as a red outline.
+*Maße übernehmen* gives the Saal the model's width, length and height (as a rectangle).
+*Zum Platz* goes back to the listener's place. The model's file and where you stand are saved
+with the project (not with patches); a missing file is kept by name.
+
 **Modulation**
 - *LFO 1–4*: shape (sine, triangle, saw, square, random steps, smooth random), *Tempo*
   0.01–20 Hz or *Sync* to the project tempo (note values), *Versatz je Pfeife* (spread):

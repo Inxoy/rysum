@@ -72,6 +72,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void refresh();
+    std::function<void()> onOpenWalk;          // the editor shows the 3D view ("Begehen")
 
 private:
     using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -94,7 +95,7 @@ private:
     void selectRoom (int r);
     juce::String assignId (int slot) const;
     void showAssignMenu (int slot);
-    juce::TextButton onButton { "Saal an" };
+    juce::TextButton onButton { "Saal an" }, walkButton { "3D begehen" };
     std::unique_ptr<ButtonAtt> onAtt;
     juce::ComboBox order;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> orderAtt;

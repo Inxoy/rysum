@@ -573,6 +573,10 @@ SaalView::SaalView (RysumProcessor& p) : proc (p)
 {
     addAndMakeVisible (plan);
     addAndMakeVisible (shapes);
+    walkButton.setTooltip (U ("Den Saal in 3D begehen: W A S D und die Maus. Wo du stehst und hinschaust, h\xc3\xb6rst du; "
+                              "ein eigenes Raummodell (OBJ) kann geladen werden."));
+    walkButton.onClick = [this] { if (onOpenWalk) onOpenWalk(); };
+    addAndMakeVisible (walkButton);
     onButton.setClickingTogglesState (true);
     onButton.setTooltip (U ("Simulierter Saal statt Impulsantwort: fr\xc3\xbche Reflexionen jeder Pfeife (Spiegelquellen) und Nachhall (Strahlenverfolgung). "
                             "Alles modulierbar \xe2\x80\x93 der Raum ist spielbar."));
@@ -844,6 +848,7 @@ void SaalView::resized()
     }
     planBox = r;
     plan.setBounds (r);
+    walkButton.setBounds (r.getRight() - 98, r.getY() + 30, 94, 24);      // (below the plan's hint line)
     {
         auto b = lucBox.withTrimmedTop (32);
         auto t = b.removeFromTop (26);

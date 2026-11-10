@@ -59,8 +59,11 @@ void OrganEngine::updateLive (const EngineParams& p, double dt) noexcept
                 default: tx += s * std::sin (a); ty += 0.5f * s * std::sin (2.0f * a); break;  // a figure eight
             }
         }
+        // the 3D view: the camera walks, the listener with it
+        const bool walking3d = viewWalkOn.load();
+        if (walking3d) { tx += viewX.load(); ty += viewY.load(); }
         // (a switched shape or a typed value: the listener walks there quickly instead of jumping)
-        const float k = 1.0f - std::exp (-fdt / 0.12f);
+        const float k = 1.0f - std::exp (-fdt / (walking3d ? 0.04f : 0.12f));
         walkX += k * (tx - walkX); walkY += k * (ty - walkY);
         if (std::abs (tx) + std::abs (ty) < 1.0e-4f && std::abs (walkX) + std::abs (walkY) < 0.003f) walkX = walkY = 0.0f;
         liveWalk = walkX != 0.0f || walkY != 0.0f;

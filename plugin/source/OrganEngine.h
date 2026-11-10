@@ -303,6 +303,10 @@ public:
     std::atomic<bool>  wearReset { false };                               // UI: all pipes new again
     std::atomic<int>   sympNow { 0 }, netKeyNow { -1 };                   // pipes ringing along; the key the walker sounds
     std::atomic<float> pureNow { 0.0f };                                  // largest correction right now (cents)
+    // ---- "Begehen" (the 3D view): while it is open the camera is the listener. Offset from the listener's place
+    //      in the room (m, like listenX / listenY) and where the head points (degrees, + = left, like binYaw)
+    std::atomic<bool>  viewWalkOn { false };
+    std::atomic<float> viewX { 0.0f }, viewY { 0.0f }, viewYaw { 0.0f };
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
     /** "Raumverfall" on the Ambisonics channels. The processor calls it itself after the impulse response

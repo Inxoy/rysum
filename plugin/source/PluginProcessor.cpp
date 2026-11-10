@@ -1213,7 +1213,8 @@ void RysumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     // ---- binaural decoding (head rotation + HRTF filters)
     if (binaural)
     {
-        const float yaw = haveModVals ? modVals[(size_t) ix.binYaw] : binYawParam->load();
+        float yaw = haveModVals ? modVals[(size_t) ix.binYaw] : binYawParam->load();
+        if (engine.viewWalkOn.load()) yaw = rysum::wrapAz (yaw + engine.viewYaw.load());     // looking around in the 3D view
         float* l = buffer.getWritePointer (0);
         if (buffer.getNumChannels() > 1)
             binActive->process (binBuf.getArrayOfWritePointers(), n, l, buffer.getWritePointer (1), yaw);
@@ -2016,6 +2017,19 @@ juce::ValueTree RysumProcessor::makeState (bool forPatch)
     auto state = apvts.copyState();
     juce::ValueTree extra ("EXTRA");
     if (! forPatch) extra.setProperty ("samplesFolder", samplesFolder.getFullPathName(), nullptr);
+    if (! forPatch)
+    {
+        // the 3D view: the loaded room model and where one stands in it (the project's, not a patch's)
+        juce::ValueTree wk ("WALK");
+        wk.setProperty ("model", walkModelFile.getFullPathName(), nullptr);
+        wk.setProperty ("zUp", walkZUp, nullptr);
+        wk.setProperty ("scale", walkScale, nullptr);
+        wk.setProperty ("x", walkPose[0].load(), nullptr);
+        wk.setProperty ("y", walkPose[1].load(), nullptr);
+        wk.setProperty ("yaw", walkPose[2].load(), nullptr);
+        wk.setProperty ("pitch", walkPose[3].load(), nullptr);
+        extra.appendChild (wk, nullptr);
+    }
     extra.setProperty ("irFile", irFile.getFullPathName(), nullptr);
     extra.setProperty ("customFolder", customOverride.getFullPathName(), nullptr);
     if (! forPatch) extra.setProperty ("sofaFile", sofaFile.getFullPathName(), nullptr);
@@ -2237,6 +2251,23 @@ void RysumProcessor::applyState (juce::ValueTree state, bool forPatch)
                 for (int k = 0; k < kNumKeys; ++k) engine.wear[(size_t) s][(size_t) k] = k < we.size() ? juce::jlimit (0.0f, 1.0f, we[k].getFloatValue()) : 0.0f;
             }
             if (! hasPositions) applyLayout (s);
+        }
+        if (! forPatch)
+        {
+            const auto wk = extra.getChildWithName ("WALK");
+            if (wk.isValid())
+            {
+                walkZUp = (bool) wk.getProperty ("zUp", false);
+                walkScale = (float) wk.getProperty ("scale", 1.0f);
+                for (int i = 0; i < 4; ++i) walkPose[(size_t) i] = (float) wk.getProperty (juce::StringArray { "x", "y", "yaw", "pitch" }[i], 0.0f);
+                const juce::File mf (wk["model"].toString());
+                if (mf != juce::File() && mf != walkModelFile)
+                {
+                    if (mf.existsAsFile()) loadWalkModel (mf, walkZUp, walkScale);
+                    else walkModelFile = mf;          // gone (another computer): kept, so saving does not lose it
+                }
+                else if (mf == juce::File()) clearWalkModel();
+            }
         }
         const juce::File irf (extra["irFile"].toString());
         if (irf != juce::File() && irf != irFile && irf.existsAsFile())

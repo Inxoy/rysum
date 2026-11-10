@@ -8,6 +8,7 @@
 #include "Lucier.h"
 #include "LucierPiece.h"
 #include "Speakers.h"
+#include "Walk3D.h"
 #include <map>
 
 // the effect version ("Rysum FX", for audio tracks) is the same code built with IsSynth = 0
@@ -260,6 +261,25 @@ public:
                                                       "lvNetOn", "lvNetPath", "lvNetDiv", "lvNetRate", "lvNetGate" };
     /** Verschleiss: all pipes new again (message thread) */
     void resetWear() { engine.wearReset = true; }
+
+    // ---- "Begehen": the 3D view's room model (an OBJ file; only seen, the sound uses the Saal's room) and pose
+    std::shared_ptr<const rysum::RoomMesh> getWalkMesh() const { return std::atomic_load (&walkMesh); }
+    /** loads the model (any thread); returns an error text, empty on success */
+    juce::String loadWalkModel (const juce::File& f, bool zUp, float scale)
+    {
+        juce::String err;
+        auto m = rysum::loadObjRoom (f, zUp, scale, err);
+        if (m == nullptr) return err;
+        walkModelFile = f; walkZUp = zUp; walkScale = scale;
+        std::atomic_store (&walkMesh, std::shared_ptr<const rysum::RoomMesh> (std::move (m)));
+        return {};
+    }
+    void clearWalkModel() { walkModelFile = juce::File(); std::atomic_store (&walkMesh, std::shared_ptr<const rysum::RoomMesh>()); }
+    juce::File walkModelFile;
+    bool walkZUp = false;
+    float walkScale = 1.0f;
+    /** camera: offset from the listener's place (m), yaw (degrees, + = left), pitch (degrees, + = up) */
+    std::array<std::atomic<float>, 4> walkPose {};
     static constexpr const char* kPipeSndKeys[8] { "Att", "Sharp", "Iso", "Rep", "Puff", "HiFreq", "HiGain", "HiShape" };
     static constexpr const char* kSpcIds[7] { "spcErode", "spcWeather", "spcGrid", "spcBits", "spcRate", "spcDrops", "spcAlias" };
 
@@ -431,6 +451,7 @@ private:
     float lucGrown = 0.0f, lucEffective = 1.0f;
     bool lucBuilding = false;
     juce::String builtLucKey, lucBaseKey;
+    std::shared_ptr<const rysum::RoomMesh> walkMesh;           // the 3D view's model (atomic_load / atomic_store)
     std::shared_ptr<const rysum::LucierBase> lucBase;          // the pool thread reads it, the message thread swaps it
     uint32_t lucSerial = 0;
     std::deque<std::shared_ptr<const rysum::TailIR>> lucKeepAlive;

@@ -984,6 +984,72 @@ public:
         }
 
         {
+            // "Begehen": the Saal in 3D. A chord sounds; walking moves the listener in the engine; a model loads and
+            // goes through the project state
+            auto setReal = [&] (const char* id, float v) { if (auto* q = proc->apvts.getParameter (id)) q->setValueNotifyingHost (q->convertTo0to1 (v)); };
+            setReal ("simOn", 1.0f);
+            juce::AudioBuffer<float> st (16, 512);
+            auto run = [&] (int blocks, std::initializer_list<int> on)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    juce::MidiBuffer mb;
+                    if (b == 0) for (int n : on) mb.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                    st.clear(), proc->processBlock (st, mb);
+                }
+            };
+            std::function<rysum::ui::WalkView* (juce::Component*)> findWalk = [&] (juce::Component* c) -> rysum::ui::WalkView*
+            {
+                if (auto* w = dynamic_cast<rysum::ui::WalkView*> (c)) return w;
+                for (auto* ch : c->getChildren()) if (auto* f = findWalk (ch)) return f;
+                return nullptr;
+            };
+            auto* wv = findWalk (content);
+            for (int i = 0; i < 4; ++i) proc->walkPose[(size_t) i] = 0.0f;
+            proc->clearWalkModel();
+            if (auto* c = dynamic_cast<RysumContent*> (content)) c->showView (8);
+            run (30, { 48, 55, 60, 64, 67 });
+            shoot (8, "ui_begehen.png");
+            std::cout << "Begehen: view on " << proc->engine.viewWalkOn.load() << (proc->engine.viewWalkOn.load() && wv != nullptr ? "  ok" : "  FAIL") << std::endl;
+            if (wv != nullptr)
+            {
+                // two seconds forwards, then turned to the left by 90 degrees: the engine's listener follows
+                for (int i = 0; i < 40; ++i) wv->stepForTest (0.05, true, false, false, false, 0.0f);
+                run (40, {});
+                const float wy = proc->engine.viewY.load(), ly = proc->engine.listenerYNow.load();
+                std::cout << "Begehen: walked " << wy << " m forwards, listener in the engine " << ly << " m"
+                          << (wy > 2.5f && std::abs (ly - wy) < 0.1f ? "  ok" : "  FAIL") << std::endl;
+                wv->stepForTest (0.05, false, false, false, false, 90.0f);
+                std::cout << "Begehen: yaw " << proc->engine.viewYaw.load() << (std::abs (proc->engine.viewYaw.load() - 90.0f) < 0.01f ? "  ok" : "  FAIL") << std::endl;
+                shoot (8, "ui_begehen_gedreht.png");
+                // a room model (OBJ, z up): the small chapel from Walk3D
+                auto objFile = outDir.getChildFile ("test_kapelle.obj");
+                objFile.replaceWithText (rysum::makeTestObj());
+                proc->walkZUp = true;
+                wv->loadModelForTest (objFile);
+                for (int i = 0; i < 4; ++i) proc->walkPose[(size_t) i] = 0.0f;
+                if (auto* c = dynamic_cast<RysumContent*> (content)) { c->showView (2); c->showView (8); }
+                auto m = proc->getWalkMesh();
+                std::cout << "Begehen: model " << (m ? (int) m->tris.size() : 0) << " triangles, " << (m ? m->size.x : 0.0f) << " x "
+                          << (m ? m->size.y : 0.0f) << " x " << (m ? m->size.z : 0.0f) << " m"
+                          << (m && m->tris.size() == 16 * 12 && std::abs (m->size.x - 12.8f) < 0.01f && std::abs (m->size.z - 9.2f) < 0.01f ? "  ok" : "  FAIL") << std::endl;
+                shoot (8, "ui_begehen_modell.png");
+                juce::MemoryBlock mb; proc->getStateInformation (mb);
+                proc->clearWalkModel();
+                proc->setStateInformation (mb.getData(), (int) mb.getSize());
+                std::cout << "Begehen: model after the state round trip " << (proc->getWalkMesh() != nullptr ? "loaded" : "missing")
+                          << (proc->getWalkMesh() != nullptr && proc->walkZUp ? "  ok" : "  FAIL") << std::endl;
+                proc->clearWalkModel();
+            }
+            if (auto* c = dynamic_cast<RysumContent*> (content)) c->showView (2);
+            std::cout << "Begehen: leaving the view gives the listener back " << (proc->engine.viewWalkOn.load() ? "no" : "yes")
+                      << (! proc->engine.viewWalkOn.load() ? "  ok" : "  FAIL") << std::endl;
+            juce::MidiBuffer off; for (int n : { 48, 55, 60, 64, 67 }) off.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+            st.clear(), proc->processBlock (st, off);
+            setReal ("simOn", 0.0f);
+        }
+
+        {
             // scenes: A with a soft Gedackt, B louder with more wind leaks; half way glides, switches change at the middle
             auto setReal = [&] (const char* id, float v) { if (auto* q = proc->apvts.getParameter (id)) q->setValueNotifyingHost (q->convertTo0to1 (v)); };
             auto real = [&] (const char* id) { return proc->apvts.getRawParameterValue (id)->load(); };
