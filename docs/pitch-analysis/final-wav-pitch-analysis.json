@@ -3,7 +3,7 @@
   "analysis_version": "1.0.0",
   "python_version": "3.14.8",
   "numpy_version": "2.5.3",
-  "manifest_sha256": "3dcf656827834229bca3e0b7e3242dadd7c4ae9e6ecfaefa9155217fc1f9735f",
+  "manifest_sha256": "73ae4eb2de36a68d6da081799e5e1344e512da7021e893eb823b252f3f18b3c0",
   "analysis_script_sha256": "3048f9f01c6ee77e345aacf71cec4d0a8b9efeff6aa5da0052af1b1e427c930e",
   "search_half_width_cents": 100,
   "thresholds": {
@@ -10805,57 +10805,57 @@
       ],
       "status": "compound_unresolved",
       "spectral_observation_region": {
-        "start_frame": 38065,
-        "end_frame": 71665
+        "start_frame": 34990,
+        "end_frame": 59904
       },
       "spectral_peaks": [
         {
-          "frequency_hz": 445.15153997658774,
-          "relative_db": -11.529133111424827
+          "frequency_hz": 445.08547677646413,
+          "relative_db": -11.682394829401314
         },
         {
-          "frequency_hz": 722.505794600975,
-          "relative_db": -39.72327204795662
+          "frequency_hz": 730.0744519230569,
+          "relative_db": -38.47982979037908
         },
         {
-          "frequency_hz": 729.7196278751635,
-          "relative_db": -36.47392609659003
+          "frequency_hz": 733.5504064321433,
+          "relative_db": -36.404492600916456
         },
         {
-          "frequency_hz": 738.4294277227165,
-          "relative_db": -32.204134198520286
+          "frequency_hz": 737.1761010180613,
+          "relative_db": -28.48339793264359
         },
         {
-          "frequency_hz": 741.7893941351059,
+          "frequency_hz": 741.7739667486247,
           "relative_db": 0.0
         },
         {
-          "frequency_hz": 745.1593270245818,
-          "relative_db": -30.200796560733664
+          "frequency_hz": 746.3371887461801,
+          "relative_db": -34.308985689254115
         },
         {
-          "frequency_hz": 755.7583844559402,
-          "relative_db": -39.01764931070265
+          "frequency_hz": 759.748135340562,
+          "relative_db": -38.329620690507966
         },
         {
-          "frequency_hz": 890.2776767867105,
-          "relative_db": -25.051685604756152
+          "frequency_hz": 890.1631439049538,
+          "relative_db": -25.15253554527324
         },
         {
-          "frequency_hz": 1335.4702532983392,
-          "relative_db": -25.85955206613172
+          "frequency_hz": 1335.2459245597483,
+          "relative_db": -26.064453766889844
         },
         {
-          "frequency_hz": 1483.5744069711793,
-          "relative_db": -19.952679863593396
+          "frequency_hz": 1483.5613782941236,
+          "relative_db": -19.955727109235895
         },
         {
-          "frequency_hz": 2225.326930424876,
-          "relative_db": -30.632797257575405
+          "frequency_hz": 2225.2632833460757,
+          "relative_db": -30.510037880069092
         },
         {
-          "frequency_hz": 2967.164992228458,
-          "relative_db": -36.31602468576384
+          "frequency_hz": 2967.138125721815,
+          "relative_db": -36.31341417925591
         }
       ]
     },
