@@ -2101,14 +2101,19 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     {
         const int selection = juce::roundToInt(apvts.getRawParameterValue("dsfRegister")->load());
         if (selection == static_cast<int>(kDsfReferenceStops.size()))
-            referenceTuning.tuning = makeKeyTuning(kQuarterCommaMeantone);
+        {
+            // The nominal reference shares the recorded organ's short octave and compass.
+            const auto nominalTuning = makeKeyTuning(kQuarterCommaMeantone);
+            for (std::size_t key = 0; key < kPhysKeys.size(); ++key)
+                recordedHz[key] = keyboardTuningHz(nominalTuning, kPhysKeys[key]);
+        }
         else
         {
             const auto index = static_cast<std::size_t>(
                 juce::jlimit(0, static_cast<int>(kDsfReferenceStops.size()) - 1, selection));
             recordedHz = engine.recordedPipeFrequencies(kDsfReferenceStops[index]);
-            referenceTuning.recordedHz = &recordedHz;
         }
+        referenceTuning.recordedHz = &recordedHz;
     }
     referenceTuning.pitchCents = params.pitchCents;
     referenceTuning.mpe = params.mpe;
