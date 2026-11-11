@@ -61,6 +61,7 @@ private:
         kbmClear{"KBM entfernen"};
     juce::TextButton *mtsFollow = nullptr;
     juce::TextButton loadPresetTuning{"Stimmung mit Preset laden"};
+    juce::TextButton extendedRange{"Erweiterter Tonumfang"};
     juce::Rectangle<int> tuningStatusArea;
     juce::String shownTuningStatus;
     juce::TextButton midiMapButton{juce::String::fromUTF8("Eigene Zuordnungen \xe2\x80\xa6")};

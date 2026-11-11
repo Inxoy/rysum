@@ -157,9 +157,12 @@ void SceneButton::showMenu()
 // ---------------------------------------------------------------------------
 int KeyStrip::midiAt(juce::Point<int> p) const
 {
-    const int n = 46;
-    const float w = (float)getWidth() / (float)n;
-    return 36 + juce::jlimit(0, n - 1, (int)((float)p.x / w));
+    const bool extended = proc.usesExtendedRange();
+    const int first = extended ? kExtendedLowestMidiNote : kPhysKeys.front();
+    const int last = extended ? kExtendedHighestMidiNote : kPhysKeys.back();
+    const int n = last - first + 1;
+    const float cellWidth = static_cast<float>(getWidth() + 2) / static_cast<float>(n);
+    return first + juce::jlimit(0, n - 1, static_cast<int>(static_cast<float>(p.x) / cellWidth));
 }
 
 void KeyStrip::play(int midi)
@@ -195,15 +198,19 @@ void KeyStrip::mouseUp(const juce::MouseEvent &)
 void KeyStrip::paint(juce::Graphics &g)
 {
     auto &A = Assets::get();
-    const int n = 46;
+    const bool extended = proc.usesExtendedRange();
+    const int first = extended ? kExtendedLowestMidiNote : kPhysKeys.front();
+    const int last = extended ? kExtendedHighestMidiNote : kPhysKeys.back();
+    const int n = last - first + 1;
     const float gap = 2.0f;
-    const float w = ((float)getWidth() - gap * (n - 1)) / (float)n;
+    const float w =
+        (static_cast<float>(getWidth()) - gap * static_cast<float>(n - 1)) / static_cast<float>(n);
     const float keyH = (float)getHeight() - 16.0f;
     const bool chromatic = proc.apvts.getRawParameterValue("temperament")->load() > 0.5f;
     const uint64_t held = proc.engine.heldMask.load();
     for (int i = 0; i < n; ++i)
     {
-        const int midi = 36 + i;
+        const int midi = first + i;
         const int k = keyIndexForMidi(midi);
         const bool black = juce::Array<int>{1, 3, 6, 8, 10}.contains(midi % 12);
         juce::Rectangle<float> r((float)i * (w + gap), 0.0f, w, black ? keyH * 0.64f : keyH);
@@ -225,6 +232,18 @@ void KeyStrip::paint(juce::Graphics &g)
     }
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::mute);
+    if (extended)
+    {
+        for (int midi = first; midi <= last; midi += 12)
+        {
+            const float x = static_cast<float>(midi - first) * (w + gap);
+            g.drawText("C" + juce::String(midi / 12 - 1),
+                       juce::Rectangle<float>(std::min(x, static_cast<float>(getWidth()) - 24.0f),
+                                              keyH + 2.0f, 24.0f, 14.0f),
+                       juce::Justification::centredLeft);
+        }
+        return;
+    }
     const std::pair<int, const char *> labels[]{
         {36, "C"}, {48, "c"}, {60, "c\xe2\x80\xb2"}, {72, "c\xe2\x80\xb3"}, {81, "a\xe2\x80\xb3"}};
     for (auto &l : labels)
@@ -570,11 +589,14 @@ void ConsoleView::paint(juce::Graphics &g)
         keyboardArea.withTrimmedLeft(270).withTrimmedRight(20).withTrimmedTop(12).withHeight(16);
     g.setFont(A.monoFont(11.0f));
     g.setColour(col::mute);
+    const bool extended = proc.usesExtendedRange();
     const bool chromatic = proc.apvts.getRawParameterValue("temperament")->load() > 0.5f;
-    g.drawText(chromatic
-                   ? u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 chromatisch")
-                   : u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 kurze Oktave \xc2\xb7 41 Tasten"),
-               kh, juce::Justification::centredLeft);
-    g.drawText("MIDI 36-81", kh, juce::Justification::centredRight);
+    auto compass = u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 kurze Oktave \xc2\xb7 41 Tasten");
+    if (extended)
+        compass = u8("C1 \xe2\x80\x93 C8 \xc2\xb7 chromatisch");
+    else if (chromatic)
+        compass = u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 chromatisch");
+    g.drawText(compass, kh, juce::Justification::centredLeft);
+    g.drawText(extended ? "MIDI 24-108" : "MIDI 36-81", kh, juce::Justification::centredRight);
 }
 } // namespace rysum::ui

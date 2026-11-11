@@ -592,9 +592,10 @@ public:
         SettableTooltipClient::setTooltip(t);
         slider.setTooltip(t);
     }
-    void setDisabledValueText(juce::String text)
+    void setDisabledValueText(juce::String text, juce::String label = {})
     {
         disabledValueText = std::move(text);
+        disabledTitle = std::move(label);
         repaint();
     }
 
@@ -626,7 +627,8 @@ public:
         auto r = headerArea();
         g.setColour(compact ? col::dim : col::ink);
         g.setFont(compact ? Assets::get().romanFont(11.5f) : Assets::get().sansFont(14.0f));
-        g.drawText(title, r, juce::Justification::centredLeft);
+        g.drawText(!isEnabled() && disabledTitle.isNotEmpty() ? disabledTitle : title, r,
+                   juce::Justification::centredLeft);
         g.setFont(Assets::get().monoFont(compact ? 10.0f : 12.0f));
         if (!isEnabled() && disabledValueText.isNotEmpty())
         {
@@ -850,7 +852,7 @@ private:
         }
     }
 
-    juce::String disabledValueText;
+    juce::String disabledValueText, disabledTitle;
     juce::String title;
     bool compact = false;
     juce::String id;

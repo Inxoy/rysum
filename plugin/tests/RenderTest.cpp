@@ -1689,7 +1689,7 @@ static void testHeldPipeTuning()
     pipe.release = 72000;
     pipe.loopStart = 4800;
     pipe.loopEnd = 48000;
-    for (const int neighbour : {36, 38})
+    for (const int neighbour : {36, 38, 81})
     {
         auto &adjacent = library->pipes[0][static_cast<std::size_t>(keyIndexForMidi(neighbour))];
         adjacent = pipe;
@@ -1757,6 +1757,52 @@ static void testHeldPipeTuning()
     midiEvents.addEvent(juce::MidiMessage::noteOn(2, 37, static_cast<juce::uint8>(100)), 0);
     check(std::abs(renderPitch() - 440.0 * std::exp2(-32.0 / 12.0)) < 0.02,
           "retuned short-octave C-sharp uses a neighbouring pipe at the target pitch");
+
+    params.tuning = makeKeyTuning(5); // Pythagorean
+    const double stimmton = effectiveStimmtonCents(kStimmton440Detent);
+    const double pythagoreanHz =
+        keyboardTuningHz(params.tuning, midi) * std::exp2(stimmton / 1200.0);
+    NoteTable mts;
+    mts.mapped[static_cast<std::size_t>(midi)] = 1;
+    mts.hz[static_cast<std::size_t>(midi)] = static_cast<float>(pythagoreanHz);
+    engine.setLibrary(library);
+    params.notes = &mts;
+    params.notesContinuous = false;
+    params.pitchCents = 0.0;
+    midiEvents.addEvent(juce::MidiMessage::noteOn(1, midi, static_cast<juce::uint8>(100)), 0);
+    check(std::abs(renderPitch() - pythagoreanHz) < 0.02,
+          "MTS renders the Pythagorean target at A440");
+    params.notes = nullptr;
+    params.pitchCents = stimmton;
+    check(std::abs(renderPitch() - pythagoreanHz) < 0.02,
+          "held MTS note keeps its pitch when switching to Pythagorean A440");
+    params.notes = &mts;
+    params.pitchCents = 0.0;
+    check(std::abs(renderPitch() - pythagoreanHz) < 0.02,
+          "held Pythagorean note keeps its pitch when switching back to MTS");
+    midiEvents.addEvent(juce::MidiMessage::allSoundOff(1), 0);
+    engine.process(audio, midiEvents, params);
+    midiEvents.clear();
+    params.notes = nullptr;
+    params.notesContinuous = true;
+    params.pitchCents = stimmton;
+
+    for (const int note : {kExtendedLowestMidiNote, kExtendedHighestMidiNote})
+    {
+        engine.setLibrary(library);
+        params.extendedRange = false;
+        midiEvents.addEvent(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(100)), 0);
+        check(renderPitch() <= 0.0, "standard range leaves MIDI " + juce::String(note) + " silent");
+        params.extendedRange = true;
+        midiEvents.addEvent(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(100)), 0);
+        const double target =
+            keyboardTuningHz(params.tuning, note) * std::exp2(params.pitchCents / 1200.0);
+        check(std::abs(renderPitch() - target) < 0.02,
+              "extended range renders MIDI " + juce::String(note) + " at its target pitch");
+        midiEvents.addEvent(juce::MidiMessage::allSoundOff(1), 0);
+        engine.process(audio, midiEvents, params);
+        midiEvents.clear();
+    }
 }
 
 int main(int argc, char **argv)

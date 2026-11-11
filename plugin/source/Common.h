@@ -11,6 +11,8 @@ namespace rysum
 {
 constexpr int kNumStops = 8;
 constexpr int kNumKeys = 41;
+constexpr int kExtendedLowestMidiNote = 24;
+constexpr int kExtendedHighestMidiNote = 108;
 constexpr int kMaxOrder = 5;
 constexpr int kMaxAmbiChannels = (kMaxOrder + 1) * (kMaxOrder + 1); // 36
 constexpr int kMaxOutChannels = 64;

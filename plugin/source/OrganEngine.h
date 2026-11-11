@@ -118,6 +118,7 @@ struct EngineParams
 
     // tuning
     bool correctSamplePitch = false;
+    bool extendedRange = false;
     KeyTuning tuning = makeKeyTuning(
         0); // per key: shift (cents) from the recorded pipe that is played, and which pipe
     /** not null: free tuning - every MIDI note (and channel) has its own pitch; the recorded pipe

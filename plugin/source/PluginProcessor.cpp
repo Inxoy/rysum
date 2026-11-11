@@ -708,8 +708,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     juce::StringArray referenceRegisters;
     for (const int stop : kDsfReferenceStops)
         referenceRegisters.add(kStops[static_cast<std::size_t>(stop)].label);
-    l.add(std::make_unique<AudioParameterChoice>(
-        ParameterID{"dsfRegister", 1}, "Testton Register", referenceRegisters, 0));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID{"dsfRegister", 1}, "Testton Register",
+                                                 referenceRegisters, 0));
     return l;
 }
 
@@ -1038,7 +1038,9 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         const int t = juce::roundToInt(V(ix.temperament));
         if ((t == kScalaTuning && scalaReady.load()) || (t == kMtsTuning && mtsActive()))
             p.notes = &noteTable;
-        p.correctSamplePitch = p.notes != nullptr || (t != 0 && t != kScalaTuning && t != kMtsTuning);
+        p.correctSamplePitch =
+            p.notes != nullptr || (t != 0 && t != kScalaTuning && t != kMtsTuning);
+        p.extendedRange = p.correctSamplePitch && extendedRange.load();
         p.pitchCents = (t == 0 || t == kMtsTuning) ? 0.0 : effectiveStimmtonCents(V(ix.pitch));
         p.detune = t == 0 ? 0.0f : V(ix.detune);
         p.notesContinuous = V(ix.mtsCont) > 0.5f;
@@ -2629,6 +2631,7 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
     {
         extra.setProperty("samplesFolder", samplesFolder.getFullPathName(), nullptr);
         extra.setProperty("loadPresetTuning", loadPresetTuning.load(), nullptr);
+        extra.setProperty("extendedRange", extendedRange.load(), nullptr);
     }
     extra.setProperty("irFile", irFile.getFullPathName(), nullptr);
     extra.setProperty("customFolder", customOverride.getFullPathName(), nullptr);
@@ -2746,14 +2749,18 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
     auto extra = state.getChildWithName("EXTRA");
     const bool loadTuning = !forPatch || loadPresetTuning.load();
     if (!forPatch)
+    {
         loadPresetTuning.store(static_cast<bool>(extra.getProperty("loadPresetTuning", true)));
+        extendedRange.store(static_cast<bool>(extra.getProperty("extendedRange", false)));
+    }
     const float keepOutput = output->load();
     // kept when a patch loads: headphone settings and the controller setup (MPE) belong to the
     // player, not the sound
-    static const char *const keepIds[]{
-        "binOrder",  "binYaw",      "binDfEq",   "mpe",          "mpeBend",     "inpOn",
-        "spkOrder",  "spkDistComp", "dsfOn",     "dsfFrequency", "dsfSpectrum", "dsfLevel",
-        "dsfMethod", "dsfMidi",     "dsfOffset", "dsfPartials",  "dsfFootage",  "dsfMixtur", "dsfRegister"};
+    static const char *const keepIds[]{"binOrder",   "binYaw",       "binDfEq",     "mpe",
+                                       "mpeBend",    "inpOn",        "spkOrder",    "spkDistComp",
+                                       "dsfOn",      "dsfFrequency", "dsfSpectrum", "dsfLevel",
+                                       "dsfMethod",  "dsfMidi",      "dsfOffset",   "dsfPartials",
+                                       "dsfFootage", "dsfMixtur",    "dsfRegister"};
     float keepVals[std::size(keepIds)]{};
     for (size_t i = 0; i < std::size(keepIds); ++i)
         keepVals[i] = apvts.getRawParameterValue(keepIds[i])->load();

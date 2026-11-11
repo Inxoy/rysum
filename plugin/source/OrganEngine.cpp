@@ -911,7 +911,10 @@ void OrganEngine::noteOnFree(const juce::MidiMessage &m, const EngineParams &p)
                 k = i;
             }
         }
-        if (best > 2.0f)
+        const int midi = m.getNoteNumber();
+        const bool extended =
+            p.extendedRange && midi >= kExtendedLowestMidiNote && midi <= kExtendedHighestMidiNote;
+        if (best > 2.0f && !extended)
             return;
     }
     auto &fn = freeNotes[(size_t)id];
@@ -3380,12 +3383,18 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         mpeBendCents = 100.0f * p.mpeBendRange;
         const NoteTable *table = p.notes;
         const bool fillChromaticGaps = p.correctSamplePitch;
+        bool mappingChanged = false;
         if (table == nullptr && (mpeNow || fillChromaticGaps))
         {
-            for (int n = kPhysKeys.front(); n <= kPhysKeys.back(); ++n)
+            const bool extended = fillChromaticGaps && p.extendedRange;
+            const int first = extended ? kExtendedLowestMidiNote : kPhysKeys.front();
+            const int last = extended ? kExtendedHighestMidiNote : kPhysKeys.back();
+            for (int n = kExtendedLowestMidiNote; n <= kExtendedHighestMidiNote; ++n)
             {
                 const auto index = static_cast<std::size_t>(n);
-                const bool mapped = fillChromaticGaps || keyIndexForMidi(n) >= 0;
+                const bool mapped =
+                    n >= first && n <= last && (fillChromaticGaps || keyIndexForMidi(n) >= 0);
+                mappingChanged |= (keyboardTable.mapped[index] != 0) != mapped;
                 keyboardTable.mapped[index] = mapped ? 1 : 0;
                 keyboardTable.hz[index] =
                     mapped ? static_cast<float>(keyboardTuningHz(p.tuning, n)) : 0.0f;
@@ -3393,18 +3402,22 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
             table = &keyboardTable;
         }
         const bool fm = table != nullptr;
-        if (fm != freeMode || (fm && (table == &keyboardTable) != (notesNow == &keyboardTable)))
+        const bool tableChanged = table != notesNow;
+        if (fm != freeMode)
         {
             releaseAllKeys(p);
             freeMode = fm;
         }
-        if (table == &keyboardTable && notesNow == table && !fillChromaticGaps)
+        notesNow = table;
+        if (notesNow != nullptr && (tableChanged || mappingChanged))
             for (int id = 0; id < NoteTable::kSize; ++id)
                 if (freeNotes[static_cast<std::size_t>(id)].held &&
-                    !keyboardTable.mapped[static_cast<std::size_t>(id & 127)])
+                    !notesNow->mapped[static_cast<std::size_t>(tableIndex(id))])
                     keyUp(freeNotes[static_cast<std::size_t>(id)].key, p, id);
-        notesNow = table;
-        notesContinuous = table == &keyboardTable || p.notesContinuous;
+
+        // A held voice keeps its sample and phase when the tuning source changes.
+        // Refresh its offset for the new table even when MTS follow is disabled.
+        notesContinuous = tableChanged || table == &keyboardTable || p.notesContinuous;
     }
     roomFollowNow = p.roomFollow;
     roomBaseAzNow = p.roomBaseAz;

@@ -84,10 +84,15 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     loadPresetTuning.onClick = [this]
     { proc.loadPresetTuning.store(loadPresetTuning.getToggleState()); };
     addAndMakeVisible(loadPresetTuning);
+    extendedRange.setClickingTogglesState(true);
+    extendedRange.setTooltip("MIDI 24 bis 108 in umgestimmten Modi.");
+    extendedRange.onClick = [this] { proc.extendedRange.store(extendedRange.getToggleState()); };
+    addAndMakeVisible(extendedRange);
 
     pitch = &row("pitch", "Stimmton");
     pitch->slider.setDoubleClickReturnValue(true, kStimmton440Detent);
     detune = &row("detune", u8("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
+    detune->setDisabledValueText("Original", "Verstimmung");
 
     tremOn = &toggle("tremOn", "Tremulant");
     tremRate = &row("tremRate", "Tempo");
@@ -285,6 +290,8 @@ void KlangView::resized()
         b.removeFromTop(6);
         loadPresetTuning.setBounds(b.removeFromTop(24));
         b.removeFromTop(6);
+        extendedRange.setBounds(b.removeFromTop(24));
+        b.removeFromTop(6);
         tuningStatusArea = b;
     }
     {
@@ -373,6 +380,9 @@ void KlangView::refresh()
 {
     const int tuning = juce::roundToInt(proc.apvts.getRawParameterValue("temperament")->load());
     const bool original = tuning == 0;
+    extendedRange.setEnabled(!original);
+    extendedRange.setAlpha(original ? 0.5f : 1.0f);
+    extendedRange.setToggleState(proc.usesExtendedRange(), juce::dontSendNotification);
     loadPresetTuning.setToggleState(proc.loadPresetTuning.load(), juce::dontSendNotification);
     dsfRegister.setVisible(original);
     scalaLoad.setVisible(tuning == RysumProcessor::kScalaTuning);

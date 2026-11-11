@@ -229,8 +229,9 @@ bool RysumContent::keyPressed(const juce::KeyPress &k)
     if (c == 'y' || c == 'x')
     {
         releaseComputerKeys();
-        proc.keysOctave = juce::jlimit(kDsfLowestMidiNote / 12 - 1, kDsfHighestMidiNote / 12 - 1,
-                                       proc.keysOctave + (c == 'x' ? 1 : -1));
+        proc.keysOctave =
+            juce::jlimit(kExtendedLowestMidiNote / 12 - 1, kExtendedHighestMidiNote / 12 - 1,
+                         proc.keysOctave + (c == 'x' ? 1 : -1));
         updatePlayButtons();
         return true;
     }

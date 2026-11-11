@@ -21,13 +21,11 @@ struct DsfReferenceTuning
     bool mpe = false;
 };
 
-inline constexpr int kDsfLowestMidiNote = 24;
-inline constexpr int kDsfHighestMidiNote = 108;
-
 // Recorded mode supplies one measured frequency per key for the selected register.
 inline double referenceNoteHz(const DsfReferenceTuning &params, int note, int channel)
 {
-    if (note < kDsfLowestMidiNote || note > kDsfHighestMidiNote || channel < 1 || channel > 16)
+    if (note < kExtendedLowestMidiNote || note > kExtendedHighestMidiNote || channel < 1 ||
+        channel > 16)
         return 0.0;
     if (params.recordedHz != nullptr)
     {

@@ -178,6 +178,11 @@ public:
     bool loadTuningFile(const juce::File &f);
     void clearKbm();
     std::atomic<bool> loadPresetTuning{true};
+    std::atomic<bool> extendedRange{false};
+    bool usesExtendedRange() const
+    {
+        return extendedRange.load() && apvts.getRawParameterValue("temperament")->load() > 0.5f;
+    }
     juce::String getTuningStatus() const;
     bool hasScala() const
     {
