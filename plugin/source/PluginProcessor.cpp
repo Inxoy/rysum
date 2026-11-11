@@ -1062,6 +1062,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     juce::StringArray referenceRegisters;
     for (const int stop : kDsfReferenceStops)
         referenceRegisters.add(kStops[static_cast<std::size_t>(stop)].label);
+    referenceRegisters.add("1/4-Komma MT A-444,5");
     l.add(std::make_unique<AudioParameterChoice>(ParameterID{"dsfRegister", 1}, "Testton Register",
                                                  referenceRegisters, 0));
     return l;
@@ -2099,10 +2100,15 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     if (params.tuning.temperament == 0)
     {
         const int selection = juce::roundToInt(apvts.getRawParameterValue("dsfRegister")->load());
-        const auto index = static_cast<std::size_t>(
-            juce::jlimit(0, static_cast<int>(kDsfReferenceStops.size()) - 1, selection));
-        recordedHz = engine.recordedPipeFrequencies(kDsfReferenceStops[index]);
-        referenceTuning.recordedHz = &recordedHz;
+        if (selection == static_cast<int>(kDsfReferenceStops.size()))
+            referenceTuning.tuning = makeKeyTuning(kQuarterCommaMeantone);
+        else
+        {
+            const auto index = static_cast<std::size_t>(
+                juce::jlimit(0, static_cast<int>(kDsfReferenceStops.size()) - 1, selection));
+            recordedHz = engine.recordedPipeFrequencies(kDsfReferenceStops[index]);
+            referenceTuning.recordedHz = &recordedHz;
+        }
     }
     referenceTuning.pitchCents = params.pitchCents;
     referenceTuning.mpe = params.mpe;

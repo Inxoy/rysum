@@ -77,7 +77,7 @@ inline juce::StringArray temperamentNames()
 {
     // new entries only at the end: projects and patches store the index
     return {juce::String::fromUTF8("Originalstimmung (wie aufgenommen)"),
-            "1/6-Pythagoreisches Komma",
+            "1/6-Pythagoreisches Komma MT",
             "Werckmeister III",
             "Kirnberger III",
             "Vallotti",
@@ -97,10 +97,10 @@ inline juce::StringArray temperamentNames()
             juce::String::fromUTF8("Carlos Alpha \xc2\xb7 jede Taste 78 ct"),
             juce::String::fromUTF8("Scala-Datei (.scl / .kbm)"),
             juce::String::fromUTF8("MTS-ESP / MIDI-Stimmung (SysEx)"),
-            "1/4-Syntonisches Komma",
-            "1/5-Syntonisches Komma",
-            "1/3-Syntonisches Komma",
-            "2/7-Syntonisches Komma",
+            "1/4-Syntonisches Komma MT",
+            "1/5-Syntonisches Komma MT",
+            "1/3-Syntonisches Komma MT",
+            "2/7-Syntonisches Komma MT",
             "Bohlen-Pierce (JI) 13 Stufen pro Duodezime"};
 }
 

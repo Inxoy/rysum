@@ -110,12 +110,12 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     dsfMidi = &toggle("dsfMidi", "MIDI");
     dsfMidi->setTooltip("An: letzte gehaltene MIDI-Note, globale Stimmung und eigene Feinstimmung. "
                         "Aus: kontinuierliche Frequenz in Hz. Originalstimmung verwendet das "
-                        "ausgewaehlte Register.");
+                        "ausgewaehlte Register oder die nominale Referenz.");
     const auto &registerParam =
         *static_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("dsfRegister"));
     dsfRegister.addItemList(registerParam.choices, 1);
     dsfRegister.setTooltip(
-        "Register, dessen gemessener Ton in Originalstimmung als Referenz dient.");
+        "Referenz in Originalstimmung: gemessenes Register oder 1/4-Komma MT bei A = 444,5 Hz.");
     addAndMakeVisible(dsfRegister);
     dsfRegisterAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "dsfRegister", dsfRegister);
