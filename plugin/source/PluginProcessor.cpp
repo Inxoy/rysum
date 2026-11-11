@@ -1436,7 +1436,7 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         // free tuning: every MIDI note its own pitch (the table is filled on the audio thread, see
         // processBlock)
         const int t = juce::roundToInt(V(ix.temperament));
-        if ((t == kScalaTuning && scalaReady.load()) || t == kMtsTuning)
+        if (t == kScalaTuning || t == kMtsTuning)
             p.notes = &noteTable;
         p.correctSamplePitch =
             p.notes != nullptr || (t != 0 && t != kScalaTuning && t != kMtsTuning);
@@ -1907,6 +1907,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         const int t = juce::roundToInt(extraParams.at("temperament")->load());
         if (t == kMtsTuning)
         {
+            scalaVersionSeen = -1; // Restore the Scala table when returning from MIDI tuning.
             // The client supplies 12edo at A4 = 440 Hz until it receives tuning.
             // Its frequency/filter calls also provide that fallback for a null client.
             for (int ch = 0; ch < 16; ++ch)
@@ -1917,6 +1918,18 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
                     noteTable.mapped[i] =
                         MTS_ShouldFilterNote(mts, (char)n, (signed char)ch) ? 0 : 1;
                 }
+        }
+        else if (t == kScalaTuning && !scalaReady.load())
+        {
+            // An empty Scala selection uses an absolute 12edo A4 = 440 Hz table.
+            for (int ch = 0; ch < 16; ++ch)
+                for (int n = 0; n < 128; ++n)
+                {
+                    const size_t i = (size_t)(ch * 128 + n);
+                    noteTable.hz[i] = (float)(440.0 * std::exp2((n - 69) / 12.0));
+                    noteTable.mapped[i] = 1;
+                }
+            scalaVersionSeen = -1;
         }
         else if (t == kScalaTuning && scalaVersion.load() != scalaVersionSeen)
         {
@@ -3809,7 +3822,8 @@ void RysumProcessor::clearKbm()
 juce::String RysumProcessor::getScalaReferenceText() const
 {
     if (!scalaReady.load())
-        return "Stimmton\nNoch keine Skala geladen";
+        return "Stimmton C4 (MIDI 60)\n" +
+               juce::String(rysum::kScalaDefaultReferenceHz, 6) + " Hz";
     static const char *const names[]{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     const auto note = juce::String(names[scala.refNote % 12]) + juce::String(scala.refNote / 12 - 1);
     return "Stimmton " + note + " (MIDI " + juce::String(scala.refNote) + ")\n" +
@@ -3826,8 +3840,7 @@ juce::String RysumProcessor::getTuningStatus() const
     if (t == kScalaTuning)
     {
         if (!scalaReady.load())
-            return u8("Noch keine Skala geladen \xe2\x80\x93 \xe2\x80\x9eScala "
-                      "laden\xe2\x80\xa6\xe2\x80\x9c (.scl, dazu optional .kbm)");
+            return "Keine Scala-Datei geladen: 12edo, A4 = 440 Hz";
         s = sclName + dot + juce::String(scala.size()) + " Stufen" + dot + "Periode " +
             juce::String(scala.cents.back(), 1) + " ct";
         if (scala.description.isNotEmpty())

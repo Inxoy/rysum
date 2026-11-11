@@ -2421,6 +2421,28 @@ private:
         set("dsfOffset", 0.0f);
         set("dsfFootage", 2.0f);
         set("dsfMixtur", 1.0f);
+        set("temperament", (float)RysumProcessor::kScalaTuning);
+        set("pitch", 100.0f);
+        {
+            juce::AudioBuffer<float> fallbackAudio(36, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 0);
+            fallbackAudio.clear();
+            proc->processBlock(fallbackAudio, midi);
+            const auto params = proc->readParams();
+            bool correct = params.notes != nullptr && params.pitchCents == 0.0 &&
+                           params.correctSamplePitch;
+            if (params.notes != nullptr)
+                for (int n = 0; n < 128; ++n)
+                    correct = correct && params.notes->mapped[(size_t)n] != 0 &&
+                              std::abs(params.notes->hz[(size_t)n] -
+                                       440.0 * std::exp2((n - 69) / 12.0)) < 0.001;
+            check(correct, "empty Scala selection uses calibrated 12edo at A440 for every MIDI note");
+            check(proc->getScalaReferenceText().contains("C4 (MIDI 60)") &&
+                      proc->getTuningStatus().contains("12edo, A4 = 440 Hz") &&
+                      std::abs(proc->getReferenceToneFrequency() - rysum::kScalaDefaultReferenceHz) < 0.001,
+                  "empty Scala selection displays C4 and Testton follows its default reference");
+        }
         juce::String scale("Reference test\n31\n");
         for (int degree = 1; degree <= 31; ++degree)
             scale << juce::String(1200.0 * degree / 31.0, 8) << "\n";

@@ -463,7 +463,8 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
   Notes that land on the same pipe (31-EDO steps, clusters) each get their own voice. Notes
   beyond the organ's compass are shifted from the outermost pipes, up to two octaves (further
   out they stay silent). Velocity, modulation, Halten and Freeze work as usual.
-  - *Scala-Datei (.scl / .kbm)*: *Scala laden …* takes a scale (`.scl`, cents or ratios) and,
+  - *Scala-Datei (.scl / .kbm)*: without a loaded file, this plays 12edo at A4 = 440 Hz
+    and displays Stimmton C4 (MIDI 60), 261.625565 Hz. *Scala laden …* takes a scale (`.scl`, cents or ratios) and,
     loaded afterwards, a keyboard mapping (`.kbm`: which key plays which degree, unmapped keys,
     reference key and frequency). *KBM entfernen* goes back to the default mapping: degree 0 on
     C4 (MIDI 60) at 261.625565 Hz, the 12edo C at A4 = 440 Hz. The Stimmton row shows
