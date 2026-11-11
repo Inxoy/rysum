@@ -145,9 +145,11 @@ def analyse(path, stop, pipe):
     raw = path.read_bytes()
     with wave.open(str(path)) as wav:
         rate, channels, bits, length = wav.getframerate(), wav.getnchannels(), wav.getsampwidth(), wav.getnframes()
-        if channels != 1 or bits != 2:
-            raise ValueError(f"Expected mono PCM16 WAV: {path}")
-        signal = np.frombuffer(wav.readframes(length), dtype="<i2").astype(float) / 32768
+        if channels not in (1, 2) or bits != 2:
+            raise ValueError(f"Expected mono or stereo PCM16 WAV: {path}")
+        # Match readMono in SampleLibrary: average channels before measuring pitch.
+        signal = np.frombuffer(wav.readframes(length), dtype="<i2").astype(float)
+        signal = signal.reshape(-1, channels).mean(axis=1) / 32768
     nominal = float(pipe["nominal_hz"])
     kind, spans = regions(pipe, length, rate)
     row = {"stop_id": stop["id"], "key": pipe["key"], "name": pipe["name"], "file": pipe["file"],
