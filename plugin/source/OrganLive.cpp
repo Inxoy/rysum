@@ -22,13 +22,14 @@ Pos OrganEngine::heardFrom (Pos pos) const noexcept
     return q;
 }
 
-int OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept
+int OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz, const Vec3f* body) const noexcept
 {
     const int ri = juce::jlimit (0, kNumRooms - 1, room);
     if (! planOn[(size_t) ri]) return 0;
-    // the pipe where the room simulation (and the 3D view) has it: from the usual place, inside the walls;
-    // the listener where it has walked to. Heard from there - straight, or around a corner.
-    const Vec3f S = roomPoint (occUsual[(size_t) ri], home), L = occL[(size_t) ri];
+    if (body == nullptr && ! liveWalk) return 0;             // (standing still: only the flying pipes can go out of sight)
+    // the pipe where the room simulation (and the 3D view) has it: from the usual place, inside the walls - or where
+    // it flies; the listener where it has walked to. Heard from there - straight, or around a corner.
+    const Vec3f S = body != nullptr ? *body : roomPoint (occUsual[(size_t) ri], home), L = occL[(size_t) ri];
     if (occOn[(size_t) ri] && diffractedPath (occGeo[(size_t) ri], occCorners[(size_t) ri], L, S, heard, lossDb, cutoffHz)) return 2;
     heard = seenFrom (L, S);
     heard.dist = juce::jlimit (kMinDist, kMaxDist, heard.dist);
@@ -86,11 +87,13 @@ void OrganEngine::updateLive (const EngineParams& p, double dt) noexcept
     // ---- line of sight: which rooms can hide a pipe from the walked listener (the plan's walls, floor to ceiling)
     hiddenNow = occCount;
     occCount = 0;
+    bool anyBodies = false;                     // (a pipe flying in the room can go out of sight of a standing listener)
+    for (int s = 0; s < kNumStops; ++s) anyBodies = anyBodies || isRoomMotion (p.motionMode[(size_t) s]);
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         const auto& r = roomsEr[(size_t) ri];
         occOn[(size_t) ri] = planOn[(size_t) ri] = false;
-        if (! occlusionEnabled || ! roomOnNow || ! liveWalk || r.box() || r.plan.n < 3) continue;
+        if (! occlusionEnabled || ! roomOnNow || (! liveWalk && ! anyBodies) || r.box() || r.plan.n < 3) continue;
         // (walking in a shaped room: the pipes are heard where they stand in it, inside its walls)
         planOn[(size_t) ri] = true;
         occUsual[(size_t) ri] = r;

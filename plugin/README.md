@@ -247,13 +247,35 @@ outside the circle = below the horizon). Select a stop on the right, then
 - The lower part has two tabs, *Bewegung* and *Hall* (buttons in its title line).
 - *Bewegung*: Statisch, Rotation (horizontal), Pendel, Drift, Vertikal (turns over your
   head: front → up → back → down), Sprünge (every pipe suddenly jumps to a new random place
-  around its position, each at its own moment; *Tiefe* = how far), Gezeichnet (see below).
+  around its position, each at its own moment; *Tiefe* = how far), Gezeichnet (see below),
+  Schwebung, and four motions in the Saal: Flug, Fall, Schwarm, Strömung (see *Im Saal* below).
   *Geschwindigkeit* runs from −500 to +500 Hz (fine at slow speeds, the knob gets coarser
   towards the top): negative = the other direction. Changing the speed never resets the
   position, so you can do smooth speed glissandi (also by automation). Positions are
   computed every 64 samples, so above ~300 Hz the motion itself starts to alias – a sound of its own.
   - *harte Sprünge* (Sprünge only): no smoothing at all. The place changes at the exact sample,
     so jumps click; from ~50 Hz on it buzzes and rattles.
+- **Im Saal** – four motions that leave the sphere around the listener: every pipe becomes a body
+  with a place and a speed in the Saal (its floor plan, floor and ceiling; the Saal of the stop's
+  room, also when *Saal an* is off), and is heard, reflected and hidden behind corners from where
+  it really is (Doppler included). *Geschwindigkeit*: 1 Hz = 10 m/s (at most 40 m/s; with *Sync*
+  faster at a faster tempo, not locked to the bar). The pipes start where they were.
+  - *Flug*: straight lines, bouncing off the walls. *Tiefe* = how roughly the walls throw them off.
+  - *Fall*: gravity. The pipes fall, bounce on the floor with their whole length (a long one
+    stands tall), slide to a halt and are thrown up again after a moment (*Geschwindigkeit* = how
+    hard). *Tiefe* = how bouncy.
+  - *Schwarm*: the pipes of the stop flock – together, in one direction, never too close.
+    *Tiefe* = how much each one wants its own way.
+  - *Strömung*: a slow current through the room carries them. *Tiefe* = turbulence.
+  - The motion runs in fixed steps (1/480 s): the same paths and impacts at any buffer size.
+  - Where a pipe hits a wall, the floor or the ceiling it knocks – *Aufprall* on the Effekte page,
+    tab *Lebendige Orgel*: *Lautstärke* (off by default), *von* klingenden / allen Pfeifen,
+    *Nachklang des Rohrs*. The faster the hit, the louder and the brighter (a shorter contact
+    excites the higher modes of the tube); an absorbing wall, floor or curtain makes it quieter
+    and duller (the Saal's absorption and high damping). The struck pipe rings with the bending
+    modes of its tube (long pipes deep, short ones high) and faintly its own note; the wall adds a
+    thump. Each knock comes from where it happened and goes into the room. In the 3D view a
+    knock flashes.
 - *Gezeichnet* – draw your own trajectory: press *✎ Bahn zeichnen*, then draw a line in the top
   view with the mouse held down (centre = overhead, edge = horizon, outside = below). When you
   let go, the stop switches to *Gezeichnet* and its pipes travel along the line like a train

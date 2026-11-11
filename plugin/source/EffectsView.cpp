@@ -251,6 +251,20 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     netRate = &row("lvNetRate", "Tempo");
     netRows = {netRate, &row("lvNetGate", U("Tonl\xc3\xa4nge")), nullptr, nullptr, nullptr,
                nullptr};
+    impRows = {&row("lvImpLevel", U("Lautst\xc3\xa4rke")),
+               &row("lvImpRing", "Nachklang des Rohrs"),
+               nullptr,
+               nullptr,
+               nullptr,
+               nullptr};
+    impRows[0]->setTooltip(U("Wie laut Pfeifen klopfen, die gegen W\xc3\xa4nde, Boden und Decke "
+                             "des Saals fliegen (aus = still). "
+                             "Nur mit den Bewegungen Flug, Fall, Schwarm und Str\xc3\xb6mung "
+                             "(Raum-Seite). Je schneller der Aufprall, "
+                             "desto lauter und heller; eine schluckende Wand d\xc3\xa4mpft ihn."));
+    impSrc = &combo("lvImpSrc");
+    impSrc->setTooltip(U("Nur klingende Pfeifen klopfen \xe2\x80\x93 oder alle Pfeifen gezogener "
+                         "Register, auch die stummen."));
     for (int i = before2; i < getNumChildComponents(); ++i)
         page2.push_back(getChildComponent(i));
 
@@ -414,7 +428,8 @@ void EffectsView::resized()
     palletBox = cell4(1, 0);
     walkBox = cell4(2, 0);
     sympBox = cell4(3, 0);
-    wearBox = cell4(0, 1, 2);
+    wearBox = cell4(0, 1);
+    impBox = cell4(1, 1);
     pureBox = cell4(2, 1);
     netBox = cell4(3, 1);
     {
@@ -456,14 +471,20 @@ void EffectsView::resized()
     }
     {
         auto b = body(wearBox);
-        auto left = b.removeFromLeft(cw4);
-        stack(left, wearRows);
-        left.removeFromTop(4);
-        wearReset.setBounds(left.removeFromTop(24).withWidth(150));
-        left.removeFromTop(8);
-        wearNote = left;
-        b.removeFromLeft(gap);
+        stack(b, wearRows);
+        b.removeFromTop(4);
+        wearReset.setBounds(b.removeFromTop(24).withWidth(150));
+        b.removeFromTop(8);
+        wearNote = {}; // (the map below says it: one row per stop)
         wearMap = b;
+    }
+    {
+        auto b = body(impBox);
+        stack(b, impRows);
+        b.removeFromTop(2);
+        impSrc->setBounds(b.removeFromTop(24));
+        b.removeFromTop(8);
+        impNote = b;
     }
     {
         auto b = body(pureBox);
@@ -520,6 +541,19 @@ void EffectsView::refresh()
             repaint(a.expanded(4));
         for (auto a : {sympBox, pureBox, netBox})
             repaint(a.withHeight(36));
+        // knocks per second (smoothed), for the title
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const uint32_t cnt = proc.engine.impactCount.load();
+        if (impTime > 0.0 && now > impTime)
+        {
+            const float inst = (float)(cnt - impCountShown) / (float)((now - impTime) * 0.001);
+            const float was = impRate;
+            impRate += 0.15f * (inst - impRate);
+            if (std::abs(impRate - was) > 0.05f || (impRate < 0.05f) != (was < 0.05f))
+                repaint(impBox.withHeight(36));
+        }
+        impCountShown = cnt;
+        impTime = now;
     }
 }
 
@@ -551,6 +585,10 @@ void EffectsView::paintLive(juce::Graphics &g)
     drawSectionTitle(g, wearBox, U("Verschlei\xc3\x9f"),
                      U("das St\xc3\xbc"
                        "ck nutzt die Orgel ab"));
+    drawSectionTitle(g, impBox, "Aufprall",
+                     impRate > 0.05f ? juce::String(impRate, impRate < 10.0f ? 1 : 0) +
+                                           U(" Schl\xc3\xa4ge pro Sekunde")
+                                     : U("Pfeifen gegen die W\xc3\xa4nde"));
     drawSectionTitle(g, pureBox, "Reinheit",
                      pureCt > 0.05f ? U("zieht bis ") + juce::String(pureCt, 1) + " ct"
                                     : U("Akkorde ziehen sich rein"));
@@ -603,6 +641,12 @@ void EffectsView::paintLive(juce::Graphics &g)
            "sie verstimmen sich, k\xc3\xb6rnen, schwanken und setzen aus (K\xc3\xb6rnung, Bittiefe "
            "\xe2\x80\xa6 wie unter Verfall "
            "auf dem Spieltisch eingestellt). Rechts: jede Pfeife, je Register eine Zeile.");
+    noteIn(impNote, "In den Bewegungen Flug, Fall, Schwarm und Str\xc3\xb6mung (Raum-Seite, je "
+                    "Register) fliegen die Pfeifen frei durch "
+                    "den Saal. Wo eine gegen Wand, Boden oder Decke st\xc3\xb6\xc3\x9ft, klopft es "
+                    "dort: kurz und hell bei schnellem Aufprall, "
+                    "dumpf bei langsamem oder an einer schluckenden Wand. Das Rohr klingt nach "
+                    "\xe2\x80\x93 lange Pfeifen tief, kurze hoch.");
     noteIn(pureNote,
            "Gehaltene T\xc3\xb6ne ziehen einander zu reinen Intervallen: die Schwebungen beruhigen "
            "sich, der Akkord "

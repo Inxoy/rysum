@@ -525,13 +525,17 @@ public:
         lvNetDiv,
         lvNetRate,
         lvNetGate,
+        lvImpLevel,
+        lvImpSrc,
+        lvImpRing,
         kNumLive
     };
     static constexpr const char *kLiveIds[kNumLive]{
         "lvBellows",  "lvBellowsSize", "lvBlower",   "lvTreadRate", "lvTreadDiv",  "lvTreadNoise",
         "lvPallet",   "lvPalletSrc",   "lvListenX",  "lvListenY",   "lvWalkShape", "lvWalkRate",
         "lvWalkSize", "lvWear",        "lvWearTime", "lvSympLevel", "lvSympDecay", "lvPure",
-        "lvPureTime", "lvNetOn",       "lvNetPath",  "lvNetDiv",    "lvNetRate",   "lvNetGate"};
+        "lvPureTime", "lvNetOn",       "lvNetPath",  "lvNetDiv",    "lvNetRate",   "lvNetGate",
+        "lvImpLevel", "lvImpSrc",      "lvImpRing"};
     /** Verschleiss: all pipes new again (message thread) */
     void resetWear()
     {

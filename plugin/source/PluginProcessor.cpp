@@ -1023,6 +1023,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             NormalisableRange<float>(0.05f, 8.0f, 0.01f, 0.5f), 0.9f,
             AudioParameterFloatAttributes().withStringFromValueFunction(
                 [](float v, int) { return String(v, 2) + String::fromUTF8(" Schritte"); })));
+
     }
 
     // Independent dry reference tone. Append parameters to preserve existing indices.
@@ -1065,6 +1066,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     referenceRegisters.add("1/4-Komma MT A-444,5");
     l.add(std::make_unique<AudioParameterChoice>(ParameterID{"dsfRegister", 1}, "Testton Register",
                                                  referenceRegisters, 0));
+    // Append new controls after Testton to preserve saved routing and host parameter indices.
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvImpLevel", 1}, "Aufprall",
+        NormalisableRange<float>(-60.0f, 12.0f, 0.1f, 2.0f), -60.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            { return v <= -59.9f ? String("aus") : (v > 0 ? "+" : "") + String(v, 1) + " dB"; })));
+    l.add(std::make_unique<AudioParameterChoice>(
+        ParameterID{"lvImpSrc", 1}, "Aufprall von",
+        StringArray{"klingenden Pfeifen", "allen Pfeifen"}, 0));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvImpRing", 1}, "Aufprall Nachklang",
+        NormalisableRange<float>(0.05f, 4.0f, 0.001f, 0.4f), 0.6f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                return v < 1.0f ? String(roundToInt(v * 1000.0f)) + " ms"
+                                : String(v, v < 10.0f ? 2 : 1) + " s";
+            })));
     return l;
 }
 
@@ -1535,6 +1555,9 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         lv.netDiv = juce::roundToInt(Lv(lvNetDiv));
         lv.netRate = Lv(lvNetRate);
         lv.netGate = Lv(lvNetGate);
+        lv.impLevel = Lv(lvImpLevel) <= -59.9f ? 0.0f : dbToGain(Lv(lvImpLevel));
+        lv.impAll = Lv(lvImpSrc) > 0.5f;
+        lv.impRing = Lv(lvImpRing);
     }
     p.windModel = juce::roundToInt(V(ix.windModel));
 
@@ -3342,12 +3365,11 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
     const float keepOutput = output->load();
     // kept when a patch loads: headphone settings and the controller setup (MPE) belong to the
     // player, not the sound
-    static const char *const keepIds[]{"binOrder",   "binYaw",       "binDfEq",     "mpe",
-                                       "mpeBend",    "inpOn",        "spkOrder",    "spkDistComp",
-                                       "dsfOn",      "dsfFrequency", "dsfSpectrum", "dsfLevel",
-                                       "dsfMethod",  "dsfMidi",      "dsfOffset",   "dsfPartials",
-                                       "dsfFootage", "dsfMixtur",    "dsfRegister",
-                                       "trAngle", "trAmount", "trBoost", "trSideEq"};
+    static const char *const keepIds[]{
+        "binOrder",    "binYaw",      "binDfEq",   "mpe",          "mpeBend",     "inpOn",
+        "spkOrder",    "spkDistComp", "dsfOn",     "dsfFrequency", "dsfSpectrum", "dsfLevel",
+        "dsfMethod",   "dsfMidi",     "dsfOffset", "dsfPartials",  "dsfFootage",  "dsfMixtur",
+        "dsfRegister", "trAngle",     "trAmount",  "trBoost",      "trSideEq"};
     float keepVals[std::size(keepIds)]{};
     for (size_t i = 0; i < std::size(keepIds); ++i)
         keepVals[i] = apvts.getRawParameterValue(keepIds[i])->load();

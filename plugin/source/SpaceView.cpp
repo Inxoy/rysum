@@ -588,7 +588,8 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     for (int i = 0; i < (int)motionButtons.size(); ++i)
     {
         auto &b = motionButtons[(size_t)i];
-        b.setButtonText(mnames[i]);
+        b.setButtonText(mnames[i].upToFirstOccurrenceOf(
+            " (", false, false)); // ("Flug (im Saal)" -> "Flug": the row says where)
         b.onClick = [this, i]
         {
             if (auto *pr = proc.apvts.getParameter(RysumProcessor::motionParamId(selected)))
@@ -605,6 +606,23 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         u8("Jede Pfeife dreht sich so schnell, wie sie mit den anderen klingenden Pfeifen schwebt: "
            "reine Terzen stehen still, "
            "der Wolf kreist. \xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = Umdrehungen je Schwebung."));
+    {
+        const char *tips[]{
+            "Jede Pfeife fliegt geradeaus durch den Saal und prallt an den W\xc3\xa4nden ab. "
+            "\xe2\x80\x9eTiefe\xe2\x80\x9c = wie rau die W\xc3\xa4nde sie ablenken; 1 Hz = 10 m/s.",
+            "Die Pfeifen fallen, springen auf dem Boden und werden nach einer Weile wieder "
+            "hochgeworfen. \xe2\x80\x9eTiefe\xe2\x80\x9c = wie sehr sie springen; "
+            "\xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = wie hoch.",
+            "Die Pfeifen des Registers fliegen als Schwarm durch den Saal. "
+            "\xe2\x80\x9eTiefe\xe2\x80\x9c = wie eigenwillig jede einzelne.",
+            "Eine langsame Str\xc3\xb6mung tr\xc3\xa4gt die Pfeifen durch den Saal. "
+            "\xe2\x80\x9eTiefe\xe2\x80\x9c = Wirbel."};
+        for (int i = 0; i < 4; ++i)
+            motionButtons[(size_t)(8 + i)].setTooltip(
+                u8(tips[i]) + u8(" Die Pfeifen sind dann K\xc3\xb6rper im Saal (Grundriss, Boden, "
+                                 "Decke) \xe2\x80\x93 "
+                                 "Aufprall auf der Seite Effekte \xc2\xb7 Lebendige Orgel."));
+    }
     motionButtons[6].setTooltip(
         u8("Die Pfeifen laufen die gezeichnete Bahn entlang (Bahn zeichnen \xe2\x86\x92)"));
     motionButtons[5].setTooltip(
@@ -1141,6 +1159,11 @@ void SpaceView::resized()
         motionButtons[5].setBounds(at(m2, 0));
         motionButtons[7].setBounds(at(m2, 1));
         motionButtons[6].setBounds(at(m2, 2));
+        // the motions in the Saal: a row of their own, after a label
+        auto m3 = mb.removeFromTop(22);
+        motionSaalLabel = at(m3, 0);
+        for (int i = 8; i < 12; ++i)
+            motionButtons[(size_t)i].setBounds(at(m3, i - 7));
         drawButton.setBounds(at(m2, 3));
         mb.removeFromTop(2);
         if (rateRow)
@@ -1281,6 +1304,14 @@ void SpaceView::paint(juce::Graphics &g)
     g.setColour(col::line);
     g.fillRect(left.getRight() - 1, left.getY(), 1, left.getHeight());
 
+    if (motionButtons[8].isVisible() && !motionSaalLabel.isEmpty())
+    {
+        // the row of the motions in the Saal
+        g.setFont(A.romanFont(12.5f));
+        g.setColour(col::dim);
+        g.drawText("im Saal:", motionSaalLabel.withTrimmedRight(6),
+                   juce::Justification::centredRight);
+    }
     g.setFont(A.monoFont(11.0f));
     g.setColour(col::mute);
     auto top = left.reduced(28, 0).withTrimmedTop(16).withHeight(16);

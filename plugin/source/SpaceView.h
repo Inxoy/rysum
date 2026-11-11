@@ -224,7 +224,9 @@ private:
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>
         pullAttachments;
     std::array<juce::TextButton, 7> layoutButtons;
-    std::array<juce::TextButton, 8> motionButtons;
+    std::array<juce::TextButton, 12>
+        motionButtons; // (8..11: the motions in the Saal, a row of their own)
+    juce::Rectangle<int> motionSaalLabel;
     juce::TextButton drawButton{juce::String::fromUTF8("Bahn zeichnen")};
     juce::TextButton pathLoop{"Schleife"},
         pathPing{juce::String::fromUTF8("Hin & zur\xc3\xbc"

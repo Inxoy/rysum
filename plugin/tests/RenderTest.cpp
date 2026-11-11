@@ -4252,8 +4252,8 @@ int main(int argc, char **argv)
                 click.kind = "down";
                 clickLibrary->clicksDown = {click};
                 clickLibrary->clicksUp.clear();
-                auto plain = note([](EngineParams &p) { p.stopOn = {}; }, 1.0, 0.5, "", true,
-                                  0.0f, clickLibrary);
+                auto plain = note([](EngineParams &p) { p.stopOn = {}; }, 1.0, 0.5, "", true, 0.0f,
+                                  clickLibrary);
                 auto res = note(
                     [](EngineParams &p)
                     {
@@ -6211,6 +6211,281 @@ int main(int argc, char **argv)
                                              "as standing in it");
                     }
                     writeWav(outDir.getChildFile("86_schattenkante.wav"), across, fsr);
+                }
+            }
+            // ---- room motion: pipes as bodies in the Saal (Flug, Fall, Schwarm, Stroemung),
+            // knocking on its walls
+            {
+                auto saal = [](EngineParams &p, int shape)
+                {
+                    p.room.on = true;
+                    p.room.width = 14;
+                    p.room.length = 28;
+                    p.room.height = 11;
+                    p.room.order = 2;
+                    p.room.tailGain = 0.0f;
+                    p.room.shape = shape;
+                    p.room.shapeAmt = 0.8f;
+                };
+                // every mode keeps every pipe inside the walls, between floor and ceiling, and
+                // moves it
+                for (int mode : {(int)Motion::Flight, (int)Motion::Fall, (int)Motion::Swarm,
+                                 (int)Motion::Flow})
+                {
+                    OrganEngine e;
+                    float minZ = 1e9f, maxZ = -1e9f;
+                    bool inside = true;
+                    int moved = 0;
+                    std::array<float, kNumKeys> x0{};
+                    RoomParams rp;
+                    rp.width = 14;
+                    rp.length = 28;
+                    rp.height = 11;
+                    rp.shape = shapeCross;
+                    rp.shapeAmt = 0.8f;
+                    finishPlan(rp, defaultDrawnPlan());
+                    const auto geo = planGeo(rp);
+                    const auto b = play(
+                        e,
+                        [&](EngineParams &p)
+                        {
+                            saal(p, shapeCross);
+                            p.motionMode[0] = mode;
+                            p.motionRate[0] = 0.4f;
+                            p.motionDepth[0] = 90.0f;
+                            p.live.impLevel = 1.0f;
+                            p.live.impAll = true;
+                        },
+                        {48, 60, 67}, 6.0, 1, 100, -1.0,
+                        [&](int pos)
+                        {
+                            for (int k = 0; k < kNumKeys; ++k)
+                            {
+                                Vec3f q;
+                                if (!e.bodyAt(0, k, q))
+                                    continue;
+                                if (pos == 0)
+                                    x0[(size_t)k] = q.x;
+                                if (pos > (int)fsr && !insidePlan(geo, q.x, q.y))
+                                    inside = false;
+                                minZ = juce::jmin(minZ, q.z);
+                                maxZ = juce::jmax(maxZ, q.z);
+                            }
+                        });
+                    for (int k = 0; k < kNumKeys; ++k)
+                    {
+                        Vec3f q;
+                        if (e.bodyAt(0, k, q) && std::abs(q.x - x0[(size_t)k]) > 0.5f)
+                            ++moved;
+                    }
+                    const char *names[]{"Flug", "Fall", "Schwarm", "Stroemung"};
+                    std::cout << "room motion " << names[mode - (int)Motion::Flight]
+                              << " (cross plan): " << moved << " of " << kNumKeys
+                              << " pipes moved, height " << minZ << " .. " << maxZ << " m, "
+                              << e.impactCount.load()
+                              << " impacts, inside the walls: " << (inside ? "yes" : "no")
+                              << std::endl;
+                    check(inside && moved > kNumKeys / 2 && minZ >= 0.1f && maxZ <= 11.0f &&
+                              finiteB(b),
+                          "room motion: the pipes move freely and stay in the Saal");
+                    if (mode == (int)Motion::Flight || mode == (int)Motion::Fall)
+                        check(e.impactCount.load() > 5,
+                              "room motion: flying pipes hit the walls / the floor");
+                    if (mode == (int)Motion::Flight)
+                        writeWav(outDir.getChildFile("88_flug_im_saal.wav"), b, fsr);
+                    if (mode == (int)Motion::Fall)
+                        writeWav(outDir.getChildFile("89_fall_im_saal.wav"), b, fsr);
+                }
+                // an impact: faster = louder and brighter; a soft wall = quieter and duller
+                {
+                    auto knock = [&](float speed, float absorb)
+                    {
+                        OrganEngine e;
+                        bool sent = false;
+                        return play(
+                            e,
+                            [](EngineParams &p)
+                            {
+                                p.live.impLevel = 1.0f;
+                                p.live.impRing = 0.6f;
+                            },
+                            {}, 1.2, 1, 100, -1.0,
+                            [&](int)
+                            {
+                                if (!sent)
+                                {
+                                    e.testImpact(7.0f, 15.2f, 1.6f, speed, absorb, 0, 12);
+                                    sent = true;
+                                } // 4 m in front of the listener
+                            });
+                    };
+                    auto bright = [&](const juce::AudioBuffer<float> &b)
+                    {
+                        // the share of highs: first difference against the signal itself (W, the
+                        // first 50 ms)
+                        double s = 0, d = 0;
+                        for (int i = 1; i < (int)(0.02 * fsr); ++i)
+                        {
+                            const double x = b.getSample(0, i), xp = b.getSample(0, i - 1);
+                            s += x * x;
+                            d += (x - xp) * (x - xp);
+                        }
+                        return 10.0 * std::log10(juce::jmax(1e-30, d) / juce::jmax(1e-30, s));
+                    };
+                    auto peakDb = [&](const juce::AudioBuffer<float> &b)
+                    {
+                        return juce::Decibels::gainToDecibels(
+                            b.getMagnitude(0, 0, b.getNumSamples()));
+                    };
+                    const auto slow = knock(1.0f, 0.05f), fast = knock(6.0f, 0.05f),
+                               soft = knock(6.0f, 0.6f);
+                    std::cout << "impact: slow (1 m/s) peak " << peakDb(slow) << " dB, highs "
+                              << bright(slow) << " dB; fast (6 m/s) " << peakDb(fast)
+                              << " dB, highs " << bright(fast) << " dB; fast on a curtain "
+                              << peakDb(soft) << " dB, highs " << bright(soft) << " dB"
+                              << std::endl;
+                    check(peakDb(fast) > peakDb(slow) + 8.0 && bright(fast) > bright(slow) + 3.0,
+                          "impact: a faster hit is louder and brighter");
+                    check(peakDb(soft) < peakDb(fast) - 4.0 && bright(soft) < bright(fast),
+                          "impact: an absorbing wall dulls the knock");
+                    check(finiteB(fast) && rmsDb(fast, 0.9, 1.2) < rmsDb(fast, 0.0, 0.2) - 20.0,
+                          "impact: the struck pipe rings out");
+                    // against a sounding pipe (the same place, 0 dB each): a hard knock should be
+                    // clearly there, not overwhelming
+                    OrganEngine ep;
+                    for (int k = 0; k < kNumKeys; ++k)
+                    {
+                        ep.baseAz[0][(size_t)k] = 0.0f;
+                        ep.baseEl[0][(size_t)k] = 0.0f;
+                        ep.baseDist[0][(size_t)k] = 4.0f;
+                    }
+                    const auto pipe = play(ep, [](EngineParams &) {}, {60}, 1.5, 1);
+                    const double pipePeak = juce::Decibels::gainToDecibels(
+                        pipe.getMagnitude(0, (int)(0.8 * fsr), (int)(0.5 * fsr)));
+                    std::cout
+                        << "impact: a 3 m/s knock against a pipe at the same distance: knock peak "
+                        << peakDb(knock(3.0f, 0.05f)) << " dB, pipe peak " << pipePeak << " dB"
+                        << std::endl;
+                    writeWav(outDir.getChildFile("90_aufprall_schnell.wav"), fast, fsr);
+                }
+                // the same paths at any block size (a fixed inner step)
+                {
+                    auto runBlocks = [&](int block)
+                    {
+                        OrganEngine e;
+                        e.prepare(fsr, block);
+                        e.setLibrary(lib);
+                        EngineParams p;
+                        p.stopOn = {};
+                        p.stopOn[0] = true;
+                        p.motionMode[0] = (int)Motion::Flight;
+                        p.motionRate[0] = 0.5f;
+                        p.motionDepth[0] = 60.0f;
+                        p.live.impLevel = 1.0f;
+                        p.live.impAll = true;
+                        saal(p, shapeBox);
+                        juce::AudioBuffer<float> b(16, block);
+                        for (int pos = 0; pos < 153600; pos += block)
+                        {
+                            juce::MidiBuffer mb;
+                            b.clear();
+                            e.process(b, mb, p);
+                        } // (3.2 s: whole blocks of both sizes)
+                        Vec3f q;
+                        e.bodyAt(0, 20, q);
+                        return std::make_pair(q, e.impactCount.load());
+                    };
+                    const auto a = runBlocks(64), c = runBlocks(512);
+                    std::cout << "room motion: block 64: pipe at " << a.first.x << " / "
+                              << a.first.y << ", " << a.second
+                              << " impacts; block 512: " << c.first.x << " / " << c.first.y << ", "
+                              << c.second << std::endl;
+                    check(std::abs(a.first.x - c.first.x) < 1e-3f &&
+                              std::abs(a.first.y - c.first.y) < 1e-3f && a.second == c.second,
+                          "room motion: the same paths at any block size");
+                }
+                // flying pipes in the cross with reflections (no knocks): no clicks - against them
+                // standing still
+                {
+                    OrganEngine ef, es;
+                    auto fly = [&](bool moving)
+                    {
+                        return [&, moving](EngineParams &p)
+                        {
+                            saal(p, shapeCross);
+                            p.room.erGain = 1.0f;
+                            for (int s = 0; s < 4; ++s)
+                            {
+                                p.stopOn[(size_t)s] = true;
+                                p.motionMode[(size_t)s] =
+                                    moving ? (int)Motion::Flight : (int)Motion::Static;
+                                p.motionRate[(size_t)s] = 0.3f;
+                            }
+                        };
+                    };
+                    const auto flying = play(ef, fly(true), {48, 55, 60, 64, 67}, 8.0, 1);
+                    const auto still = play(es, fly(false), {48, 55, 60, 64, 67}, 8.0, 1);
+                    double s1 = 0, s2 = 0;
+                    for (int c = 0; c < 4; ++c)
+                        for (int i = (int)(0.6 * fsr); i < flying.getNumSamples(); ++i)
+                        {
+                            s1 = juce::jmax(s1, (double)std::abs(flying.getSample(c, i) -
+                                                                 2.0f * flying.getSample(c, i - 1) +
+                                                                 flying.getSample(c, i - 2)));
+                            s2 = juce::jmax(s2, (double)std::abs(still.getSample(c, i) -
+                                                                 2.0f * still.getSample(c, i - 1) +
+                                                                 still.getSample(c, i - 2)));
+                        }
+                    std::cout << "room motion: flying pipes in the cross, sharpest 2nd difference "
+                              << s1 << ", standing pipes " << s2 << ", " << ef.hiddenNow.load()
+                              << " out of sight" << std::endl;
+                    check(s1 < 1.6 * s2 && finiteB(flying),
+                          "room motion: flying pipes (reflections, out of sight) do not click");
+                }
+                // what it costs: all eight stops flocking, a chord
+                {
+                    OrganEngine e;
+                    const auto t0 = std::chrono::high_resolution_clock::now();
+                    play(
+                        e,
+                        [&](EngineParams &p)
+                        {
+                            saal(p, shapeCross);
+                            for (int s = 0; s < kNumStops; ++s)
+                            {
+                                p.stopOn[(size_t)s] = true;
+                                p.motionMode[(size_t)s] = (int)Motion::Swarm;
+                                p.motionRate[(size_t)s] = 0.3f;
+                            }
+                            p.live.impLevel = 1.0f;
+                        },
+                        {48, 55, 60, 64, 67}, 4.0, 1);
+                    const double rtf = 4.0 / std::chrono::duration<double>(
+                                                 std::chrono::high_resolution_clock::now() - t0)
+                                                 .count();
+                    OrganEngine e2;
+                    const auto t1 = std::chrono::high_resolution_clock::now();
+                    play(
+                        e2,
+                        [&](EngineParams &p)
+                        {
+                            saal(p, shapeCross);
+                            for (int s = 0; s < kNumStops; ++s)
+                            {
+                                p.stopOn[(size_t)s] = true;
+                                p.motionMode[(size_t)s] = (int)Motion::Rotation;
+                                p.motionRate[(size_t)s] = 0.3f;
+                            }
+                        },
+                        {48, 55, 60, 64, 67}, 4.0, 1);
+                    const double rtf2 = 4.0 / std::chrono::duration<double>(
+                                                  std::chrono::high_resolution_clock::now() - t1)
+                                                  .count();
+                    std::cout << "room motion: 8 stops flocking " << rtf
+                              << " x real time, rotating (moving too, the old way) " << rtf2 << " x"
+                              << std::endl;
+                    check(rtf > 0.8 * rtf2,
+                          "room motion: flocking costs little more than the old motion");
                 }
             }
             // Verschleiss: a pipe held for half its life is half worn, and sounds different; reset

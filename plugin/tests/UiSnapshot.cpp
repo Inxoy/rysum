@@ -2148,6 +2148,41 @@ public:
                     for (int i = 0; i < 4; ++i)
                         proc->walkPose[(size_t)i] = 0.0f;
                 }
+                // room motion: the Praestant flies, the Gedackt falls, and they knock (through the whole processor)
+                {
+                    setReal (RysumProcessor::stopParamId (1).toRawUTF8(), 1.0f);
+                    setReal (RysumProcessor::motionParamId (0).toRawUTF8(), (float) rysum::Motion::Flight);
+                    setReal (RysumProcessor::motionParamId (1).toRawUTF8(), (float) rysum::Motion::Fall);
+                    setReal (RysumProcessor::rateParamId (0).toRawUTF8(), 0.5f);
+                    setReal (RysumProcessor::rateParamId (1).toRawUTF8(), 0.6f);
+                    setReal ("lvImpLevel", 0.0f); setReal ("lvImpSrc", 1.0f);
+                    const uint32_t before = proc->engine.impactCount.load();
+                    run (300, { 48, 55, 60, 64, 67 });
+                    const uint32_t knocks = proc->engine.impactCount.load() - before;
+                    float maxPeak = 0.0f;
+                    {
+                        juce::AudioBuffer<float> st2 (16, 512);
+                        for (int b = 0; b < 100; ++b) { juce::MidiBuffer mb; st2.clear(); proc->processBlock (st2, mb); maxPeak = juce::jmax (maxPeak, st2.getMagnitude (0, 512)); }
+                    }
+                    rysum::Vec3f q;
+                    std::cout << "room motion: " << knocks << " knocks in 3.2 s, output peak " << juce::Decibels::gainToDecibels (maxPeak) << " dB, body shown "
+                              << (proc->engine.bodyAt (1, 10, q) ? "yes" : "no") << (knocks > 5 && proc->engine.bodyAt (1, 10, q) && maxPeak < 4.0f ? "  ok" : "  FAIL") << std::endl;
+                    shoot (8, "ui_begehen_flug.png");
+                    shoot (2, "ui_saal_flug.png");
+                    if (auto* c = dynamic_cast<RysumContent*> (content)) c->showView (4);
+                    std::function<juce::TextButton* (juce::Component*)> liveTab = [&] (juce::Component* c) -> juce::TextButton*
+                    {
+                        if (auto* b = dynamic_cast<juce::TextButton*> (c)) if (b->getButtonText() == "Lebendige Orgel") return b;
+                        for (auto* ch : c->getChildren()) if (auto* f = liveTab (ch)) return f;
+                        return nullptr;
+                    };
+                    if (auto* b = liveTab (content)) b->triggerClick();
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+                    shoot (4, "ui_effekte_aufprall.png");
+                    setReal (RysumProcessor::motionParamId (0).toRawUTF8(), 0.0f); setReal (RysumProcessor::motionParamId (1).toRawUTF8(), 0.0f);
+                    setReal (RysumProcessor::stopParamId (1).toRawUTF8(), 0.0f);
+                    setReal ("lvImpLevel", -60.0f); setReal ("lvImpSrc", 0.0f);
+                }
             }
             if (auto *c = dynamic_cast<RysumContent *>(content))
                 c->showView(2);
