@@ -40,6 +40,13 @@ public:
     {
         if (proc->getLibrary() == nullptr && ++waited < 200)
             return;
+        if (std::getenv("RYSUM_ONLY_MTS") != nullptr)
+        {
+            stopTimer();
+            testMidiTuning();
+            quit();
+            return;
+        }
         if (stage == 0)
         {
             std::cout << "status: " << proc->getLoadStatus() << std::endl;
@@ -862,7 +869,9 @@ public:
             const double err = 1200.0 * std::log2(hz / 466.1638);
             std::cout << "MTS SysEx: " << status << "; note 69 sounds at " << hz << " Hz (" << err
                       << " ct from 466.16)"
-                      << ((status.contains("SysEx") && std::abs(err) < 6.0) ? "  ok" : "  FAIL")
+                      << ((status == "MIDI Tuning (MTS-ESP) empfangen" && std::abs(err) < 6.0)
+                              ? "  ok"
+                              : "  FAIL")
                       << std::endl;
             for (auto *id : {"stop1", "stop2", "stop6"})
                 P(id)->setValueNotifyingHost(1.0f);
@@ -2382,6 +2391,83 @@ public:
     }
 
 private:
+    void testMidiTuning()
+    {
+        bool passed = true;
+        auto check = [&](bool ok, const char *message)
+        {
+            std::cout << (ok ? "  ok    " : "  FAIL  ") << message << std::endl;
+            passed = passed && ok;
+        };
+        auto set = [&](const char *id, float value)
+        {
+            auto *parameter = proc->apvts.getParameter(id);
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+        };
+        check(proc->getLibrary() != nullptr, "MIDI tuning test loaded the sample library");
+        check(!proc->mtsHasMaster(), "MIDI tuning fallback test has no external master");
+        if (proc->mtsHasMaster() || proc->getLibrary() == nullptr)
+        {
+            setApplicationReturnValue(1);
+            return;
+        }
+        proc->setRateAndBufferSizeDetails(48000.0, 512);
+        proc->prepareToPlay(48000.0, 512);
+        set("temperament", static_cast<float>(RysumProcessor::kMtsTuning));
+        set("output", 0.0f);
+        set("dsfOn", 1.0f);
+        set("dsfMidi", 1.0f);
+        set("dsfOffset", 0.0f);
+        set("dsfFootage", 2.0f);
+        set("dsfMixtur", 1.0f);
+        juce::AudioBuffer<float> audio(36, 512);
+        for (const float pitch : {-200.0f, 0.0f, 100.0f})
+        {
+            set("pitch", pitch);
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::noteOn(1, 69, static_cast<juce::uint8>(100)), 0);
+            audio.clear();
+            proc->processBlock(audio, midi);
+            const auto params = proc->readParams();
+            check(params.notes != nullptr && params.correctSamplePitch && params.pitchCents == 0.0,
+                  "MIDI fallback uses calibrated absolute frequencies independently of Stimmton");
+            bool equalTemperament = params.notes != nullptr;
+            if (params.notes != nullptr)
+                for (int channel = 0; channel < 16; ++channel)
+                    for (const int note : {36, 60, 69, 81})
+                    {
+                        const auto index = static_cast<std::size_t>(channel * 128 + note);
+                        const double expected = 440.0 * std::exp2((note - 69.0) / 12.0);
+                        equalTemperament = equalTemperament && params.notes->mapped[index] != 0 &&
+                                           std::abs(params.notes->hz[index] - expected) < 0.001;
+                    }
+            check(equalTemperament, "MIDI fallback is 12edo at A4 = 440 Hz on all channels");
+            check(std::abs(proc->getReferenceToneFrequency() - 440.0) < 0.001,
+                  "Testton follows the 440 Hz fallback");
+        }
+        const auto fallback = proc->getTuningStatus();
+        check(fallback.contains("12edo") && fallback.contains("440 Hz") &&
+                  !fallback.contains("Originalstimmung"),
+              "fallback status identifies 12edo and 440 Hz");
+        const juce::uint8 sysex[]{0xF0, 0x7F, 0x7F, 0x08, 0x02, 0x00,
+                                 0x01, 69, 70, 0x00, 0x00, 0xF7};
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage(sysex, static_cast<int>(sizeof(sysex))), 0);
+        audio.clear();
+        proc->processBlock(audio, midi);
+        const auto params = proc->readParams();
+        const double expected = 440.0 * std::exp2(1.0 / 12.0);
+        check(params.notes != nullptr && std::abs(params.notes->hz[69] - expected) < 0.001 &&
+                  params.pitchCents == 0.0,
+              "received MTS SysEx replaces the fallback with its absolute pitch");
+        check(std::abs(proc->getReferenceToneFrequency() - expected) < 0.001,
+              "held Testton follows the received MIDI tuning");
+        check(proc->getTuningStatus() == "MIDI Tuning (MTS-ESP) empfangen",
+              "received tuning status has no equal-temperament scale name");
+        proc->releaseResources();
+        setApplicationReturnValue(passed ? 0 : 1);
+    }
+
     juce::File samples, outDir;
     std::unique_ptr<RysumProcessor> proc;
     std::unique_ptr<RysumEditor> editor;

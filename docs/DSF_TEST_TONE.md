@@ -65,7 +65,9 @@ measured single register or **1/4-Komma MT A-444,5**.
   Testton's own Feinstimmung, Oktavlage and Mixtur controls still apply.
 
 Other tunings use their selected target frequencies from MIDI 24 to 108,
-inclusive. Scala and MTS mappings can make individual notes silent. Across both
+inclusive. Scala and MTS mappings can make individual notes silent. MIDI Tuning
+(MTS-ESP) defaults to 12edo at A4 = 440 Hz until a master or MIDI tuning SysEx
+supplies frequencies; Testton follows the same absolute-frequency table. Across both
 modes, Testton's sounding range begins at 20 Hz and ends at the smaller of
 20000 Hz and 44% of the host sample rate. MIDI-off manual frequency is available
 independently of the organ's compass.

@@ -469,18 +469,20 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
     note 60, note 69 = 444.5 Hz (the organ's a′), so twelve-note scales sit where the organ
     is. The files themselves are saved in the project and in patches, so they also work on
     another computer. Loading a file selects this entry.
-  - *MTS-ESP / MIDI-Stimmung (SysEx)*: follows an **MTS-ESP master** (ODDSound; e.g. the free
+  - *MIDI Tuning (MTS-ESP)*: follows an **MTS-ESP master** (ODDSound; e.g. the free
     *MTS-ESP Mini*, or a master in another plugin), including multi-channel tables (keyboards with
     more than 128 keys, e.g. Lumatone layouts) and keys the master leaves unmapped. Without a
     master it takes **MIDI Tuning Standard SysEx** from the MIDI input: that is what Hexatone
     and similar isomorphic-keyboard tools send. *Töne folgen*: held notes follow a tuning change
     at once (off: each note keeps the pitch it was struck with). Until a master is connected or
-    SysEx has arrived, it plays the original tuning. The line below the buttons shows the state.
+    SysEx has arrived, it plays calibrated 12edo at A4 = 440 Hz, independently of the stored
+    Stimmton setting. This mode hides Stimmton and puts *Töne folgen* in its place. The status
+    identifies the fallback; received tuning is shown as *MIDI Tuning (MTS-ESP) empfangen*.
     MTS-ESP needs its library installed (it comes with every MTS-ESP master); without it the
     plugin works as before.
   - **Hexatone via MIDI loopback** (loopMIDI on Windows, IAC on macOS): in the **standalone
     app** choose the loopback port as MIDI input (*Options → Audio/MIDI Settings*), select
-    *MTS-ESP / MIDI-Stimmung*, and let Hexatone send MTS SysEx on that port. In **Reaper** the
+    *MIDI Tuning (MTS-ESP)*, and let Hexatone send MTS SysEx on that port. In **Reaper** the
     track's MIDI input passes SysEx on. **Ableton Live does not pass SysEx to plugins.** There,
     use an MTS-ESP master (e.g. MTS-ESP Mini with the same scale) and send Hexatone only notes.
 - Historical temperaments (¼-comma meantone = the original recording, ⅙-comma,

@@ -96,7 +96,7 @@ inline juce::StringArray temperamentNames()
             "Bohlen-Pierce (13ed3, 146,3 ct)",
             juce::String::fromUTF8("Carlos Alpha \xc2\xb7 jede Taste 78 ct"),
             juce::String::fromUTF8("Scala-Datei (.scl / .kbm)"),
-            juce::String::fromUTF8("MTS-ESP / MIDI-Stimmung (SysEx)"),
+            "MIDI Tuning (MTS-ESP)",
             "1/4-Syntonisches Komma MT",
             "1/5-Syntonisches Komma MT",
             "1/3-Syntonisches Komma MT",

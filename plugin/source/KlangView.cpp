@@ -323,11 +323,12 @@ void KlangView::resized()
         auto b = body(tuneBox);
         temperament.setBounds(b.removeFromTop(28));
         b.removeFromTop(12);
-        pitch->setBounds(b.removeFromTop(38));
+        const auto pitchBounds = b.removeFromTop(38);
+        pitch->setBounds(pitchBounds);
+        mtsFollow->setBounds(pitchBounds.withHeight(24));
         detune->setBounds(b.removeFromTop(38));
         b.removeFromTop(6);
         auto t = b.removeFromTop(24);
-        mtsFollow->setBounds(t);
         scalaLoad.setBounds(t.removeFromLeft(118));
         t.removeFromLeft(6);
         kbmClear.setBounds(t.removeFromLeft(106));
@@ -453,7 +454,8 @@ void KlangView::refresh()
     kbmClear.setVisible(tuning == RysumProcessor::kScalaTuning);
     mtsFollow->setVisible(tuning == RysumProcessor::kMtsTuning);
     const bool mts = tuning == RysumProcessor::kMtsTuning;
-    pitch->setDisabledValueText(mts ? "MTS-ESP" : "Originalstimmung");
+    pitch->setVisible(!mts);
+    pitch->setDisabledValueText("Originalstimmung");
     pitch->setEnabled(!original && !mts);
     pitch->setAlpha(original || mts ? 0.5f : 1.0f);
     detune->setEnabled(!original);

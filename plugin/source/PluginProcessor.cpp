@@ -1436,7 +1436,7 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         // free tuning: every MIDI note its own pitch (the table is filled on the audio thread, see
         // processBlock)
         const int t = juce::roundToInt(V(ix.temperament));
-        if ((t == kScalaTuning && scalaReady.load()) || (t == kMtsTuning && mtsActive()))
+        if ((t == kScalaTuning && scalaReady.load()) || t == kMtsTuning)
             p.notes = &noteTable;
         p.correctSamplePitch =
             p.notes != nullptr || (t != 0 && t != kScalaTuning && t != kMtsTuning);
@@ -1903,8 +1903,10 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
                 MTS_ParseMIDIDataU(mts, meta.data, meta.numBytes);
     {
         const int t = juce::roundToInt(extraParams.at("temperament")->load());
-        if (t == kMtsTuning && mts != nullptr)
+        if (t == kMtsTuning)
         {
+            // The client supplies 12edo at A4 = 440 Hz until it receives tuning.
+            // Its frequency/filter calls also provide that fallback for a null client.
             for (int ch = 0; ch < 16; ++ch)
                 for (int n = 0; n < 128; ++n)
                 {
@@ -3827,16 +3829,11 @@ juce::String RysumProcessor::getTuningStatus() const
     if (t == kMtsTuning)
     {
         if (mts == nullptr)
-            return u8("MTS-ESP nicht verf\xc3\xbcgbar");
-        const juce::String name(juce::CharPointer_UTF8(MTS_GetScaleName(mts)));
-        if (MTS_HasMaster(mts))
-            return u8("MTS-ESP: Master verbunden") +
-                   (name.isNotEmpty() ? dot + name : juce::String());
-        if (MTS_HasReceivedMTSSysEx(mts))
-            return u8("MIDI-Stimmung (MTS-SysEx) empfangen") +
-                   (name.isNotEmpty() ? dot + name : juce::String());
-        return u8("Kein MTS-ESP-Master verbunden, noch keine MTS-SysEx empfangen \xe2\x80\x93 bis "
-                  "dahin die gew\xc3\xa4hlte Originalstimmung");
+            return u8("MTS-ESP nicht verf\xc3\xbcgbar \xe2\x80\x93 12edo, A4 = 440 Hz");
+        if (MTS_HasMaster(mts) || MTS_HasReceivedMTSSysEx(mts))
+            return "MIDI Tuning (MTS-ESP) empfangen";
+        return u8("Kein MTS-ESP-Master verbunden, keine MIDI-Stimmung empfangen \xe2\x80\x93 "
+                  "12edo, A4 = 440 Hz");
     }
     if (mtsHasMaster())
         return u8("Ein MTS-ESP-Master ist verbunden \xe2\x80\x93 \xe2\x80\x9eMTS-ESP\xe2\x80\x9c "

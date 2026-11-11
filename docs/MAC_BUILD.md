@@ -97,6 +97,14 @@ latest merged build passed all 353 audio assertions.
 `RysumUiSnapshot` is an additional GUI test target. The CPU benchmark is enabled
 separately with `RYSUM_BUILD_BENCH=ON`.
 
+With external MTS-ESP masters closed, its focused MIDI-tuning mode checks the
+12edo fallback, independence from Stimmton and the handoff to received SysEx.
+
+```sh
+RYSUM_ONLY_MTS=1 plugin/build-mac-dev/RysumUiSnapshot_artefacts/Release/RysumUiSnapshot.app/Contents/MacOS/RysumUiSnapshot \
+  "$PWD/rysum-samples" /tmp/rysum-midi-tuning-test
+```
+
 ## Playback and controller checks
 
 Standalone and VST3 playback have been tested during development. When changing
@@ -116,7 +124,9 @@ so test the actual routing used in the DAW.
 For MTS-ESP, run a master and Rysum in the host, confirm connection status, and
 check both new and held notes. The external runtime library is commonly located
 at `/Library/Application Support/MTS-ESP/libMTS.dylib`. Without an active master,
-the MTS mode can receive local MIDI tuning SysEx.
+the MIDI Tuning (MTS-ESP) mode can receive local MIDI tuning SysEx. Until either
+source supplies tuning, it plays calibrated 12edo at A4 = 440 Hz. The status
+shows this fallback; Stimmton is hidden and Töne folgen occupies its row.
 
 MPE has its own enable setting and bend range. Check member-channel bend,
 pressure, slide and channel reuse with the intended controller. Offline tests
