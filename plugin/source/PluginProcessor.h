@@ -254,11 +254,11 @@ public:
     /** "Lebendige Orgel" (Effekte, third tab): bellows, pallets, the walking listener, wear, sympathetic pipes, pure tuning, Tonnetz walker */
     enum LiveIndex { lvBellows, lvBellowsSize, lvBlower, lvTreadRate, lvTreadDiv, lvTreadNoise, lvPallet, lvPalletSrc,
                      lvListenX, lvListenY, lvWalkShape, lvWalkRate, lvWalkSize, lvWear, lvWearTime, lvSympLevel, lvSympDecay,
-                     lvPure, lvPureTime, lvNetOn, lvNetPath, lvNetDiv, lvNetRate, lvNetGate, kNumLive };
+                     lvPure, lvPureTime, lvNetOn, lvNetPath, lvNetDiv, lvNetRate, lvNetGate, lvImpLevel, lvImpSrc, lvImpRing, kNumLive };
     static constexpr const char* kLiveIds[kNumLive] { "lvBellows", "lvBellowsSize", "lvBlower", "lvTreadRate", "lvTreadDiv", "lvTreadNoise",
                                                       "lvPallet", "lvPalletSrc", "lvListenX", "lvListenY", "lvWalkShape", "lvWalkRate", "lvWalkSize",
                                                       "lvWear", "lvWearTime", "lvSympLevel", "lvSympDecay", "lvPure", "lvPureTime",
-                                                      "lvNetOn", "lvNetPath", "lvNetDiv", "lvNetRate", "lvNetGate" };
+                                                      "lvNetOn", "lvNetPath", "lvNetDiv", "lvNetRate", "lvNetGate", "lvImpLevel", "lvImpSrc", "lvImpRing" };
     /** Verschleiss: all pipes new again (message thread) */
     void resetWear() { engine.wearReset = true; }
 

@@ -111,6 +111,10 @@ void OrganEngine::prepare (double sampleRate, int maxBlockSize)
     sr = sampleRate > 0 ? sampleRate : 48000.0;
     maxBlock = juce::jmax (1, maxBlockSize);
     scratch.assign ((size_t) maxBlock, 0.0f);
+    bodyMode.fill (-1); bodySamples = 0; bodyStepCount = 0; numImpacts = 0;      // (the same paths after every start)
+    for (auto& v : impactVoices) v.on = false;
+    impactRng = XorShift (4711u);
+    for (auto& b : bodyOn) b = false;
     scratchRamp.assign ((size_t) maxBlock, 0.0f);
     hidBuf.assign (2 * (size_t) maxBlock, 0.0f);
     for (auto& r : roomSend) r.assign ((size_t) maxBlock, 0.0f);
@@ -375,6 +379,18 @@ void OrganEngine::requestPreview (int stop, int key)
 
 Pos OrganEngine::currentPosition (int stop, int key, const EngineParams& p) const noexcept
 {
+    // in the room modes the pipe is a body in the Saal: seen from the usual listening place (no orbit, no shaping)
+    if (isRoomMotion (p.motionMode[(size_t) stop]))
+    {
+        Vec3f b;
+        if (bodyAt (stop, key, b))
+        {
+            const int ri = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) stop]);
+            Pos q = seenFrom ({ homeX[(size_t) ri].load(), homeY[(size_t) ri].load(), homeZ[(size_t) ri].load() }, b);
+            q.dist = juce::jlimit (kMinDist, kMaxDist, q.dist);
+            return q;
+        }
+    }
     Pos base { baseAz[(size_t) stop][(size_t) key].load(), baseEl[(size_t) stop][(size_t) key].load(),
                baseDist[(size_t) stop][(size_t) key].load() };
     if ((Motion) p.motionMode[(size_t) stop] == Motion::Beat)        // every pipe its own turn, as fast as it beats
@@ -522,7 +538,9 @@ void OrganEngine::updateVoiceSpatial (Voice& v, const EngineParams& p, double bl
     // 'dpos' is only the direct sound; the reflections and the room send keep the pipe where it is.
     Pos dpos = pos;
     float hidDb = 0.0f, hidFc = 20000.0f;
-    if (aroundCorner (p.stopRoom[(size_t) v.stop], homePos, dpos, hidDb, hidFc) == 2) ++occCount;
+    // a body in the room (room motion) is where it is - not placed by a ray from the listener's usual place
+    v.hasBody = isRoomMotion (p.motionMode[(size_t) v.stop]) && bodyAt (v.stop, v.key, v.bodyPos);
+    if (aroundCorner (p.stopRoom[(size_t) v.stop], homePos, dpos, hidDb, hidFc, v.hasBody ? &v.bodyPos : nullptr) == 2) ++occCount;
     {
         // Ventil: how far this pipe's pallet is open (a slow key opens it slowly; or the finger's pressure / slide)
         const auto& lv = p.live;
@@ -1923,9 +1941,9 @@ void OrganEngine::releaseSlot (int& slot) noexcept
     slot = -1;
 }
 
-void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r, const RoomParams* placeFrom) noexcept
+void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r, const RoomParams* placeFrom, const Vec3f* fixedSrc) noexcept
 {
-    if (! r.box()) { updateSlotTapsPlan (s, srcPos, base, p, r, placeFrom); return; }
+    if (! r.box()) { updateSlotTapsPlan (s, srcPos, base, p, r, placeFrom, fixedSrc); return; }
     {
         // a source that has not moved in an unchanged room: the taps are still right
         const std::array<float, ErSlot::kKey> key { srcPos.az, srcPos.el, srcPos.dist, base, r.W(), r.L(), r.H(), r.listenerX, r.listenerY,
@@ -1934,7 +1952,7 @@ void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const Engin
         if (! s.fresh && s.keyValid && key == s.key) return;
         s.key = key; s.keyValid = true;
     }
-    const Vec3f L = listenerPos (r), S = roomPoint (placeFrom != nullptr ? *placeFrom : r, srcPos);
+    const Vec3f L = listenerPos (r), S = fixedSrc != nullptr ? *fixedSrc : roomPoint (placeFrom != nullptr ? *placeFrom : r, srcPos);
     const float rd = seenFrom (L, S).dist;
     std::array<ImageSource, kMaxTaps> ims;
     const int n = imageSources (r, S, r.order, ims.data(), kMaxTaps);
@@ -1994,7 +2012,7 @@ void OrganEngine::updateSlotTaps (ErSlot& s, Pos srcPos, float base, const Engin
     room changed or a new sound starts - and at most a few times per block (the rest wait for the next block).
     In between, every tap keeps its path and only the image position is recomputed (cheap and smooth). Paths that
     appear or disappear fade in / out over 25 ms, like a reflection that slides past the end of a wall. */
-void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r, const RoomParams* placeFrom) noexcept
+void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& r, const RoomParams* placeFrom, const Vec3f* fixedSrc) noexcept
 {
     const std::array<float, ErSlot::kKey> key { srcPos.az, srcPos.el, srcPos.dist, base, r.W(), r.L(), r.H(), r.listenerX, r.listenerY,
                                                 r.absWalls, r.absFloor, r.highDamp, r.scatter, (float) r.order, r.erGain,
@@ -2008,7 +2026,7 @@ void OrganEngine::updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const E
     const auto g = planGeo (r);
     // the pipe placed from the usual place (a ray from where the listener walked to would end on other walls
     // behind every corner: the pipe and all its reflections would jump), heard from where the listener stands
-    const Vec3f L = listenerPos (r), S = roomPoint (placeFrom != nullptr ? *placeFrom : r, srcPos);
+    const Vec3f L = listenerPos (r), S = fixedSrc != nullptr ? *fixedSrc : roomPoint (placeFrom != nullptr ? *placeFrom : r, srcPos);
     const float rd = seenFrom (L, S).dist;
     const bool topo = s.visShape != r.shape || s.visN != r.plan.n;          // other walls: the old paths mean nothing any more
     const float moved = std::sqrt ((S.x - s.visSrc.x) * (S.x - s.visSrc.x) + (S.y - s.visSrc.y) * (S.y - s.visSrc.y) + (S.z - s.visSrc.z) * (S.z - s.visSrc.z));
@@ -2223,7 +2241,7 @@ void OrganEngine::renderRoom (juce::AudioBuffer<float>& out, int n, const Engine
             if (v.active && v.erSlot == (int) si)
             {
                 const int vr = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) v.stop]);
-                updateSlotTaps (s, v.erPos, v.erBase, p, roomsEr[(size_t) vr], &roomsNow[(size_t) vr]);
+                updateSlotTaps (s, v.erPos, v.erBase, p, roomsEr[(size_t) vr], &roomsNow[(size_t) vr], v.hasBody ? &v.bodyPos : nullptr);
             }
             else { s.voice = -1; s.drain = kErRing; }
         }
@@ -3364,6 +3382,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     pipeSndNow = p.pipeSnd;
     glitchNow = p.glitch;
     // ---- the living organ: bellows, the walking listener, wear, pure tuning, sympathetic pipes; the Tonnetz walker
+    stepBodies (p, blockSeconds);           // the room motion modes: the pipes as bodies in the Saal (and their impacts)
     updateLive (p, blockSeconds);
     stepWalker (p, numSamples);
     // ---- spatial data for this block (end-of-block targets, ramped from the previous ones)
@@ -3401,6 +3420,7 @@ void OrganEngine::processChunk (juce::AudioBuffer<float>& out, const juce::MidiB
     initFresh();                // voices started by stop changes / previews before any MIDI
     renderRange (out, pos, numSamples, numSamples, p);
     renderLive (out.getArrayOfWritePointers(), numSamples, p);
+    renderImpacts (out.getArrayOfWritePointers(), numSamples, p);       // pipes flying in the Saal knocking on its walls
     renderLeaks (out, numSamples, p);
     renderInput (out, numSamples, p);       // the audio input: placed like a pipe, then everything below (wear, echoes, room, Lucier)
 

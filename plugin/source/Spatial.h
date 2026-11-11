@@ -132,13 +132,40 @@ inline void encodeStereo (float azDeg, float* out) noexcept
 // Motion
 // --------------------------------------------------------------------------
 enum class Motion { Static = 0, Rotation, Pendulum, Drift, Vertical, Jumps, Drawn,
-                    Beat        // "Schwebung": every pipe turns as fast as it beats with the others (OrganEngine)
+                    Beat,       // "Schwebung": every pipe turns as fast as it beats with the others (OrganEngine)
+                    // free in the Saal (OrganBodies.cpp): every pipe a body with a place and a speed in the room, not a direction
+                    Flight,     // "Flug": straight lines, bouncing off the walls
+                    Fall,       // "Fall": gravity, bouncing on the floor, thrown up again
+                    Swarm,      // "Schwarm": flocking
+                    Flow        // "Strömung": carried by a slow current through the room
 };
 
 inline juce::StringArray motionNames()
 {
     // new entries only at the end: projects and patches store the index
-    return { "Statisch", "Rotation", "Pendel", "Drift", "Vertikal", juce::String::fromUTF8 ("Spr\xc3\xbcnge"), "Gezeichnet", "Schwebung" };
+    return { "Statisch", "Rotation", "Pendel", "Drift", "Vertikal", juce::String::fromUTF8 ("Spr\xc3\xbcnge"), "Gezeichnet", "Schwebung",
+             "Flug (im Saal)", "Fall (im Saal)", "Schwarm (im Saal)", juce::String::fromUTF8 ("Str\xc3\xb6mung (im Saal)") };
+}
+
+/** the modes where a pipe is a body in the room (a place and a speed in the Saal, not a direction around the listener) */
+inline bool isRoomMotion (int mode) noexcept
+{
+    return mode >= (int) Motion::Flight && mode <= (int) Motion::Flow;
+}
+
+/** how long / wide a pipe is (m): an 8' C is 2.4 m, every octave halves it (the 3D view draws it so, the room
+    modes let it stand on the floor and knock with its own ring) */
+inline void pipeSize (float footage, bool stopped, int key, float& len, float& rad) noexcept
+{
+    len = 2.44f * footage / 8.0f * std::exp2 (-(float) key / 12.0f);
+    if (stopped) len *= 0.5f;                              // stopped (Gedackt): half as long
+    len = juce::jlimit (0.12f, 6.0f, len);
+    rad = juce::jlimit (0.012f, 0.13f, len * (stopped ? 0.07f : 0.035f));
+}
+inline void pipeSizeOf (int stop, int key, float& len, float& rad) noexcept
+{
+    const int s = juce::jlimit (0, kNumStops - 1, stop);
+    pipeSize (kStopFootage[(size_t) s], s == 1, key, len, rad);          // (stop 1: the Gedackt)
 }
 
 /** a drawn trajectory (Raum page): points on the sphere in the order (and timing) they were drawn */

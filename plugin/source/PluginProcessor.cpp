@@ -508,6 +508,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                       AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 2) + " /s"; })));
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvNetGate", 1 }, String::fromUTF8 ("Wanderer Tonl\xc3\xa4nge"), NormalisableRange<float> (0.05f, 8.0f, 0.01f, 0.5f), 0.9f,
                                                       AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 2) + String::fromUTF8 (" Schritte"); })));
+        // Aufprall: pipes flying in the Saal (the room motion modes) knock against walls, floor and ceiling
+        // (new parameters only at the end: routings and MIDI maps address parameters by their place)
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvImpLevel", 1 }, "Aufprall", NormalisableRange<float> (-60.0f, 12.0f, 0.1f, 2.0f), -60.0f, lvDbOff));
+        l.add (std::make_unique<AudioParameterChoice> (ParameterID { "lvImpSrc", 1 }, "Aufprall von",
+                                                       StringArray { "klingenden Pfeifen", "allen Pfeifen" }, 0));
+        l.add (std::make_unique<AudioParameterFloat> (ParameterID { "lvImpRing", 1 }, "Aufprall Nachklang", NormalisableRange<float> (0.05f, 4.0f, 0.001f, 0.4f), 0.6f, lvSecs));
     }
     return l;
 }
@@ -817,6 +823,8 @@ EngineParams RysumProcessor::readParams (const float* vals) const
         lv.pure = Lv (lvPure); lv.pureTime = Lv (lvPureTime);
         lv.netOn = Lv (lvNetOn) > 0.5f; lv.netPath = juce::roundToInt (Lv (lvNetPath)); lv.netDiv = juce::roundToInt (Lv (lvNetDiv));
         lv.netRate = Lv (lvNetRate); lv.netGate = Lv (lvNetGate);
+        lv.impLevel = Lv (lvImpLevel) <= -59.9f ? 0.0f : dbToGain (Lv (lvImpLevel));
+        lv.impAll = Lv (lvImpSrc) > 0.5f; lv.impRing = Lv (lvImpRing);
     }
     p.windModel = juce::roundToInt (V (ix.windModel));
 

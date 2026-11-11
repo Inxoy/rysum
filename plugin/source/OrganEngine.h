@@ -121,6 +121,10 @@ struct LiveParams
     int   netPath = 0;                 // 0 fifths, 1 chain of thirds, 2 random, 3 random that comes home, 4 spiral
     int   netDiv = 0;                  // 0 = free (netRate), else a note value
     float netRate = 3.0f, netGate = 0.9f;         // steps per second, note length in steps
+    // Aufprall: pipes flying through the Saal (the room motion modes) knock against walls, floor and ceiling
+    float impLevel = 0.0f;             // linear (0 = silent)
+    bool  impAll = false;              // false: only sounding pipes knock, true: every pipe of a pulled stop
+    float impRing = 0.6f;              // s: how long the struck pipe rings
 };
 
 struct EngineParams
@@ -308,6 +312,28 @@ public:
     std::atomic<bool>  viewWalkOn { false };
     std::atomic<float> viewX { 0.0f }, viewY { 0.0f }, viewYaw { 0.0f };
     std::atomic<int>   hiddenNow { 0 };          // sounding pipes heard around a corner (out of sight)
+
+    // ---- room motion (Flug, Fall, Schwarm, Strömung): every pipe a body in the Saal, for the display
+    /** where the pipe is in its room (m) - true while its stop moves in the room */
+    bool bodyAt (int stop, int key, Vec3f& out) const noexcept
+    {
+        if (stop < 0 || stop >= kNumStops || key < 0 || key >= kNumKeys || ! bodyOn[(size_t) stop].load()) return false;
+        out = { bodyX[(size_t) stop][(size_t) key].load(), bodyY[(size_t) stop][(size_t) key].load(), bodyZ[(size_t) stop][(size_t) key].load() };
+        return true;
+    }
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> bodyX, bodyY, bodyZ;
+    std::array<std::atomic<bool>, kNumStops> bodyOn {};
+    std::array<std::atomic<float>, kNumRooms> homeX {}, homeY {}, homeZ {};      // the usual listening place per room
+    /** the last impacts (a ring of 16; impactCount counts them all) */
+    struct ImpactShow { std::atomic<float> x { 0 }, y { 0 }, z { 0 }, strength { 0 }; std::atomic<int> stop { 0 }; };
+    std::array<ImpactShow, 16> impactShow;
+    std::atomic<uint32_t> impactCount { 0 };
+    /** tests: an impact as if a pipe had hit there (audio thread / before process) */
+    void testImpact (float x, float y, float z, float speed, float absorb, int stop, int key, bool floor = false) noexcept
+    {
+        ImpactEvent e; e.x = x; e.y = y; e.z = z; e.speed = speed; e.absorb = absorb; e.stop = stop; e.key = key; e.floor = floor;
+        queueImpact (e);
+    }
     bool occlusionEnabled = true;                 // (tests: the same walk with and without the walls hiding pipes)
 
     void setModHook (ModHook* h) noexcept { modHook = h; }
@@ -389,6 +415,7 @@ private:
         float lp = 0.0f, lpA = 1.0f;     // tone filter for under-winded pipes
         float lpAir = 0.0f, airA = 1.0f; // air absorption by distance
         float hidLp = 0.0f, hidA = 1.0f, hidAc = 1.0f;  // out of sight: the direct sound comes around a corner, duller (1 = open; target, now)
+        bool hasBody = false; Vec3f bodyPos {};           // room motion: where the pipe is in the Saal (this block)
         WindChaos chaos;                 // wind model 2: resonances, intermittent jet, hiss
         float chAir = 0.0f;              // its own air filter
         float prevDist = -1.0f, dop = 1.0f, dopTarget = 1.0f;
@@ -579,8 +606,8 @@ private:
     int  allocSlot (int voice, int noiseVoice) noexcept;
     void releaseSlot (int& slot) noexcept;
     /** placeFrom: the room as seen from the listener's usual place, where srcPos is measured from (null = room itself) */
-    void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room, const RoomParams* placeFrom = nullptr) noexcept;
-    void updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room, const RoomParams* placeFrom) noexcept;
+    void updateSlotTaps (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room, const RoomParams* placeFrom = nullptr, const Vec3f* fixedSrc = nullptr) noexcept;
+    void updateSlotTapsPlan (ErSlot& s, Pos srcPos, float base, const EngineParams& p, const RoomParams& room, const RoomParams* placeFrom, const Vec3f* fixedSrc) noexcept;
     void renderEchoes (juce::AudioBuffer<float>& out, int n, const EngineParams& p);
     void renderInput (juce::AudioBuffer<float>& out, int n, const EngineParams& p) noexcept;
     void followInput (int start, int len, const EngineParams& p) noexcept;
@@ -734,6 +761,36 @@ private:
     // ---- living organ (OrganLive.cpp)
     void updateLive (const EngineParams& p, double blockSeconds) noexcept;
     void renderLive (float* const* outs, int n, const EngineParams& p) noexcept;
+
+    // ---- room motion: the bodies (OrganBodies.cpp)
+    struct Body { float x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, rest = 0; XorShift rng; };
+    std::array<std::array<Body, kNumKeys>, kNumStops> bodies {};
+    std::array<int, kNumStops> bodyMode {};             // the mode the bodies move in (-1 = none yet)
+    int64_t bodySamples = 0;                             // samples since the room modes started: the steps are counted from it (the same paths at every block size)
+    uint32_t bodyStepCount = 0;
+    void stepBodies (const EngineParams& p, double blockSeconds) noexcept;
+    // impacts: queued by the bodies, played by a few voices (a knock, the struck pipe ringing)
+    struct ImpactEvent { float x = 0, y = 0, z = 0, speed = 0, absorb = 0, high = 0; int stop = 0, key = 0, room = 0; bool floor = false; };
+    static constexpr int kMaxImpactEvents = 24, kNumImpactVoices = 32, kImpactModes = 5;
+    std::array<ImpactEvent, kMaxImpactEvents> impactQueue {};
+    int numImpacts = 0;
+    struct ImpactVoice
+    {
+        bool on = false;
+        int exN = 0, exPos = 0;                          // the contact: a raised-cosine pulse of exN samples
+        float exGain = 0, noiseGain = 0, noiseLp = 0, noiseA = 0;
+        float thud = 0, thudLp = 0, thudA = 0, thudDec = 0;
+        std::array<float, kImpactModes> b1 {}, b2 {}, y1 {}, y2 {}, gm {};
+        float level = 0, levelDec = 0;                   // a rough envelope (for stealing and for ending)
+        int age = 0, life = 0;
+        std::array<float, kMaxAmbiChannels> g {};
+        float send = 0;
+    };
+    std::array<ImpactVoice, kNumImpactVoices> impactVoices {};
+    XorShift impactRng { 4711u };
+    void queueImpact (const ImpactEvent& e) noexcept;
+    void startImpact (const ImpactEvent& e, const EngineParams& p) noexcept;
+    void renderImpacts (float* const* outs, int n, const EngineParams& p) noexcept;
     void updateSympathy (const EngineParams& p) noexcept;
     void updatePure (const EngineParams& p, double blockSeconds) noexcept;
     void stepWalker (const EngineParams& p, int numSamples);
@@ -758,7 +815,8 @@ private:
     int occCount = 0;
     /** the pipe at 'home' (as placed from the listener's usual place) heard from where the listener stands:
         false if nothing is in the way; else where it is heard from and how much is lost */
-    int aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz) const noexcept;    // 0 = not walking in a shaped room, 1 = in sight, 2 = around a corner
+    /** body: the pipe's own place in the room (room motion), else it is placed from "home" */
+    int aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz, const Vec3f* body = nullptr) const noexcept;    // 0 = not walking in a shaped room, 1 = in sight, 2 = around a corner
     // sympathetic pipes
     static constexpr int kSymp = 16;
     struct Symp

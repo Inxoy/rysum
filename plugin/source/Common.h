@@ -206,6 +206,8 @@ constexpr std::array<StopInfo, kNumStops> kStops {{
 /** order on screen: the 16' first, as on a stop list (parameter / state indices stay as they are) */
 constexpr std::array<int, kNumStops> kDisplayOrder { 7, 0, 1, 2, 3, 4, 5, 6 };
 constexpr int kPraestant16 = 7;
+/** the length of each stop's pipes in feet (the mixtures: their lowest rank, roughly) */
+constexpr std::array<float, kNumStops> kStopFootage { 8.0f, 8.0f, 4.0f, 2.0f, 2.67f, 1.33f, 8.0f, 16.0f };
 
 /** default stop volumes (dB): measured perceived loudness (K-weighted, all pipes) of the cleaned samples,
     including the default distances in the room, so all stops start roughly equally loud */

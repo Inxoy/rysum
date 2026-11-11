@@ -7,19 +7,10 @@ namespace
 {
 juce::String U (const char* s) { return juce::String::fromUTF8 (s); }
 
-constexpr float kFootage[kNumStops] { 8.0f, 8.0f, 4.0f, 2.0f, 2.67f, 1.33f, 8.0f, 16.0f };
 const juce::Colour kMetal[kNumStops] { juce::Colour (0xffd9d6cd), juce::Colour (0xff8e877a), juce::Colour (0xffc9c6bd), juce::Colour (0xffbdbab2),
                                        juce::Colour (0xffb5afa2), juce::Colour (0xffaaa69c), juce::Colour (0xffc8a15a), juce::Colour (0xffe4e0d6) };
 constexpr float kUnitScale[] { 1.0f, 0.01f, 0.001f, 0.0254f, 0.3048f };
 
-/** how long / wide a pipe is drawn: an 8' C is 2.4 m, every octave halves it */
-void pipeSize (int stop, int key, float& len, float& rad)
-{
-    len = 2.44f * kFootage[stop] / 8.0f * std::exp2 (-(float) key / 12.0f);
-    if (stop == 1) len *= 0.5f;                            // Gedackt: stopped, half as long
-    len = juce::jlimit (0.12f, 6.0f, len);
-    rad = juce::jlimit (0.012f, 0.13f, len * (stop == 1 ? 0.07f : 0.035f));
-}
 
 bool insidePlan (const FloorPlan& f, float W, float L, float x, float y)
 {
@@ -496,7 +487,7 @@ void WalkView::paint (juce::Graphics& g)
             const Pos pos = proc.engine.displayPosition (s, k, params);
             const V3 c = pipeAt (r, homeP, pos);
             float len, rad;
-            pipeSize (s, k, len, rad);
+            pipeSizeOf (s, k, len, rad);
             // floating: a slow breath up and down, each pipe its own
             const float bob = 0.06f * (float) std::sin (now * 0.7 + (double) (s * 41 + k) * 1.37);
             const V3 bottom { c.x, c.y, c.z - 0.5f * len + bob };
