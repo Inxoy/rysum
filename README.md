@@ -120,7 +120,7 @@ binaural decoder: 128 samples.
   delete that file to get the automatic size again).
 
 **Every slider:** click its value to type a number (in the units shown: `50` on a % slider
-= 50 %, `300 ms` or `1.5 s`, `440` on the Stimmton = a′ in Hz, `22` on Abtastrate = 22 kHz),
+= 50 %, `300 ms` or `1.5 s`, `440` on the Stimmton = A4 in Hz, `22` on Abtastrate = 22 kHz),
 Return applies. Double-click the slider = default. Right-click = modulation.
 
 **Stops:** eight – the seven recorded ones plus a *Praestant 16′*, made from the Praestant 8′
@@ -263,8 +263,10 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
   - *Scala-Datei (.scl / .kbm)*: *Scala laden …* takes a scale (`.scl`, cents or ratios) and,
     loaded afterwards, a keyboard mapping (`.kbm`: which key plays which degree, unmapped keys,
     reference key and frequency). *KBM entfernen* goes back to the default mapping: degree 0 on
-    note 60, note 69 = 444.5 Hz (the organ's a′), so twelve-note scales sit where the organ
-    is. The files themselves are saved in the project and in patches, so they also work on
+    C4 (MIDI 60) at 261.625565 Hz, the 12edo C at A4 = 440 Hz. The Stimmton row shows
+    the reference MIDI note and frequency supplied by the KBM, or this default reference.
+    Scala tuning uses these absolute frequencies independently of the normal Stimmton setting.
+    The files themselves are saved in the project and in patches, so they also work on
     another computer. Loading a file selects this entry.
   - *MIDI Tuning (MTS-ESP)*: follows an **MTS-ESP master** (ODDSound; e.g. the free
     *MTS-ESP Mini*, or a master in another plugin), including multi-channel tables (keyboards with
@@ -284,7 +286,7 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
     use an MTS-ESP master (e.g. MTS-ESP Mini with the same scale) and send Hexatone only notes.
 - Historical temperaments (¼-comma meantone = the original recording, ⅙-comma,
   Werckmeister III, Kirnberger III, Vallotti, Pythagorean, equal). a′ stays put, the other
-  pitch classes are shifted. *Stimmton* moves everything (±200 ct, shown as a′ in Hz).
+  pitch classes are shifted. *Stimmton* moves everything (±200 ct, shown as A4 in Hz).
   *Verstimmung* gives every pipe its own fixed random detune (0–60 ct).
 - *Tremulant*: on/off, speed, depth – pitch + level wave shared by all pipes, plus a bit
   of wind noise.

@@ -199,7 +199,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         AudioParameterFloatAttributes().withStringFromValueFunction(
             [](float v, int)
             {
-                return juce::String::fromUTF8("a\xe2\x80\xb2 = ") +
+                return "A4 = " +
                        String(kA4 * std::exp2(effectiveStimmtonCents(v) / 1200.0), 1) + " Hz";
             })));
     l.add(std::make_unique<AudioParameterFloat>(
@@ -1441,7 +1441,9 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         p.correctSamplePitch =
             p.notes != nullptr || (t != 0 && t != kScalaTuning && t != kMtsTuning);
         p.extendedRange = p.correctSamplePitch && extendedRange.load();
-        p.pitchCents = (t == 0 || t == kMtsTuning) ? 0.0 : effectiveStimmtonCents(V(ix.pitch));
+        p.pitchCents = (t == 0 || t == kScalaTuning || t == kMtsTuning)
+                          ? 0.0
+                          : effectiveStimmtonCents(V(ix.pitch));
         p.detune = t == 0 ? 0.0f : V(ix.detune);
         p.notesContinuous = V(ix.mtsCont) > 0.5f;
         p.mpe = V(ix.mpe) > 0.5f;
@@ -3804,6 +3806,16 @@ void RysumProcessor::clearKbm()
         setScala(sclText, sclName, {}, {});
 }
 
+juce::String RysumProcessor::getScalaReferenceText() const
+{
+    if (!scalaReady.load())
+        return "Stimmton\nNoch keine Skala geladen";
+    static const char *const names[]{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    const auto note = juce::String(names[scala.refNote % 12]) + juce::String(scala.refNote / 12 - 1);
+    return "Stimmton " + note + " (MIDI " + juce::String(scala.refNote) + ")\n" +
+           juce::String(scala.refFreq, 6) + " Hz";
+}
+
 juce::String RysumProcessor::getTuningStatus() const
 {
     const int t = juce::roundToInt(extraParams.at("temperament")->load());
@@ -3820,10 +3832,10 @@ juce::String RysumProcessor::getTuningStatus() const
             juce::String(scala.cents.back(), 1) + " ct";
         if (scala.description.isNotEmpty())
             s << "\n" << scala.description;
-        s << "\n"
-          << (kbmText.isNotEmpty()
-                  ? "KBM: " + kbmName
-                  : u8("Standard-Zuordnung: Stufe 0 auf Taste 60, Taste 69 = 444,5 Hz"));
+        if (kbmText.isNotEmpty())
+            s << "\nKBM: " << kbmName << "\nMittelnote: MIDI " << scala.middleNote;
+        else
+            s << "\nStandard: Stufe 0 = C4 (MIDI 60), 12edo-Referenz bei A4 = 440 Hz";
         return s;
     }
     if (t == kMtsTuning)

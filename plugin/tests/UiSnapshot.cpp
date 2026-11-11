@@ -40,10 +40,13 @@ public:
     {
         if (proc->getLibrary() == nullptr && ++waited < 200)
             return;
-        if (std::getenv("RYSUM_ONLY_MTS") != nullptr)
+        if (std::getenv("RYSUM_ONLY_MTS") != nullptr || std::getenv("RYSUM_ONLY_SCALA") != nullptr)
         {
             stopTimer();
-            testMidiTuning();
+            if (std::getenv("RYSUM_ONLY_SCALA") != nullptr)
+                testScalaTuning();
+            else
+                testMidiTuning();
             quit();
             return;
         }
@@ -2391,6 +2394,96 @@ public:
     }
 
 private:
+    void testScalaTuning()
+    {
+        bool passed = true;
+        auto check = [&](bool ok, const char *message)
+        {
+            std::cout << (ok ? "  ok    " : "  FAIL  ") << message << std::endl;
+            passed = passed && ok;
+        };
+        auto set = [&](const char *id, float value)
+        {
+            auto *parameter = proc->apvts.getParameter(id);
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+        };
+        check(proc->getLibrary() != nullptr, "Scala test loaded the sample library");
+        if (proc->getLibrary() == nullptr)
+        {
+            setApplicationReturnValue(1);
+            return;
+        }
+        proc->setRateAndBufferSizeDetails(48000.0, 512);
+        proc->prepareToPlay(48000.0, 512);
+        set("output", 0.0f);
+        set("dsfOn", 1.0f);
+        set("dsfMidi", 1.0f);
+        set("dsfOffset", 0.0f);
+        set("dsfFootage", 2.0f);
+        set("dsfMixtur", 1.0f);
+        juce::String scale("Reference test\n31\n");
+        for (int degree = 1; degree <= 31; ++degree)
+            scale << juce::String(1200.0 * degree / 31.0, 8) << "\n";
+        const auto scl = outDir.getChildFile("reference.scl");
+        const auto kbm = outDir.getChildFile("reference.kbm");
+        check(scl.replaceWithText(scale) && proc->loadTuningFile(scl), "Scala scale loaded");
+        juce::AudioBuffer<float> audio(36, 512);
+        auto play = [&](int note)
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::allSoundOff(1), 0);
+            midi.addEvent(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(100)), 1);
+            audio.clear();
+            proc->processBlock(audio, midi);
+        };
+        for (const float pitch : {-200.0f, 0.0f, 100.0f})
+        {
+            set("pitch", pitch);
+            play(60);
+            const auto params = proc->readParams();
+            check(params.notes != nullptr && params.pitchCents == 0.0 &&
+                      std::abs(params.notes->hz[60] - rysum::kScalaDefaultReferenceHz) < 0.001 &&
+                      std::abs(proc->getReferenceToneFrequency() - rysum::kScalaDefaultReferenceHz) < 0.001,
+                  "Scala degree zero and Testton use C4 at the 12edo A440 reference independently of Stimmton");
+        }
+        check(proc->getScalaReferenceText().contains("C4 (MIDI 60)") &&
+                  proc->getScalaReferenceText().contains("261.625565") &&
+                  proc->getTuningStatus().contains("Stufe 0 = C4"),
+              "default Scala display identifies its MIDI reference, frequency and degree zero");
+        check(kbm.replaceWithText("0\n0\n127\n55\n57\n432.1255\n0\n") && proc->loadTuningFile(kbm),
+              "KBM with a distinct middle and reference note loaded");
+        play(57);
+        auto params = proc->readParams();
+        check(params.notes != nullptr && params.pitchCents == 0.0 &&
+                  std::abs(params.notes->hz[57] - 432.1255) < 0.001 &&
+                  std::abs(proc->getReferenceToneFrequency() - 432.1255) < 0.001,
+              "organ target and Testton follow the KBM reference frequency");
+        check(proc->getScalaReferenceText().contains("A3 (MIDI 57)") &&
+                  proc->getScalaReferenceText().contains("432.125500") &&
+                  proc->getTuningStatus().contains("Mittelnote: MIDI 55"),
+              "KBM display distinguishes reference note and middle note");
+        juce::MemoryBlock saved;
+        proc->getStateInformation(saved);
+        proc->clearKbm();
+        play(60);
+        params = proc->readParams();
+        check(!proc->hasKbm() && params.notes != nullptr &&
+                  std::abs(params.notes->hz[60] - rysum::kScalaDefaultReferenceHz) < 0.001 &&
+                  proc->getScalaReferenceText().contains("C4 (MIDI 60)"),
+              "clearing KBM restores the default C4 reference and display");
+        proc->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        play(57);
+        params = proc->readParams();
+        check(proc->hasKbm() && params.notes != nullptr &&
+                  std::abs(params.notes->hz[57] - 432.1255) < 0.001 &&
+                  proc->getScalaReferenceText().contains("A3 (MIDI 57)"),
+              "project restoration restores the KBM reference and display");
+        check(proc->apvts.getParameter("pitch")->getCurrentValueAsText().startsWith("A4 = "),
+              "normal Stimmton uses scientific A4 notation");
+        proc->releaseResources();
+        setApplicationReturnValue(passed ? 0 : 1);
+    }
+
     void testMidiTuning()
     {
         bool passed = true;

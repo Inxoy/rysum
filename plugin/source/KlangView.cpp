@@ -67,7 +67,7 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
                              });
     };
     kbmClear.setTooltip(
-        u8("Tastenzuordnung entfernen: Standard (Stufe 0 auf Taste 60, Taste 69 = 444,5 Hz)"));
+        u8("Tastenzuordnung entfernen: Stufe 0 auf C4 (MIDI 60), 261,625565 Hz bei A4 = 440 Hz"));
     kbmClear.onClick = [this]
     {
         proc.clearKbm();
@@ -91,6 +91,10 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
 
     pitch = &row("pitch", "Stimmton");
     pitch->slider.setDoubleClickReturnValue(true, kStimmton440Detent);
+    scalaReference.setFont(Assets::get().sansFont(13.0f));
+    scalaReference.setColour(juce::Label::textColourId, col::ink);
+    scalaReference.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(scalaReference);
     detune = &row("detune", u8("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
     detune->setDisabledValueText("Original", "Verstimmung");
 
@@ -325,6 +329,7 @@ void KlangView::resized()
         b.removeFromTop(12);
         const auto pitchBounds = b.removeFromTop(38);
         pitch->setBounds(pitchBounds);
+        scalaReference.setBounds(pitchBounds);
         mtsFollow->setBounds(pitchBounds.withHeight(24));
         detune->setBounds(b.removeFromTop(38));
         b.removeFromTop(6);
@@ -454,7 +459,11 @@ void KlangView::refresh()
     kbmClear.setVisible(tuning == RysumProcessor::kScalaTuning);
     mtsFollow->setVisible(tuning == RysumProcessor::kMtsTuning);
     const bool mts = tuning == RysumProcessor::kMtsTuning;
-    pitch->setVisible(!mts);
+    const bool scala = tuning == RysumProcessor::kScalaTuning;
+    pitch->setVisible(!mts && !scala);
+    scalaReference.setVisible(scala);
+    if (scala)
+        scalaReference.setText(proc.getScalaReferenceText(), juce::dontSendNotification);
     pitch->setDisabledValueText("Originalstimmung");
     pitch->setEnabled(!original && !mts);
     pitch->setAlpha(original || mts ? 0.5f : 1.0f);

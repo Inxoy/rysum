@@ -2766,11 +2766,12 @@ int main(int argc, char **argv)
                 const auto f = t.frequencies();
                 const double c70 = 1200.0 * std::log2(f[70] / f[69]),
                              c38 = 1200.0 * std::log2(f[69 + 31] / f[69]);
-                std::cout << "scala: 31-EDO parsed " << ok << ", a' " << f[69] << " Hz, one step "
+                std::cout << "scala: 31edo parsed " << ok << ", C4 " << f[60] << " Hz, one step "
                           << c70 << " ct, 31 steps " << c38 << " ct" << std::endl;
-                check(ok && std::abs(f[69] - kA4) < 1e-6 && std::abs(c70 - 1200.0 / 31.0) < 1e-3 &&
+                check(ok && std::abs(f[60] - kScalaDefaultReferenceHz) < 1e-6 &&
+                          std::abs(c70 - 1200.0 / 31.0) < 1e-3 &&
                           std::abs(c38 - 1200.0) < 1e-3,
-                      "scala: 31-EDO, default mapping (a' = 444.5 Hz on note 69)");
+                      "scala: 31edo, degree zero at C4 from 12edo A4 = 440 Hz");
                 ScalaTuning j;
                 juce::String e2;
                 const bool ok2 =
@@ -2788,6 +2789,15 @@ int main(int argc, char **argv)
                           std::abs(g[67] / g[60] - 1.5) < 1e-9 &&
                           std::abs(g[72] / g[60] - 2.0) < 1e-9 && g[61] == 0.0,
                       "scala: ratios, .kbm with unmapped keys and reference frequency");
+                const bool customReference = ScalaTuning::parseKbm(
+                    "0\n0\n127\n55\n57\n432.1255\n0\n", j, e2);
+                check(customReference && j.middleNote == 55 && j.refNote == 57 &&
+                          std::abs(j.frequencies()[57] - 432.1255) < 1.0e-9,
+                      "scala: KBM reference note and frequency are independent of the middle note");
+                j.clearKbm();
+                check(!j.hasKbm && j.middleNote == 60 && j.refNote == 60 &&
+                          std::abs(j.frequencies()[60] - kScalaDefaultReferenceHz) < 1.0e-9,
+                      "scala: removing KBM restores the C4 reference");
                 ScalaTuning bad;
                 juce::String e3;
                 check(!ScalaTuning::parseScl("bad\n3\n100.0\n", bad, e3) && e3.isNotEmpty(),

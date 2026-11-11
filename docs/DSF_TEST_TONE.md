@@ -14,7 +14,9 @@ parameters as the Klang page; tuning and frequency settings remain on Klang.
 
 - **Testton an** enables the reference, initially off.
 - **MIDI on:** the most recent held or sustained note determines the pitch.
-  The reference follows the selected global tuning and Stimmton, with an
+  The reference follows the selected global tuning and Stimmton. Scala follows its KBM
+  reference, defaulting to degree 0 at C4 (MIDI 60), 261.625565 Hz; the normal Stimmton
+  setting does not shift Scala frequencies. The test tone has an
   independent Feinstimmung offset of ±50 cents, in 0.01-cent steps. MPE member-channel pitch bend
   follows the organ's configured range. The heading displays the calculated target
   frequency to six decimal places, including cents, octave and Mixtur adjustments.

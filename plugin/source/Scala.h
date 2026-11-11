@@ -7,12 +7,14 @@
 
 namespace rysum
 {
+inline const double kScalaDefaultReferenceHz = 440.0 * std::exp2(-9.0 / 12.0);
+
 /** Scala tuning files: a scale (.scl) and optionally a keyboard mapping (.kbm), as specified at
     https://www.huygens-fokker.org/scala/scl_format.html and .../help.htm#mappings
 
     Without a .kbm the default mapping is used: linear (every MIDI note one scale degree), degree 0
-   on note 60, and note 69 sounding at the organ's a' (444.5 Hz) - so a twelve-note scale lands
-   where the organ's own pitches are. ("Stimmton" on the Klang page shifts everything as usual.) */
+    on note 60 (C4), at the 12edo C frequency corresponding to A4 = 440 Hz.
+    A .kbm supplies its own reference MIDI note and absolute frequency. */
 struct ScalaTuning
 {
     juce::String description;
@@ -20,8 +22,8 @@ struct ScalaTuning
         cents; // degrees 1..N in cents; the last one is the period (usually the octave)
     // keyboard mapping
     bool hasKbm = false;
-    int mapSize = 0, firstNote = 0, lastNote = 127, middleNote = 60, refNote = 69, octaveDegree = 0;
-    double refFreq = kA4;
+    int mapSize = 0, firstNote = 0, lastNote = 127, middleNote = 60, refNote = 60, octaveDegree = 0;
+    double refFreq = kScalaDefaultReferenceHz;
     std::vector<int> mapping; // per position in the mapping: scale degree, -1 = unmapped ("x")
 
     int size() const noexcept
@@ -196,9 +198,9 @@ struct ScalaTuning
         firstNote = 0;
         lastNote = 127;
         middleNote = 60;
-        refNote = 69;
+        refNote = 60;
         octaveDegree = 0;
-        refFreq = kA4;
+        refFreq = kScalaDefaultReferenceHz;
         mapping.clear();
     }
 };

@@ -186,6 +186,7 @@ public:
         return extendedRange.load() && apvts.getRawParameterValue("temperament")->load() > 0.5f;
     }
     juce::String getTuningStatus() const;
+    juce::String getScalaReferenceText() const;
     bool hasScala() const
     {
         return scalaReady.load();
