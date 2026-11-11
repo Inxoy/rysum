@@ -42,7 +42,10 @@ private:
     enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark };
     struct RTri { Raster::Vert a, b, c; int slot; float tone; };
     void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt);
-    V3 pipeAt (const RoomParams& r, V3 homeP, Pos pos) const;
+    V3 pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const;
+    uint32_t flashSeen = 0;                                  // impacts already flashed
+    struct Flash { V3 at; float life = 0.0f, strength = 0.0f; };
+    std::array<Flash, 16> flashes {};
     bool pipesInRoom = false;           // this frame: walking in a shaped Saal (see pipeAt)
     const RoomMesh* slotMesh = nullptr; // the model whose surfaces are sorted into floor / ceiling / walls
     std::vector<uint8_t> meshSlots;

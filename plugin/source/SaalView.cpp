@@ -219,7 +219,8 @@ void SaalPlan::paint (juce::Graphics& g)
         const uint64_t sounding = proc.engine.soundingMask[(size_t) s].load();
         for (int k = 0; k < kNumKeys; ++k)
         {
-            const auto q = roomPoint (now, proc.engine.displayPosition (s, k, params));
+            Vec3f q;
+            if (! proc.engine.bodyAt (s, k, q)) q = roomPoint (now, proc.engine.displayPosition (s, k, params));    // (flying pipes: where they are)
             const auto pt = P (q.x, q.y);
             const bool snd = (sounding >> k) & 1;
             juce::Graphics::ScopedSaveState ss (g);
@@ -233,7 +234,8 @@ void SaalPlan::paint (juce::Graphics& g)
     const int ls_ = proc.engine.lastStruckStop.load(), lk = proc.engine.lastStruckKey.load();
     if (on && ls_ >= 0 && lk >= 0 && params.stopRoom[(size_t) ls_] == shownRoom)
     {
-        const auto src = roomPoint (now, proc.engine.displayPosition (ls_, lk, params));
+        Vec3f src;
+        if (! proc.engine.bodyAt (ls_, lk, src)) src = roomPoint (now, proc.engine.displayPosition (ls_, lk, params));
         if (poly)
         {
             // the visible paths over the walls of the plan (from above: floor / ceiling images left out)

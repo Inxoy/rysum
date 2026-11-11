@@ -397,8 +397,11 @@ void WalkView::addPipe (V3 bottom, float len, float rad, float faceAngle, float 
     }
 }
 
-V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos) const
+V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const
 {
+    // a pipe flying in the room (Flug, Fall, Schwarm, Strömung) is where its body is
+    Vec3f b;
+    if (proc.engine.bodyAt (stop, key, b)) return { b.x, b.y, b.z };
     // walking in a shaped Saal the engine hears every pipe where the room simulation has it, inside the walls
     // (so what you see hidden behind a wall is what you hear around the corner); otherwise where Ambisonics puts it
     if (pipesInRoom && ! r.box() && r.plan.n >= 3)
@@ -485,16 +488,36 @@ void WalkView::paint (juce::Graphics& g)
             auto& gl = glow[(size_t) s][(size_t) k];
             gl = ((sounding >> k) & 1) ? juce::jmin (1.0f, gl + 0.35f) : gl * 0.9f;
             const Pos pos = proc.engine.displayPosition (s, k, params);
-            const V3 c = pipeAt (r, homeP, pos);
+            const V3 c = pipeAt (r, homeP, pos, s, k);
             float len, rad;
             pipeSizeOf (s, k, len, rad);
-            // floating: a slow breath up and down, each pipe its own
-            const float bob = 0.06f * (float) std::sin (now * 0.7 + (double) (s * 41 + k) * 1.37);
+            // floating: a slow breath up and down, each pipe its own (not the ones flying as bodies: they move as they move)
+            Vec3f bodyNow;
+            const float bob = proc.engine.bodyAt (s, k, bodyNow) ? 0.0f : 0.06f * (float) std::sin (now * 0.7 + (double) (s * 41 + k) * 1.37);
             const V3 bottom { c.x, c.y, c.z - 0.5f * len + bob };
             const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x);       // the mouth towards the listener's place
             addPipe (bottom, len, rad, face, metalTone, gl);
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });
         }
+    }
+    // impacts: a short white flash where a pipe hit (new ones from the engine's ring of the last 16)
+    {
+        const uint32_t n = proc.engine.impactCount.load();
+        if (n - flashSeen > 16u) flashSeen = n - 16u;
+        for (; flashSeen != n; ++flashSeen)
+        {
+            const auto& sh = proc.engine.impactShow[(size_t) (flashSeen & 15u)];
+            auto& f = flashes[(size_t) (flashSeen & 15u)];
+            f.at = { sh.x.load(), sh.y.load(), sh.z.load() };
+            f.strength = 0.4f + 0.6f * sh.strength.load();
+            f.life = 1.0f;
+        }
+        for (auto& f : flashes)
+            if (f.life > 0.0f)
+            {
+                glows.push_back ({ f.at, f.strength * f.life, 0.4f + 1.6f * (1.0f - f.life) });   // grows as it fades
+                f.life -= 0.12f;
+            }
     }
     geoMs = (float) (juce::Time::getMillisecondCounterHiRes() - t0);
     rast.finish();
@@ -646,7 +669,7 @@ void WalkView::drawMap (juce::Graphics& g, juce::Rectangle<float> box, const Roo
         {
             if (proc.engine.muted[(size_t) s][(size_t) k].load()) continue;
             const Pos pos = proc.engine.displayPosition (s, k, params);
-            const V3 pw = pipeAt (r, homeP, pos);
+            const V3 pw = pipeAt (r, homeP, pos, s, k);
             const auto q = P (pw.x, pw.y);
             const float gl = glow[(size_t) s][(size_t) k];
             g.setColour (gl > 0.05f ? juce::Colour (0xffffd9a0).withAlpha (0.5f + 0.5f * gl) : col::mute.withAlpha (0.6f));
