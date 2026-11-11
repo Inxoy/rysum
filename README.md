@@ -457,7 +457,11 @@ works the same way in Ableton, Reaper and the standalone app:
 
 The maintained application is in `plugin/`. Repository-wide utilities are in
 `scripts/`; sample preparation and analysis are documented in `scripts/README.md`.
-`docs/` contains design and analysis reports. Historical source copies, extracted
+`docs/` contains the current [macOS build guide](docs/MAC_BUILD.md),
+[Testton documentation](docs/DSF_TEST_TONE.md) and
+[structure review](docs/STRUCTURE_REVIEW.md).
+Ongoing pitch research and reports are in `docs/in-progress/`;
+stereo and release-velocity plans are in `docs/to-do/`. Historical source copies, extracted
 notes and original photos are retained in `_archive/` and are not built.
 
 All paths in the following tree are relative to the repository root.

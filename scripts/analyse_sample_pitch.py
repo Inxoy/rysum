@@ -208,7 +208,7 @@ def write_reports(output, manifest, manifest_path, rows):
                 "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
                 "analysis_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 "search_half_width_cents": 100, "thresholds": THRESHOLDS,
-                "notes": ["Candidates are provisional estimates, not approved calibration.",
+                "notes": ["Candidates are automatic estimates; runtime calibration choices are stored separately in the manifest.",
                           "Five overlapping windows are not five independent recordings.",
                           "No WAV or existing manifest was modified.",
                           "Compound peaks can be harmonics, ranks or noise; no rank identity is inferred."],
@@ -226,7 +226,7 @@ def write_reports(output, manifest, manifest_path, rows):
              "## Method and limits", "", "The analysis uses final PCM16 audio, five windows of up to 700 ms per single-rank pipe, preferentially within its sustain loop. A Hann-windowed, zero-padded spectrum supplies interpolated harmonic peaks; a robust harmonic fit is cross-checked against normalized autocorrelation. Both searches use a ±100-cent neighbourhood of the declared nominal pitch. This cannot discover a wrongly labelled note or reliably exclude octave errors outside that range.", "",
              "Window spread is the 95th–5th percentile of window estimates, not a confidence interval. Overlapping windows are correlated. `candidate` means the automatic checks passed; it does not mean approved or exact. The method does not remove vibrato, drift, beating or inharmonicity. Independent listening and measurement remain necessary for reviewed entries and compound stops.", "",
              "Review thresholds: fewer than 3 usable windows; median periodicity below 0.85; window spread above 5 cents; median method disagreement above 3 cents; fewer than 3 resolved harmonics in any usable window; difference from legacy measurement above 5 cents; or a short-sustain fallback.", "",
-             "All results are observations only. Original files and the original manifest remain unchanged. JSON includes WAV hashes, frame regions, individual window estimates, analysis settings and tool versions. CSV is the sortable summary.", "", "## Summary", "",
+             "All results are observations only. Original files and the original manifest remain unchanged. JSON includes WAV hashes, frame regions, individual window estimates, analysis settings and tool versions. CSV is the sortable summary.", "", "Runtime single-rank calibration choices are stored separately as `calibrated_hz` in the manifest. Compound-register review is ongoing.", "", "## Summary", "",
              "Median and range below include automatic candidates only, excluding unresolved or flagged estimates.", "", "| Stop | Files | Candidates | Review / unresolved | Candidate median deviation (ct) | Candidate range (ct) |", "|---|---:|---:|---:|---:|---:|"]
     for stop in manifest["stops"]:
         group = [r for r in rows if r["stop_id"] == stop["id"]]
@@ -240,7 +240,7 @@ def write_reports(output, manifest, manifest_path, rows):
             legacy = f"{r['legacy_difference_cents']:+.2f}" if r['legacy_difference_cents'] is not None else "—"
             lines.append(f"| {r['stop_id']} / {r['key']} | {r['measured_hz']:.4f} | {r['deviation_cents']:+.2f} | {legacy} | {r['window_spread_cents']:.2f} | {r['status']}: {', '.join(r['flags']) or 'automatic checks passed'} |")
     lines += ["", "## Compound stops", "", "All 82 compound samples remain `compound_unresolved`. The JSON records up to twelve prominent spectral peaks in a representative sustain window for each. These are not identified ranks or validated fundamentals. Correcting all constituent pitches requires rank identification and, if they differ in tuning, separate rank assets or another decomposition method.", "",
-              "## Reproduction", "", "From the repository root, using Python with NumPy installed:", "", "```sh", "python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/pitch-analysis", "```", "",
+              "## Reproduction", "", "From the repository root, using Python with NumPy installed:", "", "```sh", "python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/in-progress/pitch-analysis", "```", "",
               "Synthetic estimator checks: `python -m unittest discover -s scripts -p 'test_analyse_sample_pitch.py'`.", ""]
     (output / "final-wav-pitch-analysis.md").write_text("\n".join(lines))
 
@@ -248,7 +248,7 @@ def write_reports(output, manifest, manifest_path, rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--samples", type=Path, default=REPO_ROOT / "rysum-samples")
-    parser.add_argument("--out", type=Path, default=REPO_ROOT / "docs/pitch-analysis")
+    parser.add_argument("--out", type=Path, default=REPO_ROOT / "docs/in-progress/pitch-analysis")
     args = parser.parse_args()
     path = args.samples / "rysum_samples.json"
     manifest = json.loads(path.read_text())

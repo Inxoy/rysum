@@ -12,6 +12,8 @@ Review thresholds: fewer than 3 usable windows; median periodicity below 0.85; w
 
 All results are observations only. Original files and the original manifest remain unchanged. JSON includes WAV hashes, frame regions, individual window estimates, analysis settings and tool versions. CSV is the sortable summary.
 
+Runtime single-rank calibration choices are stored separately as `calibrated_hz` in the manifest. Compound-register review is ongoing.
+
 ## Summary
 
 Median and range below include automatic candidates only, excluding unresolved or flagged estimates.
@@ -255,7 +257,7 @@ All 82 compound samples remain `compound_unresolved`. The JSON records up to twe
 From the repository root, using Python with NumPy installed:
 
 ```sh
-python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/pitch-analysis
+python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/in-progress/pitch-analysis
 ```
 
 Synthetic estimator checks: `python -m unittest discover -s scripts -p 'test_analyse_sample_pitch.py'`.

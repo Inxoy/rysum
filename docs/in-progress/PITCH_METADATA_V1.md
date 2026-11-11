@@ -1,6 +1,8 @@
 # Pitch metadata v1 — draft contract
 
-Status: proposed, not consumed by the current plugin. The machine-readable definition is [pitch-metadata-v1.schema.json](pitch-metadata-v1.schema.json). Measurement evidence is separate from approval. The [final-WAV audit](pitch-analysis/final-wav-pitch-analysis.md) supplies candidates, not production calibration.
+Status — draft; loader integration is pending. The machine-readable definition is [pitch-metadata-v1.schema.json](pitch-metadata-v1.schema.json). Measurement evidence is separate from approval. The [final-WAV audit](pitch-analysis/final-wav-pitch-analysis.md) supplies automatic observations.
+The current runtime reads adopted `calibrated_hz` values from `rysum_samples.json`;
+it does not yet consume this draft sidecar or its approval records.
 
 ## Packaging and versioning
 
@@ -81,7 +83,8 @@ The loader must also check:
 
 ## Example (illustrative, not approved calibration)
 
-See [pitch-metadata-v1.example.json](pitch-metadata-v1.example.json). It contains a candidate Trompete measurement from the audit and own/derived Praestant mappings. None of these entries is approved. The example is a partial library, not a replacement for the production manifest.
+See [pitch-metadata-v1.example.json](pitch-metadata-v1.example.json). It contains a candidate Trompete measurement from the audit and own/derived Praestant mappings. None of these entries is approved. The example is an illustrative partial snapshot from the initial review; its manifest hash
+refers to that snapshot. Runtime library revisions need their own validated metadata.
 
 ## Acceptance tests for implementation
 

@@ -1,6 +1,7 @@
 # Stereo source preservation: Raum, Saal and output mapping
 
-Code review: 8 November 2026. This is an architectural proposal, not a change to playback.
+Status — planned. Initial signal-path review on 8 November 2026; references updated
+on 11 November 2026. Source storage and voice playback currently use mono emitters.
 
 ## Main conclusion
 
@@ -8,7 +9,7 @@ Keep the stereo recording as a source asset. Mono conversion should be an explic
 
 A microphone pair is not automatically two physical pipe positions. Two-emitter rendering gives an explicit spatial interpretation of the stereo recording; it does not reconstruct the original acoustic field.
 
-Sample range must also remain bounded: moving an end sample far into the high or low register changes its character and does not supply the spatial identity of a newly recorded pipe. Register metadata should define the supported sounding range and permitted source transpositions. Keep the source pipe's position as the spatial centre of either its mono emitter or stereo pair; any virtual relocation is a separate choice. Beyond the declared limits, that register should remain silent rather than repeatedly stretching an edge sample. The numerical limits should be established by listening tests for each register, with explicit exceptions for intentionally derived registers. See the [range and transposition policy](SAMPLE_TUNING_IMPLEMENTATION_PLAN.md#bound-sample-range-and-transposition).
+Sample range must also remain bounded: moving an end sample far into the high or low register changes its character and does not supply the spatial identity of a newly recorded pipe. Register metadata should define the supported sounding range and permitted source transpositions. Keep the source pipe's position as the spatial centre of either its mono emitter or stereo pair; any virtual relocation is a separate choice. Beyond the declared limits, that register should remain silent rather than repeatedly stretching an edge sample. The numerical limits should be established by listening tests for each register, with explicit exceptions for intentionally derived registers. See the [range and transposition policy](SAMPLE_LIBRARY_IMPLEMENTATION.md#tuning-and-source-selection).
 
 ## Where information is currently lost
 
@@ -38,9 +39,11 @@ flowchart TD
     O --> AM[Ambisonics]
     O --> BI[Ambisonic to binaural decoder]
     O --> SP[AllRAD loudspeaker decoder]
+    BI --> TR[Optional transaural crosstalk processing]
 ```
 
-This diagram omits supplementary noise/echo inputs and the two Lucier processing stages for readability. These join or transform the same field/send paths; see the table below. Raum's IR receives separate sends, rather than simply convolving the complete dry output mix.
+This diagram focuses on source and room routing. Noise, echoes, the two Lucier stages,
+field effects and the independent DSF Testton also join or transform the output path. These join or transform the same field/send paths; see the table below. Raum's IR receives separate sends, rather than simply convolving the complete dry output mix.
 
 ## Stage-by-stage boundaries
 
@@ -58,6 +61,7 @@ This diagram omits supplementary noise/echo inputs and the two Lucier processing
 | Lucier live effect | Stereo mid or Ambisonic W through an iterative room response | Conceptually mono excitation in the current effect; preserve it as an explicit choice |
 | Lucier recording/piece | Records stereo mid, input mid or Ambisonic W | Also explicitly mono today; stereo source storage alone does not change it |
 | Binaural decoding | Ambisonic channels to L/R through HRTFs | Does not collapse the original source. Two encoded emitters can pass through this same decoder |
+| Transaural output | Binaural L/R followed by crosstalk processing | Can receive the same encoded stereo emitters through the binaural decoder |
 | Ambisonic export | The encoded field channels | Two emitters can be summed in the field before export |
 | AllRAD speakers | Ambisonic field decoded to speakers | The same stereo-emitter interpretation can feed it |
 
@@ -103,7 +107,7 @@ The pure `SamplePitch` adapter remains useful unchanged: one playback rate contr
 
 ## Recommended actions and completion criteria
 
-These are planned actions, not completed implementation. Follow the tuning work in [the sample implementation plan](SAMPLE_TUNING_IMPLEMENTATION_PLAN.md); stereo support should build on the same asset and pipe definitions.
+These are planned actions, not completed implementation. Follow the tuning work in [the sample implementation plan](../in-progress/SAMPLE_TUNING_IMPLEMENTATION_PLAN.md); stereo support should build on the same asset and pipe definitions.
 
 1. **Finish the pure tuning adapter and tests first.** Establish one source-frame increment for the whole asset, independent of its channel count. Check native/corrected tuning, register ratios and different file/output rates. Stereo must not acquire a separate tuning calculation or MIDI voice identity for each channel.
 2. **Extend the portable asset definition and loader.** Preserve channel count, native sample rate, shared frame regions, raw pitch calibration and source provenance. Decode original stereo into channel-aware storage instead of calling `readMono` universally. Keep an adapter for existing mono Rysum assets. Completion: mono assets still load, and both channels of an imported stereo asset remain available with their original alignment and resolution.

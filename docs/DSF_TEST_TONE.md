@@ -1,5 +1,8 @@
 # DSF test tone
 
+Implemented in the Standalone and VST3 instruments. Reviewed against the
+`plainsound/sample-tuning` code on 11 November 2026.
+
 The Klang page contains a dedicated Testton panel. The reference is
 monophonic and has its own level, independent of the organ's master level,
 detuning, wind, tremulant and room effects. It enters the output before binaural
@@ -45,20 +48,34 @@ parameters as the Klang page; tuning and frequency settings remain on Klang.
   latest target and finish the current fade before starting another.
 - **Pegel:** independent output gain, initially −32 dB.
 
-In Originalstimmung, the register menu to the right of MIDI selects the pipe
-whose measured playback frequency Testton follows. It uses the checked
-calibration where available and otherwise the manifest's measured frequency.
-Notes without a measurement are silent. The menu lists single-rank registers,
-including the derived Praestant 16′. Other tunings use their selected target
-frequencies from MIDI 24 to 108, inclusive. Testton respects unmapped notes in
-Scala and MTS and plays frequencies of 20 Hz or higher.
+In Originalstimmung, the reference menu to the right of MIDI selects either a
+measured single register or **1/4-Komma MT A-444,5**.
+
+- The register choices follow the measured playback frequencies of Praestant 8′,
+  Gedackt 8′, Trompete 8′, Octave 4′, Octave 2′ and the derived Praestant 16′.
+  They use `calibrated_hz` where available and otherwise `measured_hz`, with the
+  source's native playback ratio.
+- **1/4-Komma MT A-444,5** supplies exact quarter-syntonic-comma meantone at
+  A4 = 444.5 Hz. This provides a nominal reference for checking compound registers
+  as well as individual pipes.
+- Both choices follow the organ's historical compass, MIDI 36–81, including the
+  short-octave gaps and missing G♯ at MIDI 80. A measured reference also requires
+  an available pipe frequency.
+- Originalstimmung disables the organ's Stimmton and Verstimmung controls.
+  Testton's own Feinstimmung, Oktavlage and Mixtur controls still apply.
+
+Other tunings use their selected target frequencies from MIDI 24 to 108,
+inclusive. Scala and MTS mappings can make individual notes silent. Across both
+modes, Testton's sounding range begins at 20 Hz and ends at the smaller of
+20000 Hz and 44% of the host sample rate. MIDI-off manual frequency is available
+independently of the organ's compass.
 
 To check a sample, begin with Spektrum at zero and one organ stop enabled. In
 MIDI mode, hold a note and adjust Feinstimmung to minimise beating; the heading
 shows the resulting reference frequency. Alternatively, switch MIDI off and enter
-or adjust an absolute Hz value. This is an aural comparison tool, not an automatic
-frequency analyser; wind, random detuning, tremulant and Doppler can affect the
-sample being compared.
+or adjust an absolute Hz value. The heading shows the calculated reference
+frequency. Wind, random detuning, tremulant and Doppler can affect the sample
+being compared; disable these when checking its sustained pitch by ear.
 
 The live reference reserves 8× oversampling throughout a sweep. Buffers and filters
 are allocated in preparation. Frequency/spectrum controls are smoothed over 30 ms,
@@ -66,6 +83,14 @@ with integration-state updates at most every 32 output samples; gain changes use
 a 20 ms ramp. Note starts and releases respect MIDI offsets within the host block.
 The general renderer retains its per-note automatic factor selector.
 
-Reference controls remain unchanged by sound-patch loading, scene morphing and
-randomisation. Host project state can save and restore them. There is no automatic
-sample-pitch correction or new sample-tuning metadata in this change.
+Reference controls persist across sound-patch loading, scene morphing and
+randomisation. Host project state saves and restores them.
+
+The separate sample engine applies the selected single-register calibration in
+retuned modes. Compound-register analysis and the general pitch-metadata format
+are [ongoing work](in-progress/PITCH_ACCURACY_REVIEW.md). Testton supports checking
+those recordings by ear.
+
+The `dsf_renderer` CTest target exercises the renderer and reference instrument;
+`dsf_integrator` covers the underlying DSF and integration calculations. Both are
+part of the [macOS build checks](MAC_BUILD.md#run-the-checks).

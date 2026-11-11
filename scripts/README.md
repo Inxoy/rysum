@@ -5,7 +5,7 @@ Run the examples below from the repository root. Python dependencies are separat
 | Script | Purpose / output |
 |---|---|
 | `rysum_preprocess.py` | Current preparation pipeline: `raw_unprocessed_files/` → `rysum-samples/`, including `rysum_samples.json` and analysis images |
-| `analyse_sample_pitch.py` | Non-destructive final-WAV audit → `docs/pitch-analysis/` |
+| `analyse_sample_pitch.py` | Non-destructive final-WAV audit → `docs/in-progress/pitch-analysis/` |
 | `test_analyse_sample_pitch.py`, `test_pitch_metadata.py` | Synthetic estimator checks and metadata/evidence validation |
 | `make_photos.py` | Current image preparation → `plugin/resources/`; reads original photos from `_archive/newpics/` and `_archive/photos/` |
 | `make_fabian.py` | Converts a supplied FABIAN SOFA file → `plugin/resources/fabian_hrir.bin` |
@@ -23,7 +23,7 @@ Pitch analysis and validation:
 
 ```sh
 python -m pip install -r scripts/pitch-analysis-requirements.txt
-python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/pitch-analysis
+python scripts/analyse_sample_pitch.py --samples rysum-samples --out docs/in-progress/pitch-analysis
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s scripts -p 'test_*pitch*.py'
 ```
 

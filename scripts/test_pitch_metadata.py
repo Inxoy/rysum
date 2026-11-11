@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class PitchMetadataTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.schema = json.loads((ROOT / 'docs/pitch-metadata-v1.schema.json').read_text())
-        cls.example = json.loads((ROOT / 'docs/pitch-metadata-v1.example.json').read_text())
+        cls.schema = json.loads((ROOT / 'docs/in-progress/pitch-metadata-v1.schema.json').read_text())
+        cls.example = json.loads((ROOT / 'docs/in-progress/pitch-metadata-v1.example.json').read_text())
         cls.validator = Draft202012Validator(cls.schema, format_checker=FormatChecker())
 
     def test_contract_and_example(self):
@@ -42,7 +42,7 @@ class PitchMetadataTests(unittest.TestCase):
         self.validator.validate(value)
 
     def test_audit_covers_every_manifest_pipe_and_matches_final_wavs(self):
-        audit = json.loads((ROOT / 'docs/pitch-analysis/final-wav-pitch-analysis.json').read_text())
+        audit = json.loads((ROOT / 'docs/in-progress/pitch-analysis/final-wav-pitch-analysis.json').read_text())
         manifest_path = ROOT / 'rysum-samples/rysum_samples.json'
         manifest = json.loads(manifest_path.read_text())
         expected = {(s['id'], p['key'], p['file']) for s in manifest['stops'] for p in s['pipes']}

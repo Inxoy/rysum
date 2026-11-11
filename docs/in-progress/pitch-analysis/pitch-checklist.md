@@ -1,6 +1,7 @@
 # Sample pitch verification checklist
 
-Source: `final-wav-pitch-analysis.csv`. Frequencies are estimates from the existing audit, rounded to 0.001 Hz for convenient comparison; this does not imply that level of accuracy. No new analysis or calibration approval has been performed.
+Source: `final-wav-pitch-analysis.csv`. Frequencies are estimates from the existing audit, rounded to 0.001 Hz for convenient comparison; this does not imply that level of accuracy. This is an ongoing listening record. Runtime single-rank choices are stored separately
+in `rysum-samples/rysum_samples.json`; the audit status remains an automatic estimator result.
 
 Open `pitch-checklist.csv` in a spreadsheet to enter your measurements in `checked_hz` and comments in `review_notes`. Check the raw WAV at its native sample rate, without tuning or pitch effects. The estimates describe the sustain region, preferably inside the loop, rather than the attack.
 
@@ -289,8 +290,8 @@ Open `pitch-checklist.csv` in a spreadsheet to enter your measurements in `check
 | ☐ | `trompete/045_A.wav` | 111.705 | candidate |
 | ☐ | `trompete/046_Bb.wav` | 118.851 | candidate |
 | ☐ | `trompete/047_B.wav` | 124.651 | candidate |
-| ☐ | `trompete/048_c.wav` | 134.109 | candidate |
-| ☐ | `trompete/049_c#.wav` | 140.869 | candidate |
+| ☐ | `trompete/048_c-trim.wav` | 134.109 | candidate |
+| ☐ | `trompete/049_c#-trim.wav` | 140.869 | candidate |
 | ☐ | `trompete/050_d.wav` | 149.981 | candidate |
 | ☐ | `trompete/051_eb.wav` | 160.272 | candidate |
 | ☐ | `trompete/052_e.wav` | 167.715 | candidate |
