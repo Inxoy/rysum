@@ -40,7 +40,7 @@ private:
     ParamRow *pitch = nullptr, *detune = nullptr, *tremRate = nullptr, *tremDepth = nullptr,
              *smear = nullptr, *release = nullptr, *doppler = nullptr, *distAmount = nullptr,
              *air = nullptr, *airInvert = nullptr;
-    juce::Label scalaReference;
+    juce::Label scalaReference, scalaReferenceValue;
     juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr,
                      *mpeOn = nullptr;
     ParamRow *mpeBend = nullptr;

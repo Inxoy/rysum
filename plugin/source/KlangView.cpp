@@ -91,10 +91,16 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
 
     pitch = &row("pitch", "Stimmton");
     pitch->slider.setDoubleClickReturnValue(true, kStimmton440Detent);
-    scalaReference.setFont(Assets::get().sansFont(13.0f));
+    scalaReference.setFont(Assets::get().sansFont(14.0f));
+    scalaReference.setBorderSize(juce::BorderSize<int>(0));
     scalaReference.setColour(juce::Label::textColourId, col::ink);
     scalaReference.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(scalaReference);
+    scalaReferenceValue.setFont(Assets::get().monoFont(12.0f));
+    scalaReferenceValue.setBorderSize(juce::BorderSize<int>(0));
+    scalaReferenceValue.setColour(juce::Label::textColourId, col::dim);
+    scalaReferenceValue.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(scalaReferenceValue);
     detune = &row("detune", u8("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
     detune->setDisabledValueText("Original", "Verstimmung");
 
@@ -329,7 +335,9 @@ void KlangView::resized()
         b.removeFromTop(12);
         const auto pitchBounds = b.removeFromTop(38);
         pitch->setBounds(pitchBounds);
-        scalaReference.setBounds(pitchBounds);
+        auto referenceBounds = pitchBounds.withHeight(18);
+        scalaReference.setBounds(referenceBounds.removeFromLeft(130));
+        scalaReferenceValue.setBounds(referenceBounds);
         mtsFollow->setBounds(pitchBounds.withHeight(24));
         detune->setBounds(b.removeFromTop(38));
         b.removeFromTop(6);
@@ -462,8 +470,18 @@ void KlangView::refresh()
     const bool scala = tuning == RysumProcessor::kScalaTuning;
     pitch->setVisible(!mts && !scala);
     scalaReference.setVisible(scala);
+    scalaReferenceValue.setVisible(scala);
     if (scala)
-        scalaReference.setText(proc.getScalaReferenceText(), juce::dontSendNotification);
+    {
+        const auto reference = proc.getScalaReferenceText();
+        const auto note = reference.fromFirstOccurrenceOf("Stimmton ", false, false)
+                              .upToFirstOccurrenceOf(" (MIDI", false, false);
+        const auto midi = reference.fromFirstOccurrenceOf("(MIDI", true, false)
+                              .upToFirstOccurrenceOf("\n", false, false);
+        scalaReference.setText("Stimmton " + midi, juce::dontSendNotification);
+        scalaReferenceValue.setText(note + " = " + reference.fromFirstOccurrenceOf("\n", false, false),
+                                    juce::dontSendNotification);
+    }
     pitch->setDisabledValueText("Originalstimmung");
     pitch->setEnabled(!original && !mts);
     pitch->setAlpha(original || mts ? 0.5f : 1.0f);
