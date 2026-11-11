@@ -20,3 +20,6 @@ plugin/**/*.user
 # Generated Python caches and legacy extraction working files
 __pycache__/
 scripts/output_notes*/
+
+# macOS folder metadata
+.DS_Store
