@@ -1,5 +1,6 @@
 #include "WalkView.h"
 #include "RoomSim.h"
+#include <algorithm>
 
 namespace rysum::ui
 {
@@ -12,15 +13,82 @@ const juce::Colour kMetal[kNumStops] { juce::Colour (0xffd9d6cd), juce::Colour (
 constexpr float kUnitScale[] { 1.0f, 0.01f, 0.001f, 0.0254f, 0.3048f };
 
 
-bool insidePlan (const FloorPlan& f, float W, float L, float x, float y)
+// the floor and ceiling follow the outline exactly: the outline cut into triangles (ear clipping; it may be
+// concave: L, cross), each triangle cut to the fields of the floor
+struct P2 { float x = 0, y = 0; };
+inline float cross2 (P2 a, P2 b, P2 c) noexcept { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
+
+void triangulatePlan (const FloorPlan& f, float W, float L, std::vector<std::array<P2, 3>>& out)
 {
-    bool in = false;
-    for (int i = 0, j = f.n - 1; i < f.n; j = i++)
+    out.clear();
+    std::vector<P2> p;
+    for (int i = 0; i < f.n; ++i) p.push_back ({ f.x[(size_t) i] * W, f.y[(size_t) i] * L });
+    if (p.size() < 3) return;
+    float area2 = 0.0f;
+    for (size_t i = 0, j = p.size() - 1; i < p.size(); j = i++) area2 += p[j].x * p[i].y - p[i].x * p[j].y;
+    if (area2 < 0.0f) std::reverse (p.begin(), p.end());          // counter-clockwise from here on
+    const float eps = 1.0e-7f * juce::jmax (1.0f, W * L);
+    int guard = 0;
+    while (p.size() > 3 && ++guard < 200)
     {
-        const float xi = f.x[(size_t) i] * W, yi = f.y[(size_t) i] * L, xj = f.x[(size_t) j] * W, yj = f.y[(size_t) j] * L;
-        if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) in = ! in;
+        bool cut = false;
+        const size_t n = p.size();
+        for (size_t i = 0; i < n && ! cut; ++i)
+        {
+            const P2 a = p[(i + n - 1) % n], b = p[i], c = p[(i + 1) % n];
+            const float cr = cross2 (a, b, c);
+            if (cr < -eps) continue;                               // a corner pointing inwards: no ear
+            bool ear = true;
+            if (cr > eps)                                          // (a corner on a straight line is simply dropped)
+                for (size_t k = 0; k < n && ear; ++k)
+                {
+                    if (k == i || k == (i + n - 1) % n || k == (i + 1) % n) continue;
+                    const P2 q = p[k];
+                    if (cross2 (a, b, q) > -eps && cross2 (b, c, q) > -eps && cross2 (c, a, q) > -eps) ear = false;
+                }
+            if (! ear) continue;
+            if (cr > eps) out.push_back ({ a, b, c });
+            p.erase (p.begin() + (ptrdiff_t) i);
+            cut = true;
+        }
+        if (! cut) break;                                          // (a crossing outline: what is left as a fan)
     }
-    return in;
+    for (size_t k = 2; k < p.size(); ++k) out.push_back ({ p[0], p[k - 1], p[k] });
+}
+
+/** a triangle cut to a rectangle: the corners of what is left (convex, at most 7) */
+int clipToField (const std::array<P2, 3>& t, float x0, float y0, float x1, float y1, P2* out)
+{
+    P2 a[8], b[8];
+    int n = 3;
+    a[0] = t[0]; a[1] = t[1]; a[2] = t[2];
+    for (int side = 0; side < 4 && n >= 3; ++side)
+    {
+        auto dist = [&] (P2 q) { return side == 0 ? q.x - x0 : (side == 1 ? x1 - q.x : (side == 2 ? q.y - y0 : y1 - q.y)); };
+        int m = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            const P2 p = a[i], q = a[(i + 1) % n];
+            const float dp = dist (p), dq = dist (q);
+            if (dp >= 0.0f) b[m++] = p;
+            if ((dp >= 0.0f) != (dq >= 0.0f))
+            {
+                // (always worked out from the same end, and exactly on the line: neighbouring pieces share the point)
+                const bool swap = q.x < p.x || (q.x == p.x && q.y < p.y);
+                const P2 e0 = swap ? q : p, e1 = swap ? p : q;
+                const float d0 = swap ? dq : dp, d1 = swap ? dp : dq;
+                const float s = d0 / (d0 - d1);
+                P2 c { e0.x + (e1.x - e0.x) * s, e0.y + (e1.y - e0.y) * s };
+                if (side == 0) c.x = x0; else if (side == 1) c.x = x1; else if (side == 2) c.y = y0; else c.y = y1;
+                b[m++] = c;
+            }
+        }
+        n = juce::jmin (m, 8);
+        for (int i = 0; i < n; ++i) a[i] = b[i];
+    }
+    if (n < 3) return 0;
+    for (int i = 0; i < n; ++i) out[i] = a[i];
+    return n;
 }
 } // namespace
 
@@ -286,7 +354,6 @@ void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
     out.clear();
     const float W = r.W(), L = r.L(), H = r.H();
     const bool box = r.box() || r.plan.n < 3;
-    auto inside = [&] (float x, float y) { return box ? (x >= 0 && x <= W && y >= 0 && y <= L) : insidePlan (r.plan, W, L, x, y); };
     auto quad = [&] (Raster::Vert a, Raster::Vert b, Raster::Vert c, Raster::Vert d, int slot, float tone)
     {
         out.push_back ({ a, b, c, slot, tone });
@@ -306,13 +373,37 @@ void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
         }
     }
     const V3 nz { 0, 0, 1 };
+    std::vector<std::array<P2, 3>> planTris;
+    if (! box) triangulatePlan (r.plan, W, L, planTris);
     for (float x = x0; x < x1 - 1.0e-3f; x += tile)
         for (float y = y0; y < y1 - 1.0e-3f; y += tile)
         {
             const float xe = juce::jmin (x1, x + tile), ye = juce::jmin (y1, y + tile);
-            if (! inside (0.5f * (x + xe), 0.5f * (y + ye))) continue;
-            quad (vt ({ x, y, 0 }, nz, x, y), vt ({ xe, y, 0 }, nz, xe, y), vt ({ xe, ye, 0 }, nz, xe, ye), vt ({ x, ye, 0 }, nz, x, ye), 1, 1.0f);
-            quad (vt ({ x, y, H }, nz, x, y), vt ({ xe, y, H }, nz, xe, y), vt ({ xe, ye, H }, nz, xe, ye), vt ({ x, ye, H }, nz, x, ye), 2, 1.0f);
+            if (box)
+            {
+                quad (vt ({ x, y, 0 }, nz, x, y), vt ({ xe, y, 0 }, nz, xe, y), vt ({ xe, ye, 0 }, nz, xe, ye), vt ({ x, ye, 0 }, nz, x, ye), 1, 1.0f);
+                quad (vt ({ x, y, H }, nz, x, y), vt ({ xe, y, H }, nz, xe, y), vt ({ xe, ye, H }, nz, xe, ye), vt ({ x, ye, H }, nz, x, ye), 2, 1.0f);
+                continue;
+            }
+            // a shaped Saal: every field cut to the outline, so floor and ceiling reach every wall (whole fields
+            // kept or left out by their centre left holes along slanted walls, and stuck out behind others)
+            for (const auto& t : planTris)
+            {
+                if (juce::jmax (t[0].x, t[1].x, t[2].x) <= x || juce::jmin (t[0].x, t[1].x, t[2].x) >= xe
+                    || juce::jmax (t[0].y, t[1].y, t[2].y) <= y || juce::jmin (t[0].y, t[1].y, t[2].y) >= ye) continue;
+                P2 c[8];
+                const int nc = clipToField (t, x, y, xe, ye, c);
+                for (int k = 2; k < nc; ++k)
+                {
+                    if (std::abs (cross2 (c[0], c[k - 1], c[k])) < 1.0e-8f) continue;
+                    for (int top = 0; top < 2; ++top)
+                    {
+                        const float z = top ? H : 0.0f;
+                        out.push_back ({ vt ({ c[0].x, c[0].y, z }, nz, c[0].x, c[0].y), vt ({ c[k - 1].x, c[k - 1].y, z }, nz, c[k - 1].x, c[k - 1].y),
+                                         vt ({ c[k].x, c[k].y, z }, nz, c[k].x, c[k].y), top ? 2 : 1, 1.0f });
+                    }
+                }
+            }
         }
     // walls: the material from the absorption; a darker plinth of the same stuff
     float along = 0.0f;
