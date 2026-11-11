@@ -8,6 +8,8 @@
 #include "OrganEngine.h"
 #include "Scala.h"
 #include "Speakers.h"
+#include "Transaural.h"
+#include "Walk3D.h"
 #include <map>
 
 // the effect version ("Rysum FX", for audio tracks) is the same code built with IsSynth = 0
@@ -355,9 +357,24 @@ public:
     static constexpr int kBinauralOutput = 6; // index of "Binaural" in the output choice
     static constexpr int kSpeakerOutput =
         7; // "Lautsprecher": AllRAD decoding to a loudspeaker layout
+    static constexpr int kTransauralOutput =
+        8; // "Transaural": binaural over two loudspeakers, crosstalk cancelled
     bool isSpeakers() const
     {
         return juce::roundToInt(output->load()) == kSpeakerOutput;
+    }
+    bool isTransaural() const
+    {
+        return juce::roundToInt(output->load()) == kTransauralOutput;
+    }
+    juce::String getTransauralStatus() const
+    {
+        const juce::ScopedLock sl(statusLock);
+        return trStatus;
+    }
+    std::shared_ptr<const rysum::TransauralFilters> getTransauralFilters() const
+    {
+        return trUi;
     }
     // ---- loudspeakers (message thread)
     const rysum::SpeakerLayout &getSpeakerLayout() const
@@ -376,7 +393,14 @@ public:
     /** test noise: -1 = off, else the index of a loudspeaker in the layout */
     std::atomic<int> speakerTest{-1};
     static juce::File speakerDefaultFile();
+    /** binaural decoding is running: headphones, or transaural (the same decoder, then crosstalk
+     * cancellation) */
     bool isBinaural() const
+    {
+        const int o = juce::roundToInt(output->load());
+        return o == kBinauralOutput || o == kTransauralOutput;
+    }
+    bool isHeadphones() const
     {
         return juce::roundToInt(output->load()) == kBinauralOutput;
     }
@@ -403,6 +427,9 @@ public:
 
     // layouts (message thread)
     std::array<rysum::LayoutSettings, rysum::kNumStops> layouts;
+    int layoutTuning = -1; // the tuning the "Tonnetz" layouts were made for
+    /** a stop arranged as a Tonnetz follows a change of the tuning (message thread) */
+    void followTuningLayouts();
     void applyLayout(int stop);
     void setPipePosition(int stop, int key, rysum::Pos p);
 
@@ -454,6 +481,97 @@ public:
     {
         return "jumpHard" + juce::String(s);
     }
+    /** grain cloud per stop: key = Mix Dens Spread Size Scatter */
+    static juce::String cloudParamId(const char *key, int s)
+    {
+        return juce::String("cloud") + key + juce::String(s);
+    }
+    static constexpr const char *kCloudKeys[5]{"Mix", "Dens", "Spread", "Size", "Scatter"};
+    /** the sound of the pipe per stop (Raum page, tab "Pfeife"): key = Att Sharp Iso Rep Puff
+     * HiFreq HiGain HiShape */
+    static juce::String pipeSndParamId(const char *key, int s)
+    {
+        return juce::String("pipe") + key + juce::String(s);
+    }
+    static constexpr const char *kSpace2Ids[15]{
+        "fxBeatIdeal", "fxGhostLevel", "fxGhostPlace", "fxGhostCons", "simIce",
+        "simIceLen",   "fxDexMix",     "fxDexTime",    "fxDexTurn",   "fxDexMirror",
+        "fxDexFade",   "fxDexAgain",   "fxExpoMix",    "fxExpoTime",  "fxExpoBright"};
+    /** "Lebendige Orgel" (Effekte, third tab): bellows, pallets, the walking listener, wear,
+     * sympathetic pipes, pure tuning, Tonnetz walker */
+    enum LiveIndex
+    {
+        lvBellows,
+        lvBellowsSize,
+        lvBlower,
+        lvTreadRate,
+        lvTreadDiv,
+        lvTreadNoise,
+        lvPallet,
+        lvPalletSrc,
+        lvListenX,
+        lvListenY,
+        lvWalkShape,
+        lvWalkRate,
+        lvWalkSize,
+        lvWear,
+        lvWearTime,
+        lvSympLevel,
+        lvSympDecay,
+        lvPure,
+        lvPureTime,
+        lvNetOn,
+        lvNetPath,
+        lvNetDiv,
+        lvNetRate,
+        lvNetGate,
+        kNumLive
+    };
+    static constexpr const char *kLiveIds[kNumLive]{
+        "lvBellows",  "lvBellowsSize", "lvBlower",   "lvTreadRate", "lvTreadDiv",  "lvTreadNoise",
+        "lvPallet",   "lvPalletSrc",   "lvListenX",  "lvListenY",   "lvWalkShape", "lvWalkRate",
+        "lvWalkSize", "lvWear",        "lvWearTime", "lvSympLevel", "lvSympDecay", "lvPure",
+        "lvPureTime", "lvNetOn",       "lvNetPath",  "lvNetDiv",    "lvNetRate",   "lvNetGate"};
+    /** Verschleiss: all pipes new again (message thread) */
+    void resetWear()
+    {
+        engine.wearReset = true;
+    }
+
+    // ---- "Begehen": the 3D view's room model (an OBJ file; only seen, the sound uses the Saal's
+    // room) and pose
+    std::shared_ptr<const rysum::RoomMesh> getWalkMesh() const
+    {
+        return std::atomic_load(&walkMesh);
+    }
+    /** loads the model (any thread); returns an error text, empty on success */
+    juce::String loadWalkModel(const juce::File &f, bool zUp, float scale)
+    {
+        juce::String err;
+        auto m = rysum::loadObjRoom(f, zUp, scale, err);
+        if (m == nullptr)
+            return err;
+        walkModelFile = f;
+        walkZUp = zUp;
+        walkScale = scale;
+        std::atomic_store(&walkMesh, std::shared_ptr<const rysum::RoomMesh>(std::move(m)));
+        return {};
+    }
+    void clearWalkModel()
+    {
+        walkModelFile = juce::File();
+        std::atomic_store(&walkMesh, std::shared_ptr<const rysum::RoomMesh>());
+    }
+    juce::File walkModelFile;
+    bool walkZUp = false;
+    float walkScale = 1.0f;
+    /** camera: offset from the listener's place (m), yaw (degrees, + = left), pitch (degrees, + =
+     * up) */
+    std::array<std::atomic<float>, 4> walkPose{};
+    static constexpr const char *kPipeSndKeys[8]{"Att",  "Sharp",  "Iso",    "Rep",
+                                                 "Puff", "HiFreq", "HiGain", "HiShape"};
+    static constexpr const char *kSpcIds[7]{"spcErode", "spcWeather", "spcGrid", "spcBits",
+                                            "spcRate",  "spcDrops",   "spcAlias"};
 
     // ---- drawn trajectories (message thread)
     struct DrawnPath
@@ -516,6 +634,13 @@ private:
         std::array<int, 16> inp{};
         std::array<std::array<int, 12>, rysum::kNumRooms> room{};
         std::array<int, rysum::kNumStops> stopRoom{};
+        std::array<int, 7> spc{};
+        std::array<std::array<int, 5>, rysum::kNumStops> cloud{};
+        std::array<std::array<int, 8>, rysum::kNumStops> pipeSnd{};
+        int airInvert = -1, clickRes = -1, clickResDecay = -1, clickResBright = -1;
+        std::array<int, 4> glitch{};
+        std::array<int, 15> space2{};
+        std::array<int, 24> live{};
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex
@@ -709,6 +834,7 @@ private:
         void timerCallback() override
         {
             proc.applySceneMorph();
+            proc.followTuningLayouts();
         }
         RysumProcessor &proc;
     } morphTimer{*this};
@@ -730,6 +856,8 @@ private:
     float lucGrown = 0.0f, lucEffective = 1.0f;
     bool lucBuilding = false;
     juce::String builtLucKey, lucBaseKey;
+    std::shared_ptr<const rysum::RoomMesh>
+        walkMesh; // the 3D view's model (atomic_load / atomic_store)
     std::shared_ptr<const rysum::LucierBase>
         lucBase; // the pool thread reads it, the message thread swaps it
     uint32_t lucSerial = 0;
@@ -812,6 +940,16 @@ private:
         const juce::ScopedLock sl(statusLock);
         binStatus = s;
     }
+    // transaural: the crosstalk cancellation after the binaural decoder (filters designed on the
+    // pool, loaded on the message thread)
+    rysum::TransauralCtc trCtc;
+    std::shared_ptr<const rysum::TransauralFilters> trUi;
+    juce::String trBuiltKey, trPendingKey;
+    int trKeyTicks = 0;
+    juce::String trStatus{juce::String::fromUTF8(
+        "aus \xe2\x80\x93 Ausgabe auf \xe2\x80\x9eTransaural\xe2\x80\x9c stellen")};
+    juce::String transauralKey() const;
+    void rebuildTransaural();
 
     std::shared_ptr<std::atomic<bool>> aliveFlag = std::make_shared<std::atomic<bool>>(true);
 

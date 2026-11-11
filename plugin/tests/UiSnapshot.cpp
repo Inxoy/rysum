@@ -1,7 +1,11 @@
+#include <functional>
+#include <thread>
 // Renders the three views of the editor into PNG files (for checking the UI without a host).
 //   RysumUiSnapshot <samples folder> <output folder>
+#include "ConsoleView.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "SpaceView.h"
 
 class SnapshotApp : public juce::JUCEApplication, private juce::Timer
 {
@@ -378,7 +382,9 @@ public:
                 juce::Thread::sleep(20);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
             bool allOk = true;
-            for (auto &f : RysumProcessor::getPatchFiles())
+            // RYSUM_QUICK: skip playing every factory patch (for quick looks at the pages)
+            const bool quick = std::getenv("RYSUM_QUICK") != nullptr;
+            for (auto &f : quick ? juce::Array<juce::File>() : RysumProcessor::getPatchFiles())
             {
                 proc->loadPatch(f);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
@@ -386,8 +392,20 @@ public:
                 double e = 0.0;
                 bool finite = true;
                 long cnt = 0;
+                int maxGrains = 0;
+                float maxErode = 0.0f;
                 const bool feedInput = proc->apvts.getRawParameterValue("inpOn")->load() > 0.5f;
                 rysum::XorShift noise(11);
+                // the routes that are on when the patch is loaded must stay on (scenes used to
+                // switch them off) (taken from the file: loading has already applied scene A)
+                std::vector<int> liveRoutes;
+                if (auto xml = juce::XmlDocument::parse(f))
+                    for (int r = 0; r < rysum::kNumRoutes; ++r)
+                        for (auto *e : xml->getChildWithTagNameIterator("PARAM"))
+                            if (e->getStringAttribute("id") == proc->getModAmountId(r) &&
+                                std::abs(e->getDoubleAttribute("value")) > 1.0e-4 &&
+                                proc->getRouteSrc(r) >= 0)
+                                liveRoutes.push_back(r);
                 for (int b = 0; b < 600; ++b) // 6.4 s
                 {
                     juce::MidiBuffer mb;
@@ -396,6 +414,36 @@ public:
                             mb.addEvent(
                                 juce::MidiMessage::noteOn(1, m, (juce::uint8)(b % 2 ? 60 : 110)),
                                 0);
+                    // the hands: mod wheel up and down, pitch wheel swinging, while the chord
+                    // sounds
+                    if (b >= 60 && b < 420 && b % 6 == 0)
+                    {
+                        const double ph = (double)(b - 60) / 360.0;
+                        mb.addEvent(
+                            juce::MidiMessage::controllerEvent(
+                                1, 1,
+                                juce::jlimit(
+                                    0, 127,
+                                    (int)std::round(
+                                        127.0 * std::sin(juce::MathConstants<double>::pi * ph)))),
+                            0);
+                        mb.addEvent(
+                            juce::MidiMessage::pitchWheel(
+                                1, juce::jlimit(
+                                       0, 16383,
+                                       8192 + (int)(8000.0 *
+                                                    std::sin(juce::MathConstants<double>::twoPi *
+                                                             2.0 * ph)))),
+                            1);
+                    }
+                    if (b == 420)
+                    {
+                        mb.addEvent(juce::MidiMessage::controllerEvent(1, 1, 0), 0);
+                        mb.addEvent(juce::MidiMessage::pitchWheel(1, 8192), 0);
+                    }
+                    if (b % 20 == 0)
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(
+                            2); // the scene timer (moving through the scenes)
                     if (b == 420)
                         for (int m : {41, 53, 57, 60, 65, 69, 72})
                             mb.addEvent(juce::MidiMessage::noteOff(1, m), 0);
@@ -407,6 +455,8 @@ public:
                                     c, i,
                                     0.1f * noise.bi()); // a patch for the input: something to hear
                     proc->processBlock(buf, mb);
+                    maxGrains = std::max(maxGrains, proc->engine.cloudGrainsNow.load());
+                    maxErode = std::max(maxErode, proc->engine.spaceErosionNow.load());
                     for (int c = 0; c < 4; ++c)
                         for (int i = 0; i < 512; ++i)
                         {
@@ -432,7 +482,13 @@ public:
                 } // let tails / freeze die
                 const float rmsDb = juce::Decibels::gainToDecibels(
                     (float)std::sqrt(e / static_cast<double>(juce::jmax(1L, cnt))));
-                const bool ok = finite && peak > 1.0e-4f;
+                bool routesKept = true;
+                for (int r : liveRoutes)
+                    if (std::abs(
+                            proc->apvts.getRawParameterValue(proc->getModAmountId(r))->load()) <
+                        1.0e-4f)
+                        routesKept = false;
+                const bool ok = finite && peak > 1.0e-4f && routesKept;
                 allOk = allOk && ok;
                 if (feedInput && std::getenv("RYSUM_DEBUG_INPUT") != nullptr)
                 {
@@ -448,9 +504,105 @@ public:
                 std::cout << "  " << f.getFileNameWithoutExtension()
                           << (feedInput ? " [Eingang]" : "") << ": peak "
                           << juce::Decibels::gainToDecibels(peak) << " dB, rms W " << rmsDb << " dB"
+                          << (maxGrains > 0 ? ", grains up to " + juce::String(maxGrains)
+                                            : juce::String())
+                          << (maxErode > 0.0f ? ", erosion up to " + juce::String(maxErode, 2)
+                                              : juce::String())
+                          << (routesKept ? "" : ", a route was switched off")
                           << (ok ? "" : "  FAIL") << std::endl;
             }
             std::cout << "all factory patches play: " << (allOk ? "ok" : "FAIL") << std::endl;
+
+            // set 14 (playing with the hands): how much one note a' changes with velocity, mod
+            // wheel and pitch wheel (W channel, first 1.5 s: level difference, and the share of the
+            // highs (first difference) as brightness)
+            for (auto &f : quick ? juce::Array<juce::File>() : RysumProcessor::getPatchFiles())
+            {
+                const int num = f.getFileNameWithoutExtension().getIntValue();
+                if (num < 118 || num > 133)
+                    continue;
+                auto play = [&](int vel, int wheel, int bend, double &level, double &bright,
+                                juce::AudioBuffer<float> *keep)
+                {
+                    proc->loadPatch(f);
+                    juce::MidiBuffer pre;
+                    pre.addEvent(juce::MidiMessage::controllerEvent(1, 1, wheel), 0);
+                    pre.addEvent(juce::MidiMessage::pitchWheel(1, bend), 0);
+                    buf.clear();
+                    proc->processBlock(buf, pre);
+                    for (int w = 0; w < 6; ++w)
+                    {
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+                        juce::MidiBuffer none;
+                        buf.clear();
+                        proc->processBlock(buf, none);
+                    }
+                    double e = 0, d = 0;
+                    float prev = 0.0f;
+                    for (int b = 0; b < 141; ++b)
+                    {
+                        juce::MidiBuffer mb;
+                        if (b == 0)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, 69, (juce::uint8)vel), 0);
+                        buf.clear();
+                        proc->processBlock(buf, mb);
+                        if (b % 20 == 0)
+                            juce::MessageManager::getInstance()->runDispatchLoopUntil(2);
+                        for (int i = 0; i < 512; ++i)
+                        {
+                            const float v = buf.getSample(0, i);
+                            e += (double)v * v;
+                            d += (double)(v - prev) * (v - prev);
+                            prev = v;
+                        }
+                        if (keep != nullptr)
+                            for (int i = 0; i < 512 && b * 512 + i < keep->getNumSamples(); ++i)
+                                keep->setSample(0, b * 512 + i, buf.getSample(0, i));
+                    }
+                    juce::MidiBuffer off;
+                    for (int m = 36; m < 82; ++m)
+                        off.addEvent(juce::MidiMessage::noteOff(1, m), 0);
+                    off.addEvent(juce::MidiMessage::controllerEvent(1, 1, 0), 1);
+                    off.addEvent(juce::MidiMessage::pitchWheel(1, 8192), 1);
+                    buf.clear();
+                    proc->processBlock(buf, off);
+                    for (int b = 0; b < 400; ++b)
+                    {
+                        juce::MidiBuffer none;
+                        buf.clear();
+                        proc->processBlock(buf, none);
+                    }
+                    level = 10.0 * std::log10(juce::jmax(1e-30, e));
+                    bright = 10.0 * std::log10(juce::jmax(1e-30, d) / juce::jmax(1e-30, e));
+                };
+                juce::AudioBuffer<float> a(1, 141 * 512), b2(1, 141 * 512);
+                auto diffDb =
+                    [](const juce::AudioBuffer<float> &x, const juce::AudioBuffer<float> &y)
+                {
+                    double dd = 0, ee = 0;
+                    for (int i = 0; i < x.getNumSamples(); ++i)
+                    {
+                        const double t = x.getSample(0, i) - y.getSample(0, i);
+                        dd += t * t;
+                        ee += (double)y.getSample(0, i) * y.getSample(0, i);
+                    }
+                    return 10.0 * std::log10(juce::jmax(1e-30, dd) / juce::jmax(1e-30, ee));
+                };
+                double l0, b0, l1, b1, lw, bw, lb, bb;
+                play(25, 0, 8192, l0, b0, nullptr);
+                play(120, 0, 8192, l1, b1, &a);
+                play(120, 127, 8192, lw, bw, &b2);
+                const double wheelDiff = diffDb(b2, a);
+                play(120, 0, 0, lb, bb, &b2);
+                const double bendDiff = diffDb(b2, a);
+                std::cout << "  expression " << f.getFileNameWithoutExtension()
+                          << ": velocity 25 -> 120: level " << juce::String(l1 - l0, 1)
+                          << " dB, brightness " << juce::String(b1 - b0, 1)
+                          << " dB; mod wheel 0 -> 127: level " << juce::String(lw - l1, 1)
+                          << " dB, brightness " << juce::String(bw - b1, 1) << " dB, change "
+                          << juce::String(wheelDiff, 1) << " dB; pitch wheel down: change "
+                          << juce::String(bendDiff, 1) << " dB" << std::endl;
+            }
             // back to a plain state for the rest of the test
             proc->setRoute(0, -1, -1);
         }
@@ -757,6 +909,169 @@ public:
         }
 
         editor.reset(dynamic_cast<RysumEditor *>(proc->createEditor()));
+        if (std::getenv("RYSUM_D2D_BENCH") != nullptr)
+        {
+            // a real window at full-HD size (the interface 1.5x, as in full screen): how many whole
+            // repaints per second each renderer manages per page, and what leaving out single
+            // drawing effects gains
+            editor->setSize(1920, 1080);
+            editor->addToDesktop(juce::ComponentPeer::windowAppearsOnTaskbar);
+            editor->setTopLeftPosition(
+                juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_X", "0").getIntValue(), 0);
+            editor->setVisible(true);
+            auto *c = dynamic_cast<RysumContent *>(editor->getChildComponent(0));
+            auto *peer = editor->getPeer();
+            if (c == nullptr || peer == nullptr)
+            {
+                std::cout << "BENCH: no window" << std::endl;
+                std::_Exit(1);
+            }
+            const auto engines = peer->getAvailableRenderingEngines();
+            auto measure = [&](int view, int skip, const juce::String &label)
+            {
+                rysum::ui::dbg::skip = skip;
+                c->showView(view);
+                auto spin = [&](double ms)
+                {
+                    const double end = juce::Time::getMillisecondCounterHiRes() + ms;
+                    while (juce::Time::getMillisecondCounterHiRes() < end)
+                    {
+                        editor->repaint();
+                        c->tick();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(2);
+                    }
+                };
+                spin(400);
+                const int p0 = c->paintsDone;
+                const double t0 = juce::Time::getMillisecondCounterHiRes();
+                spin(1500);
+                const double fps = (c->paintsDone - p0) /
+                                   ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                std::cout << "BENCH " << engines[peer->getCurrentRenderingEngine()] << "  " << label
+                          << ": " << fps << " repaints/s" << std::endl;
+            };
+            const char *names[]{"Spieltisch", "Raum", "Saal", "Klang",  "Effekte",
+                                "Modulation", "",     "",     "Begehen"};
+            {
+                // as in the app: audio running in real time (a held chord), repaints only from the
+                // interface's own timers
+                std::atomic<bool> audioRun{true};
+                std::thread audio(
+                    [&]
+                    {
+                        juce::AudioBuffer<float> b(16, 512);
+                        bool first = true;
+                        double next = juce::Time::getMillisecondCounterHiRes();
+                        while (audioRun.load())
+                        {
+                            juce::MidiBuffer mb;
+                            if (first)
+                            {
+                                for (int n : {48, 55, 60, 64, 67})
+                                    mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100),
+                                                0);
+                                first = false;
+                            }
+                            b.clear();
+                            proc->processBlock(b, mb);
+                            next += 512.0 / 48.0;
+                            const double wait = next - juce::Time::getMillisecondCounterHiRes();
+                            if (wait > 0)
+                                std::this_thread::sleep_for(
+                                    std::chrono::microseconds((int)(wait * 1000.0)));
+                        }
+                    });
+                for (int e = 0; e < engines.size(); ++e)
+                {
+                    peer->setCurrentRenderingEngine(e);
+                    for (int v : {0, 5, 8})
+                    {
+                        c->showView(v);
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(600);
+                        const int p0 = c->paintsDone;
+                        const double t0 = juce::Time::getMillisecondCounterHiRes();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(2000);
+                        const double fps =
+                            (c->paintsDone - p0) /
+                            ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                        std::cout << "BENCH natural, audio running, " << engines[e] << "  "
+                                  << names[v] << ": " << fps << " paints/s" << std::endl;
+                    }
+                }
+                // the full-screen window (kiosk mode), as F11 opens it
+                if (c->onToggleFullscreen)
+                    c->onToggleFullscreen();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(800);
+                if (auto *fp = c->getPeer())
+                {
+                    const auto fe = fp->getAvailableRenderingEngines();
+                    for (int e = 0; e < fe.size(); ++e)
+                    {
+                        fp->setCurrentRenderingEngine(e);
+                        for (int v : {0, 5, 8})
+                        {
+                            c->showView(v);
+                            juce::MessageManager::getInstance()->runDispatchLoopUntil(600);
+                            const int p0 = c->paintsDone;
+                            const double t0 = juce::Time::getMillisecondCounterHiRes();
+                            juce::MessageManager::getInstance()->runDispatchLoopUntil(2000);
+                            const double fps =
+                                (c->paintsDone - p0) /
+                                ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                            std::cout << "BENCH full screen, audio running, " << fe[e] << "  "
+                                      << names[v] << ": " << fps << " paints/s   (screen "
+                                      << fp->getBounds().getWidth() << " x "
+                                      << fp->getBounds().getHeight() << ", scale "
+                                      << fp->getPlatformScaleFactor() << ")" << std::endl;
+                        }
+                    }
+                    fp->setCurrentRenderingEngine(
+                        fe.indexOf("Direct2D") >= 0 ? fe.indexOf("Direct2D") : 0);
+                }
+                if (c->onToggleFullscreen)
+                    c->onToggleFullscreen();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(800);
+                audioRun = false;
+                audio.join();
+                for (int e = 0; e < engines.size(); ++e)
+                {
+                    peer->setCurrentRenderingEngine(e);
+                    for (int v : {0, 5})
+                    {
+                        c->showView(v);
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(600);
+                        const int p0 = c->paintsDone;
+                        const double t0 = juce::Time::getMillisecondCounterHiRes();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(2000);
+                        const double fps =
+                            (c->paintsDone - p0) /
+                            ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
+                        std::cout << "BENCH natural, no audio, " << engines[e] << "  " << names[v]
+                                  << ": " << fps << " paints/s" << std::endl;
+                    }
+                }
+            }
+            for (int e = 0; e < engines.size(); ++e)
+            {
+                peer->setCurrentRenderingEngine(e);
+                for (int v : {0, 1, 2, 3, 4, 5, 8})
+                    measure(v, 0, names[v]);
+            }
+            peer->setCurrentRenderingEngine(
+                engines.indexOf("Direct2D") >= 0 ? engines.indexOf("Direct2D") : 0);
+            namespace D = rysum::ui::dbg;
+            for (int v : {0, 5})
+            {
+                measure(v, D::skipOverlay, juce::String(names[v]) + " without the overlay");
+                measure(v, D::skipCover, juce::String(names[v]) + " without photos (drawCover)");
+                measure(v, D::skipGrain, juce::String(names[v]) + " without grain tiles");
+                measure(v, D::skipClipPath, juce::String(names[v]) + " without round clips");
+                measure(v, D::skipTranslucent, juce::String(names[v]) + " without the faint wall");
+                measure(v, 31, juce::String(names[v]) + " without all of these");
+            }
+            std::cout.flush();
+            std::_Exit(0);
+        }
         editor->setSize(1280, 720);
         auto *content = editor->getChildComponent(0);
         auto shoot = [&](int view, const juce::String &name)
@@ -777,9 +1092,174 @@ public:
             std::cout << "wrote " << f.getFullPathName() << std::endl;
         };
         shoot(0, "ui_spieltisch.png");
+        {
+            // the spatial degradation tab and the grain cloud tab (found by their button text)
+            std::function<juce::Button *(juce::Component *, const juce::String &)> findButton =
+                [&](juce::Component *c, const juce::String &t) -> juce::Button *
+            {
+                if (!c->isVisible())
+                    return nullptr;
+                if (auto *b = dynamic_cast<juce::TextButton *>(c))
+                    if (b->getButtonText() == t)
+                        return b;
+                for (auto *ch : c->getChildren())
+                    if (auto *f = findButton(ch, t))
+                        return f;
+                return nullptr;
+            };
+            auto setN = [&](const juce::String &id, float v)
+            {
+                if (auto *prm = proc->apvts.getParameter(id))
+                    prm->setValueNotifyingHost(prm->convertTo0to1(v));
+            };
+            setN("spcErode", 0.35f);
+            setN("spcGrid", 0.4f);
+            setN("spcDrops", 0.2f);
+            if (auto *c = dynamic_cast<RysumContent *>(content))
+            {
+                c->showView(0);
+                c->tick();
+            }
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            std::function<juce::Component *(juce::Component *, bool)> findView =
+                [&](juce::Component *c, bool console) -> juce::Component *
+            {
+                if (console ? dynamic_cast<rysum::ui::ConsoleView *>(c) != nullptr
+                            : dynamic_cast<rysum::ui::SpaceView *>(c) != nullptr)
+                    return c;
+                for (auto *ch : c->getChildren())
+                    if (auto *f = findView(ch, console))
+                        return f;
+                return nullptr;
+            };
+            // the buttons of the Spieltisch must not cover one another ("pro Pfeife" / "Summe" used
+            // to lie over the Glitch tab)
+            if (auto *cv = findView(content, true))
+            {
+                bool clear = true;
+                for (auto *a : cv->getChildren())
+                    for (auto *b : cv->getChildren())
+                        if (a != b && a->isVisible() && b->isVisible() &&
+                            dynamic_cast<juce::TextButton *>(a) != nullptr &&
+                            dynamic_cast<juce::TextButton *>(b) != nullptr &&
+                            a->getBounds().intersects(b->getBounds()))
+                            clear = false;
+                std::cout << "Spieltisch buttons do not overlap: " << (clear ? "ok" : "FAIL")
+                          << std::endl;
+            }
+            if (auto *b =
+                    findView(content, true) ? findButton(findView(content, true), "Raum") : nullptr)
+                b->triggerClick();
+            else
+                std::cout << "Raum tab button not found  FAIL" << std::endl;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+            shoot(0, "ui_spieltisch_raumverfall.png");
+            if (auto *b = findView(content, true) ? findButton(findView(content, true), "Glitch")
+                                                  : nullptr)
+                b->triggerClick();
+            else
+                std::cout << "Glitch tab button not found  FAIL" << std::endl;
+            if (auto *b = findView(content, true) ? findButton(findView(content, true), "Resonanz")
+                                                  : nullptr)
+                b->triggerClick();
+            else
+                std::cout << "Resonanz tab button not found  FAIL" << std::endl;
+            setN("degStutter", 0.4f);
+            setN("clickRes", 0.6f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+            shoot(0, "ui_spieltisch_glitch_resonanz.png");
+            setN("degStutter", 0.0f);
+            setN("clickRes", 0.0f);
+            if (auto *b = findView(content, true)
+                              ? findButton(findView(content, true),
+                                           juce::String::fromUTF8("Ger\xc3\xa4usche"))
+                              : nullptr)
+                b->triggerClick();
+            if (auto *b = findView(content, true) ? findButton(findView(content, true), "Klang")
+                                                  : nullptr)
+                b->triggerClick();
+            for (auto *id : {"spcErode", "spcGrid", "spcDrops"})
+                if (auto *prm = proc->apvts.getParameter(id))
+                    prm->setValueNotifyingHost(prm->getDefaultValue());
+            setN(RysumProcessor::cloudParamId("Mix", 6), 0.6f);
+            if (auto *c = dynamic_cast<RysumContent *>(content))
+            {
+                c->showView(1);
+                c->tick();
+            }
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            if (auto *b = findView(content, false) ? findButton(findView(content, false), "Wolke")
+                                                   : nullptr)
+                b->triggerClick();
+            else
+                std::cout << "Wolke tab button not found  FAIL" << std::endl;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+            auto img = editor->createComponentSnapshot(editor->getLocalBounds(), true, 1.0f);
+            {
+                juce::PNGImageFormat png;
+                auto f = outDir.getChildFile("ui_raum_wolke.png");
+                f.deleteFile();
+                juce::FileOutputStream os(f);
+                png.writeImageToStream(img, os);
+            }
+            setN(RysumProcessor::pipeSndParamId("Att", 6), 0.5f);
+            setN(RysumProcessor::pipeSndParamId("HiGain", 6), 6.0f);
+            if (auto *b = findView(content, false) ? findButton(findView(content, false), "Pfeife")
+                                                   : nullptr)
+                b->triggerClick();
+            else
+                std::cout << "Pfeife tab button not found  FAIL" << std::endl;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+            {
+                auto img2 = editor->createComponentSnapshot(editor->getLocalBounds(), true, 1.0f);
+                juce::PNGImageFormat png;
+                auto f = outDir.getChildFile("ui_raum_pfeife.png");
+                f.deleteFile();
+                juce::FileOutputStream os(f);
+                png.writeImageToStream(img2, os);
+            }
+            setN(RysumProcessor::pipeSndParamId("Att", 6), 0.0f);
+            setN(RysumProcessor::pipeSndParamId("HiGain", 6), 0.0f);
+            if (auto *b = findView(content, false)
+                              ? findButton(findView(content, false), "Bewegung")
+                              : nullptr)
+                b->triggerClick();
+            setN(RysumProcessor::cloudParamId("Mix", 6), 0.0f);
+        }
         for (int k = 0; k < rysum::kNumKeys; k += 3)
             proc->setPipeMuted(6, k, true); // some Trompete pipes muted
         shoot(1, "ui_raum.png");
+        {
+            // the arrangement "Tonnetz" and the motion "Schwebung" (their buttons, found by text)
+            std::function<juce::Button *(juce::Component *, const juce::String &)> fb =
+                [&](juce::Component *c, const juce::String &t) -> juce::Button *
+            {
+                if (!c->isVisible())
+                    return nullptr;
+                if (auto *b = dynamic_cast<juce::TextButton *>(c))
+                    if (b->getButtonText() == t)
+                        return b;
+                for (auto *ch : c->getChildren())
+                    if (auto *f = fb(ch, t))
+                        return f;
+                return nullptr;
+            };
+            const int before = proc->layouts[0].type;
+            bool found = true;
+            if (auto *b = fb(content, "Tonnetz"))
+                b->triggerClick();
+            else
+                found = false;
+            if (auto *b = fb(content, "Schwebung"))
+                b->triggerClick();
+            else
+                found = false;
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+            shoot(1, "ui_raum_tonnetz.png");
+            std::cout << "Raum: Tonnetz and Schwebung buttons "
+                      << (found ? "ok" : "not found  FAIL") << std::endl;
+            (void)before;
+        }
         for (int k = 0; k < rysum::kNumKeys; ++k)
             proc->setPipeMuted(6, k, false);
         {
@@ -836,6 +1316,24 @@ public:
             setN("inpDist", 4.0f);
         }
         shoot(3, "ui_klang.png");
+        {
+            // two loudspeakers (transaural): the output switched, the HRTF decoder and then the
+            // crosstalk filters designed
+            if (auto *o = proc->apvts.getParameter("output"))
+                o->setValueNotifyingHost(
+                    o->convertTo0to1((float)RysumProcessor::kTransauralOutput));
+            for (int t = 0; t < 300 && proc->getTransauralFilters() == nullptr; ++t)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+            shoot(3, "ui_klang_transaural.png");
+            const auto f = proc->getTransauralFilters();
+            std::cout << "transaural in the plugin: "
+                      << (f != nullptr ? f->description : juce::String("not designed  FAIL"))
+                      << std::endl;
+            if (auto *o = proc->apvts.getParameter("output"))
+                o->setValueNotifyingHost(o->getDefaultValue());
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+        }
         {
             // loudspeakers: 7.1.4 at 3rd order through the processor - sound on the layout's
             // channels only, the LFE channel silent
@@ -1003,6 +1501,105 @@ public:
             for (auto *id : {"fxEchoLevel", "fxPartSpread", "fxEchoTilt"})
                 if (auto *prm = proc->apvts.getParameter(id))
                     prm->setValueNotifyingHost(prm->getDefaultValue());
+            {
+                // second tab: Stimmung & Belichtung
+                std::function<juce::Button *(juce::Component *, const juce::String &)> fb =
+                    [&](juce::Component *c, const juce::String &t) -> juce::Button *
+                {
+                    if (!c->isVisible())
+                        return nullptr;
+                    if (auto *b = dynamic_cast<juce::TextButton *>(c))
+                        if (b->getButtonText() == t)
+                            return b;
+                    for (auto *ch : c->getChildren())
+                        if (auto *f = fb(ch, t))
+                            return f;
+                    return nullptr;
+                };
+                auto setV = [&](const char *id, float v)
+                {
+                    if (auto *prm = proc->apvts.getParameter(id))
+                        prm->setValueNotifyingHost(prm->convertTo0to1(v));
+                };
+                setV("fxGhostLevel", -6.0f);
+                setV("fxDexMix", 0.5f);
+                setV("fxExpoMix", 0.4f);
+                if (auto *c = dynamic_cast<RysumContent *>(content))
+                {
+                    c->showView(4);
+                    c->tick();
+                }
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (auto *b = fb(content, juce::String::fromUTF8("Stimmung & Belichtung")))
+                    b->triggerClick();
+                else
+                    std::cout << "Stimmung & Belichtung tab button not found  FAIL" << std::endl;
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+                shoot(4, "ui_effekte_stimmung_belichtung.png");
+                {
+                    // third tab: the living organ - a Kalkant, a walking listener, some worn pipes
+                    setV("lvBellows", 0.8f);
+                    setV("lvBlower", 1.0f);
+                    setV("lvWalkShape", 4.0f);
+                    setV("lvWalkSize", 5.0f);
+                    setV("lvWear", 1.0f);
+                    for (int k = 0; k < rysum::kNumKeys; ++k)
+                        proc->engine.wear[0][(size_t)k] = (float)((k * 7) % 11) / 11.0f;
+                    {
+                        // the wear belongs to the project, not to a patch
+                        juce::MemoryBlock ws;
+                        proc->getStateInformation(ws);
+                        proc->engine.wear[0][5] = 0.0f;
+                        proc->setStateInformation(ws.getData(), (int)ws.getSize());
+                        std::cout << "wear in the project state: "
+                                  << (std::abs(proc->engine.wear[0][5].load() - 2.0f / 11.0f) <
+                                              0.001f
+                                          ? "ok"
+                                          : "FAIL")
+                                  << std::endl;
+                    }
+                    juce::AudioBuffer<float> lb(36, 512);
+                    for (int b2 = 0; b2 < 300; ++b2)
+                    {
+                        juce::MidiBuffer mb2;
+                        if (b2 == 0)
+                            for (int m : {48, 55, 60, 64, 67})
+                                mb2.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)90), 0);
+                        lb.clear(), proc->processBlock(lb, mb2);
+                    }
+                    if (auto *b = fb(content, "Lebendige Orgel"))
+                        b->triggerClick();
+                    else
+                        std::cout << "Lebendige Orgel tab button not found  FAIL" << std::endl;
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+                    shoot(4, "ui_effekte_lebendige_orgel.png");
+                    std::cout << "living organ in the plugin: bellows pressure "
+                              << proc->engine.bellowsNow.load() << ", listener at "
+                              << proc->engine.listenerXNow.load() << " / "
+                              << proc->engine.listenerYNow.load() << " m"
+                              << (proc->engine.bellowsNow.load() < 0.999f ? "  ok" : "  FAIL")
+                              << std::endl;
+                    juce::MidiBuffer offs;
+                    for (int m : {48, 55, 60, 64, 67})
+                        offs.addEvent(juce::MidiMessage::noteOff(1, m), 0);
+                    lb.clear(), proc->processBlock(lb, offs);
+                    for (auto *id :
+                         {"lvBellows", "lvBlower", "lvWalkShape", "lvWalkSize", "lvWear"})
+                        if (auto *prm = proc->apvts.getParameter(id))
+                            prm->setValueNotifyingHost(prm->getDefaultValue());
+                    proc->resetWear();
+                    for (int b2 = 0; b2 < 60; ++b2)
+                    {
+                        juce::MidiBuffer none;
+                        lb.clear(), proc->processBlock(lb, none);
+                    }
+                }
+                if (auto *b = fb(content, juce::String::fromUTF8("Kl\xc3\xa4nge")))
+                    b->triggerClick();
+                for (auto *id : {"fxGhostLevel", "fxDexMix", "fxExpoMix"})
+                    if (auto *prm = proc->apvts.getParameter(id))
+                        prm->setValueNotifyingHost(prm->getDefaultValue());
+            }
         }
         {
             // the simulated room: on, a note played, ray tracing done in the background
@@ -1244,6 +1841,324 @@ public:
                 st.clear(), proc->processBlock(st, mb);
             }
             P->setValueNotifyingHost(0.0f);
+        }
+
+        {
+            // "Begehen": the Saal in 3D. A chord sounds; walking moves the listener in the engine;
+            // a model loads and goes through the project state
+            auto setReal = [&](const char *id, float v)
+            {
+                if (auto *q = proc->apvts.getParameter(id))
+                    q->setValueNotifyingHost(q->convertTo0to1(v));
+            };
+            setReal("simOn", 1.0f);
+            juce::AudioBuffer<float> st(16, 512);
+            auto run = [&](int blocks, std::initializer_list<int> on)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    juce::MidiBuffer mb;
+                    if (b == 0)
+                        for (int n : on)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                    st.clear(), proc->processBlock(st, mb);
+                }
+            };
+            std::function<rysum::ui::WalkView *(juce::Component *)> findWalk =
+                [&](juce::Component *c) -> rysum::ui::WalkView *
+            {
+                if (auto *w = dynamic_cast<rysum::ui::WalkView *>(c))
+                    return w;
+                for (auto *ch : c->getChildren())
+                    if (auto *f = findWalk(ch))
+                        return f;
+                return nullptr;
+            };
+            auto *wv = findWalk(content);
+            if (wv != nullptr)
+                wv->setTestMode(true);
+            for (int i = 0; i < 4; ++i)
+                proc->walkPose[(size_t)i] = 0.0f;
+            proc->clearWalkModel();
+            if (auto *c = dynamic_cast<RysumContent *>(content))
+                c->showView(8);
+            run(30, {48, 55, 60, 64, 67});
+            shoot(8, "ui_begehen.png");
+            std::cout << "Begehen: view on " << proc->engine.viewWalkOn.load()
+                      << (proc->engine.viewWalkOn.load() && wv != nullptr ? "  ok" : "  FAIL")
+                      << std::endl;
+            if (wv != nullptr)
+            {
+                // two seconds forwards, then turned to the left by 90 degrees: the engine's
+                // listener follows
+                for (int i = 0; i < 40; ++i)
+                    wv->stepForTest(0.05, true, false, false, false, 0.0f);
+                run(40, {});
+                const float wy = proc->engine.viewY.load(), ly = proc->engine.listenerYNow.load();
+                std::cout << "Begehen: walked " << wy << " m forwards, listener in the engine "
+                          << ly << " m"
+                          << (wy > 2.5f && std::abs(ly - wy) < 0.1f ? "  ok" : "  FAIL")
+                          << std::endl;
+                wv->stepForTest(0.05, false, false, false, false, 90.0f);
+                std::cout << "Begehen: yaw " << proc->engine.viewYaw.load()
+                          << (std::abs(proc->engine.viewYaw.load() - 90.0f) < 0.01f ? "  ok"
+                                                                                    : "  FAIL")
+                          << std::endl;
+                shoot(8, "ui_begehen_gedreht.png");
+                // a room model (OBJ, z up): the small chapel from Walk3D
+                auto objFile = outDir.getChildFile("test_kapelle.obj");
+                objFile.replaceWithText(rysum::makeTestObj());
+                proc->walkZUp = true;
+                wv->loadModelForTest(objFile);
+                for (int i = 0; i < 4; ++i)
+                    proc->walkPose[(size_t)i] = 0.0f;
+                if (auto *c = dynamic_cast<RysumContent *>(content))
+                {
+                    c->showView(2);
+                    c->showView(8);
+                }
+                auto m = proc->getWalkMesh();
+                std::cout << "Begehen: model " << (m ? (int)m->tris.size() : 0) << " triangles, "
+                          << (m ? m->size.x : 0.0f) << " x " << (m ? m->size.y : 0.0f) << " x "
+                          << (m ? m->size.z : 0.0f) << " m"
+                          << (m && m->tris.size() == 16 * 12 &&
+                                      std::abs(m->size.x - 12.8f) < 0.01f &&
+                                      std::abs(m->size.z - 9.2f) < 0.01f
+                                  ? "  ok"
+                                  : "  FAIL")
+                          << std::endl;
+                shoot(8, "ui_begehen_modell.png");
+                juce::MemoryBlock mb;
+                proc->getStateInformation(mb);
+                proc->clearWalkModel();
+                proc->setStateInformation(mb.getData(), (int)mb.getSize());
+                std::cout << "Begehen: model after the state round trip "
+                          << (proc->getWalkMesh() != nullptr ? "loaded" : "missing")
+                          << (proc->getWalkMesh() != nullptr && proc->walkZUp ? "  ok" : "  FAIL")
+                          << std::endl;
+                {
+                    // the same file read with Y up (the usual OBJ convention): its height becomes
+                    // the length
+                    juce::String e;
+                    auto m2 = rysum::loadObjRoom(objFile, false, 1.0f, e);
+                    std::cout << "Begehen: read with Y up " << (m2 ? m2->size.x : 0.0f) << " x "
+                              << (m2 ? m2->size.y : 0.0f) << " x " << (m2 ? m2->size.z : 0.0f)
+                              << " m"
+                              << (m2 && std::abs(m2->size.x - 12.8f) < 0.01f &&
+                                          std::abs(m2->size.y - 9.2f) < 0.01f &&
+                                          std::abs(m2->size.z - 24.8f) < 0.01f
+                                      ? "  ok"
+                                      : "  FAIL")
+                              << std::endl;
+                    // no line end after the last face, decimals (read the same whatever the locale)
+                    auto f2 = outDir.getChildFile("test_dreieck.obj");
+                    f2.replaceWithText("v 0 0 0\nv 1.5 0 0\nv 0 2.25 0.5\nf 1 2 3");
+                    auto m3 = rysum::loadObjRoom(f2, true, 1.0f, e);
+                    std::cout << "Begehen: one triangle without a final line end: "
+                              << (m3 ? (int)m3->tris.size() : 0) << ", " << (m3 ? m3->size.x : 0.0f)
+                              << " x " << (m3 ? m3->size.y : 0.0f) << " x "
+                              << (m3 ? m3->size.z : 0.0f)
+                              << (m3 && m3->tris.size() == 1 &&
+                                          std::abs(m3->size.x - 1.5f) < 1e-4f &&
+                                          std::abs(m3->size.y - 2.25f) < 1e-4f
+                                      ? "  ok"
+                                      : "  FAIL")
+                              << std::endl;
+                }
+                {
+                    // speed: a model at the limit (200 x 200 quads = 80,000 triangles, a wavy floor
+                    // over 24 m), painted 20 times
+                    juce::MemoryOutputStream os;
+                    const int N = 200;
+                    for (int y = 0; y <= N; ++y)
+                        for (int x = 0; x <= N; ++x)
+                            os << "v " << juce::String(x * 0.12f, 3) << " "
+                               << juce::String(y * 0.12f, 3) << " "
+                               << juce::String(0.4f * std::sin(x * 0.2f) * std::cos(y * 0.17f), 3)
+                               << "\n";
+                    for (int y = 0; y < N; ++y)
+                        for (int x = 0; x < N; ++x)
+                        {
+                            const int a = y * (N + 1) + x + 1;
+                            os << "f " << a << " " << a + 1 << " " << a + N + 2 << " " << a + N + 1
+                               << "\n";
+                        }
+                    auto big = outDir.getChildFile("test_gross.obj");
+                    big.replaceWithText(os.toString());
+                    proc->loadWalkModel(big, true, 1.0f);
+                    auto mb3 = proc->getWalkMesh();
+                    juce::Image frame(juce::Image::ARGB, wv->getWidth(), wv->getHeight(), true);
+                    const double t0 = juce::Time::getMillisecondCounterHiRes();
+                    for (int i = 0; i < 20; ++i)
+                    {
+                        juce::Graphics g(frame);
+                        wv->paintEntireComponent(g, false);
+                    }
+                    const double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 20.0;
+                    std::cout << "Begehen: " << (mb3 ? (int)mb3->tris.size() : 0)
+                              << " triangles: " << ms << " ms per frame (" << wv->renderWidth()
+                              << " px wide)"
+                              << (mb3 && mb3->tris.size() == 80000 ? "  ok" : "  FAIL")
+                              << std::endl;
+                }
+                proc->clearWalkModel();
+                {
+                    // the Saal's own room with all eight stops on and a chord sounding: the frame
+                    // time at full resolution, then the way the app runs it (the resolution
+                    // adapting), for the Saal and for the largest model
+                    std::array<float, rysum::kNumStops> stopWas{};
+                    for (int s = 0; s < rysum::kNumStops; ++s)
+                    {
+                        stopWas[(size_t)s] =
+                            proc->apvts.getRawParameterValue(RysumProcessor::stopParamId(s))
+                                ->load();
+                        setReal(RysumProcessor::stopParamId(s).toRawUTF8(), 1.0f);
+                    }
+                    run(20, {48, 55, 60, 64, 67});
+                    if (auto *c = dynamic_cast<RysumContent *>(content))
+                    {
+                        c->showView(2);
+                        c->showView(8);
+                    }
+                    juce::Image frame(juce::Image::ARGB, wv->getWidth(), wv->getHeight(), true);
+                    double t0 = juce::Time::getMillisecondCounterHiRes();
+                    for (int i = 0; i < 20; ++i)
+                    {
+                        juce::Graphics g(frame);
+                        wv->paintEntireComponent(g, false);
+                    }
+                    double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 20.0;
+                    std::cout << "Begehen: all stops: " << ms << " ms per frame (geometry "
+                              << wv->geometryMs() << " ms, 3D total " << wv->frameMs() << " ms, "
+                              << wv->renderStats() << ", " << wv->renderWidth() << " px wide)"
+                              << (wv->renderWidth() >= wv->getWidth() ? "  ok" : "  FAIL")
+                              << std::endl;
+                    wv->setTestMode(false);
+                    for (int i = 0; i < 100; ++i)
+                    {
+                        juce::Graphics g(frame);
+                        wv->paintEntireComponent(g, false);
+                    }
+                    std::cout << "Begehen: adapting, the Saal settles at " << wv->renderWidth()
+                              << " px wide (3D " << wv->frameMs() << " ms, geometry "
+                              << wv->geometryMs() << " ms)"
+                              << (wv->renderWidth() >= (int)(0.4f * (float)wv->getWidth())
+                                      ? "  ok"
+                                      : "  FAIL")
+                              << std::endl;
+                    proc->loadWalkModel(outDir.getChildFile("test_gross.obj"), true, 1.0f);
+                    for (int i = 0; i < 100; ++i)
+                    {
+                        juce::Graphics g(frame);
+                        wv->paintEntireComponent(g, false);
+                    }
+                    std::cout << "Begehen: adapting, 80,000 triangles settle at "
+                              << wv->renderWidth() << " px wide (3D " << wv->frameMs()
+                              << " ms, geometry " << wv->geometryMs() << " ms)"
+                              << (wv->renderWidth() >= (int)(0.4f * (float)wv->getWidth())
+                                      ? "  ok"
+                                      : "  FAIL")
+                              << std::endl;
+                    proc->clearWalkModel();
+                    wv->setTestMode(true);
+                    for (int s = 0; s < rysum::kNumStops; ++s)
+                        setReal(RysumProcessor::stopParamId(s).toRawUTF8(), stopWas[(size_t)s]);
+                    shoot(8, "ui_begehen_alle.png");
+                }
+                // what the walls look like follows the absorption (the Saal page's materials)
+                {
+                    const bool okM =
+                        rysum::wallMaterial(0.5f, 0.85f, 0.3f).kind == rysum::Material::curtain &&
+                        rysum::wallMaterial(0.12f, 0.55f, 0.3f).kind == rysum::Material::wood &&
+                        rysum::wallMaterial(0.02f, 0.3f, 0.3f).kind == rysum::Material::stone &&
+                        rysum::wallMaterial(0.04f, 0.1f, 0.3f).kind == rysum::Material::glass &&
+                        rysum::wallMaterial(0.0f, 0.0f, 0.0f).kind == rysum::Material::mirror &&
+                        rysum::wallMaterial(0.5f, 0.85f, 0.3f).tone <
+                            rysum::wallMaterial(0.02f, 0.3f, 0.3f).tone;
+                    std::cout << "Begehen: materials from the absorption (curtain, wood, stone, "
+                                 "glass, mirror; curtain darker than stone)"
+                              << (okM ? "  ok" : "  FAIL") << std::endl;
+                    const struct
+                    {
+                        float aw, af, hi;
+                        const char *name;
+                    } looks[]{{0.5f, 0.35f, 0.85f, "vorhang"},
+                              {0.12f, 0.15f, 0.55f, "holz"},
+                              {0.04f, 0.06f, 0.1f, "glas"}};
+                    for (auto &lk : looks)
+                    {
+                        setReal("simAbs", lk.aw);
+                        setReal("simAbsFloor", lk.af);
+                        setReal("simHigh", lk.hi);
+                        run(4, {});
+                        shoot(8, juce::String("ui_begehen_") + lk.name + ".png");
+                    }
+                    setReal("simAbs", 0.1f);
+                    setReal("simAbsFloor", 0.25f);
+                    setReal("simHigh", 0.5f);
+                }
+                // a cross-shaped church: walked (held inside the walls, as when walking) into an
+                // arm until pipes are out of sight
+                {
+                    setReal("simShape", (float)rysum::shapeCross);
+                    setReal("simShapeAmt", 0.8f);
+                    for (int i = 0; i < 4; ++i)
+                        proc->walkPose[(size_t)i] = 0.0f;
+                    if (auto *c = dynamic_cast<RysumContent *>(content))
+                    {
+                        c->showView(2);
+                        c->showView(8);
+                    }
+                    run(10, {});
+                    int bestHidden = 0;
+                    float bx = 0, by = 0;
+                    // (a snake over the grid: the listener walks - at most 6 m/s - from one point
+                    // to the next)
+                    for (int ix = 0; ix <= 14; ++ix)
+                        for (int j = 0; j <= 13; ++j)
+                        {
+                            const float ox = -7.0f + (float)ix,
+                                        oy = (ix % 2 == 0) ? -10.0f + (float)j : 3.0f - (float)j;
+                            wv->setPoseForTest(ox, oy, 0.0f);
+                            run(24, {});
+                            const int hid = proc->engine.hiddenNow.load();
+                            if (hid > bestHidden)
+                            {
+                                bestHidden = hid;
+                                bx = proc->walkPose[0].load();
+                                by = proc->walkPose[1].load();
+                            }
+                        }
+                    // look towards the crossing (the middle of the plan)
+                    const float W = proc->engine.heard[0].W.load(),
+                                L = proc->engine.heard[0].L.load();
+                    const float hx = proc->engine.heard[0].Lx.load() * W,
+                                hy = proc->engine.heard[0].Ly.load() * L;
+                    const float dx = 0.5f * W - (hx + bx), dy = 0.5f * L - (hy + by);
+                    wv->setPoseForTest(bx, by, juce::radiansToDegrees(std::atan2(-dx, dy)));
+                    run(400, {}); // (walks back there)
+                    std::cout << "Begehen: cross-shaped plan, at " << bx << " / " << by << " m "
+                              << proc->engine.hiddenNow.load()
+                              << " sounding pipes heard around the corner"
+                              << (proc->engine.hiddenNow.load() > 0 ? "  ok" : "  FAIL")
+                              << std::endl;
+                    shoot(8, "ui_begehen_kreuz.png");
+                    setReal("simShape", 0.0f);
+                    setReal("simShapeAmt", 0.5f);
+                    for (int i = 0; i < 4; ++i)
+                        proc->walkPose[(size_t)i] = 0.0f;
+                }
+            }
+            if (auto *c = dynamic_cast<RysumContent *>(content))
+                c->showView(2);
+            std::cout << "Begehen: leaving the view gives the listener back "
+                      << (proc->engine.viewWalkOn.load() ? "no" : "yes")
+                      << (!proc->engine.viewWalkOn.load() ? "  ok" : "  FAIL") << std::endl;
+            juce::MidiBuffer off;
+            for (int n : {48, 55, 60, 64, 67})
+                off.addEvent(juce::MidiMessage::noteOff(1, n), 0);
+            st.clear(), proc->processBlock(st, off);
+            setReal("simOn", 0.0f);
         }
 
         {

@@ -80,6 +80,7 @@ public:
     void paint(juce::Graphics &) override;
     void resized() override;
     void refresh();
+    std::function<void()> onOpenWalk; // the editor shows the 3D view ("Begehen")
 
 private:
     using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -97,13 +98,13 @@ private:
         assign; // stops in console order, then the input
     std::array<std::array<ParamRow *, 4>, rysum::kNumRooms> dimsR{}, surfR{};
     std::array<std::array<ParamRow *, 2>, rysum::kNumRooms> lisR{};
-    std::array<ParamRow *, 2> gainRows{};
+    std::array<ParamRow *, 2> gainRows{}, iceRows{};
     juce::Rectangle<int> roomsArea;
     std::array<int, rysum::kNumStops + 1> shownAssign{};
     void selectRoom(int r);
     juce::String assignId(int slot) const;
     void showAssignMenu(int slot);
-    juce::TextButton onButton{"Saal an"};
+    juce::TextButton onButton{"Saal an"}, walkButton{"3D begehen"};
     std::unique_ptr<ButtonAtt> onAtt;
     juce::ComboBox order;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> orderAtt;

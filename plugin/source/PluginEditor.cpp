@@ -13,21 +13,29 @@ RysumContent::RysumContent(RysumProcessor &p)
     addAndMakeVisible(console);
     addChildComponent(organ);
     addChildComponent(speakers);
+    addChildComponent(walk);
     klang.onOpenSpeakers = [this] { showView(7); };
+    saal.onOpenWalk = [this]
+    {
+        releaseComputerKeys();
+        showView(8);
+    };
+    walk.onBack = [this] { showView(2); };
     outInfoButton.setTooltip(juce::String::fromUTF8("Lautsprecher einrichten (AllRAD)"));
     outInfoButton.setAlpha(0.0f);
     outInfoButton.onClick = [this] { showView(current == 7 ? viewBeforeOrgan : 7); };
     addAndMakeVisible(outInfoButton);
-    logoButton.setTooltip(juce::String::fromUTF8("Ã"
-                                                 "ber die Orgel zu Rysum (nochmal klicken: zurÃ¼"
-                                                 "ck)"));
+    logoButton.setTooltip(
+        juce::String::fromUTF8("\xc3\x9c"
+                               "ber die Orgel zu Rysum (nochmal klicken: zur\xc3\xbc"
+                               "ck)"));
     logoButton.onClick = [this] { showView(current == 6 ? viewBeforeOrgan : 6); };
     addAndMakeVisible(logoButton);
     diceButton.setTooltip(
-        juce::String::fromUTF8("WÃ¼rfeln: zufÃ¤llige Einstellungen â sanft "
-                               "oder wild, nur in den gewÃ¤hlten Bereichen. "
-                               "Ein Schritt zurÃ¼"
-                               "ck ist mÃ¶glich."));
+        juce::String::fromUTF8("W\xc3\xbcrfeln: zuf\xc3\xa4llige Einstellungen \xe2\x80\x93 sanft "
+                               "oder wild, nur in den gew\xc3\xa4hlten Bereichen. "
+                               "Ein Schritt zur\xc3\xbc"
+                               "ck ist m\xc3\xb6glich."));
     diceButton.onClick = [this] { showDiceMenu(); };
     addAndMakeVisible(diceButton);
     addChildComponent(space);
@@ -131,16 +139,27 @@ RysumContent::RysumContent(RysumProcessor &p)
         g.setGradientFill(grad);
         g.fillRect(0, 0, kW, kH);
     }
+    // ... both in one image: every repainted area draws one overlay instead of two (in full screen
+    // that counts)
+    {
+        juce::Graphics g(vignette);
+        g.setOpacity(0.22f);
+        g.drawImageAt(grainLayer, 0, 0);
+    }
+    grainLayer = {};
     setSize(kW, kH);
 }
 
 void RysumContent::showView(int v)
 {
-    if ((v == 6 || v == 7) && current != 6 && current != 7)
+    if ((v == 6 || v == 7) && current != 6 && current != 7 && current != 8)
         viewBeforeOrgan = current;
+    if (v == 8 && current != 8)
+        viewBeforeOrgan = 2;
     current = v;
     organ.setVisible(v == 6);
     speakers.setVisible(v == 7);
+    walk.setVisible(v == 8);
     console.setVisible(v == 0);
     space.setVisible(v == 1);
     saal.setVisible(v == 2);
@@ -149,7 +168,12 @@ void RysumContent::showView(int v)
     mod.setVisible(v == 5);
     for (int i = 0; i < 6; ++i)
         tabs[(size_t)i].setToggleState(i == v, juce::dontSendNotification);
-    if (proc.computerKeys)
+    if (v == 8)
+    {
+        if (walk.isShowing())
+            walk.grabKeyboardFocus();
+    }
+    else if (proc.computerKeys)
         grabKeyboardFocus();
 }
 
@@ -164,6 +188,7 @@ void RysumContent::resized()
     saal.setBounds(body);
     organ.setBounds(body);
     speakers.setBounds(body);
+    walk.setBounds(body);
     outInfoButton.setBounds(kOutX + kOutW + 2, 8, kFullX - 5 - (kOutX + kOutW + 2), kHeader - 16);
     logoButton.setBounds(24, 6, 116, 44);
     patchPrev.setBounds(152, 14, 22, 28);
@@ -209,8 +234,26 @@ void RysumContent::releaseComputerKeys()
         }
 }
 
+static juce::File paintStatsFile();
+
 bool RysumContent::keyPressed(const juce::KeyPress &k)
 {
+    // performance readout / renderer switch (for finding what makes the picture slow)
+    if (k.getModifiers().isCtrlDown() && k.getModifiers().isShiftDown() &&
+        (k.getKeyCode() == 'P' || k.getKeyCode() == 'R'))
+    {
+        if (k.getKeyCode() == 'R')
+            cycleRenderer();
+        else
+        {
+            if (stats.on)
+                stats.on = false;
+            else
+                startStats();
+            repaint();
+        }
+        return true;
+    }
     // F11: full screen on / off; Esc leaves it
     if (k.getKeyCode() == juce::KeyPress::F11Key ||
         (k == juce::KeyPress::escapeKey && fullButton.active))
@@ -275,6 +318,13 @@ bool RysumContent::keyStateChanged(bool)
 }
 
 void RysumContent::tick()
+{
+    if (stats.on)
+        updateStats();
+    tickBody();
+}
+
+void RysumContent::tickBody()
 {
     updatePlayButtons();
     // the window lost the keyboard: let the computer keys go (they would hang otherwise)
@@ -419,6 +469,8 @@ void RysumContent::askSavePatch()
 void RysumContent::paint(juce::Graphics &g)
 {
     auto &A = Assets::get();
+    if (stats.on)
+        stats.paintStart = juce::Time::getMillisecondCounterHiRes();
     g.fillAll(col::bg);
     auto head = juce::Rectangle<int>(0, 0, kW, kHeader).reduced(28, 0);
     g.setColour(col::border);
@@ -445,13 +497,14 @@ void RysumContent::paint(juce::Graphics &g)
     g.setFont(A.monoFont(11.0f));
 
     const int out = (int)proc.apvts.getRawParameterValue("output")->load();
-    const bool bin = out == RysumProcessor::kBinauralOutput,
+    const bool tr = out == RysumProcessor::kTransauralOutput;
+    const bool bin = out == RysumProcessor::kBinauralOutput || tr,
                spk = out == RysumProcessor::kSpeakerOutput;
     auto dec = proc.getSpeakerDecoder();
     const int spkCh = dec != nullptr ? dec->numOutChannels : 0;
     const int needed = out == 0 || bin ? 2 : spk ? spkCh : (out + 1) * (out + 1);
     const int have = proc.getTotalNumOutputChannels();
-    juce::String o = bin ? (proc.binauralReady() ? juce::String("2 ch HRTF")
+    juce::String o = bin ? (proc.binauralReady() ? juce::String(tr ? "2 LS" : "2 ch HRTF")
                                                  : juce::String::fromUTF8("HRTF \xe2\x80\xa6"))
                      : spk
                          ? (dec != nullptr && dec->error.isEmpty() ? juce::String(spkCh) + " ch LS"
@@ -591,12 +644,104 @@ void RysumContent::showModMenu(juce::Component &target, const juce::String &para
 
 void RysumContent::paintOverChildren(juce::Graphics &g)
 {
-    g.drawImageAt(vignette, 0, 0);
-    g.setOpacity(0.22f);
-    g.drawImageAt(grainLayer, 0, 0);
+    ++paintsDone;
+    if (!(dbg::skip & dbg::skipOverlay))
+        g.drawImageAt(vignette, 0,
+                      0); // darkened edges and the grain, blended once in the constructor
+    if (stats.on)
+    {
+        // the time from paint() to here covers every child painted in this repaint
+        const double ms = juce::Time::getMillisecondCounterHiRes() - stats.paintStart;
+        ++stats.paints;
+        stats.paintMs += ms;
+        stats.paintMax = juce::jmax(stats.paintMax, ms);
+        const auto cb = g.getClipBounds();
+        stats.area += (double)cb.getWidth() * (double)cb.getHeight() / ((double)kW * (double)kH);
+        auto box = juce::Rectangle<int>(kW - 430, kHeader + 4, 424, 54);
+        g.setColour(juce::Colours::black.withAlpha(0.8f));
+        g.fillRect(box);
+        g.setColour(juce::Colours::white);
+        g.setFont(Assets::get().monoFont(11.0f));
+        g.drawFittedText(stats.shown, box.reduced(6, 3), juce::Justification::topLeft, 3);
+    }
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// performance readout (Ctrl+Shift+P) and the renderer switch (Ctrl+Shift+R)
+static juce::File paintStatsFile()
+{
+    return RysumProcessor::getPatchFolder().getParentDirectory().getChildFile("paint-stats.txt");
+}
+
+void RysumContent::updateStats()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (stats.lastTick > 0.0)
+        stats.tickMax = juce::jmax(stats.tickMax, now - stats.lastTick);
+    stats.lastTick = now;
+    ++stats.ticks;
+    if (now - stats.secondStart < 1000.0)
+        return;
+    const double secs = (now - stats.secondStart) * 0.001;
+    juce::String engine = "?";
+    float phys = 1.0f;
+    if (auto *peer = getPeer())
+    {
+        const auto names = peer->getAvailableRenderingEngines();
+        const int cur = peer->getCurrentRenderingEngine();
+        if (cur >= 0 && cur < names.size())
+            engine = names[cur];
+        phys = (float)peer->getPlatformScaleFactor();
+    }
+    const auto t = getTransform();
+    const float scale = std::sqrt(std::abs(t.getDeterminant())) * phys;
+    const char *views[]{"Spieltisch", "Raum",  "Saal",         "Klang",  "Effekte",
+                        "Modulation", "Orgel", "Lautsprecher", "Begehen"};
+    stats.shown = juce::String(stats.paints / secs, 1) + " Bilder/s   Malen " +
+                  juce::String(stats.paints > 0 ? stats.paintMs / stats.paints : 0.0, 1) +
+                  " ms (max " + juce::String(stats.paintMax, 1) + ")   neu gemalt " +
+                  juce::String(100.0 * stats.area / secs, 0) + " % des Fensters pro s\n" + "Takt " +
+                  juce::String(stats.ticks / secs, 1) + "/s (max Pause " +
+                  juce::String(stats.tickMax, 0) + " ms)   " + engine + "   Pixel x" +
+                  juce::String(scale, 2) + "   " + (fullButton.active ? "Vollbild" : "Fenster") +
+                  "\n" + "Seite " + views[juce::jlimit(0, 8, current)] +
+                  "   Strg+Umschalt+R: Renderer wechseln";
+    paintStatsFile().appendText(juce::Time::getCurrentTime().toString(false, true, true, true) +
+                                "  " + stats.shown.replace("\n", "  |  ") + "\n");
+    stats.secondStart = now;
+    stats.paints = 0;
+    stats.ticks = 0;
+    stats.paintMs = stats.paintMax = stats.area = stats.tickMax = 0.0;
+    repaint(kW - 430, kHeader + 4, 424, 54);
+}
+
+void RysumContent::startStats()
+{
+    stats.on = true;
+    stats.secondStart = juce::Time::getMillisecondCounterHiRes();
+    stats.lastTick = 0.0;
+    stats.paints = stats.ticks = 0;
+    stats.paintMs = stats.paintMax = stats.area = stats.tickMax = 0.0;
+    stats.shown = "Messe ...";
+    paintStatsFile().appendText("---- " + juce::Time::getCurrentTime().toString(true, true) + "\n");
+}
+
+void RysumContent::cycleRenderer()
+{
+    if (auto *peer = getPeer())
+    {
+        const auto names = peer->getAvailableRenderingEngines();
+        if (names.size() > 1)
+        {
+            peer->setCurrentRenderingEngine((peer->getCurrentRenderingEngine() + 1) % names.size());
+            paintStatsFile().appendText(
+                "---- renderer: " + names[peer->getCurrentRenderingEngine()] + "\n");
+        }
+    }
+    getTopLevelComponent()->repaint();
+}
+
 // window size: the last size the user chose (Documents/Rysum/Fenster.xml), else as large as fits
 // the screen
 static juce::File windowSizeFile()
@@ -655,7 +800,30 @@ RysumEditor::RysumEditor(RysumProcessor &p) : AudioProcessorEditor(p), content(p
                     safe->toggleFullscreen();
             });
     };
-    startTimer(0, 33);
+    startTimer(0, 16); // 60 times a second: on fast screens 30 looked choppy (the paints are cheap:
+                       // 0.5 - 3 ms)
+    // (measuring: RYSUM_PAINT_STATS=1 switches the readout on at start, RYSUM_PAINT_STATS=fs also
+    // goes full screen,
+    //  RYSUM_PAINT_VIEW=n opens page n)
+    const auto ps = juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_STATS", {});
+    if (ps.isNotEmpty())
+    {
+        content.startStats();
+        const auto pv = juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_VIEW", {});
+        if (pv.isNotEmpty())
+            content.showView(pv.getIntValue());
+        if (juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_CHORD", {}).isNotEmpty())
+            for (int n : {48, 55, 60, 64, 67})
+                static_cast<RysumProcessor &>(processor).keyboardState.noteOn(
+                    1, n, 0.8f); // a held chord, as when playing
+        if (ps == "fs")
+            juce::Timer::callAfterDelay(1500,
+                                        [safe = juce::Component::SafePointer<RysumEditor>(this)]
+                                        {
+                                            if (safe != nullptr && safe->fullscreen == nullptr)
+                                                safe->toggleFullscreen();
+                                        });
+    }
 }
 
 RysumEditor::~RysumEditor()

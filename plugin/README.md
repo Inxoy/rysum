@@ -98,6 +98,31 @@ the order, the HRTF or the sample rate changes. The built-in HRTF is the **FABIA
 torso simulator of the TU Berlin (2000 of the 11 950 measured directions). Latency of the
 binaural decoder: 128 samples.
 
+### Two loudspeakers (transaural) – the binaural image over a pair of speakers
+
+Output *Transaural (2 LS)*, or *Transaural an* on the Klang page (box *Zwei Lautsprecher*, below
+Freeze). It is the binaural mode – same order, HRTF (FABIAN or an own SOFA file), Kopfdrehung,
+Diffusfeld-Entzerrung – followed by a crosstalk cancellation: each speaker also reaches the far
+ear, a little later (the ITD) and quieter (the head shadow); two filters (on (L+R)/2 and (L−R)/2)
+cancel that path, so each ear gets (nearly) only its own binaural channel.
+- *Lautsprecher bei* ±10…150° (default ±90°: the two speakers on opposite sides of the room,
+  facing each other, you in the middle between them – a good layout for this, because the head
+  already shades each ear from the far speaker);
+- *Übersprechen aus* 0–100 %: 0 % = the binaural signal plainly over the speakers, 100 % = full
+  cancellation (more spatial, more sensitive to where you sit);
+- *höchste Anhebung* 3–20 dB: cancellation needs a bass lift in the side signal (the head is
+  small against long waves); this limits it (regularised inverse). Below ~80 Hz and above ~12 kHz
+  the filters fade to plain;
+- *Seitenklang ausgleichen*: also takes out the colour of the speakers' own direction (the
+  near-ear HRTF at the angle, 1/3 octave smoothed, at most ±10 dB).
+
+The filters come from the HRTF in use at the set angle: the measured far-ear/near-ear ratio with
+the ITD taken out, smoothed over 1/12 octave, regularised; designed in the background (a few
+hundred ms) and crossfaded in. Extra delay: 5.3 ms. Against FABIAN itself the far ear drops from
+−13 dB to −28 dB at ±90° (250 Hz–6 kHz; −13 → −26 dB at ±60°, −7 → −20 dB at ±30°) – with a real
+head and a real room expect less, and the effect is best on the line between the speakers,
+equally far from both.
+
 ### Loudspeakers (AllRAD) – a speaker array straight from the plugin or the standalone app
 Output "Lautsprecher". The plugin decodes its Ambisonics to your loudspeaker layout, the
 approach of the IEM *AllRADecoder* (Zotter & Frank 2012): a dense virtual sphere (5000
@@ -194,6 +219,24 @@ each pipe before it is placed in space ("pro Pfeife") or to the whole output
 ("Summe"); *Windschwankung* also gets disproportionately wilder towards 100 %. The
 keyboard strip can be clicked to play.
 
+*Verfall · Raum* (tab *Raum* in the Verfall title; everything off by default): the same idea for
+the spatial image – the Ambisonics sphere wears away. It works on the whole output after the
+impulse response / Saal, before the binaural or loudspeaker decoder, so it needs an Ambisonics
+output (AmbiX, binaural, loudspeakers); in stereo only the direction grid is heard.
+- *Ordnung abtragen*: the higher orders fade out from the top, continuously (50 % of 3rd order =
+  1st order full, 2nd at half, 3rd gone); 100 % = only W, everything from everywhere.
+- *Verwittern*: the sphere wears away by itself while something sounds – after this time it is
+  completely eroded; in silence it grows back four times as fast (the title shows how far).
+- *Richtungsraster*: every direction snaps to the nearest of a few grid points (64 down to 4,
+  evenly over the sphere) – moving pipes jump from point to point. Also in stereo.
+- *Raum-Bittiefe* / *Raum-Abtastrate*: bit crushing and sample-and-hold of the directional
+  channels; the higher the order, the coarser (W stays clean) – fine directions decay first.
+- *Raum-Aussetzer*: single channels or whole orders fall out for 50–400 ms (5 ms ramps) – the
+  sound tips to one side or goes flat for a moment.
+- *Raum-Aliasing*: the field is sampled at too few points and encoded again (fewer points the
+  higher the amount): ghost directions, slowly wandering as the sampling grid turns.
+All of them are modulation targets (group "Verfall") and part of the dice group Traktur und Verfall.
+
 **Raum** – every pipe of every stop as a small dot (top view: centre = zenith, edge = horizon,
 outside the circle = below the horizon). Select a stop on the right, then
 - drag a dot to move one pipe,
@@ -249,6 +292,16 @@ outside the circle = below the horizon). Select a stop on the right, then
   - *Direkt* and *Hall* set the dry and room levels, *x* removes the IR. The IR is resampled to
     the project rate and normalised automatically; changing these settings or the output format
     rebuilds the room in the background (~½ s).
+
+**Wolke** (Raum page, third tab next to *Bewegung* / *Hall*, per stop, off by default): every
+sounding pipe of the stop scatters grains of its own sound over the sphere around it.
+*Menge* dissolves the pipe into the cloud (equal power: 100 % = only grains), *Dichte* grains per
+second and pipe, *Streuung* how far around the pipe (a few degrees = a shimmering spot, 180° =
+the whole sphere), *Korngröße* (Hann-windowed, ±30 %), *Zeitstreuung* how far back in the pipe's
+sound a grain reaches (up to 150 ms – smears attacks and movement). The cloud follows the pipe's
+motion. The grains are not sent to the room separately (the pipe's room send stays as it is).
+*für alle Register übernehmen* copies the five values to every stop. Up to 64 pipes at once
+have a cloud (256 grains in all); more pipes stay whole.
 
 **Lucier** (Saal page, middle column) – after Alvin Lucier's *I am sitting in a room* (1969):
 a recording is played into a room and recorded again, over and over, until only the room's
@@ -471,6 +524,127 @@ follow the pipes. Everything is off in older patches.
   uses a note value instead of *Zeit*. The little circle shows where the repeats come from
   (top view, front up). Echoes also go into the Hall from their own direction.
 
+*Effekte · Stimmung & Belichtung* (second tab, everything off by default):
+- **Schwebungsraum** – the tuning moves the room. For every two sounding pipes the engine finds
+  the lowest partials that nearly coincide (n × f1 ≈ m × f2) and their beat rate. With the
+  motion *Schwebung* (Raum page, Bewegung) every pipe turns as fast as it beats with the others
+  (*Geschwindigkeit* = turns per beat): in ¼-comma meantone pure major thirds stand still, the
+  fifths drift (c′–g′ about 2.5 Hz), minor thirds go faster (about 6 Hz), the wolf fifth G♯–E♭
+  spins (about 13 Hz) and the wolf thirds even faster. A pipe stops where it is when its
+  interval becomes pure. *Schwebungen aus*: the tuning as it is meant (ideal) or the pipes as
+  recorded (they are only accurate to about ±5 ct, so even pure thirds beat a little). The
+  modulation source *Schwebung* (per pipe, 0 = still … 1 = 32 Hz, logarithmic) lets the beats
+  drive anything else (e.g. *Schwebung* → *Pfeife: Verfall*: impure intervals crumble).
+- **Differenztöne** (resultant ghosts) – every two held pipes sound their difference tone
+  (higher minus lower frequency), like the resultant with which organ builders suggest a 32′:
+  a fifth gives the octave below its lower note, a pure third two octaves below the root of the
+  triad. Up to 12 at once, fading in over ~0.4 s while the interval is held. *Ort*: between the
+  two pipes … deep below the listener; *nur Konsonanzen*: 0 = every pair, 100 % = only simple
+  ratios. Below ~80 Hz no Ambisonics system places sound well – the deepest ghosts are felt
+  more than located.
+- **Tonnetz** – an arrangement (Raum page, *Anordnung*): every key gets its place in the
+  lattice of the tuning, fifths to the right, major thirds upwards. The tuning's own fifth and
+  third decide: pure intervals are short, impure ones long, and each key takes the lattice point
+  that is cheapest to reach. In ¼-comma the triads form tight groups and G♯ and E♭ end up on
+  opposite edges (the wolf is the seam); in Pythagorean tuning the keys line up as one chain of
+  fifths; in equal temperament the thirds are drawn long. Changing the tuning redraws the map.
+- **Doppelbelichtung** (double exposure) – the field of a few seconds ago (*Abstand* 0.05–8 s),
+  turned (*Drehung*), mirrored (*Spiegeln*: left/right, front/back, up/down), faded (*Verblassen*,
+  a low-pass) and laid over the present; *mehrfach belichten* feeds the copy back (more, fainter
+  images further back). On the whole field after Hall and Saal, up to 3rd order (stereo: mirrored
+  = sides swapped).
+- **Belichtung** (long exposure) – 24 directions of the sphere each keep what passes through
+  them and let it go slowly (*Belichtungszeit* = −60 dB, 0.2–60 s; *Helligkeit der Spuren*):
+  moving pipes leave light trails, fast ones paint arcs and rings. Up to 3rd order.
+
+*Effekte · Lebendige Orgel* (third tab, everything off by default) – the organ as one physical
+thing instead of a set of independent samples:
+- **Balg** (bellows) – one finite wind supply for all stops. *Windverbrauch* 0 % = endless wind
+  (as before); above that every sounding pipe draws from the same supply, low pipes and many
+  stops the most. When wind is short, all pipes get flatter, quieter, duller and unsteady
+  together (with the wind model *instabil* also their edge tones). *Windquelle*:
+  - *Gebläse*: a blower feeds steadily; a big chord pulls the pressure down for as long as it
+    sounds, a single pipe hardly at all. *Größe des Balgs* = how slowly the pressure answers.
+  - *Kalkant tritt*: a bellows treader lifts the bellows every few seconds (*Tritte* per minute,
+    or *im Tempo*: every 8 … ¼ bars). In between it sinks as the pipes use the wind
+    (*Größe* = seconds a twelve-pipe chord lasts at 100 %). Play too much and the organ runs out
+    of breath until the next tread. *Trittgeräusch* = the thump at the console.
+  The two bars show the supply and the pressure. The modulation source *Balg (Winddruck)*
+  (0 = empty … 1 = full) lets the pressure drive anything else.
+- **Ventil** (pallet) – the pallet under the pipe no longer opens instantly. *Anschlag*: a slowly
+  pressed key (low velocity) lets the wind in hesitantly – the pipe speaks flat, breathy, with
+  its edge tone, and only then finds its tone (up to 1.6 s); a fast key speaks at once.
+  *Druck* / *Gleiten*: the finger holds the pallet itself (MPE pressure, aftertouch or CC 74) –
+  at 100 % no pressure means no tone. The slider sets how far the pallet can stay closed.
+- **Hörer** (listener) – you leave the usual listening place. *links / rechts* and
+  *zurück / vor* (metres, both can be automated and modulated) set where you stand; *Hörer
+  geht* walks around that place by itself (circle, left / right, forward / back, figure
+  eight; *Tempo*, *Weite*). Pipes you pass get louder, brighter and move past you, with
+  Doppler; in the Saal the early reflections are heard from where you are (the late reverb
+  stays that of the usual place, and the Saal page shows you walking). The little map shows
+  the pipes of the pulled stops and you (red). Clicks stay with you at the console. You keep
+  looking forward – turn the head with *Kopfdrehung* (Klang, binaural).
+- **Mitklingen** (sympathetic pipes) – silent pipes, also those of stops that are not pulled,
+  ring quietly when a partial of a sounding pipe meets their pitch (within 25 ct), each at its
+  own place: up to 16 at once. Pure intervals wake more pipes than impure ones, another tuning
+  wakes others. *Nachklang* = how long they ring on.
+- **Verschleiß** (wear) – every pipe remembers how long it has sounded. *Lebensdauer* = minutes
+  of sounding until a pipe is worn out; *Wie stark man ihn hört* = how much of that is audible.
+  Worn pipes go out of tune (most of them flat), waver, and crumble with the grain / bit depth /
+  sample rate / dropouts set under *Verfall* on the Spieltisch – so the keys a piece uses most
+  fall apart first. The map shows every pipe (one row per stop, red = worn). The wear is saved
+  with the project (not in patches: a patch does not make the instrument young again);
+  *Alle Pfeifen neu* resets it. It only accumulates while the slider is above 0.
+- **Reinheit** (adaptive pure tuning) – held notes pull each other towards pure intervals
+  (springs between every pair of notes, strongest for octaves, fifths and thirds; a weak one
+  holds the chord at its tempered pitch). New notes start in the chosen tuning and glide
+  (*Zeit bis rein*): the beats calm down and the chord locks in. Even the wolf fifth is tamed.
+  With the motion *Schwebung* the pipes stop turning as the chord becomes pure; the difference
+  tones settle too. The title shows the largest correction in cents.
+- **Tonnetz-Wanderer** – while you hold keys, a walker steps through the lattice of the tuning
+  (fifths to the right, major thirds up) and sounds every key it comes to, starting at the key
+  struck last. *Weg*: along the fifths (after eleven steps: the wolf), a chain of thirds
+  (major, minor, major …), random, random with homesickness, or a spiral around the first key.
+  *Schritt*: free (*Tempo*) or a note value of the project tempo. *Tonlänge* above 1 step lets
+  the notes overlap. With the arrangement *Tonnetz* (Raum page) the sound takes the same walk
+  through the room. Your own keys sound as usual. Not available with free tuning (Scala / MTS)
+  or MPE. Patches 148–159 show all of this.
+
+*Saal · Eis* (Saal page, below *Nachhall*): the walls turn to ice – in every early reflection
+the low frequencies travel slower than the high ones (an all-pass chain per Ambisonics channel of
+the reflections), so each reflection becomes a falling chirp from its own direction; the later
+reflections (longer ways) chirp more. *Eis* blends from the plain reflections to only the chirps,
+*Eis Länge* sets how long a chirp is (about 5–50 ms).
+
+*Saal · Begehen* (button *3D begehen* on the floor plan): the Saal in 3D, seen through your own
+eyes. The pipes float where Ambisonics places them (with their motion and modulation); sounding
+pipes glow. **W A S D** walk, **dragging the mouse** looks around, **Q / E** or the arrow keys
+turn, **Shift** runs, the **mouse wheel** changes the field of view, **Esc** goes back. The
+camera is the listener: walking moves the listener of the room simulation and the direct sound
+(as *Hörer* on the living-organ tab does), the walls stop you. Turning your head is heard with
+headphones (binaural, transaural) only; with the Ambisonics or loudspeaker outputs the field
+stays still. A small map (bottom right) is turned with your view. While the view has the keyboard
+the walking keys do not play notes: play over MIDI, or hold a chord with *Halten*.
+*Raummodell laden …* takes an OBJ file (with its MTL colours, up to 80,000 triangles) as the
+room you see; *Meter / Zentimeter / …* and *Z oben* (Z instead of Y as the up axis) fix the
+import. The model is only seen: the sound keeps using the Saal's room, drawn as a red outline.
+*Maße übernehmen* gives the Saal the model's width, length and height (as a rectangle).
+*Zum Platz* goes back to the listener's place. The model's file and where you stand are saved
+with the project (not with patches); a missing file is kept by name.
+The room is drawn in greys like an old print, with moving film grain, and its surfaces follow
+the Saal's acoustics: the wall absorption and high damping pick the nearest of the Saal page's
+materials (*Stein*: ashlar blocks, *Putz*: plaster, *Holz*: panelling, *Glas*: leaded panes,
+*Vorhang*: heavy folds, *Spiegel*: bright and smooth); the more a surface swallows, the darker it
+is, *Streuung* makes it rougher, high damping duller. The floor and ceiling follow their own
+absorption (stone slabs, boards, carpet). The pipes are real 3D pipes – a conical foot, the
+round body, the mouth turned towards the listener's place. The view is drawn on several
+threads at the screen's full resolution and lowers it by itself when a frame takes too long.
+*Out of sight* (floor plans that are not convex: L, cross, apse …, also when walking with
+*Hörer*): when a wall stands between you and a pipe, its direct sound comes around the corner –
+from the corner's direction, over the longer way, quieter and duller the sharper it bends
+(over two corners into the far arm of a cross). The reflections still come from where they
+reach you. The 3D view shows how many sounding pipes are heard around a corner.
+
 **Modulation**
 - *LFO 1–4*: shape (sine, triangle, saw, square, random steps, smooth random), *Tempo*
   0.01–20 Hz or *Sync* to the project tempo (note values), *Versatz je Pfeife* (spread):
@@ -485,7 +659,9 @@ follow the pipes. Everything is off in older patches.
   (a new random value per key press), *Anschlag* (key velocity 0 … 1, per note – each pipe keeps
   the velocity its key was struck with; global targets follow the last note), *Tonhöhenrad*
   (pitch wheel −1 … +1; it bends nothing by itself – route it to *Pfeife: Tonhöhe*, e.g. 17 %
-  = ±2 semitones, or anywhere else).
+  = ±2 semitones, or anywhere else), *Schwebung* (per pipe: how fast it beats with the other
+  sounding pipes, see Effekte · Stimmung & Belichtung), *Balg (Winddruck)* (the pressure of the shared
+  bellows, 0 … 1, see Effekte · Lebendige Orgel).
 - *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 % (click the
   amount to type it), and **± / +**: ± = bipolar (an LFO swings around the slider value),
   + = unipolar (it only pushes one way, 0 … amount; envelopes and the mod wheel are 0 … 1 anyway).
@@ -500,6 +676,17 @@ follow the pipes. Everything is off in older patches.
     *Windschwankung* and its crackle (*Knistern*, Effekte page). Example: *Hüllkurve 1 pro Pfeife*
     → *Pfeife: Wind* −80 % with a slow attack lets every note start full and sag on its own;
     *Tastenlage* → *Pfeife: Verfall* wears out only the high pipes;
+  - in submenus, added on top of the pipe's stop setting (Raum · Pfeife / Wolke, Verfall, Glitch):
+    *Ansprache · Abriss · Obertöne* (Ansprache ±1, Schärfe / Nur Ansprache / Wiederholen /
+    Abriss ±100 %, Obertöne ab ±4 octaves, Pegel ±24 dB, Anschlag ±100 %, Luft umkehren ±100 %),
+    *Wolke* (Menge ±100 %, Dichte and Korngröße ×8 / :8, Streuung ±180°, Zeitstreuung ±150 ms),
+    *Verfall* (Körnung / Aussetzer ±100 %, Bittiefe ±13 bits, Abtastrate ±6 octaves – only in the
+    mode *pro Pfeife*, and only where the pipe's *Verfall* amount is above 0) and *Glitch*
+    (Stottern, Bandschnitt, harte Kanten, Clipping ±100 %). *Wiederholen* and the hard start of
+    *harte Kanten* are taken when the note starts, *Abriss* and the hard release when the key
+    is let go; everything else follows the modulation all the time (Obertöne Pegel and Luft
+    umkehren glide over ~4 ms). Example: *Zufall je Ton* → *Pfeife: Ansprache* +60 % gives every
+    note its own chiff; *Tastenlage* → *Pfeife: Wolke Menge* dissolves only the high pipes;
   - every continuous parameter of the plugin (stop volume, motion speed, wind, Verfall,
     Doppler, Hall, even the LFO speeds themselves …), amount = share of the slider's range.
     **These are global:** one value for the whole instrument. There the per-pipe sources act
@@ -538,7 +725,37 @@ set (deleted ones are not re-created). Set 9 (59–79) shows the newer features:
 59–63 Lucier (live), 80 Lucier as a piece (74 too, with the input), 64–67 expression (MPE pressure / slide – polyphonic or channel aftertouch
 work as pressure too), 68–71 scenes (move *Überblenden* on the Spieltisch; 70 moves by itself
 with an LFO), 72–79 the audio input (they switch it on); set 11 (81–85): notes spread to single
-pipes and stops in different rooms.
+pipes and stops in different rooms; set 12 (86–99): Saal floor plans (86 L-shape round the
+corner, 87 rotunda / whispering gallery, 88 cruciform church, 89 fan, 90 a plan that breathes
+with an LFO), Verfall · Raum (91 weathering, 92 direction grid, 93 sphere of sand – crushed and
+dropping out, 94 ghost directions, 95 an LFO erodes the sphere and lets it grow back) and grain
+clouds (96 shimmering Mixtur, 97 the organ dissolves – move *Überblenden* A → D, 98 a choir from
+all directions, 99 clouds circling in an octagonal hall while the sphere weathers). 91–95 need an
+Ambisonics output (AmbiX, binaural or loudspeakers); in stereo only 92's grid is heard. Set 13 (100–117): Ansprache (100 soft speech, 101 sharp chiff on the high
+registers, 102 only the chiff, 103 repeated chiff), Abriss (104 breath, 105 sighs in a cruciform
+church), upper partials (106 glass organ, 107 under the ceiling, 108 needle attack), 109 inverted
+air (distant presence), key-click resonance (110, 111), glitches (112 stutter, 113 tape splices,
+114 hard edges, 115 clipping storm), 116 an LFO breathes the Ansprache, 117 everything decays.
+101, 102, 110, 111 and 114 use registers other than the Praestant 8′, so they are quiet or silent
+in a build that only has the Praestant samples. Set 14 (118–133) is made for playing with the hands – velocity,
+pitch wheel (±2 semitones per pipe unless noted), mod wheel, pressure / slide: 118 from a breath to
+a scream (velocity shapes chiff, brightness, level, overtones, distance, the ringing keys), 119 a
+church becomes a machine (mod wheel through four scenes), 120 out of breath (pitch wheel down
+starves the wind, wind model *instabil*), 121 the pipe under the finger (pressure blows it – needs
+aftertouch or MPE), 122 a long walk (four slow random LFOs, never the same), 123 glass shatters
+(hard notes cut and clip), 124 no note like the last (*Zufall je Ton*), 125 the organ evaporates
+(mod wheel: only the chiffs remain, in a cloud, far away), 126 clockwork (every pipe gated at its
+own phase), 127 the organist has been drinking, 128 every note crumbles on its own (pressure holds
+it together), 129 four organs on the mod wheel, 130 gravity (pitch wheel lifts the pipes into the
+vault), 131 continuum (MPE pressure and slide), 132 slow erosion (ten minutes and more), 133
+explosion (velocity, pitch wheel ±12 semitones). Set 15 (134–147): the tuning in space – 134 the tuning dances
+(motion *Schwebung*), 135 wolf howl (beats make the impure intervals crumble), 136 beats as light
+(impure intervals dissolve into clouds), 137 resultant bass, 138 ghosts between the pipes, 139
+ice hall, 140 frozen rotunda, 141 mirror image, 142 echo of the past (double exposure, again and
+again), 143 light trails, 144 twenty seconds (long exposure of jumping pipes), 145 the tuning as a
+map (Tonnetz), 146 the map floats (Tonnetz + beats), 147 the tuning becomes space (everything on
+the mod wheel). Set 14 also re-issues 70: factory scenes used to
+store the routes at 0 %, so moving through the scenes switched the LFO off that moves them.
 
 A patch made with the input on switches the input on when it loads; every other patch leaves
 the input as it is (on or off belongs to your setup, like MPE).
@@ -665,21 +882,15 @@ works the same way in Ableton, Reaper and the standalone app:
 
 ## 5. Files
 
-The maintained application is in `plugin/`. Repository-wide utilities are in
-`scripts/`; sample preparation and analysis are documented in `scripts/README.md`.
-`docs/` contains design and analysis reports. Historical source copies, extracted
-notes and original photos are retained in `_archive/` and are not built.
-
-All paths in the following tree are relative to the repository root.
-
 ```
 plugin/
   CMakeLists.txt        build description
-  source/               C++ code
+  Source/               C++ code
     OrganEngine.*       voices, loops, releases, noise layer, encoder, degradation
     SampleLibrary.*     reads rysum_samples.json + WAVs, replaces unusable pipes
     Spatial.h           AmbiX encoder (ACN/SN3D), stereo panning, layouts, motion
     Degrade.h           "Verfall"
+    SpatialDegrade.h    "Verfall · Raum" (spatial erosion) and the grain cloud parameters
     PluginProcessor.*   parameters, state, sample loading
     Convolver.*         impulse-response reverb (stereo / AmbiX)
     PartConv.h          partitioned convolution with its work spread over time (used by all convolutions)
@@ -694,11 +905,12 @@ plugin/
     WindChaos.h         wind model "instabil": resonances, intermittent speech, hiss of starving pipes
     PluginEditor.*, ConsoleView.*, SpaceView.*, SaalView.*, KlangView.*, EffectsView.*, ModView.*,
     MidiMapView.*, Theme.h   interface
-  resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
-  third-party/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
-  third-party/MTS-ESP/   MTS-ESP client by ODDSound (0BSD, see its LICENSE and README_RYSUM.txt)
-  third-party/pffft/     PFFFT by Julien Pommier (FFTPACK licence, BSD-like, see its LICENSE and README_RYSUM.txt)
-  tests/                offline render test + UI snapshot tool (optional)
+  Resources/            photos, fonts (OFL), grain texture, fabian_hrir.bin (FABIAN HRIRs)
+  ThirdParty/libmysofa/ SOFA reader (BSD-3, see its LICENSE and README_RYSUM.txt)
+  ThirdParty/MTS-ESP/   MTS-ESP client by ODDSound (0BSD, see its LICENSE and README_RYSUM.txt)
+  ThirdParty/pffft/     PFFFT by Julien Pommier (FFTPACK licence, BSD-like, see its LICENSE and README_RYSUM.txt)
+  tools/make_fabian.py  rebuilds Resources/fabian_hrir.bin from the FABIAN SOFA file
+  Tests/                offline render test + UI snapshot tool (optional)
 ```
 
 Optional tests (not needed for normal use):
@@ -715,6 +927,12 @@ and the worst blocks in % of one core's real-time budget. The worst blocks are w
 
 ## 6. CPU
 
+**The picture**: the interface draws 60 times a second (the 3D view lowers its resolution by itself when a
+frame gets slow). **Ctrl+Shift+P** shows a readout: pictures per second, milliseconds per picture, how
+much of the window is redrawn, whether the interface thread falls behind, the renderer (Direct2D or
+software) and the pixel scale; once a second it is also written to `Documents/Rysum/paint-stats.txt`.
+**Ctrl+Shift+R** switches the renderer (for comparing; Direct2D is the fast one).
+
 What costs the most, roughly in this order: the simulated room (*Saal*, every sounding pipe has its
 own early reflections - up to 48 sounds × 24 or 62 mirror images), a long impulse response at a high
 Ambisonics order, the number of sounding pipes × output channels (8 stops × 10 notes = 80 pipes, each
@@ -727,7 +945,7 @@ into 36 channels at 5th order), binaural / loudspeaker decoding. How the plugin 
   response. The large blocks spread their work evenly over the time they cover instead of computing
   everything in the one audio block where a partition is complete (before, every 512 / 8192 samples
   a single block had to do the whole convolution - the CPU meter's peaks). Latency unchanged.
-- **AVX2.** The innermost loops (`source/Kernels.*`) exist twice; on CPUs with AVX2 + FMA (Intel
+- **AVX2.** The innermost loops (`Source/Kernels.*`) exist twice; on CPUs with AVX2 + FMA (Intel
   since 2013, AMD since 2015) the faster version runs, otherwise the plain one - decided at start-up.
 - **Early reflections** four mirror images at a time; the Ambisonics encoder without per-channel
   trigonometry; the mixing of every pipe into the output channels in one pass per four channels.
@@ -738,15 +956,15 @@ and fewer stops or shorter impulse responses help the most. A larger audio buffe
 (256 or 512 instead of 64 / 128) lowers the overhead per block.
 
 Fonts: "Rysum Fell" = IM FELL DW Pica by Igino Marini with a few symbols (arrows, primes, ♯ …)
-added from DejaVu Serif and renamed as the OFL requires (built by `scripts/make_fell.py`);
+added from DejaVu Serif and renamed as the OFL requires (built by `tools/make_fell.py`);
 UnifrakturMaguntia for the title; IBM Plex (no longer used in the interface). All SIL Open
-Font License (see `plugin/resources/OFL_*.txt`).
+Font License (see `Resources/OFL_*.txt`).
 
 HRTF: FABIAN head-related transfer function database, Audio Communication Group, TU Berlin –
 F. Brinkmann et al., "A High Resolution and Full-Spherical Head-Related Transfer Function
 Database for Different Head-Above-Torso Orientations", JAES 65(10), 2017, data DOI
-10.14279/depositonce-5718, licence CC BY 4.0 (see `plugin/resources/FABIAN_LICENSE.txt`).
+10.14279/depositonce-5718, licence CC BY 4.0 (see `Resources/FABIAN_LICENSE.txt`).
 SOFA files are read with libmysofa by Christian Hoene / Symonics (BSD 3-clause).
 Microtuning via the MTS-ESP client library by ODDSound Ltd. (0BSD).
 FFTs: PFFFT by Julien Pommier, based on FFTPACKv4 by Paul N. Swarztrauber, NCAR (FFTPACK licence,
-see `third-party/pffft/LICENSE` - its copyright notice has to go with binary distributions too).
+see `ThirdParty/pffft/LICENSE` - its copyright notice has to go with binary distributions too).

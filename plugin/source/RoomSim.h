@@ -415,6 +415,33 @@ inline float planEdgeDist(const PlanGeo &g, float x, float y, int *which = nullp
     return best;
 }
 
+/** inside the plan and at least 'margin' from every wall */
+inline bool planFree (const PlanGeo& g, float x, float y, float margin) noexcept
+{
+    return insidePlan (g, x, y) && planEdgeDist (g, x, y) >= margin;
+}
+
+/** walking from (x, y) towards (tx, ty) without ever jumping: small steps, sliding along a wall that is in the
+    way (first both axes, then each alone), stopping where neither works. Returns false if (x, y) was not free. */
+inline bool planSlide (const PlanGeo& g, float& x, float& y, float tx, float ty, float margin, float maxDist = 1.0e9f) noexcept
+{
+    if (g.n < 3 || ! planFree (g, x, y, 0.95f * margin)) return false;           // (a hair of tolerance: it stood exactly at the margin)
+    float dx = tx - x, dy = ty - y;
+    float d = std::sqrt (dx * dx + dy * dy);
+    if (d < 1.0e-6f) return true;
+    if (d > maxDist) { dx *= maxDist / d; dy *= maxDist / d; d = maxDist; }       // (no faster than walking: never through a gap at once)
+    const int n = juce::jlimit (1, 400, (int) std::ceil (d / 0.08f));
+    const float sx = dx / (float) n, sy = dy / (float) n;
+    for (int i = 0; i < n; ++i)
+    {
+        if (planFree (g, x + sx, y + sy, margin)) { x += sx; y += sy; }
+        else if (planFree (g, x + sx, y, margin)) x += sx;
+        else if (planFree (g, x, y + sy, margin)) y += sy;
+        else break;
+    }
+    return true;
+}
+
 /** a point moved inside the plan, at least 'margin' from the walls */
 inline void keepInsidePlan(const PlanGeo &g, float &x, float &y, float margin) noexcept
 {
@@ -753,6 +780,111 @@ inline Pos seenFrom(const Vec3f &L, const Vec3f &q) noexcept
         r > 1.0e-6f ? juce::radiansToDegrees(std::asin(juce::jlimit(-1.0f, 1.0f, dz / r))) : 0.0f;
     p.dist = r;
     return p;
+}
+
+// ---------------------------------------------------------------------------
+// line of sight in a floor plan that is not convex (L, cross, apse ...): the walls go from floor to ceiling,
+// so a pipe hidden behind a corner is heard around it - from the corner's direction, over the longer way,
+// quieter and duller the further the sound has to bend
+// ---------------------------------------------------------------------------
+/** true if the segment a-b crosses a wall (touching at the ends does not count) */
+inline bool planBlocks (const PlanGeo& g, float ax, float ay, float bx, float by) noexcept
+{
+    const float rx = bx - ax, ry = by - ay;
+    for (int i = 0; i < g.n; ++i)
+    {
+        const auto& w = g.w[(size_t) i];
+        const float sx = w.bx - w.ax, sy = w.by - w.ay;
+        const float den = rx * sy - ry * sx;
+        if (std::abs (den) < 1.0e-9f) continue;
+        const float qx = w.ax - ax, qy = w.ay - ay;
+        const float t = (qx * sy - qy * sx) / den, u = (qx * ry - qy * rx) / den;
+        if (t > 1.0e-4f && t < 1.0f - 1.0e-4f && u > -1.0e-4f && u < 1.0f + 1.0e-4f) return true;
+    }
+    return false;
+}
+
+/** the corners sound can bend around: the plan's reflex corners, moved 5 cm into the room */
+struct PlanCorners { std::array<float, kMaxPlanVerts> x {}, y {}; int n = 0; };
+inline PlanCorners planCorners (const PlanGeo& g) noexcept
+{
+    PlanCorners c;
+    for (int i = 0; i < g.n; ++i)
+    {
+        const auto& a = g.w[(size_t) ((i + g.n - 1) % g.n)];
+        const auto& b = g.w[(size_t) i];
+        const float cr = (a.bx - a.ax) * (b.by - b.ay) - (a.by - a.ay) * (b.bx - b.ax);
+        if (cr >= -1.0e-6f * a.len * b.len) continue;                  // a convex corner hides nothing
+        float nx = a.nx + b.nx, ny = a.ny + b.ny;
+        const float l = std::sqrt (nx * nx + ny * ny);
+        if (l < 1.0e-6f) continue;
+        nx /= l; ny /= l;
+        c.x[(size_t) c.n] = b.ax + 0.05f * nx; c.y[(size_t) c.n] = b.ay + 0.05f * ny;
+        ++c.n;
+    }
+    return c;
+}
+
+/** the way from listener L to source S if a wall is in between: over one or two corners. Returns false if the
+    line of sight is free (nothing to change). 'out' = where it is heard from (the first corner's direction,
+    the whole way's length); lossDb / cutoff grow with how sharply the sound bends. */
+inline bool diffractedPath (const PlanGeo& g, const PlanCorners& c, Vec3f L, Vec3f S, Pos& out, float& lossDb, float& cutoffHz) noexcept
+{
+    if (g.n < 3 || c.n == 0 || ! planBlocks (g, L.x, L.y, S.x, S.y)) return false;
+    auto len = [] (float ax, float ay, float bx, float by) { return std::sqrt ((bx - ax) * (bx - ax) + (by - ay) * (by - ay)); };
+    auto turn = [] (float ax, float ay, float bx, float by, float cx, float cy)   // how far the way bends at b (0..pi)
+    {
+        const float ux = bx - ax, uy = by - ay, vx = cx - bx, vy = cy - by;
+        const float lu = std::sqrt (ux * ux + uy * uy), lv = std::sqrt (vx * vx + vy * vy);
+        if (lu < 1.0e-6f || lv < 1.0e-6f) return 0.0f;
+        return std::acos (juce::jlimit (-1.0f, 1.0f, (ux * vx + uy * vy) / (lu * lv)));
+    };
+    float best = 1.0e30f, bend = 0.0f;
+    int first = -1;
+    bool seeL[kMaxPlanVerts] {}, seeS[kMaxPlanVerts] {};
+    for (int i = 0; i < c.n; ++i)
+    {
+        seeL[i] = ! planBlocks (g, L.x, L.y, c.x[(size_t) i], c.y[(size_t) i]);
+        seeS[i] = ! planBlocks (g, c.x[(size_t) i], c.y[(size_t) i], S.x, S.y);
+    }
+    for (int i = 0; i < c.n; ++i)
+        if (seeL[i] && seeS[i])
+        {
+            const float d = len (L.x, L.y, c.x[(size_t) i], c.y[(size_t) i]) + len (c.x[(size_t) i], c.y[(size_t) i], S.x, S.y);
+            if (d < best) { best = d; first = i; bend = turn (L.x, L.y, c.x[(size_t) i], c.y[(size_t) i], S.x, S.y); }
+        }
+    if (first < 0)
+        for (int i = 0; i < c.n; ++i)                                   // around two corners (the far arm of a cross)
+            for (int j = 0; j < c.n; ++j)
+                if (i != j && seeL[i] && seeS[j] && ! planBlocks (g, c.x[(size_t) i], c.y[(size_t) i], c.x[(size_t) j], c.y[(size_t) j]))
+                {
+                    const float d = len (L.x, L.y, c.x[(size_t) i], c.y[(size_t) i]) + len (c.x[(size_t) i], c.y[(size_t) i], c.x[(size_t) j], c.y[(size_t) j])
+                                  + len (c.x[(size_t) j], c.y[(size_t) j], S.x, S.y);
+                    if (d < best)
+                    {
+                        best = d; first = i;
+                        bend = turn (L.x, L.y, c.x[(size_t) i], c.y[(size_t) i], c.x[(size_t) j], c.y[(size_t) j])
+                             + turn (c.x[(size_t) i], c.y[(size_t) i], c.x[(size_t) j], c.y[(size_t) j], S.x, S.y);
+                    }
+                }
+    const float horiz = len (L.x, L.y, S.x, S.y);
+    if (first < 0)
+    {
+        // no way found (a strange plan): the straight line, through the wall, heavily damped
+        out = seenFrom (L, S);
+        lossDb = 30.0f; cutoffHz = 500.0f;
+        return true;
+    }
+    const float dz = S.z - L.z;
+    const float total = std::sqrt (best * best + dz * dz);
+    out.az = juce::radiansToDegrees (std::atan2 (-(c.x[(size_t) first] - L.x), c.y[(size_t) first] - L.y));
+    out.el = total > 1.0e-6f ? juce::radiansToDegrees (std::asin (juce::jlimit (-1.0f, 1.0f, dz / total))) : 0.0f;
+    out.dist = juce::jmax (horiz, total);
+    // (at the shadow's edge the bend is 0: nothing jumps when you step past the corner)
+    const float b = juce::jlimit (0.0f, 1.0f, bend / juce::MathConstants<float>::pi);
+    lossDb = 20.0f * b;                                   // (10 dB around a right angle, growing gently from the edge)
+    cutoffHz = 20000.0f / (1.0f + 40.0f * b);
+    return true;
 }
 
 /** one mirror image of a source */

@@ -39,7 +39,7 @@ private:
 
     ParamRow *pitch = nullptr, *detune = nullptr, *tremRate = nullptr, *tremDepth = nullptr,
              *smear = nullptr, *release = nullptr, *doppler = nullptr, *distAmount = nullptr,
-             *air = nullptr;
+             *air = nullptr, *airInvert = nullptr;
     juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr,
                      *mpeOn = nullptr;
     ParamRow *mpeBend = nullptr;
@@ -65,5 +65,11 @@ private:
     juce::Rectangle<int> tuningStatusArea;
     juce::String shownTuningStatus;
     juce::TextButton midiMapButton{juce::String::fromUTF8("Eigene Zuordnungen \xe2\x80\xa6")};
+    // two loudspeakers (transaural): below Freeze
+    juce::TextButton trOn{"Transaural an"};
+    juce::TextButton *trEq = nullptr;
+    ParamRow *trAngle = nullptr, *trAmount = nullptr, *trBoost = nullptr;
+    juce::Rectangle<int> trBox, trStatusArea;
+    juce::String shownTrStatus;
 };
 } // namespace rysum::ui

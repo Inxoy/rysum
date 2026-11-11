@@ -109,10 +109,10 @@ public:
     PipeStrip(RysumProcessor &p, int &selectedStop) : proc(p), stop(selectedStop)
     {
         setTooltip(juce::String::fromUTF8(
-            "Pfeifen des Registers: Klick schaltet eine Pfeife stumm / wieder an, Ã¼"
+            "Pfeifen des Registers: Klick schaltet eine Pfeife stumm / wieder an, \xc3\xbc"
             "ber mehrere ziehen. "
-            "Rechtsklick: Muster. Stumme Pfeifen spielen nicht (beim Verteilen der TÃ¶ne werden "
-            "sie Ã¼"
+            "Rechtsklick: Muster. Stumme Pfeifen spielen nicht (beim Verteilen der T\xc3\xb6ne "
+            "werden sie \xc3\xbc"
             "bersprungen)."));
     }
     void paint(juce::Graphics &) override;
@@ -223,8 +223,8 @@ private:
     std::vector<std::unique_ptr<PullToggle>> pullButtons;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>
         pullAttachments;
-    std::array<juce::TextButton, 6> layoutButtons;
-    std::array<juce::TextButton, 7> motionButtons;
+    std::array<juce::TextButton, 7> layoutButtons;
+    std::array<juce::TextButton, 8> motionButtons;
     juce::TextButton drawButton{juce::String::fromUTF8("Bahn zeichnen")};
     juce::TextButton pathLoop{"Schleife"},
         pathPing{juce::String::fromUTF8("Hin & zur\xc3\xbc"
@@ -236,9 +236,19 @@ private:
     std::unique_ptr<juce::ParameterAttachment> ellFormAttachment;
     std::unique_ptr<ParamRow> spreadRow, ellDirRow, ellTiltRow;
     juce::Rectangle<int> ellPreview;
-    juce::TextButton tabMotion{"Bewegung"}, tabHall{"Hall"};
-    bool hallTab = false;
-    void showTab(bool hall);
+    juce::TextButton tabMotion{"Bewegung"}, tabHall{"Hall"}, tabCloud{"Wolke"}, tabPipe{"Pfeife"};
+    bool hallTab = false, cloudTab = false, pipeTab = false;
+    void showTab(int tab); // 0 = Bewegung, 1 = Hall, 2 = Wolke, 3 = Pfeife
+    // the sound of the selected stop's pipes: Ansprache, Abriss, upper partials
+    std::array<std::unique_ptr<ParamRow>, 8> pipeRows;
+    juce::TextButton pipeAll{juce::String::fromUTF8("f\xc3\xbcr alle Register \xc3\xbc"
+                                                    "bernehmen")};
+    // grain cloud of the selected stop
+    std::array<std::unique_ptr<ParamRow>, 5> cloudRows;
+    juce::TextButton cloudAll{juce::String::fromUTF8("f\xc3\xbcr alle Register \xc3\xbc"
+                                                     "bernehmen")};
+    juce::Rectangle<int> cloudNote;
+    int shownGrains = -1;
     juce::Slider width, centre, elevation, spread, distance;
     std::unique_ptr<ParamRow> rateRow, depthRow, ellipseRow, irDry, irWet, irEnvelop, irDirect;
     juce::ComboBox irOrder;

@@ -67,11 +67,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                 NormalisableRange<float>(-60.0f, 12.0f, 0.1f),
                                                 -12.0f,
                                                 AudioParameterFloatAttributes().withLabel("dB")));
-    l.add(std::make_unique<AudioParameterChoice>(ParameterID{"output", 1}, "Ausgabe",
-                                                 StringArray{"Stereo", "AmbiX 1", "AmbiX 2",
-                                                             "AmbiX 3", "AmbiX 4", "AmbiX 5",
-                                                             "Binaural", "Lautsprecher"},
-                                                 0));
+    l.add(std::make_unique<AudioParameterChoice>(
+        ParameterID{"output", 1}, "Ausgabe",
+        StringArray{"Stereo", "AmbiX 1", "AmbiX 2", "AmbiX 3", "AmbiX 4", "AmbiX 5", "Binaural",
+                    "Lautsprecher", "Transaural (2 LS)"},
+        0));
     // loudspeakers: AllRAD decoding of this order to the layout set up on the page "Lautsprecher"
     l.add(std::make_unique<AudioParameterChoice>(
         ParameterID{"spkOrder", 1}, "Lautsprecher-Ordnung",
@@ -95,6 +95,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             })));
     l.add(std::make_unique<AudioParameterBool>(ParameterID{"binDfEq", 1}, "Diffusfeld-Entzerrung",
                                                true));
+    // transaural: the binaural signal over two loudspeakers, symmetric at +-angle (90 = on opposite
+    // sides of the room)
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"trAngle", 1}, "Transaural Lautsprecherwinkel",
+        NormalisableRange<float>(10.0f, 150.0f, 1.0f), 90.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                return juce::String::fromUTF8("\xc2\xb1") + String(roundToInt(v)) +
+                       juce::String::fromUTF8("\xc2\xb0");
+            })));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"trAmount", 1},
+                                                juce::String::fromUTF8("Transaural \xc3\x9c"
+                                                                       "bersprech-Unterdr\xc3\xbc"
+                                                                       "ckung"),
+                                                NormalisableRange<float>(0, 1), 1.0f, pct));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"trBoost", 1},
+        juce::String::fromUTF8("Transaural h\xc3\xb6"
+                               "chste Anhebung"),
+        NormalisableRange<float>(3.0f, 20.0f, 0.1f), 10.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(v, 1) + " dB"; })));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID{"trSideEq", 1},
+                                               "Transaural Seitenklang ausgleichen", true));
 
     l.add(std::make_unique<AudioParameterFloat>(ParameterID{"click", 1}, "Tastenklick",
                                                 NormalisableRange<float>(0, 1), 0.2f, pct));
@@ -671,6 +696,335 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add(std::make_unique<AudioParameterBool>(ParameterID{jumpHardParamId(s), 1},
                                                    name + u8(" harte Spr\xc3\xbcnge"), false));
     }
+
+    // ---- "Raumverfall": degradation of the spatial image (Spieltisch, Verfall · Raum); everything
+    // off by default
+    {
+        auto secs =
+            AudioParameterFloatAttributes()
+                .withStringFromValueFunction(
+                    [](float v, int)
+                    {
+                        return v < 0.05f   ? String("aus")
+                               : v < 60.0f ? String(v, 1) + " s"
+                                           : String(v / 60.0f, 1) + " min";
+                    })
+                .withValueFromStringFunction([](const String &t) { return t.getFloatValue(); });
+        auto gridTxt = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                const int n = rysum::gridCount(v);
+                return n == 0 ? String("aus") : String(n) + " Richtungen";
+            });
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"spcErode", 1}, "Raum abtragen",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"spcWeather", 1}, "Raum verwittern",
+            NormalisableRange<float>(0.0f, 600.0f, 0.01f, 0.35f), 0.0f, secs));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"spcGrid", 1}, "Richtungsraster",
+                                                    NormalisableRange<float>(0, 1), 0.0f, gridTxt));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"spcBits", 1}, "Raum-Bittiefe", NormalisableRange<float>(2.0f, 16.0f, 0.1f),
+            16.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return v >= 15.95f ? String("aus") : String(v, 1) + " bit"; })));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"spcRate", 1}, "Raum-Abtastrate",
+            NormalisableRange<float>(200.0f, 48000.0f, 1.0f, 0.35f), 48000.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int)
+                {
+                    return v >= 47999.0f ? String("aus")
+                           : v >= 1000   ? String(v / 1000.0f, 2) + " kHz"
+                                         : String(roundToInt(v)) + " Hz";
+                })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"spcDrops", 1}, "Raum-Aussetzer",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"spcAlias", 1}, "Raum-Aliasing",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+    }
+    // ---- the sound of the pipe per stop (Raum page, tab "Pfeife"): neutral by default
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        const String name = prettyLabel(kStops[(size_t)s].label) + " ";
+        auto signedPct = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                const int k = roundToInt(v * 100);
+                return (k > 0 ? "+" : "") + String(k) + " %";
+            });
+        auto hzA = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                return v >= 1000 ? String(v / 1000.0f, 1) + " kHz" : String(roundToInt(v)) + " Hz";
+            });
+        auto dbA = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return (v > 0.05f ? "+" : "") + String(v, 1) + " dB"; });
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{pipeSndParamId("Att", s), 1}, name + "Ansprache",
+            NormalisableRange<float>(-1, 1), 0.0f, signedPct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{pipeSndParamId("Sharp", s), 1},
+            name + String::fromUTF8("Ansprache Sch\xc3\xa4rfe"), NormalisableRange<float>(0, 1),
+            0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Iso", s), 1},
+                                                    name + "Nur Ansprache",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Rep", s), 1},
+                                                    name + "Ansprache wiederholen",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Puff", s), 1},
+                                                    name + "Abriss", NormalisableRange<float>(0, 1),
+                                                    0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{pipeSndParamId("HiFreq", s), 1},
+            name + String::fromUTF8("Obert\xc3\xb6ne ab"),
+            NormalisableRange<float>(500.0f, 16000.0f, 1.0f, 0.4f), 4000.0f, hzA));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{pipeSndParamId("HiGain", s), 1},
+            name + String::fromUTF8("Obert\xc3\xb6ne Pegel"),
+            NormalisableRange<float>(-24.0f, 18.0f, 0.1f), 0.0f, dbA));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{pipeSndParamId("HiShape", s), 1},
+            name + String::fromUTF8("Obert\xc3\xb6ne Anschlag"), NormalisableRange<float>(-1, 1),
+            0.0f, signedPct));
+    }
+    // ---- air inversion (Klang), resonated clicks (Spieltisch, Traktur · Resonanz), glitches
+    // (Spieltisch, Verfall · Glitch)
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"airInvert", 1}, "Luft umkehren",
+                                                NormalisableRange<float>(0, 1), 0.0f, pct));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"clickRes", 1}, "Klick-Resonanz",
+                                                NormalisableRange<float>(0, 1), 0.0f, pct));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"clickResDecay", 1}, "Klick-Resonanz Nachklang",
+        NormalisableRange<float>(0.02f, 3.0f, 0.001f, 0.4f), 0.4f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            { return v < 1.0f ? String(roundToInt(v * 1000)) + " ms" : String(v, 2) + " s"; })));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"clickResBright", 1},
+                                                "Klick-Resonanz Helligkeit",
+                                                NormalisableRange<float>(0, 1), 0.5f, pct));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"degStutter", 1}, "Glitch Stottern",
+                                                NormalisableRange<float>(0, 1), 0.0f, pct));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"degSplice", 1}, "Glitch Bandschnitt",
+                                                NormalisableRange<float>(0, 1), 0.0f, pct));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"degZero", 1}, "Glitch harte Kanten",
+                                                NormalisableRange<float>(0, 1), 0.0f, pct));
+    l.add(std::make_unique<AudioParameterFloat>(ParameterID{"degClip", 1}, "Glitch Clipping",
+                                                NormalisableRange<float>(0, 1), 0.0f, pct));
+    // ---- the tuning in space (Effekte, "Stimmung & Belichtung"): beats from ..., difference
+    // tones; Eis (Saal);
+    //      Doppelbelichtung, Belichtung (Effekte) - all off by default
+    {
+        auto dbOff = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            { return v <= -59.9f ? String("aus") : (v > 0 ? "+" : "") + String(v, 1) + " dB"; });
+        auto secsA = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            { return v < 1.0f ? String(roundToInt(v * 1000.0f)) + " ms" : String(v, 2) + " s"; });
+        auto degA = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                return (v > 0.5f ? "+" : "") + String(roundToInt(v)) + String::fromUTF8("\xc2\xb0");
+            });
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"fxBeatIdeal", 1}, "Schwebungen aus",
+            StringArray{"der Stimmung (ideal)", "den Pfeifen (wie aufgenommen)"}, 0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"fxGhostLevel", 1}, String::fromUTF8("Differenzt\xc3\xb6ne"),
+            NormalisableRange<float>(-60.0f, 12.0f, 0.1f, 2.0f), -60.0f, dbOff));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxGhostPlace", 1},
+                                                    String::fromUTF8("Differenzt\xc3\xb6ne Ort"),
+                                                    NormalisableRange<float>(0, 1), 0.3f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"fxGhostCons", 1}, String::fromUTF8("Differenzt\xc3\xb6ne nur Konsonanzen"),
+            NormalisableRange<float>(0, 1), 0.5f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"simIce", 1}, "Eis (Reflexionen)",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"simIceLen", 1},
+                                                    String::fromUTF8("Eis L\xc3\xa4nge"),
+                                                    NormalisableRange<float>(0, 1), 0.5f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxDexMix", 1}, "Doppelbelichtung",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"fxDexTime", 1}, "Doppelbelichtung Abstand",
+            NormalisableRange<float>(0.05f, 8.0f, 0.001f, 0.45f), 2.0f, secsA));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"fxDexTurn", 1}, "Doppelbelichtung Drehung",
+            NormalisableRange<float>(-180.0f, 180.0f, 0.1f), 0.0f, degA));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"fxDexMirror", 1}, "Doppelbelichtung Spiegeln",
+            StringArray{"nicht gespiegelt", "gespiegelt links / rechts", "gespiegelt vorn / hinten",
+                        "gespiegelt oben / unten"},
+            0));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxDexFade", 1},
+                                                    "Doppelbelichtung Verblassen",
+                                                    NormalisableRange<float>(0, 1), 0.3f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"fxDexAgain", 1}, "Doppelbelichtung mehrfach",
+            NormalisableRange<float>(0.0f, 0.85f), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxExpoMix", 1}, "Belichtung",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"fxExpoTime", 1}, "Belichtungszeit",
+            NormalisableRange<float>(0.2f, 60.0f, 0.001f, 0.4f), 4.0f, secsA));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxExpoBright", 1},
+                                                    "Belichtung Helligkeit",
+                                                    NormalisableRange<float>(0, 1), 0.5f, pct));
+    }
+
+    // ---- "Körnerwolke" per stop (Raum page, tab "Wolke"): off by default
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        const String name = prettyLabel(kStops[(size_t)s].label) + " Wolke ";
+        auto hz = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(v, v < 10.0f ? 1 : 0) + " /s"; });
+        auto msA = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(roundToInt(v)) + " ms"; });
+        auto degA = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(roundToInt(v)) + String::fromUTF8("\xc2\xb0"); });
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{cloudParamId("Mix", s), 1},
+                                                    name + "Menge", NormalisableRange<float>(0, 1),
+                                                    0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{cloudParamId("Dens", s), 1}, name + "Dichte",
+            NormalisableRange<float>(1.0f, 200.0f, 0.01f, 0.4f), 30.0f, hz));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{cloudParamId("Spread", s), 1}, name + "Streuung",
+            NormalisableRange<float>(0.0f, 180.0f, 0.1f), 60.0f, degA));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{cloudParamId("Size", s), 1},
+            name + String::fromUTF8("Korngr\xc3\xb6\xc3\x9f"
+                                    "e"),
+            NormalisableRange<float>(10.0f, 500.0f, 0.1f, 0.5f), 80.0f, msA));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{cloudParamId("Scatter", s), 1}, name + "Zeitstreuung",
+            NormalisableRange<float>(0.0f, 150.0f, 0.1f), 40.0f, msA));
+    }
+    // ---- "Lebendige Orgel" (Effekte, third tab): everything off by default
+    {
+        auto lvSecs = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                return v < 1.0f ? String(roundToInt(v * 1000.0f)) + " ms"
+                                : String(v, v < 10.0f ? 2 : 1) + " s";
+            });
+        auto lvMetres = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return (v > 0.005f ? "+" : "") + String(v, 2) + " m"; });
+        auto lvDbOff = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            { return v <= -59.9f ? String("aus") : (v > 0 ? "+" : "") + String(v, 1) + " dB"; });
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lvBellows", 1},
+                                                    "Balg Windverbrauch",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvBellowsSize", 1},
+            String::fromUTF8("Balg Gr\xc3\xb6\xc3\x9f"
+                             "e"),
+            NormalisableRange<float>(0.3f, 30.0f, 0.01f, 0.4f), 4.0f, lvSecs));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"lvBlower", 1}, "Balg Windquelle",
+            StringArray{String::fromUTF8("Gebl\xc3\xa4se (stetig)"), "Kalkant tritt (frei)",
+                        "Kalkant tritt im Tempo"},
+            0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvTreadRate", 1}, "Kalkant Tritte",
+            NormalisableRange<float>(2.0f, 120.0f, 0.1f, 0.5f), 20.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, 1) + " /min"; })));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"lvTreadDiv", 1}, "Kalkant Tritt alle",
+            StringArray{"8 Takte", "4 Takte", "2 Takte", "1 Takt", "1/2", "1/4"}, 3));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvTreadNoise", 1}, String::fromUTF8("Kalkant Trittger\xc3\xa4usch"),
+            NormalisableRange<float>(0, 1), 0.3f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lvPallet", 1}, "Ventil",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"lvPalletSrc", 1},
+            String::fromUTF8("Ventil \xc3\xb6"
+                             "ffnet durch"),
+            StringArray{String::fromUTF8("Anschlag (langsame Taste \xc3\xb6"
+                                         "ffnet langsam)"),
+                        "Druck (MPE / Aftertouch)", "Gleiten (MPE, CC 74)"},
+            0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvListenX", 1}, String::fromUTF8("H\xc3\xb6rer rechts / links"),
+            NormalisableRange<float>(-20.0f, 20.0f, 0.01f), 0.0f, lvMetres));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvListenY", 1},
+            String::fromUTF8("H\xc3\xb6rer vor / zur\xc3\xbc"
+                             "ck"),
+            NormalisableRange<float>(-20.0f, 20.0f, 0.01f), 0.0f, lvMetres));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"lvWalkShape", 1}, String::fromUTF8("H\xc3\xb6rer geht"),
+            StringArray{"steht", "im Kreis", "hin und her (links / rechts)",
+                        String::fromUTF8("vor und zur\xc3\xbc"
+                                         "ck"),
+                        "eine Acht"},
+            0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvWalkRate", 1}, String::fromUTF8("H\xc3\xb6rer Tempo"),
+            NormalisableRange<float>(0.002f, 2.0f, 0.0001f, 0.35f), 0.05f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int)
+                {
+                    return v < 0.1f ? String(1.0f / v, 1) + " s je Runde" : String(v, 2) + " Hz";
+                })));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvWalkSize", 1}, String::fromUTF8("H\xc3\xb6rer Weite"),
+            NormalisableRange<float>(0.0f, 20.0f, 0.01f, 0.6f), 3.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, 1) + " m"; })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lvWear", 1},
+                                                    String::fromUTF8("Verschlei\xc3\x9f"),
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvWearTime", 1}, String::fromUTF8("Verschlei\xc3\x9f Lebensdauer"),
+            NormalisableRange<float>(0.1f, 240.0f, 0.01f, 0.35f), 5.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int)
+                {
+                    return v < 1.0f ? String(roundToInt(v * 60.0f)) + " s" : String(v, 1) + " min";
+                })));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvSympLevel", 1}, "Mitklingende Pfeifen",
+            NormalisableRange<float>(-60.0f, 12.0f, 0.1f, 2.0f), -60.0f, lvDbOff));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvSympDecay", 1}, "Mitklingen Nachklang",
+            NormalisableRange<float>(0.05f, 6.0f, 0.001f, 0.4f), 0.6f, lvSecs));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lvPure", 1}, "Reinheit",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pct));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvPureTime", 1}, "Reinheit Zeit",
+            NormalisableRange<float>(0.03f, 20.0f, 0.001f, 0.35f), 1.5f, lvSecs));
+        l.add(std::make_unique<AudioParameterBool>(ParameterID{"lvNetOn", 1}, "Tonnetz-Wanderer",
+                                                   false));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"lvNetPath", 1}, "Wanderer Weg",
+            StringArray{
+                "Quinten (bis zum Wolf)",
+                String::fromUTF8("Terzkette (gro\xc3\x9f, klein, gro\xc3\x9f \xe2\x80\xa6)"),
+                String::fromUTF8("zuf\xc3\xa4llig"),
+                String::fromUTF8("zuf\xc3\xa4llig mit Heimweh"), "Spirale"},
+            0));
+        l.add(std::make_unique<AudioParameterChoice>(ParameterID{"lvNetDiv", 1}, "Wanderer Schritt",
+                                                     StringArray{"frei (Tempo-Regler)", "1/1",
+                                                                 "1/2", "1/4", "1/8", "1/16",
+                                                                 "1/8 T", "1/16 T"},
+                                                     0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvNetRate", 1}, "Wanderer Tempo",
+            NormalisableRange<float>(0.1f, 20.0f, 0.01f, 0.4f), 3.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, 2) + " /s"; })));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvNetGate", 1}, String::fromUTF8("Wanderer Tonl\xc3\xa4nge"),
+            NormalisableRange<float>(0.05f, 8.0f, 0.01f, 0.5f), 0.9f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, 2) + String::fromUTF8(" Schritte"); })));
+    }
+
     // Independent dry reference tone. Append parameters to preserve existing indices.
     l.add(std::make_unique<AudioParameterBool>(ParameterID{"dsfOn", 1}, "Testton", false));
     l.add(std::make_unique<AudioParameterFloat>(
@@ -923,8 +1277,31 @@ RysumProcessor::RysumProcessor()
             ix.stopRoom[(size_t)st] = I(stopRoomParamId(st));
         ix.inputRoom = I("simRoomIn");
         ix.noteSpread = I("noteSpread");
+        for (int k = 0; k < 7; ++k)
+            ix.spc[(size_t)k] = I(kSpcIds[k]);
+        for (int st = 0; st < kNumStops; ++st)
+            for (int k = 0; k < 8; ++k)
+                ix.pipeSnd[(size_t)st][(size_t)k] = I(pipeSndParamId(kPipeSndKeys[k], st));
+        ix.airInvert = I("airInvert");
+        ix.clickRes = I("clickRes");
+        ix.clickResDecay = I("clickResDecay");
+        ix.clickResBright = I("clickResBright");
+        {
+            const char *g[]{"degStutter", "degSplice", "degZero", "degClip"};
+            for (int k = 0; k < 4; ++k)
+                ix.glitch[(size_t)k] = I(g[k]);
+        }
+        for (int k = 0; k < (int)ix.space2.size(); ++k)
+            ix.space2[(size_t)k] = I(kSpace2Ids[k]);
+        for (int k = 0; k < kNumLive; ++k)
+            ix.live[(size_t)k] = I(kLiveIds[k]);
+        for (int st = 0; st < kNumStops; ++st)
+            for (int k = 0; k < 5; ++k)
+                ix.cloud[(size_t)st][(size_t)k] = I(cloudParamId(kCloudKeys[k], st));
     }
     engine.setModHook(this);
+    engine.spaceDegInProcess =
+        false; // processBlock applies the spatial degradation after the impulse response
 
     // MIDI controller assignments: every new instance starts with the ones saved last
     // (Documents/Rysum/MIDI-Regler.xml); a saved project / session brings its own
@@ -993,6 +1370,8 @@ void RysumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     binBuf.setSize(kMaxAmbiChannels, juce::jmax(512, samplesPerBlock), false, true,
                    false); // reserved once (see processBlock)
     spkRenderer.prepare(sampleRate, juce::jmax(512, samplesPerBlock));
+    trCtc.prepare(sampleRate, juce::jmax(512, samplesPerBlock));
+    trBuiltKey.clear(); // (re)loaded by the timer at this rate
     lucPiece.prepare(sampleRate);
     lucRecScratch.assign((size_t)juce::jmax(512, samplesPerBlock), 0.0f);
     inBuf.setSize(2, juce::jmax(512, samplesPerBlock), false, true, false);
@@ -1059,7 +1438,7 @@ EngineParams RysumProcessor::readParams(const float *vals) const
     p.sync = V(ix.motionSync) > 0.5f;
     p.masterGain = dbToGain(V(ix.master));
     p.outputMode = juce::roundToInt(V(ix.output));
-    if (p.outputMode == kBinauralOutput)
+    if (p.outputMode == kBinauralOutput || p.outputMode == kTransauralOutput)
         p.outputMode =
             1 + juce::roundToInt(binOrderParam->load()); // processBlock uses the decoder's order
     if (p.outputMode == kSpeakerOutput)
@@ -1076,6 +1455,86 @@ EngineParams RysumProcessor::readParams(const float *vals) const
     p.deg.wobble = V(ix.degWobble);
     p.deg.dropouts = V(ix.degDropouts);
     p.deg.perPipe = V(ix.degMode) < 0.5f;
+    {
+        auto Sp = [&](int k) { return V(ix.spc[(size_t)k]); };
+        p.space.erode = Sp(0);
+        p.space.weather = Sp(1) < 0.05f ? 0.0f : Sp(1);
+        p.space.grid = Sp(2);
+        p.space.bits = Sp(3);
+        p.space.rateHz = Sp(4);
+        p.space.drops = Sp(5);
+        p.space.alias = Sp(6);
+        for (int st = 0; st < kNumStops; ++st)
+        {
+            auto C = [&](int k) { return V(ix.cloud[(size_t)st][(size_t)k]); };
+            auto &c = p.cloud[(size_t)st];
+            c.mix = C(0);
+            c.density = C(1);
+            c.spread = C(2);
+            c.sizeMs = C(3);
+            c.scatterMs = C(4);
+            auto Q = [&](int k) { return V(ix.pipeSnd[(size_t)st][(size_t)k]); };
+            auto &q = p.pipeSnd[(size_t)st];
+            q.attGain = Q(0);
+            q.attSharp = Q(1);
+            q.attIso = Q(2);
+            q.attRep = Q(3);
+            q.puff = Q(4);
+            q.hiFreq = Q(5);
+            q.hiGain = Q(6);
+            q.hiShape = Q(7);
+        }
+        p.airInvert = V(ix.airInvert);
+        p.resClick = V(ix.clickRes);
+        p.resDecay = V(ix.clickResDecay);
+        p.resBright = V(ix.clickResBright);
+        p.glitch.stutter = V(ix.glitch[0]);
+        p.glitch.splice = V(ix.glitch[1]);
+        p.glitch.zero = V(ix.glitch[2]);
+        p.glitch.clip = V(ix.glitch[3]);
+        auto S2 = [&](int k) { return V(ix.space2[(size_t)k]); };
+        p.beatIdeal = S2(0) < 0.5f;
+        p.ghostLevel = S2(1) <= -59.9f ? 0.0f : dbToGain(S2(1));
+        p.ghostPlace = S2(2);
+        p.ghostCons = S2(3);
+        p.ice = S2(4);
+        p.iceLen = S2(5);
+        p.dex.mix = S2(6);
+        p.dex.time = S2(7);
+        p.dex.turn = S2(8);
+        p.dex.mirror = juce::roundToInt(S2(9));
+        p.dex.fade = S2(10);
+        p.dex.again = S2(11);
+        p.expo.mix = S2(12);
+        p.expo.time = S2(13);
+        p.expo.bright = S2(14);
+        auto Lv = [&](int k) { return V(ix.live[(size_t)k]); };
+        auto &lv = p.live;
+        lv.bellows = Lv(lvBellows);
+        lv.bellowsSize = Lv(lvBellowsSize);
+        lv.blower = juce::roundToInt(Lv(lvBlower));
+        lv.treadRate = Lv(lvTreadRate);
+        lv.treadDiv = juce::roundToInt(Lv(lvTreadDiv));
+        lv.treadNoise = Lv(lvTreadNoise);
+        lv.pallet = Lv(lvPallet);
+        lv.palletSrc = juce::roundToInt(Lv(lvPalletSrc));
+        lv.listenX = Lv(lvListenX);
+        lv.listenY = Lv(lvListenY);
+        lv.walkShape = juce::roundToInt(Lv(lvWalkShape));
+        lv.walkRate = Lv(lvWalkRate);
+        lv.walkSize = Lv(lvWalkSize);
+        lv.wear = Lv(lvWear);
+        lv.wearMinutes = Lv(lvWearTime);
+        lv.sympLevel = Lv(lvSympLevel) <= -59.9f ? 0.0f : dbToGain(Lv(lvSympLevel));
+        lv.sympDecay = Lv(lvSympDecay);
+        lv.pure = Lv(lvPure);
+        lv.pureTime = Lv(lvPureTime);
+        lv.netOn = Lv(lvNetOn) > 0.5f;
+        lv.netPath = juce::roundToInt(Lv(lvNetPath));
+        lv.netDiv = juce::roundToInt(Lv(lvNetDiv));
+        lv.netRate = Lv(lvNetRate);
+        lv.netGate = Lv(lvNetGate);
+    }
     p.windModel = juce::roundToInt(V(ix.windModel));
 
     for (int i = 0; i < kNumLfos; ++i)
@@ -1481,10 +1940,10 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     if (auto pending = std::atomic_exchange(&pendingBin, std::shared_ptr<rysum::BinauralDecoder>()))
         binActive = std::move(pending); // the old one is still referenced by retiredBin
     const int n = buffer.getNumSamples();
-    const bool binaural = juce::roundToInt(output->load()) == kBinauralOutput &&
-                          binActive != nullptr && buffer.getNumChannels() > 0;
-    if (juce::roundToInt(output->load()) == kBinauralOutput)
+    const bool binaural = isBinaural() && binActive != nullptr && buffer.getNumChannels() > 0;
+    if (isBinaural())
         params.outputMode = binaural ? binActive->getOrder() : 0;
+    const bool transaural = binaural && isTransaural() && buffer.getNumChannels() > 1;
     // loudspeakers: the same Ambisonics buffer, decoded with AllRAD to the layout's channels
     if (auto pending =
             std::atomic_exchange(&pendingSpk, std::shared_ptr<const rysum::AllRadDecoder>()))
@@ -1623,6 +2082,15 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
                          apvts.getRawParameterValue("lucMix")->load());
     }
 
+    // ---- Doppelbelichtung / Belichtung: on the whole field (after the room), before it wears away
+    if (used > 0)
+        engine.applyPhotoFx(work.getArrayOfWritePointers(), params.outputMode, n, params);
+
+    // ---- "Raumverfall": the spatial image wears away (after the impulse response, so the whole
+    // sphere does)
+    if (!stereo && used > 0)
+        engine.applySpaceDegradation(work.getArrayOfWritePointers(), params.outputMode, n, params);
+
     // Add the reference after organ effects, before output decoding. It uses its
     // own level; MIDI follows nominal global tuning, manual Hz is independent.
     DsfReferenceTuning referenceTuning;
@@ -1659,7 +2127,9 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     // ---- binaural decoding (head rotation + HRTF filters)
     if (binaural)
     {
-        const float yaw = haveModVals ? modVals[(size_t)ix.binYaw] : binYawParam->load();
+        float yaw = haveModVals ? modVals[(size_t)ix.binYaw] : binYawParam->load();
+        if (engine.viewWalkOn.load())
+            yaw = rysum::wrapAz(yaw + engine.viewYaw.load()); // looking around in the 3D view
         float *l = buffer.getWritePointer(0);
         if (buffer.getNumChannels() > 1)
             binActive->process(binBuf.getArrayOfWritePointers(), n, l, buffer.getWritePointer(1),
@@ -1676,6 +2146,10 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         }
         for (int c = 2; c < buffer.getNumChannels(); ++c)
             buffer.clear(c, 0, n);
+        // transaural: the ear signals become two loudspeaker feeds (each speaker's way to the far
+        // ear cancelled)
+        if (transaural)
+            trCtc.process(buffer.getWritePointer(0), buffer.getWritePointer(1), n);
     }
 
     // ---- loudspeakers (AllRAD)
@@ -1956,7 +2430,7 @@ juce::StringArray RysumProcessor::roomShapeNames()
     // (new shapes only at the end: the index is stored)
     return {"Quader",
             "L-Form",
-            juce::String::fromUTF8("FÃ¤"
+            juce::String::fromUTF8("F\xc3\xa4"
                                    "cher"),
             "Sechseck",
             "Achteck",
@@ -2347,6 +2821,44 @@ void RysumProcessor::rebuildBinaural()
         });
 }
 
+juce::String RysumProcessor::transauralKey() const
+{
+    auto v = [&](const char *id)
+    { return juce::String(apvts.getRawParameterValue(id)->load(), 3); };
+    return juce::String::toHexString((juce::pointer_sized_int)hrirSet.get()) + "|" + v("trAngle") +
+           "|" + v("trAmount") + "|" + v("trBoost") + "|" + v("trSideEq") + "|" +
+           juce::String(hostRate.load() > 0 ? hostRate.load() : 48000.0, 0);
+}
+
+void RysumProcessor::rebuildTransaural()
+{
+    const auto key = transauralKey();
+    trBuiltKey = key;
+    auto set = hrirSet;
+    if (set == nullptr)
+        return;
+    const float angle = apvts.getRawParameterValue("trAngle")->load(),
+                amount = apvts.getRawParameterValue("trAmount")->load();
+    const float boost = apvts.getRawParameterValue("trBoost")->load();
+    const bool eq = apvts.getRawParameterValue("trSideEq")->load() > 0.5f;
+    const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+    irPool.addJob(
+        [this, key, set, angle, amount, boost, eq, rate, alive = aliveFlag]
+        {
+            auto f = rysum::TransauralFilters::design(*set, angle, amount, boost, eq, rate);
+            juce::MessageManager::callAsync(
+                [this, key, f, alive]
+                {
+                    if (!alive->load() || key != trBuiltKey || f == nullptr)
+                        return;
+                    trUi = f;
+                    trCtc.load(*f);
+                    const juce::ScopedLock sl(statusLock);
+                    trStatus = f->description;
+                });
+        });
+}
+
 void RysumProcessor::clearIr()
 {
     irFile = juce::File();
@@ -2556,6 +3068,26 @@ void RysumProcessor::timerCallback()
             }
         }
     }
+    // transaural: the crosstalk filters follow the HRTF set and the settings (~0.5 s debounce)
+    if (autoLoadDone && isTransaural() && hrirSet != nullptr)
+    {
+        const auto key = transauralKey();
+        if (key != trBuiltKey)
+        {
+            if (trUi == nullptr && trBuiltKey.isEmpty())
+                rebuildTransaural();
+            else if (key != trPendingKey)
+            {
+                trPendingKey = key;
+                trKeyTicks = 0;
+            }
+            else if (++trKeyTicks >= 2)
+            {
+                rebuildTransaural();
+                trPendingKey.clear();
+            }
+        }
+    }
     // IR settings / output format changed: rebuild the room once the values have settled (~0.5 s)
     if (irFile.existsAsFile() && autoLoadDone)
     {
@@ -2607,9 +3139,23 @@ juce::String RysumProcessor::irSettingsKey(const rysum::Convolver::Settings &s)
 void RysumProcessor::applyLayout(int stop)
 {
     std::array<Pos, kNumKeys> pos{};
-    generateLayout(layouts[(size_t)stop], stop, pos);
+    const int t = juce::jlimit(0, (int)tunings.size() - 1,
+                               juce::roundToInt(apvts.getRawParameterValue("temperament")->load()));
+    generateLayout(layouts[(size_t)stop], stop, pos, &tunings[(size_t)t], tuningStepCents(t));
+    layoutTuning = t;
     for (int k = 0; k < kNumKeys; ++k)
         setPipePosition(stop, k, pos[(size_t)k]);
+}
+
+void RysumProcessor::followTuningLayouts()
+{
+    const int t = juce::roundToInt(apvts.getRawParameterValue("temperament")->load());
+    if (t == layoutTuning)
+        return;
+    layoutTuning = t;
+    for (int s = 0; s < kNumStops; ++s)
+        if ((Layout)layouts[(size_t)s].type == Layout::Tonnetz)
+            applyLayout(s);
 }
 
 void RysumProcessor::setPipePosition(int stop, int key, Pos p)
@@ -2632,6 +3178,20 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         extra.setProperty("samplesFolder", samplesFolder.getFullPathName(), nullptr);
         extra.setProperty("loadPresetTuning", loadPresetTuning.load(), nullptr);
         extra.setProperty("extendedRange", extendedRange.load(), nullptr);
+    }
+    if (!forPatch)
+    {
+        // the 3D view: the loaded room model and where one stands in it (the project's, not a
+        // patch's)
+        juce::ValueTree wk("WALK");
+        wk.setProperty("model", walkModelFile.getFullPathName(), nullptr);
+        wk.setProperty("zUp", walkZUp, nullptr);
+        wk.setProperty("scale", walkScale, nullptr);
+        wk.setProperty("x", walkPose[0].load(), nullptr);
+        wk.setProperty("y", walkPose[1].load(), nullptr);
+        wk.setProperty("yaw", walkPose[2].load(), nullptr);
+        wk.setProperty("pitch", walkPose[3].load(), nullptr);
+        extra.appendChild(wk, nullptr);
     }
     extra.setProperty("irFile", irFile.getFullPathName(), nullptr);
     extra.setProperty("customFolder", customOverride.getFullPathName(), nullptr);
@@ -2675,6 +3235,21 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         st.setProperty("mute", mu.joinIntoString(","), nullptr);
         st.setProperty("dist", di.joinIntoString(","), nullptr);
         st.setProperty("distance", L.distance, nullptr);
+        if (!forPatch)
+        {
+            // Verschleiss: how worn every pipe is belongs to the project (a patch leaves the
+            // instrument's age alone)
+            juce::StringArray we;
+            bool any = false;
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                const float w = engine.wear[(size_t)s][(size_t)k].load();
+                any = any || w > 0.0f;
+                we.add(juce::String(w, 4));
+            }
+            if (any)
+                st.setProperty("wear", we.joinIntoString(","), nullptr);
+        }
         const auto &dp = drawnPaths[(size_t)s];
         if (!dp.points.empty())
         {
@@ -2760,7 +3335,8 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                                        "mpeBend",    "inpOn",        "spkOrder",    "spkDistComp",
                                        "dsfOn",      "dsfFrequency", "dsfSpectrum", "dsfLevel",
                                        "dsfMethod",  "dsfMidi",      "dsfOffset",   "dsfPartials",
-                                       "dsfFootage", "dsfMixtur",    "dsfRegister"};
+                                       "dsfFootage", "dsfMixtur",    "dsfRegister",
+                                       "trAngle", "trAmount", "trBoost", "trSideEq"};
     float keepVals[std::size(keepIds)]{};
     for (size_t i = 0; i < std::size(keepIds); ++i)
         keepVals[i] = apvts.getRawParameterValue(keepIds[i])->load();
@@ -2863,6 +3439,8 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
             L.elevation = (float)st.getProperty("elevation", L.elevation);
             L.spread = (float)st.getProperty("spread", L.spread);
             L.distance = (float)st.getProperty("distance", L.distance);
+            const bool hasPositions =
+                st.hasProperty("az"); // (a factory patch may give only the layout)
             {
                 auto &dp = drawnPaths[(size_t)s];
                 dp.points.clear();
@@ -2897,6 +3475,45 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                     engine.baseEl[(size_t)s][(size_t)k] = el[k].getFloatValue();
                 if (k < mu.size())
                     engine.muted[(size_t)s][(size_t)k] = mu[k] == "1";
+            }
+            if (!forPatch)
+            {
+                juce::StringArray we;
+                we.addTokens(st["wear"].toString(), ",", {});
+                for (int k = 0; k < kNumKeys; ++k)
+                    engine.wear[(size_t)s][(size_t)k] =
+                        k < we.size() ? juce::jlimit(0.0f, 1.0f, we[k].getFloatValue()) : 0.0f;
+            }
+            if (!hasPositions)
+                applyLayout(s);
+        }
+        if (!forPatch)
+        {
+            const auto wk = extra.getChildWithName("WALK");
+            if (wk.isValid())
+            {
+                const bool zUp = (bool)wk.getProperty("zUp", false);
+                const float scale = (float)wk.getProperty("scale", 1.0f);
+                for (int i = 0; i < 4; ++i)
+                    walkPose[(size_t)i] =
+                        (float)wk.getProperty(juce::StringArray{"x", "y", "yaw", "pitch"}[i], 0.0f);
+                const juce::File mf(wk["model"].toString());
+                const bool same = mf == walkModelFile && zUp == walkZUp &&
+                                  std::abs(scale - walkScale) < 1.0e-6f && getWalkMesh() != nullptr;
+                walkZUp = zUp;
+                walkScale = scale;
+                if (mf == juce::File())
+                    clearWalkModel();
+                else if (!same)
+                {
+                    if (!mf.existsAsFile() || loadWalkModel(mf, zUp, scale).isNotEmpty())
+                    {
+                        // gone (another computer) or unreadable: nothing shown, the name kept so
+                        // saving does not lose it
+                        clearWalkModel();
+                        walkModelFile = mf;
+                    }
+                }
             }
         }
         const juce::File irf(extra["irFile"].toString());
@@ -3392,7 +4009,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 11;
+    constexpr int kFactoryVersion = 16;
     const auto marker = folder.getChildFile(".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion)
@@ -3410,9 +4027,11 @@ void RysumProcessor::writeFactoryPatches()
     };
     using Values = std::vector<std::pair<juce::String, double>>;
     // scenes: each one = the patch's values with these changes on top; 'input' = made for the audio
-    // input (switches it on)
+    // input (switches it on) layoutsIn: (stop, layout type) - the stop gets that layout (default
+    // width etc.), its pipes placed when the patch loads
     auto makeFull = [&](const juce::String &name, Values values, std::vector<Route> routesIn,
-                        std::vector<Values> scenesIn, bool input)
+                        std::vector<Values> scenesIn, bool input,
+                        std::vector<std::pair<int, int>> layoutsIn = {})
     {
         for (auto &sc : scenesIn)
             for (auto &kv : sc)
@@ -3457,6 +4076,25 @@ void RysumProcessor::writeFactoryPatches()
         extra.appendChild(mod, nullptr);
         if (input)
             extra.setProperty("input", true, nullptr);
+        for (auto [ls, lt] : layoutsIn)
+        {
+            auto L = defaultLayout(ls);
+            L.type = lt;
+            if (lt == (int)Layout::Tonnetz)
+            {
+                L.width = 120.0f;
+                L.elevation = 10.0f;
+            }
+            juce::ValueTree st("STOP");
+            st.setProperty("id", kStops[(size_t)ls].id, nullptr);
+            st.setProperty("layout", L.type, nullptr);
+            st.setProperty("width", L.width, nullptr);
+            st.setProperty("center", L.center, nullptr);
+            st.setProperty("elevation", L.elevation, nullptr);
+            st.setProperty("spread", L.spread, nullptr);
+            st.setProperty("distance", L.distance, nullptr);
+            extra.appendChild(st, nullptr);
+        }
         if (!scenesIn.empty())
         {
             juce::ValueTree scs("SCENES");
@@ -3472,6 +4110,11 @@ void RysumProcessor::writeFactoryPatches()
                     for (auto &b : values)
                         if (b.first == id)
                             v = (float)b.second;
+                    // the routes' amounts belong to every scene - otherwise moving through the
+                    // scenes switches them off (including a route that moves the scenes itself)
+                    for (size_t r = 0; r < routesIn.size() && r < (size_t)kNumRoutes; ++r)
+                        if (id == getModAmountId((int)r))
+                            v = routesIn[r].amt;
                     for (auto &c : scenesIn[slot])
                         if (c.first == id)
                             v = (float)c.second;
@@ -4620,6 +5263,1259 @@ void RysumProcessor::writeFactoryPatches()
           {"simRoom1", 3},
           {"simRoom6", 2}},
          {});
+
+    // ---- set 12: floor plans of the Saal, the spatial image wearing away (Verfall · Raum), grain
+    // clouds (Raum, Wolke)
+    //      (Verfall · Raum needs an Ambisonics output - AmbiX, binaural or loudspeakers; in stereo
+    //      only the grid is heard)
+    currentSet = 12;
+    make(u8("86 Saal \xe2\x80\x93 Um die Ecke"),
+         {{"stop1", 1},
+          {"stop2", 1},
+          {"simOn", 1},
+          {"simShape", (int)rysum::shapeL},
+          {"simShapeAmt", 0.9f},
+          {"simW", 14.0f},
+          {"simL", 22.0f},
+          {"simH", 9.0f},
+          {"simAbs", 0.04f},
+          {"simLy", 0.3f},
+          {"motion1", 2},
+          {"rate1", 0.08f},
+          {"depth1", 70.0f}},
+         {});
+    make(u8("87 Saal \xe2\x80\x93 Rotunde (Fl\xc3\xbcstergalerie)"),
+         {{"stop3", 1},
+          {"stop5", 1},
+          {"simOn", 1},
+          {"simShape", (int)rysum::shapeRound},
+          {"simShapeAmt", 1.0f},
+          {"simW", 20.0f},
+          {"simL", 20.0f},
+          {"simH", 16.0f},
+          {"simAbs", 0.02f},
+          {"simAbsFloor", 0.05f},
+          {"simScatter", 0.05f},
+          {"simLx", 0.2f},
+          {"simLy", 0.5f},
+          {"motion3", 1},
+          {"rate3", 0.05f},
+          {"master", -15.0f}},
+         {});
+    make(u8("88 Saal \xe2\x80\x93 Kreuzkirche"),
+         {{"stop7", 1},
+          {"stop1", 1},
+          {"stop6", 1},
+          {"simOn", 1},
+          {"simShape", (int)rysum::shapeCross},
+          {"simShapeAmt", 0.4f},
+          {"simW", 28.0f},
+          {"simL", 44.0f},
+          {"simH", 18.0f},
+          {"simAbs", 0.04f},
+          {"simAbsFloor", 0.12f},
+          {"simScatter", 0.45f},
+          {"simLy", 0.25f},
+          {"master", -16.0f}},
+         {});
+    make(u8("89 Saal \xe2\x80\x93 F\xc3\xa4"
+            "cher"),
+         {{"stop1", 1},
+          {"stop3", 1},
+          {"simOn", 1},
+          {"simShape", (int)rysum::shapeFan},
+          {"simShapeAmt", 0.9f},
+          {"simW", 32.0f},
+          {"simL", 36.0f},
+          {"simH", 12.0f},
+          {"simAbs", 0.08f},
+          {"simLy", 0.2f}},
+         {});
+    make(u8("90 Saal \xe2\x80\x93 Der Grundriss atmet"),
+         {{"stop1", 1},
+          {"stop2", 1},
+          {"stop4", 1},
+          {"simOn", 1},
+          {"simShape", (int)rysum::shapeApse},
+          {"simShapeAmt", 0.5f},
+          {"simW", 16.0f},
+          {"simL", 30.0f},
+          {"simH", 12.0f},
+          {"simAbs", 0.03f},
+          {"lfo1Shape", (float)shSmooth},
+          {"lfo1Rate", 0.04f},
+          {"lfo2Shape", (float)shSmooth},
+          {"lfo2Rate", 0.023f}},
+         {{srcLfo1, "simShapeAmt", 0.5f}, {srcLfo2, "simSize", 0.25f}});
+    make(u8("91 Raumverfall \xe2\x80\x93 Verwittern"),
+         {{"stop1", 1},
+          {"stop2", 1},
+          {"stop7", 1},
+          {"motion1", 1},
+          {"rate1", 0.04f},
+          {"motion7", 1},
+          {"rate7", -0.05f},
+          {"spcWeather", 90.0f},
+          {"spcDrops", 0.15f},
+          {"irEnvelop", 0.5f}},
+         {});
+    make(u8("92 Raumverfall \xe2\x80\x93 Raster"),
+         {{"stop3", 1},
+          {"stop6", 1},
+          {"motion3", 1},
+          {"rate3", 0.15f},
+          {"motion6", 3},
+          {"rate6", 0.4f},
+          {"depth6", 90.0f},
+          {"spcGrid", 0.85f}},
+         {});
+    make(u8("93 Raumverfall \xe2\x80\x93 Kugel aus Sand"),
+         {{"stop1", 1},
+          {"stop4", 1},
+          {"stop5", 1},
+          {"motion4", 2},
+          {"rate4", 0.2f},
+          {"depth4", 120.0f},
+          {"spcBits", 5.0f},
+          {"spcRate", 1500.0f},
+          {"spcDrops", 0.35f},
+          {"degAmount", 0.25f},
+          {"degGrain", 0.3f}},
+         {});
+    make(u8("94 Raumverfall \xe2\x80\x93 Geisterrichtungen"),
+         {{"stop3", 1}, {"stop2", 1}, {"motion3", 1}, {"rate3", 0.1f}, {"spcAlias", 0.8f}}, {});
+    make(u8("95 Raumverfall \xe2\x80\x93 Die Kugel atmet aus"),
+         {{"stop1", 1},
+          {"stop6", 1},
+          {"motion6", 1},
+          {"rate6", 0.25f},
+          {"spcErode", 0.0f},
+          {"lfo1Shape", (float)shSmooth},
+          {"lfo1Rate", 0.06f}},
+         {{srcLfo1, "spcErode", 1.0f, true}});
+    make(u8("96 Wolke \xe2\x80\x93 Flirrende Mixtur"),
+         {{"stop1", 1},
+          {"stop6", 1},
+          {"cloudMix6", 0.75f},
+          {"cloudDens6", 90.0f},
+          {"cloudSpread6", 30.0f},
+          {"cloudSize6", 35.0f},
+          {"cloudScatter6", 15.0f}},
+         {});
+    makeFull(u8("97 Wolke \xe2\x80\x93 Die Orgel l\xc3\xb6st sich auf"),
+             {{"stop1", 1},
+              {"stop2", 1},
+              {"stop3", 1},
+              {"cloudMix1", 0.15f},
+              {"cloudMix2", 0.15f},
+              {"cloudMix3", 0.15f},
+              {"cloudSpread1", 180.0f},
+              {"cloudSpread2", 180.0f},
+              {"cloudSpread3", 180.0f},
+              {"cloudSize1", 220.0f},
+              {"cloudSize2", 220.0f},
+              {"cloudSize3", 220.0f},
+              {"cloudScatter1", 120.0f},
+              {"cloudScatter2", 120.0f},
+              {"cloudScatter3", 120.0f},
+              {"cloudDens1", 35.0f},
+              {"cloudDens2", 35.0f},
+              {"cloudDens3", 35.0f}},
+             {},
+             {{},
+              {{"cloudMix1", 0.4f}, {"cloudMix2", 0.4f}, {"cloudMix3", 0.4f}},
+              {{"cloudMix1", 0.8f}, {"cloudMix2", 0.8f}, {"cloudMix3", 0.8f}},
+              {{"cloudMix1", 1.0f}, {"cloudMix2", 1.0f}, {"cloudMix3", 1.0f}, {"spcErode", 0.4f}}},
+             false);
+    make(u8("98 Wolke \xe2\x80\x93 Chor aus allen Richtungen"),
+         {{"stop2", 1},
+          {"stop7", 1},
+          {"vol7", -6.0f},
+          {"cloudMix2", 0.6f},
+          {"cloudDens2", 20.0f},
+          {"cloudSpread2", 120.0f},
+          {"cloudSize2", 420.0f},
+          {"cloudScatter2", 60.0f},
+          {"cloudMix7", 0.35f},
+          {"cloudDens7", 15.0f},
+          {"cloudSpread7", 90.0f},
+          {"cloudSize7", 300.0f}},
+         {});
+    make(u8("99 Wolke kreist im Saal"),
+         {{"stop3", 1},
+          {"stop5", 1},
+          {"motion3", 1},
+          {"rate3", 0.3f},
+          {"motion5", 1},
+          {"rate5", -0.22f},
+          {"cloudMix3", 0.6f},
+          {"cloudSpread3", 40.0f},
+          {"cloudScatter3", 150.0f},
+          {"cloudDens3", 50.0f},
+          {"cloudMix5", 0.6f},
+          {"cloudSpread5", 40.0f},
+          {"cloudScatter5", 150.0f},
+          {"cloudDens5", 50.0f},
+          {"simOn", 1},
+          {"simShape", (int)rysum::shapeOct},
+          {"simShapeAmt", 0.6f},
+          {"simW", 18.0f},
+          {"simL", 24.0f},
+          {"simH", 12.0f},
+          {"spcWeather", 180.0f}},
+         {});
+
+    // ---- set 13: Ansprache, Abriss, Obertoene (Raum · Pfeife), Luft umkehren, Klick-Resonanz,
+    // Glitch
+    //      (internal stop numbers: 0 Praestant 8', 1 Gedackt, 2 Octave 4', 3 Octave 2', 4
+    //      Sesquialtera, 5 Mixtur, 6 Trompete, 7 Praestant 16')
+    currentSet = 13;
+    make(u8("100 Ansprache \xe2\x80\x93 Weiche Rede"),
+         {{"stop0", 1}, {"stop1", 1}, {"pipeAtt0", -0.8f}, {"pipeAtt1", -0.7f}, {"click", 0.1f}},
+         {});
+    make(u8("101 Ansprache \xe2\x80\x93 Sch\xc3\xa4rfe"),
+         {{"stop0", 0},
+          {"stop2", 1},
+          {"stop3", 1},
+          {"pipeAtt2", 0.9f},
+          {"pipeSharp2", 0.6f},
+          {"pipeAtt3", 0.9f},
+          {"pipeSharp3", 0.7f}},
+         {});
+    make(u8("102 Ansprache \xe2\x80\x93 Nur das Anblasen"),
+         {{"stop0", 0},
+          {"stop2", 1},
+          {"stop5", 1},
+          {"pipeAtt2", 0.5f},
+          {"pipeIso2", 1.0f},
+          {"pipeRep2", 0.4f},
+          {"pipeAtt5", 0.5f},
+          {"pipeIso5", 1.0f},
+          {"pipeRep5", 0.25f},
+          {"simOn", 1},
+          {"simW", 16.0f},
+          {"simL", 30.0f},
+          {"simH", 12.0f}},
+         {});
+    make(u8("103 Ansprache \xe2\x80\x93 Kr\xc3\xa4hende Pfeife"),
+         {{"stop0", 1},
+          {"stop2", 1},
+          {"pipeAtt0", 0.7f},
+          {"pipeSharp0", 0.4f},
+          {"pipeRep0", 0.85f},
+          {"pipeAtt2", 0.5f},
+          {"pipeRep2", 0.6f}},
+         {});
+    make(u8("104 Abriss \xe2\x80\x93 Atem"),
+         {{"stop0", 1},
+          {"stop1", 1},
+          {"pipePuff0", 0.7f},
+          {"pipePuff1", 1.0f},
+          {"releaseClick", 0.0f},
+          {"noteSpread", 1}},
+         {});
+    make(u8("105 Abriss \xe2\x80\x93 Seufzer im Kirchenschiff"),
+         {{"stop7", 1},
+          {"stop6", 1},
+          {"stop0", 0},
+          {"pipePuff7", 1.0f},
+          {"pipePuff6", 0.8f},
+          {"simOn", 1},
+          {"simShape", (int)rysum::shapeCross},
+          {"simShapeAmt", 0.3f},
+          {"simW", 26.0f},
+          {"simL", 42.0f},
+          {"simH", 18.0f},
+          {"master", -15.0f}},
+         {});
+    make(u8("106 Obert\xc3\xb6ne \xe2\x80\x93 Glasorgel"),
+         {{"stop0", 1},
+          {"stop2", 1},
+          {"pipeHiFreq0", 3000.0f},
+          {"pipeHiGain0", 10.0f},
+          {"pipeHiShape0", 0.4f},
+          {"pipeHiFreq2", 3500.0f},
+          {"pipeHiGain2", 9.0f},
+          {"pipeHiShape2", 0.4f}},
+         {});
+    make(u8("107 Obert\xc3\xb6ne \xe2\x80\x93 Unter der Decke"),
+         {{"stop7", 1},
+          {"stop5", 1},
+          {"stop0", 0},
+          {"pipeHiFreq5", 2500.0f},
+          {"pipeHiGain5", -20.0f},
+          {"pipeHiFreq7", 1200.0f},
+          {"pipeHiGain7", -12.0f},
+          {"master", -14.0f}},
+         {});
+    make(u8("108 Obert\xc3\xb6ne \xe2\x80\x93 Nadelanschlag"),
+         {{"stop0", 1},
+          {"stop3", 1},
+          {"pipeHiFreq0", 5000.0f},
+          {"pipeHiGain0", 6.0f},
+          {"pipeHiShape0", 1.0f},
+          {"pipeHiFreq3", 6000.0f},
+          {"pipeHiGain3", 8.0f},
+          {"pipeHiShape3", 1.0f}},
+         {});
+    make(u8("109 Luft umkehren \xe2\x80\x93 Ferne Pr\xc3\xa4senz"),
+         {{"stop0", 1},
+          {"stop2", 1},
+          {"stop3", 1},
+          {"airInvert", 0.85f},
+          {"simOn", 1},
+          {"simW", 24.0f},
+          {"simL", 60.0f},
+          {"simH", 16.0f},
+          {"simLy", 0.1f},
+          {"master", -17.0f}},
+         {});
+    make(u8("110 Klick-Resonanz \xe2\x80\x93 Die Traktur singt"),
+         {{"stop0", 0},
+          {"stop1", 1},
+          {"vol1", -16.0f},
+          {"click", 0.8f},
+          {"releaseClick", 0.6f},
+          {"clickBlend", 0.7f},
+          {"clickRes", 0.8f},
+          {"clickResDecay", 0.9f},
+          {"clickResBright", 0.6f}},
+         {});
+    make(u8("111 Klick-Resonanz \xe2\x80\x93 Tasten wie Glocken"),
+         {{"stop0", 0},
+          {"stop1", 1},
+          {"vol1", -22.0f},
+          {"click", 1.0f},
+          {"releaseClick", 1.0f},
+          {"clickBlend", 1.0f},
+          {"clickRes", 1.0f},
+          {"clickResDecay", 2.2f},
+          {"clickResBright", 0.9f},
+          {"simOn", 1},
+          {"simW", 18.0f},
+          {"simL", 34.0f},
+          {"simH", 14.0f}},
+         {});
+    make(u8("112 Glitch \xe2\x80\x93 Stottern"), {{"stop0", 1}, {"stop2", 1}, {"degStutter", 0.6f}},
+         {});
+    make(u8("113 Glitch \xe2\x80\x93 Bandschnitt"),
+         {{"stop0", 1}, {"stop1", 1}, {"degSplice", 0.85f}}, {});
+    make(u8("114 Glitch \xe2\x80\x93 Harte Kanten"),
+         {{"stop0", 0}, {"stop2", 1}, {"stop3", 1}, {"stop5", 1}, {"degZero", 0.9f}}, {});
+    make(u8("115 Glitch \xe2\x80\x93 Clipping-Gewitter"),
+         {{"stop7", 1},
+          {"stop6", 1},
+          {"stop0", 0},
+          {"degClip", 0.7f},
+          {"degStutter", 0.25f},
+          {"master", -16.0f}},
+         {});
+    make(u8("116 Atmende Ansprache"),
+         {{"stop0", 1},
+          {"stop2", 1},
+          {"pipeAtt0", 0.0f},
+          {"pipeAtt2", 0.0f},
+          {"pipePuff0", 0.5f},
+          {"lfo1Shape", (float)shSmooth},
+          {"lfo1Rate", 0.05f}},
+         {{srcLfo1, "pipeAtt0", 0.9f}, {srcLfo1, "pipeAtt2", -0.8f}});
+    make(u8("117 Alles zerf\xc3\xa4llt"),
+         {{"stop0", 1},
+          {"stop2", 1},
+          {"stop5", 1},
+          {"pipeAtt0", 0.6f},
+          {"pipeRep0", 0.5f},
+          {"pipePuff0", 0.6f},
+          {"clickRes", 0.6f},
+          {"clickResDecay", 0.7f},
+          {"degStutter", 0.3f},
+          {"degSplice", 0.4f},
+          {"degZero", 0.3f},
+          {"degAmount", 0.2f},
+          {"degGrain", 0.25f},
+          {"spcWeather", 120.0f},
+          {"spcDrops", 0.2f}},
+         {});
+
+    // ---- set 14: playing with the hands - velocity, pitch wheel, mod wheel, pressure; long
+    // evolutions; wild ones
+    //      (every patch: pitch wheel -> +-2 semitones per pipe, unless said otherwise)
+    currentSet = 14;
+    {
+        const float bend2 = 1.0f / 6.0f;
+        // 70 again: its scenes had switched its own LFO route off (route amounts are part of the
+        // scenes now)
+        makeFull(u8("70 Szenen \xe2\x80\x93 Wanderung von selbst"),
+                 {{"stop1", 1}, {"lfo1Shape", (float)shTriangle}, {"lfo1Rate", 0.02f}},
+                 {{srcLfo1, "sceneMorph", 1.0f, true}},
+                 {{},
+                  {{"motion0", 1},
+                   {"motion1", 1},
+                   {"rate0", 0.2f},
+                   {"rate1", -0.15f},
+                   {"ellipse0", 0.5f},
+                   {"ellipse1", 0.5f}},
+                  {{"motion0", 1},
+                   {"motion1", 1},
+                   {"rate0", 0.35f},
+                   {"rate1", -0.3f},
+                   {"stop3", 1},
+                   {"fxEchoLevel", 0.6f},
+                   {"fxEchoTurn", 120.0f}},
+                  {{"stop0", 0},
+                   {"stop7", 1},
+                   {"stop3", 1},
+                   {"tremOn", 1},
+                   {"tremDepth", 0.4f},
+                   {"degAmount", 0.4f},
+                   {"degWobble", 0.5f},
+                   {"motion1", 2},
+                   {"rate1", 0.1f}}},
+                 false);
+
+        // velocity shapes the whole pipe: soft = a swelling, dull, distant breath; hard = a sharp,
+        // bright, close chiff (envelope 2 is held at 1 while a key is down: it gives the soft end
+        // its offset)
+        make(u8("118 Anschlag \xe2\x80\x93 Vom Hauch zum Schrei"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"pipeAtt0", -0.9f},
+              {"pipeAtt2", -0.9f},
+              {"pipePuff0", 0.3f},
+              {"pipePuff2", 0.3f},
+              {"env2Attack", 0.001f},
+              {"env2Decay", 1.0f},
+              {"env2Sustain", 1.0f},
+              {"env2Release", 20.0f}},
+             {{srcVelocity, pipe(tgtAttack), 1.0f},
+              {srcVelocity, pipe(tgtAttack), 0.9f},
+              {srcVelocity, pipe(tgtAttSharp), 0.9f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcEnv2, pipe(tgtLevel), -0.15f},
+              {srcVelocity, pipe(tgtBright), 0.5f},
+              {srcEnv2, pipe(tgtBright), -0.4f},
+              {srcVelocity, pipe(tgtHiGain), 0.4f},
+              {srcVelocity, pipe(tgtDist), -0.25f},
+              {srcVelocity, "clickRes", 0.7f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcModWheel, pipe(tgtAttRep), 0.9f},
+              {srcModWheel, pipe(tgtCloudMix), 0.45f},
+              {srcPressure, pipe(tgtHiGain), 0.3f}});
+
+        // the mod wheel goes through four scenes: a church -> sharp speech -> tape and grid -> a
+        // broken machine
+        makeFull(u8("119 Modrad \xe2\x80\x93 Kirche wird Maschine"),
+                 {{"stop0", 1},
+                  {"stop1", 1},
+                  {"simOn", 1},
+                  {"simShape", (int)rysum::shapeApse},
+                  {"simShapeAmt", 0.6f},
+                  {"simW", 16.0f},
+                  {"simL", 30.0f},
+                  {"simH", 12.0f},
+                  {"master", -14.0f}},
+                 {{srcModWheel, "sceneMorph", 1.0f},
+                  {srcVelocity, pipe(tgtAttack), 0.8f},
+                  {srcPitchWheel, pipe(tgtPitch), bend2},
+                  {srcVelocity, pipe(tgtClip), 0.0f}},
+                 {{},
+                  {{"pipeAtt0", 0.6f},
+                   {"pipeSharp0", 0.5f},
+                   {"pipeRep0", 0.4f},
+                   {"pipeHiGain0", 6.0f},
+                   {"pipeHiShape0", 0.6f},
+                   {"cloudMix1", 0.3f},
+                   {"stop3", 1}},
+                  {{"stop3", 1},
+                   {"stop5", 1},
+                   {"pipeRep0", 0.7f},
+                   {"degStutter", 0.5f},
+                   {"degSplice", 0.6f},
+                   {"degAmount", 0.4f},
+                   {"degBits", 8.0f},
+                   {"cloudMix0", 0.4f},
+                   {"cloudMix1", 0.6f},
+                   {"spcGrid", 0.6f},
+                   {"clickRes", 0.5f},
+                   {"mod4Amt", 0.4f}},
+                  {{"stop3", 1},
+                   {"stop5", 1},
+                   {"stop6", 1},
+                   {"stop7", 1},
+                   {"degStutter", 0.8f},
+                   {"degSplice", 0.9f},
+                   {"degZero", 0.9f},
+                   {"degClip", 0.4f},
+                   {"degAmount", 0.8f},
+                   {"degBits", 4.0f},
+                   {"degRate", 2500.0f},
+                   {"spcErode", 0.6f},
+                   {"spcAlias", 0.7f},
+                   {"airInvert", 1.0f},
+                   {"pipeIso0", 0.5f},
+                   {"clickRes", 1.0f},
+                   {"mod4Amt", 0.7f}}},
+                 false);
+
+        // pitch wheel down: the organ runs out of breath (wind model "instabil": edge tones); up:
+        // it bends up, rises and brightens
+        make(u8("120 Tonh\xc3\xb6henrad \xe2\x80\x93 Atemnot"),
+             {{"windModel", 1},
+              {"stop0", 1},
+              {"stop1", 1},
+              {"stop2", 1},
+              {"swind0", 0.85f},
+              {"swind1", 0.85f},
+              {"swind2", 0.85f},
+              {"tremOn", 1},
+              {"tremDepth", 0.0f},
+              {"pipePuff0", 0.5f},
+              {"pipePuff1", 0.7f}},
+             {{srcPitchWheel, pipe(tgtWind), 0.8f},
+              {srcPitchWheel, pipe(tgtPitch), 1.0f / 12.0f},
+              {srcPitchWheel, pipe(tgtEl), 0.4f},
+              {srcPitchWheel, pipe(tgtHiFreq), 0.4f},
+              {srcModWheel, "tremDepth", 0.9f},
+              {srcVelocity, pipe(tgtPuff), 0.5f},
+              {srcVelocity, pipe(tgtAttack), 0.6f},
+              {srcPressure, pipe(tgtWind), 0.3f}});
+
+        // aftertouch / MPE pressure blows the pipe: without pressure it barely speaks
+        make(u8("121 Druck \xe2\x80\x93 Die Pfeife unter dem Finger"),
+             {{"windModel", 1},
+              {"stop0", 1},
+              {"stop3", 1},
+              {"swind0", 0.38f},
+              {"swind3", 0.38f},
+              {"pipeAtt0", -0.5f},
+              {"pipeAtt3", -0.5f}},
+             {{srcPressure, pipe(tgtWind), 0.62f},
+              {srcPressure, pipe(tgtHiGain), 0.45f},
+              {srcPressure, pipe(tgtCloudMix), 0.5f},
+              {srcSlide, pipe(tgtAz), 0.6f},
+              {srcSlide, pipe(tgtHiFreq), -0.5f},
+              {srcVelocity, pipe(tgtAttack), 1.0f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcModWheel, pipe(tgtAttRep), 0.8f},
+              {srcModWheel, pipe(tgtCloudSpread), 0.6f}});
+
+        // half an hour that never repeats: four slow random LFOs at odd rates - the scenes, and
+        // every pipe its own chiff and cloud (mod wheel: the wandering speeds up)
+        makeFull(u8("122 Lange Wanderung"),
+                 {{"stop0", 0},
+                  {"stop1", 1},
+                  {"lfo4Shape", (float)shSmooth},
+                  {"lfo4Rate", 0.01f},
+                  {"lfo3Shape", (float)shSmooth},
+                  {"lfo3Rate", 0.0137f},
+                  {"lfo3Spread", 1.0f},
+                  {"lfo3SpreadMode", 1},
+                  {"lfo2Shape", (float)shSmooth},
+                  {"lfo2Rate", 0.0171f},
+                  {"lfo2Spread", 1.0f},
+                  {"lfo2SpreadMode", 1},
+                  {"lfo1Shape", (float)shSmooth},
+                  {"lfo1Rate", 0.023f},
+                  {"lfo1Spread", 0.5f}},
+                 {{srcLfo4, "sceneMorph", 1.0f, true},
+                  {srcLfo3, pipe(tgtAttack), 0.8f},
+                  {srcLfo2, pipe(tgtCloudMix), 0.6f, true},
+                  {srcLfo1, pipe(tgtAz), 0.35f},
+                  {srcLfo2, pipe(tgtHiGain), 0.3f},
+                  {srcModWheel, "lfo4Rate", 0.5f},
+                  {srcModWheel, "lfo3Rate", 0.4f},
+                  {srcVelocity, pipe(tgtLevel), 0.2f},
+                  {srcPitchWheel, pipe(tgtPitch), bend2}},
+                 {{},
+                  {{"stop2", 1},
+                   {"cloudMix2", 0.4f},
+                   {"cloudSpread2", 120.0f},
+                   {"motion2", 1},
+                   {"rate2", 0.03f}},
+                  {{"stop2", 1},
+                   {"stop4", 1},
+                   {"stop5", 1},
+                   {"vol5", -10.0f},
+                   {"degSplice", 0.5f},
+                   {"pipeIso5", 0.6f},
+                   {"pipeRep5", 0.5f}},
+                  {{"stop7", 1},
+                   {"stop6", 1},
+                   {"vol6", -8.0f},
+                   {"degAmount", 0.5f},
+                   {"degWobble", 0.6f},
+                   {"spcWeather", 300.0f},
+                   {"airInvert", 0.6f}}},
+                 false);
+
+        // soft = a glass organ (bright, soft overtones); hard = it shatters (hard edges, clipping,
+        // spiky overtones); wheel: it stutters
+        make(u8("123 Anschlag \xe2\x80\x93 Glas zerspringt"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop3", 1},
+              {"pipeHiFreq0", 3000.0f},
+              {"pipeHiGain0", 8.0f},
+              {"pipeHiShape0", -0.6f},
+              {"pipeHiFreq2", 3500.0f},
+              {"pipeHiGain2", 7.0f},
+              {"pipeHiShape2", -0.6f},
+              {"pipeHiFreq3", 4500.0f},
+              {"pipeHiGain3", 6.0f},
+              {"pipeHiShape3", -0.6f}},
+             {{srcVelocity, pipe(tgtZero), 0.8f},
+              {srcVelocity, pipe(tgtClip), 0.6f},
+              {srcVelocity, pipe(tgtHiShape), 1.0f},
+              {srcVelocity, pipe(tgtHiShape), 0.6f},
+              {srcVelocity, pipe(tgtAttSharp), 1.0f},
+              {srcModWheel, pipe(tgtStutter), 0.8f},
+              {srcModWheel, pipe(tgtSplice), 0.6f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcPitchWheel, pipe(tgtHiFreq), 0.5f}});
+
+        // no note like the last: chiff, overtones, direction, a little pitch, cloud, bits, puff -
+        // drawn anew for every note (LFO 1 almost still, Versatz random: every pipe also keeps its
+        // own leaning)
+        make(u8("124 Zufall je Ton \xe2\x80\x93 Kein Ton gleich"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"stop3", 1},
+              {"degAmount", 0.0f},
+              {"degDropouts", 0.0f},
+              {"degWobble", 0.0f},
+              {"degBits", 16.0f},
+              {"lfo1Shape", (float)shSine},
+              {"lfo1Rate", 0.01f},
+              {"lfo1Spread", 1.0f},
+              {"lfo1SpreadMode", 1}},
+             {{srcRandom, pipe(tgtAttack), 0.8f},
+              {srcLfo1, pipe(tgtHiFreq), 0.5f},
+              {srcLfo1, pipe(tgtHiGain), 0.35f},
+              {srcRandom, pipe(tgtAz), 0.5f},
+              {srcLfo1, pipe(tgtEl), 0.3f},
+              {srcRandom, pipe(tgtPitch), 0.006f},
+              {srcRandom, pipe(tgtCloudMix), 0.5f},
+              {srcLfo1, pipe(tgtDegrade), 0.4f, true},
+              {srcRandom, pipe(tgtDegBits), -0.7f},
+              {srcRandom, pipe(tgtPuff), 0.8f},
+              {srcLfo1, pipe(tgtAttRep), 0.6f},
+              {srcModWheel, pipe(tgtStutter), 0.7f},
+              {srcVelocity, pipe(tgtLevel), 0.25f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+
+        // the mod wheel lets the organ evaporate: the sustain falls away until only the chiffs are
+        // left, dissolved into a cloud, far away, the sphere worn down
+        make(u8("125 Modrad \xe2\x80\x93 Die Orgel verdunstet"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop7", 1},
+              {"simOn", 1},
+              {"simW", 20.0f},
+              {"simL", 36.0f},
+              {"simH", 14.0f},
+              {"master", -14.0f}},
+             {{srcModWheel, pipe(tgtAttIso), 1.0f},
+              {srcModWheel, pipe(tgtCloudMix), 0.9f},
+              {srcModWheel, pipe(tgtCloudSpread), 0.7f},
+              {srcModWheel, pipe(tgtCloudSize), 0.5f},
+              {srcModWheel, pipe(tgtDist), 0.45f},
+              {srcModWheel, "spcErode", 0.85f},
+              {srcModWheel, pipe(tgtAttRep), 0.7f},
+              {srcVelocity, pipe(tgtAttack), 0.8f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcPressure, pipe(tgtLevel), 0.2f}});
+
+        // clockwork: every pipe gated by a fast square at its own phase (polyrhythms across the
+        // keyboard), the action rings; mod wheel: faster and stuttering; velocity: repeated chiffs
+        // and a brighter ring
+        make(u8("126 Uhrwerk der Traktur"),
+             {{"stop0", 0},
+              {"stop1", 1},
+              {"stop3", 1},
+              {"lfo1Shape", (float)shSquare},
+              {"lfo1Rate", 5.0f},
+              {"lfo1Spread", 0.37f},
+              {"lfo2Shape", (float)shSteps},
+              {"lfo2Rate", 3.0f},
+              {"lfo2Spread", 1.0f},
+              {"lfo2SpreadMode", 1},
+              {"click", 0.7f},
+              {"releaseClick", 0.6f},
+              {"clickRes", 0.7f},
+              {"clickResDecay", 0.5f},
+              {"pipeAtt1", 0.8f},
+              {"pipeAtt3", 0.8f},
+              {"pipeIso1", 0.4f}},
+             {{srcLfo1, pipe(tgtLevel), -0.5f, true},
+              {srcLfo2, pipe(tgtAz), 0.5f},
+              {srcLfo2, pipe(tgtHiGain), 0.3f},
+              {srcModWheel, "lfo1Rate", 0.3f},
+              {srcModWheel, pipe(tgtStutter), 0.7f},
+              {srcVelocity, "clickResBright", 0.6f},
+              {srcVelocity, pipe(tgtAttRep), 0.7f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+
+        // a tipsy organist: every note a little off, the wind of every pipe sways on its own, hard
+        // notes stammer; mod wheel: more detuned, more wobble
+        make(u8("127 Der Organist hat getrunken"),
+             {{"windModel", 1},
+              {"stop0", 1},
+              {"stop1", 1},
+              {"stop2", 1},
+              {"degAmount", 0.3f},
+              {"degWobble", 0.7f},
+              {"degDropouts", 0.0f},
+              {"degBits", 16.0f},
+              {"degGrain", 0.0f},
+              {"lfo1Shape", (float)shSmooth},
+              {"lfo1Rate", 0.4f},
+              {"lfo1Spread", 1.0f},
+              {"lfo1SpreadMode", 1}},
+             {{srcRandom, pipe(tgtPitch), 0.012f},
+              {srcLfo1, pipe(tgtWind), -0.5f, true},
+              {srcLfo1, pipe(tgtPitch), 0.006f},
+              {srcVelocity, pipe(tgtAttRep), 0.8f},
+              {srcVelocity, pipe(tgtStutter), 0.4f},
+              {srcRandom, pipe(tgtAz), 0.4f},
+              {srcModWheel, "detune", 0.8f},
+              {srcModWheel, pipe(tgtWobble), 0.6f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+
+        // every note decays on its own: after a second it starts to crumble (bits, rate, dropouts,
+        // cloud, stutter) for 12 s; pressure holds it together, the mod wheel makes it crumble
+        // faster
+        make(u8("128 H\xc3\xbcllkurve \xe2\x80\x93 Jeder Ton zerf\xc3\xa4llt"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"degAmount", 0.0f},
+              {"degBits", 4.0f},
+              {"degRate", 3000.0f},
+              {"degGrain", 0.5f},
+              {"degDropouts", 0.3f},
+              {"degWobble", 0.5f},
+              {"env2Delay", 1.0f},
+              {"env2Attack", 12.0f},
+              {"env2Decay", 1.0f},
+              {"env2Sustain", 1.0f},
+              {"env2Release", 6.0f},
+              {"env1Attack", 0.002f},
+              {"env1Decay", 2.5f},
+              {"env1Sustain", 0.2f},
+              {"env1Release", 1.0f}},
+             {{srcEnv2, pipe(tgtDegrade), 1.0f},
+              {srcEnv2, pipe(tgtCloudMix), 0.8f},
+              {srcEnv2, pipe(tgtStutter), 0.4f},
+              {srcEnv2, pipe(tgtBright), -0.35f},
+              {srcEnv1, pipe(tgtHiGain), 0.5f},
+              {srcVelocity, pipe(tgtAttack), 1.0f},
+              {srcModWheel, "env2Attack", -0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcPressure, pipe(tgtDegrade), -0.6f}});
+
+        // four instruments on the mod wheel: a flute in a small room - reeds in a cruciform church
+        // - only chiffs and ringing keys in a fan-shaped hall - a frozen cloud in a weathering
+        // sphere
+        makeFull(u8("129 Modrad \xe2\x80\x93 Vier Orgeln"),
+                 {{"stop0", 0},
+                  {"stop1", 1},
+                  {"simOn", 1},
+                  {"simW", 5.0f},
+                  {"simL", 7.0f},
+                  {"simH", 3.5f},
+                  {"simAbs", 0.2f},
+                  {"master", -14.0f}},
+                 {{srcModWheel, "sceneMorph", 1.0f},
+                  {srcVelocity, pipe(tgtAttack), 0.8f},
+                  {srcPitchWheel, pipe(tgtPitch), bend2},
+                  {srcPressure, pipe(tgtHiGain), 0.4f}},
+                 {{},
+                  {{"stop1", 0},
+                   {"stop6", 1},
+                   {"stop5", 1},
+                   {"stop7", 1},
+                   {"simShape", (int)rysum::shapeCross},
+                   {"simShapeAmt", 0.5f},
+                   {"simW", 28.0f},
+                   {"simL", 46.0f},
+                   {"simH", 18.0f},
+                   {"simAbs", 0.04f},
+                   {"simScatter", 0.4f},
+                   {"pipePuff6", 0.8f}},
+                  {{"stop1", 0},
+                   {"stop2", 1},
+                   {"stop3", 1},
+                   {"pipeIso2", 1.0f},
+                   {"pipeIso3", 1.0f},
+                   {"pipeRep2", 0.5f},
+                   {"pipeRep3", 0.6f},
+                   {"pipeAtt2", 0.8f},
+                   {"pipeAtt3", 0.8f},
+                   {"clickRes", 1.0f},
+                   {"clickResDecay", 1.5f},
+                   {"click", 0.8f},
+                   {"simShape", (int)rysum::shapeFan},
+                   {"simShapeAmt", 1.0f},
+                   {"simW", 30.0f},
+                   {"simL", 34.0f},
+                   {"simH", 12.0f}},
+                  {{"stop1", 1},
+                   {"stop7", 1},
+                   {"cloudMix1", 1.0f},
+                   {"cloudMix7", 0.8f},
+                   {"cloudSize1", 420.0f},
+                   {"cloudSize7", 420.0f},
+                   {"cloudSpread1", 180.0f},
+                   {"cloudSpread7", 180.0f},
+                   {"cloudDens1", 25.0f},
+                   {"cloudDens7", 25.0f},
+                   {"spcAlias", 0.6f},
+                   {"spcWeather", 120.0f},
+                   {"degAmount", 0.3f},
+                   {"simW", 40.0f},
+                   {"simL", 80.0f},
+                   {"simH", 30.0f},
+                   {"simAbs", 0.03f}}},
+                 false);
+
+        // the pitch wheel lifts the pipes up into the vault (and a semitone up) or pulls them down
+        // to the floor and near; they circle, with Doppler; hard notes come close; the mod wheel
+        // dissolves them
+        make(u8("130 Tonh\xc3\xb6henrad \xe2\x80\x93 Schwerkraft"),
+             {{"stop0", 1},
+              {"stop3", 1},
+              {"doppler", 2.5f},
+              {"motion0", 1},
+              {"rate0", 0.15f},
+              {"motion3", 1},
+              {"rate3", -0.2f}},
+             {{srcPitchWheel, pipe(tgtEl), 1.0f},
+              {srcPitchWheel, pipe(tgtPitch), 1.0f / 12.0f},
+              {srcPitchWheel, pipe(tgtDist), -0.5f},
+              {srcModWheel, "doppler", 0.4f},
+              {srcVelocity, pipe(tgtDist), -0.5f},
+              {srcVelocity, pipe(tgtAttack), 0.7f},
+              {srcModWheel, pipe(tgtCloudMix), 0.6f},
+              {srcModWheel, pipe(tgtCloudSpread), 0.5f}});
+
+        // for MPE (or aftertouch + CC 74): pressure = loudness and overtones, slide = direction,
+        // cloud and colour; wheel: only the chiff
+        make(u8("131 Druck & Gleiten \xe2\x80\x93 Kontinuum"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"vol0", -10.0f},
+              {"vol2", -10.0f},
+              {"pipeAtt0", -0.6f},
+              {"pipeAtt2", -0.6f}},
+             {{srcPressure, pipe(tgtLevel), 0.3f},
+              {srcPressure, pipe(tgtHiGain), 0.5f},
+              {srcPressure, pipe(tgtHiShape), 0.6f},
+              {srcSlide, pipe(tgtAz), 0.8f},
+              {srcSlide, pipe(tgtCloudMix), 0.7f},
+              {srcSlide, pipe(tgtHiFreq), -0.6f},
+              {srcVelocity, pipe(tgtAttack), 1.0f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcModWheel, pipe(tgtAttIso), 0.8f}});
+
+        // slow erosion: the sphere weathers over ten minutes of playing, LFOs (100 s and more) wear
+        // it down and let it grow back, every pipe drifts in its own chiff and cloud; the mod wheel
+        // makes it weather faster
+        make(u8("132 Langsame Erosion"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"stop2", 1},
+              {"spcWeather", 600.0f},
+              {"degAmount", 0.0f},
+              {"degBits", 6.0f},
+              {"degDropouts", 0.1f},
+              {"lfo4Shape", (float)shSmooth},
+              {"lfo4Rate", 0.01f},
+              {"lfo3Shape", (float)shSine},
+              {"lfo3Rate", 0.01f},
+              {"lfo3Spread", 1.0f},
+              {"lfo3SpreadMode", 1}},
+             {{srcLfo4, "spcErode", 0.5f, true},
+              {srcLfo3, pipe(tgtAttack), 0.7f},
+              {srcLfo3, pipe(tgtCloudMix), 0.5f, true},
+              {srcLfo4, pipe(tgtDegrade), 0.4f, true},
+              {srcModWheel, "spcWeather", -0.6f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+
+        // velocity = explosion: soft notes are clean, hard ones clip, cut, crush, scatter all
+        // around and come close; pitch wheel +-12 semitones; mod wheel: stutter and a broken
+        // sphere; pressure: tape splices
+        make(u8("133 Anschlag \xe2\x80\x93 Explosion"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop5", 1},
+              {"stop7", 1},
+              {"master", -18.0f},
+              {"simOn", 1},
+              {"simW", 24.0f},
+              {"simL", 40.0f},
+              {"simH", 16.0f},
+              {"degAmount", 0.0f},
+              {"degBits", 16.0f}},
+             {{srcVelocity, pipe(tgtClip), 1.0f},
+              {srcVelocity, pipe(tgtZero), 1.0f},
+              {srcVelocity, pipe(tgtHiGain), 0.7f},
+              {srcVelocity, pipe(tgtDist), -0.6f},
+              {srcVelocity, pipe(tgtCloudMix), 0.8f},
+              {srcVelocity, pipe(tgtCloudSpread), 1.0f},
+              {srcVelocity, pipe(tgtDegBits), -0.9f},
+              {srcVelocity, pipe(tgtDegrade), 0.8f},
+              {srcVelocity, pipe(tgtAttack), 1.0f},
+              {srcVelocity, pipe(tgtAttRep), 1.0f},
+              {srcPitchWheel, pipe(tgtPitch), 1.0f},
+              {srcModWheel, pipe(tgtStutter), 1.0f},
+              {srcModWheel, "spcAlias", 1.0f},
+              {srcModWheel, "spcErode", 0.7f},
+              {srcPressure, pipe(tgtSplice), 1.0f}});
+    }
+
+    // ---- set 15: the tuning in space (beats move the pipes, difference tones, the Tonnetz), ice
+    // walls, double / long exposure
+    currentSet = 15;
+    {
+        const float bend2 = 1.0f / 6.0f;
+        const int beat = (int)Motion::Beat, tonnetz = (int)Layout::Tonnetz;
+        // play thirds (still), fifths (drifting) and the remote keys (the wolf fifth G#-Eb and the
+        // wolf thirds spin)
+        make(u8("134 Schwebungsraum \xe2\x80\x93 Die Stimmung tanzt"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"motion0", beat},
+              {"rate0", 0.08f},
+              {"motion2", beat},
+              {"rate2", -0.06f},
+              {"simOn", 1},
+              {"simW", 16.0f},
+              {"simL", 24.0f},
+              {"simH", 10.0f},
+              {"master", -20.0f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}});
+        // beats decide the sound: impure intervals crumble and stutter, the wolf howls; pure ones
+        // stay whole
+        make(u8("135 Schwebungsraum \xe2\x80\x93 Wolfsgeheul"),
+             {{"stop0", 1},
+              {"stop3", 1},
+              {"motion0", beat},
+              {"rate0", 0.15f},
+              {"motion3", beat},
+              {"rate3", 0.12f},
+              {"degAmount", 0.0f},
+              {"degBits", 5.0f},
+              {"degRate", 4000.0f},
+              {"degDropouts", 0.2f},
+              {"degWobble", 0.3f}},
+             {{srcBeat, pipe(tgtDegrade), 0.9f},
+              {srcBeat, pipe(tgtStutter), 0.5f},
+              {srcBeat, pipe(tgtHiGain), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcModWheel, pipe(tgtWind), -0.5f}});
+        // beats as light: impure intervals dissolve into clouds and brighten, pure ones stand solid
+        // in place
+        make(u8("136 Schwebung als Licht"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"stop2", 1},
+              {"cloudSpread0", 120.0f},
+              {"cloudSpread2", 120.0f},
+              {"cloudSize0", 160.0f},
+              {"cloudSize2", 160.0f}},
+             {{srcBeat, pipe(tgtCloudMix), 0.9f},
+              {srcBeat, pipe(tgtBright), 0.4f},
+              {srcBeat, pipe(tgtAttRep), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcVelocity, pipe(tgtAttack), 0.6f}});
+        // the resultant 32': held fifths and thirds give their difference tones deep under the
+        // floor
+        make(u8("137 Differenzt\xc3\xb6ne \xe2\x80\x93 Resultantbass"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"fxGhostLevel", 0.0f},
+              {"fxGhostPlace", 1.0f},
+              {"fxGhostCons", 0.8f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}, {srcModWheel, "fxGhostLevel", 0.25f}});
+        // ghosts between the pipes: every pair sounds its difference, where the two pipes are
+        // (spread wide)
+        make(u8("138 Differenzt\xc3\xb6ne \xe2\x80\x93 Geister zwischen den Pfeifen"),
+             {{"stop0", 0},
+              {"stop3", 1},
+              {"stop5", 1},
+              {"vol5", -6.0f},
+              {"fxGhostLevel", 4.0f},
+              {"fxGhostPlace", 0.0f},
+              {"fxGhostCons", 0.0f},
+              {"motion3", 3},
+              {"rate3", 0.1f},
+              {"depth3", 120.0f},
+              {"motion5", 3},
+              {"rate5", 0.13f},
+              {"depth5", 120.0f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}});
+        // a hall of ice: every early reflection a falling chirp from its own direction
+        make(u8("139 Eis-Saal"),
+             {{"stop2", 1},
+              {"stop3", 1},
+              {"click", 0.5f},
+              {"simOn", 1},
+              {"simIce", 1.0f},
+              {"simIceLen", 0.7f},
+              {"simW", 20.0f},
+              {"simL", 30.0f},
+              {"simH", 12.0f},
+              {"simAbs", 0.02f},
+              {"master", -21.0f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}, {srcModWheel, "simIceLen", 0.3f}});
+        // a frozen rotunda: the pipes circle, the round walls chirp
+        make(u8("140 Eis-Saal \xe2\x80\x93 Gefrorene Rotunde"),
+             {{"stop0", 1},
+              {"stop3", 1},
+              {"motion0", 1},
+              {"rate0", 0.12f},
+              {"motion3", 1},
+              {"rate3", -0.17f},
+              {"simOn", 1},
+              {"simShape", (int)rysum::shapeRound},
+              {"simShapeAmt", 1.0f},
+              {"simW", 22.0f},
+              {"simL", 22.0f},
+              {"simH", 16.0f},
+              {"simAbs", 0.02f},
+              {"simIce", 0.8f},
+              {"simIceLen", 1.0f},
+              {"master", -20.0f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}, {srcModWheel, "simIce", 0.2f}});
+        // a mirror image a moment later: what sounded on the left comes back on the right
+        make(u8("141 Doppelbelichtung \xe2\x80\x93 Spiegelbild"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"motion0", 1},
+              {"rate0", 0.1f},
+              {"fxDexMix", 0.8f},
+              {"fxDexTime", 1.5f},
+              {"fxDexMirror", 1},
+              {"fxDexFade", 0.4f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}, {srcModWheel, "fxDexTime", 0.3f}});
+        // the past, exposed again and again: each image a quarter turn further, fainter, duller
+        make(u8("142 Doppelbelichtung \xe2\x80\x93 Echo der Vergangenheit"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"fxDexMix", 0.7f},
+              {"fxDexTime", 4.0f},
+              {"fxDexTurn", 90.0f},
+              {"fxDexAgain", 0.7f},
+              {"fxDexFade", 0.6f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}, {srcModWheel, "fxDexTurn", 0.5f}});
+        // light trails: two registers circle in opposite directions and paint rings on the sphere
+        make(u8("143 Belichtung \xe2\x80\x93 Lichtspuren"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"motion0", 1},
+              {"rate0", 0.3f},
+              {"motion2", 1},
+              {"rate2", -0.5f},
+              {"fxExpoMix", 0.8f},
+              {"fxExpoTime", 6.0f},
+              {"fxExpoBright", 0.4f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}, {srcModWheel, "fxExpoTime", 0.3f}});
+        // a long exposure of jumping pipes: every place they jump to keeps glowing for twenty
+        // seconds
+        make(u8("144 Belichtung \xe2\x80\x93 Zwanzig Sekunden"),
+             {{"stop0", 1},
+              {"stop3", 1},
+              {"motion0", 5},
+              {"rate0", 0.7f},
+              {"depth0", 150.0f},
+              {"motion3", 5},
+              {"rate3", 1.1f},
+              {"depth3", 150.0f},
+              {"fxExpoMix", 1.0f},
+              {"fxExpoTime", 20.0f},
+              {"fxExpoBright", 0.7f},
+              {"master", -15.0f}},
+             {{srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the tuning as a map: Praestant and Octave arranged in the Tonnetz (change the tuning on
+        // the Klang page: the map changes)
+        makeFull(u8("145 Tonnetz \xe2\x80\x93 Die Stimmung als Landkarte"),
+                 {{"stop0", 1}, {"stop2", 1}}, {{srcPitchWheel, pipe(tgtPitch), bend2}}, {}, false,
+                 {{0, tonnetz}, {2, tonnetz}});
+        // the Tonnetz moving: every pipe on its lattice place, turning as fast as it beats
+        makeFull(u8("146 Tonnetz \xe2\x80\x93 Die Karte schwebt"),
+                 {{"stop0", 1},
+                  {"stop1", 1},
+                  {"motion0", beat},
+                  {"rate0", 0.05f},
+                  {"motion1", beat},
+                  {"rate1", -0.05f},
+                  {"fxGhostLevel", -6.0f},
+                  {"fxGhostPlace", 0.5f}},
+                 {{srcPitchWheel, pipe(tgtPitch), bend2}}, {}, false, {{0, tonnetz}, {1, tonnetz}});
+        // everything at once, on the mod wheel: beats move the pipes, ghosts appear, the past is
+        // laid over, trails glow
+        make(u8("147 Die Stimmung wird Raum"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"motion0", beat},
+              {"rate0", 0.1f},
+              {"motion2", beat},
+              {"rate2", -0.08f},
+              {"fxGhostLevel", -60.0f},
+              {"fxGhostPlace", 0.6f},
+              {"fxDexMix", 0.0f},
+              {"fxDexTime", 3.0f},
+              {"fxDexTurn", 180.0f},
+              {"fxExpoMix", 0.0f},
+              {"fxExpoTime", 8.0f},
+              {"simOn", 1},
+              {"simIce", 0.0f},
+              {"simW", 18.0f},
+              {"simL", 30.0f},
+              {"simH", 12.0f},
+              {"master", -20.0f}},
+             {{srcModWheel, "fxGhostLevel", 0.85f},
+              {srcModWheel, "fxDexMix", 0.6f},
+              {srcModWheel, "fxExpoMix", 0.7f},
+              {srcModWheel, "simIce", 0.8f},
+              {srcBeat, pipe(tgtCloudMix), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2},
+              {srcVelocity, pipe(tgtAttack), 0.6f}});
+    }
+
+    // ---- set 16: the living organ (Effekte, third tab) - shared wind, pallets, the walking
+    // listener, wear, sympathetic
+    //      pipes, pure tuning, the Tonnetz walker
+    currentSet = 16;
+    {
+        const int beat = (int)Motion::Beat, tonnetz = (int)Layout::Tonnetz;
+        // a Kalkant treads every four seconds: hold a big chord and the wind runs out before he
+        // comes back
+        make(u8("148 Kalkant \xe2\x80\x93 Der Atem geht aus"),
+             {{"stop7", 1},
+              {"stop0", 1},
+              {"stop1", 1},
+              {"stop2", 1},
+              {"lvBellows", 0.8f},
+              {"lvBellowsSize", 3.0f},
+              {"lvBlower", 1},
+              {"lvTreadRate", 15.0f},
+              {"lvTreadNoise", 0.5f},
+              {"windModel", 1},
+              {"wind", 0.1f}},
+             {});
+        // a blower that is too small for the plenum: every pipe more makes all of them flatter; the
+        // starving organ crackles
+        make(u8("149 Gebl\xc3\xa4se \xe2\x80\x93 Schwere Akkorde"),
+             {{"stop7", 1},
+              {"stop0", 1},
+              {"stop2", 1},
+              {"stop3", 1},
+              {"stop5", 1},
+              {"lvBellows", 0.6f},
+              {"lvBellowsSize", 2.5f},
+              {"fxCrackLevel", 0.5f},
+              {"fxCrackRate", 14.0f}},
+             {{srcBellows, "fxCrackLevel", -0.5f}});
+        // play softly: the pipes speak late, breathy, with their edge tone; play hard: at once
+        make(u8("150 Z\xc3\xb6gernde Tasten"),
+             {{"stop0", 1}, {"stop1", 1}, {"lvPallet", 0.9f}, {"lvPalletSrc", 0}},
+             {{srcVelocity, pipe(tgtAttack), 0.5f}});
+        // for MPE keyboards / aftertouch: the finger holds the pallet - no pressure, no tone
+        make(u8("151 Ventil unter dem Finger (Druck)"),
+             {{"stop0", 1}, {"stop6", 1}, {"lvPallet", 1.0f}, {"lvPalletSrc", 1}, {"windModel", 1}},
+             {});
+        // the listener walks a figure eight through the pipes: they pass close by, with Doppler
+        make(u8("152 Gang durch die Orgel"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop3", 1},
+              {"lvWalkShape", 4},
+              {"lvWalkSize", 7.0f},
+              {"lvWalkRate", 0.03f},
+              {"doppler", 1.5f},
+              {"simOn", 1},
+              {"simW", 18.0f},
+              {"simL", 30.0f},
+              {"simH", 12.0f},
+              {"master", -18.0f}},
+             {});
+        make(u8("153 Im Kreis um die Pfeifen"),
+             {{"stop1", 1},
+              {"stop2", 1},
+              {"lvWalkShape", 1},
+              {"lvWalkSize", 9.0f},
+              {"lvWalkRate", 0.06f},
+              {"doppler", 1.0f}},
+             {});
+        // three minutes of sounding and a pipe is gone: the keys you use most crumble first (the
+        // wear stays with the project)
+        make(u8("154 Das St\xc3\xbc"
+                "ck nutzt die Orgel ab"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"lvWear", 1.0f},
+              {"lvWearTime", 3.0f},
+              {"degGrain", 0.6f},
+              {"degBits", 7.0f},
+              {"degRate", 9000.0f},
+              {"degDropouts", 0.25f}},
+             {});
+        // only the Gedackt is pulled - the pipes of the other stops answer from their places
+        make(u8("155 Mitklingende Pfeifen"),
+             {{"stop1", 1}, {"lvSympLevel", 0.0f}, {"lvSympDecay", 1.5f}}, {});
+        // hold a chord: it beats, the pipes turn - then it pulls itself pure and the room comes to
+        // rest
+        make(u8("156 Reinheit \xe2\x80\x93 Der Akkord rastet ein"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"lvPure", 1.0f},
+              {"lvPureTime", 3.0f},
+              {"motion0", beat},
+              {"rate0", 0.08f},
+              {"motion2", beat},
+              {"rate2", -0.06f}},
+             {});
+        // hold one key: a walker goes along the fifths of the Tonnetz - through the room - until he
+        // meets the wolf
+        makeFull(u8("157 Tonnetz-Wanderer \xe2\x80\x93 Quintenweg"),
+                 {{"stop1", 1},
+                  {"stop3", 1},
+                  {"lvNetOn", 1},
+                  {"lvNetPath", 0},
+                  {"lvNetRate", 4.0f},
+                  {"lvNetGate", 1.5f}},
+                 {}, {}, false, {{1, tonnetz}, {3, tonnetz}});
+        makeFull(u8("158 Tonnetz-Wanderer \xe2\x80\x93 Heimweh"),
+                 {{"stop0", 1},
+                  {"lvNetOn", 1},
+                  {"lvNetPath", 3},
+                  {"lvNetRate", 5.0f},
+                  {"lvNetGate", 2.5f},
+                  {"lvSympLevel", -3.0f},
+                  {"lvPure", 0.6f}},
+                 {}, {}, false, {{0, tonnetz}});
+        // all of it, gently: a treading Kalkant, hesitant keys, an ageing organ that rings along
+        // and tunes itself, heard while walking
+        make(u8("159 Lebendige Orgel"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"stop2", 1},
+              {"lvBellows", 0.5f},
+              {"lvBellowsSize", 5.0f},
+              {"lvBlower", 1},
+              {"lvTreadRate", 10.0f},
+              {"lvPallet", 0.5f},
+              {"lvWear", 0.6f},
+              {"lvWearTime", 10.0f},
+              {"lvSympLevel", -6.0f},
+              {"lvPure", 0.7f},
+              {"lvWalkShape", 4},
+              {"lvWalkSize", 4.0f},
+              {"lvWalkRate", 0.02f},
+              {"windModel", 1}},
+             {});
+    }
 
     marker.replaceWithText(juce::String(kFactoryVersion));
 }

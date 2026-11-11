@@ -416,9 +416,9 @@ void PipeStrip::mouseDown(const juce::MouseEvent &e)
         m.addItem(1, "alle an");
         m.addItem(2, "alle stumm");
         m.addItem(3, "jede zweite");
-        m.addItem(4, juce::String::fromUTF8("nur die untere HÃ¤lfte"));
-        m.addItem(5, juce::String::fromUTF8("nur die obere HÃ¤lfte"));
-        m.addItem(6, juce::String::fromUTF8("zufÃ¤llig die HÃ¤lfte"));
+        m.addItem(4, juce::String::fromUTF8("nur die untere H\xc3\xa4lfte"));
+        m.addItem(5, juce::String::fromUTF8("nur die obere H\xc3\xa4lfte"));
+        m.addItem(6, juce::String::fromUTF8("zuf\xc3\xa4llig die H\xc3\xa4lfte"));
         m.addItem(7, "umkehren");
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
                         [this](int r)
@@ -573,7 +573,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
                 proc.apvts, RysumProcessor::stopParamId(s), *pullButtons.back()));
     }
     const auto lnames = layoutNames();
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < (int)layoutButtons.size(); ++i)
     {
         auto &b = layoutButtons[(size_t)i];
         b.setButtonText(lnames[i]);
@@ -585,7 +585,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         addAndMakeVisible(b);
     }
     const auto mnames = motionNames();
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < (int)motionButtons.size(); ++i)
     {
         auto &b = motionButtons[(size_t)i];
         b.setButtonText(mnames[i]);
@@ -596,6 +596,15 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         };
         addAndMakeVisible(b);
     }
+    layoutButtons[6].setTooltip(
+        u8("Jede Taste an ihrem Platz im Tonnetz der Stimmung: Quinten nach rechts, gro\xc3\x9f"
+           "e Terzen nach oben. "
+           "Reine Intervalle liegen eng, unreine weit; der Wolf ist die Naht. Folgt einem Wechsel "
+           "der Stimmung."));
+    motionButtons[7].setTooltip(
+        u8("Jede Pfeife dreht sich so schnell, wie sie mit den anderen klingenden Pfeifen schwebt: "
+           "reine Terzen stehen still, "
+           "der Wolf kreist. \xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = Umdrehungen je Schwebung."));
     motionButtons[6].setTooltip(
         u8("Die Pfeifen laufen die gezeichnete Bahn entlang (Bahn zeichnen \xe2\x86\x92)"));
     motionButtons[5].setTooltip(
@@ -671,10 +680,57 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         };
         addAndMakeVisible(ellForm[(size_t)i]);
     }
-    tabMotion.onClick = [this] { showTab(false); };
-    tabHall.onClick = [this] { showTab(true); };
+    tabMotion.onClick = [this] { showTab(0); };
+    tabHall.onClick = [this] { showTab(1); };
+    tabCloud.onClick = [this] { showTab(2); };
+    tabPipe.onClick = [this] { showTab(3); };
+    tabPipe.setTooltip(u8("Der Klang der Pfeifen dieses Registers: Ansprache (Chiff), Abriss beim "
+                          "Loslassen, Obert\xc3\xb6ne als eigene Schicht"));
+    addAndMakeVisible(tabPipe);
+    pipeAll.setTooltip(u8("Diese acht Werte f\xc3\xbcr alle Register setzen"));
+    pipeAll.onClick = [this]
+    {
+        for (const char *k : RysumProcessor::kPipeSndKeys)
+        {
+            auto *src = proc.apvts.getParameter(RysumProcessor::pipeSndParamId(k, selected));
+            if (src == nullptr)
+                continue;
+            for (int s2 = 0; s2 < kNumStops; ++s2)
+                if (s2 != selected)
+                    if (auto *d = proc.apvts.getParameter(RysumProcessor::pipeSndParamId(k, s2)))
+                    {
+                        d->beginChangeGesture();
+                        d->setValueNotifyingHost(src->getValue());
+                        d->endChangeGesture();
+                    }
+        }
+    };
+    addAndMakeVisible(pipeAll);
+    tabCloud.setTooltip(
+        u8("K\xc3\xb6rnerwolke: der Klang jeder Pfeife zerstreut sich in K\xc3\xb6rnern \xc3\xbc"
+           "ber die Kugel um die Pfeife"));
     addAndMakeVisible(tabMotion);
     addAndMakeVisible(tabHall);
+    addAndMakeVisible(tabCloud);
+    cloudAll.setTooltip(u8("Diese f\xc3\xbcnf Werte f\xc3\xbcr alle Register setzen"));
+    cloudAll.onClick = [this]
+    {
+        for (const char *k : RysumProcessor::kCloudKeys)
+        {
+            auto *src = proc.apvts.getParameter(RysumProcessor::cloudParamId(k, selected));
+            if (src == nullptr)
+                continue;
+            for (int s2 = 0; s2 < kNumStops; ++s2)
+                if (s2 != selected)
+                    if (auto *d = proc.apvts.getParameter(RysumProcessor::cloudParamId(k, s2)))
+                    {
+                        d->beginChangeGesture();
+                        d->setValueNotifyingHost(src->getValue());
+                        d->endChangeGesture();
+                    }
+        }
+    };
+    addAndMakeVisible(cloudAll);
 
     // room / impulse response
     addAndMakeVisible(irLoad);
@@ -760,21 +816,34 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     distance.setSkewFactorFromMidPoint(8.0);
 
     selectStop(selected);
-    showTab(false);
+    showTab(0);
 }
 
-void SpaceView::showTab(bool hall)
+void SpaceView::showTab(int tab)
 {
-    hallTab = hall;
-    tabMotion.setToggleState(!hall, juce::dontSendNotification);
-    tabHall.setToggleState(hall, juce::dontSendNotification);
+    hallTab = tab == 1;
+    cloudTab = tab == 2;
+    pipeTab = tab == 3;
+    tabPipe.setToggleState(tab == 3, juce::dontSendNotification);
+    tabMotion.setToggleState(tab == 0, juce::dontSendNotification);
+    tabHall.setToggleState(tab == 1, juce::dontSendNotification);
+    tabCloud.setToggleState(tab == 2, juce::dontSendNotification);
     updateVisibility();
 }
 
 void SpaceView::updateVisibility()
 {
     const bool stopPanel = !inputSel;
-    const bool motion = stopPanel && !hallTab, hall = stopPanel && hallTab;
+    const bool motion = stopPanel && !hallTab && !cloudTab && !pipeTab, hall = stopPanel && hallTab,
+               cloud = stopPanel && cloudTab;
+    for (auto &r : pipeRows)
+        if (r)
+            r->setVisible(stopPanel && pipeTab);
+    pipeAll.setVisible(stopPanel && pipeTab);
+    for (auto &r : cloudRows)
+        if (r)
+            r->setVisible(cloud);
+    cloudAll.setVisible(cloud);
     juce::Component *motionComps[]{&drawButton, &pathLoop,   &pathPing,   &pathEven,   &pathDrawnT,
                                    &jumpHard,   &ellForm[0], &ellForm[1], &ellForm[2], &ellForm[3]};
     for (auto *c : motionComps)
@@ -797,6 +866,8 @@ void SpaceView::updateVisibility()
     tabMotion.setVisible(stopPanel);
     pipeStrip.setVisible(stopPanel);
     tabHall.setVisible(stopPanel);
+    tabCloud.setVisible(stopPanel);
+    tabPipe.setVisible(stopPanel);
     juce::Component *inputComps[]{&inMono,       &inStereo,     &inGate,      &inFollow,
                                   inLevel.get(), inSend.get(),  inAz.get(),   inEl.get(),
                                   inDist.get(),  inWidth.get(), inSpin.get(), inRelease.get()};
@@ -849,6 +920,63 @@ void SpaceView::selectStop(int s)
     for (auto *r : {rateRow.get(), depthRow.get(), ellipseRow.get(), spreadRow.get(),
                     ellDirRow.get(), ellTiltRow.get()})
         addAndMakeVisible(*r);
+    {
+        const char *names[]{"Menge (0 = Pfeife, 100 = nur Wolke)",
+                            "Dichte (K\xc3\xb6rner pro Sekunde und Pfeife)",
+                            "Streuung um die Pfeife",
+                            "Korngr\xc3\xb6\xc3\x9f"
+                            "e",
+                            "Zeitstreuung (wie weit zur\xc3\xbc"
+                            "ck)"};
+        const char *tips[]{"Wie weit sich die Pfeife in K\xc3\xb6rner aufl\xc3\xb6st (gleiche "
+                           "Lautheit): bei 100 % ist nur noch die Wolke da.",
+                           "Wie viele K\xc3\xb6rner jede klingende Pfeife pro Sekunde aussendet.",
+                           "Wie weit die K\xc3\xb6rner um die Pfeife verstreut sind: wenige Grad = "
+                           "ein flirrender Fleck, 180\xc2\xb0 = die ganze Kugel.",
+                           "L\xc3\xa4nge eines Korns: kurz = Rauschen und Flirren, lang = ein Chor "
+                           "aus vielen Richtungen.",
+                           "Jedes Korn nimmt den Klang der Pfeife von bis zu so viel fr\xc3\xbch"
+                           "er: verschmiert Einschwingen und Bewegung."};
+        for (int k = 0; k < 5; ++k)
+        {
+            cloudRows[(size_t)k] = std::make_unique<ParamRow>(
+                proc.apvts, RysumProcessor::cloudParamId(RysumProcessor::kCloudKeys[k], s),
+                juce::String::fromUTF8(names[k]));
+            cloudRows[(size_t)k]->setTooltip(juce::String::fromUTF8(tips[k]));
+            addAndMakeVisible(*cloudRows[(size_t)k]);
+        }
+    }
+    {
+        const char *names[]{"Ansprache (Chiff)",     "Ansprache Sch\xc3\xa4rfe",
+                            "Nur Ansprache",         "Ansprache wiederholen",
+                            "Abriss (Loslassen)",    "Obert\xc3\xb6ne ab",
+                            "Obert\xc3\xb6ne Pegel", "Obert\xc3\xb6ne Anschlag"};
+        const char *tips[]{
+            "Der gemessene Einschwingvorgang jeder Pfeife: \xe2\x88\x92 = die Pfeife schwillt "
+            "weich an, + = der Chiff bis +12 dB lauter. Der gehaltene Ton bleibt gleich.",
+            "Hebt die H\xc3\xb6hen des Einschwingens an: ein sch\xc3\xa4rferer, zischenderer "
+            "Chiff.",
+            "Der gehaltene Ton f\xc3\xa4llt nach dem Einschwingen weg \xe2\x80\x93 bei 100 % "
+            "bleibt nur der Chiff.",
+            "Der Chiff wiederholt sich als kurzer Schwall (bis zu sechsmal, jedesmal etwas "
+            "leiser).",
+            "Ein Luftsto\xc3\x9f, wenn das Ventil schlie\xc3\x9ft: geformt nach Register und "
+            "Tonh\xc3\xb6he, so stark wie die Taste angeschlagen wurde.",
+            "Ab dieser Frequenz sind die Obert\xc3\xb6ne eine eigene Schicht.",
+            "Pegel der Obert\xc3\xb6ne-Schicht: Mixtur und Sesquialtera glitzern f\xc3\xbcr sich, "
+            "ohne den ganzen Klang heller zu machen.",
+            "Transientenformer der Obert\xc3\xb6ne: + = spitzer, knackiger Anschlag, \xe2\x88\x92 "
+            "= weicher, nur Fl\xc3\xa4"
+            "che."};
+        for (int k = 0; k < 8; ++k)
+        {
+            pipeRows[(size_t)k] = std::make_unique<ParamRow>(
+                proc.apvts, RysumProcessor::pipeSndParamId(RysumProcessor::kPipeSndKeys[k], s),
+                juce::String::fromUTF8(names[k]));
+            pipeRows[(size_t)k]->setTooltip(juce::String::fromUTF8(tips[k]));
+            addAndMakeVisible(*pipeRows[(size_t)k]);
+        }
+    }
     jumpHardAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         proc.apvts, RysumProcessor::jumpHardParamId(s), jumpHard);
     if (auto *f = proc.apvts.getParameter(RysumProcessor::ellFormParamId(s)))
@@ -879,7 +1007,7 @@ void SpaceView::syncLayoutControls()
     elevation.setValue(L.elevation, juce::dontSendNotification);
     spread.setValue(L.spread, juce::dontSendNotification);
     distance.setValue(L.distance, juce::dontSendNotification);
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < (int)layoutButtons.size(); ++i)
         layoutButtons[(size_t)i].setToggleState(i == L.type, juce::dontSendNotification);
     updating = false;
 }
@@ -958,11 +1086,11 @@ void SpaceView::resized()
     layoutBox = rr.removeFromTop(30 + 44 + 5 * 18 + 24);
     auto lb = layoutBox.withTrimmedTop(30);
     auto row1 = lb.removeFromTop(22), row2 = lb.removeFromTop(22);
-    const int bw1 = (row1.getWidth() - 8) / 3;
-    for (int i = 0; i < 3; ++i)
+    const int bw1 = (row1.getWidth() - 12) / 4;
+    for (int i = 0; i < 4; ++i)
         layoutButtons[(size_t)i].setBounds(row1.getX() + i * (bw1 + 4), row1.getY(), bw1, 20);
     for (int i = 0; i < 3; ++i)
-        layoutButtons[(size_t)i + 3].setBounds(row2.getX() + i * (bw1 + 4), row2.getY(), bw1, 20);
+        layoutButtons[(size_t)i + 4].setBounds(row2.getX() + i * (bw1 + 4), row2.getY(), bw1, 20);
     for (auto *s : {&width, &centre, &elevation, &spread, &distance})
         s->setBounds(lb.removeFromTop(18).withTrimmedLeft(100).withTrimmedRight(52));
     lb.removeFromTop(3);
@@ -972,18 +1100,48 @@ void SpaceView::resized()
 
     // lower part: "Bewegung" or "Hall" (tabs in the title line)
     tabBox = rr;
-    tabHall.setBounds(tabBox.getRight() - 56, tabBox.getY() + 9, 56, 20);
+    tabPipe.setBounds(tabBox.getRight() - 58, tabBox.getY() + 9, 58, 20);
+    tabCloud.setBounds(tabPipe.getX() - 4 - 60, tabBox.getY() + 9, 60, 20);
+    tabHall.setBounds(tabCloud.getX() - 4 - 56, tabBox.getY() + 9, 56, 20);
+    {
+        auto pb = tabBox.withTrimmedTop(36);
+        // two columns: the attack on the left, release puff and upper partials on the right
+        const int rh = juce::jmin(36, (pb.getHeight() - 30) / 4);
+        auto colL = pb.removeFromTop(rh * 4), colR = colL.removeFromRight(colL.getWidth() / 2);
+        colL.removeFromRight(10);
+        colR.removeFromLeft(10);
+        for (int k = 0; k < 8; ++k)
+            if (pipeRows[(size_t)k])
+                pipeRows[(size_t)k]->setBounds((k < 4 ? colL : colR).removeFromTop(rh));
+        pb.removeFromTop(6);
+        pipeAll.setBounds(pb.removeFromTop(22).withWidth(220));
+    }
     tabMotion.setBounds(tabHall.getX() - 4 - 86, tabBox.getY() + 9, 86, 20);
+    {
+        auto cb = tabBox.withTrimmedTop(36);
+        for (auto &r : cloudRows)
+            if (r)
+                r->setBounds(cb.removeFromTop(34));
+        cb.removeFromTop(4);
+        cloudAll.setBounds(cb.removeFromTop(22).withWidth(220));
+        cb.removeFromTop(6);
+        cloudNote = cb;
+    }
     motionBox = hallBox = tabBox;
     auto mb = tabBox.withTrimmedTop(34);
     {
         auto m1 = mb.removeFromTop(22), m2 = mb.removeFromTop(22);
-        const int bw2 = (m1.getWidth() - 12) / 4;
-        for (int i = 0; i < 4; ++i)
-            motionButtons[(size_t)i].setBounds(m1.getX() + i * (bw2 + 4), m1.getY(), bw2, 20);
-        for (int i = 0; i < 3; ++i)
-            motionButtons[(size_t)i + 4].setBounds(m2.getX() + i * (bw2 + 4), m2.getY(), bw2, 20);
-        drawButton.setBounds(m2.getX() + 3 * (bw2 + 4), m2.getY(), bw2, 20);
+        // five columns: Statisch Rotation Pendel Drift Vertikal / Spruenge Schwebung Gezeichnet
+        // [Bahn zeichnen]
+        const int bw2 = (m1.getWidth() - 16) / 5;
+        auto at = [&](juce::Rectangle<int> line, int col)
+        { return juce::Rectangle<int>(line.getX() + col * (bw2 + 4), line.getY(), bw2, 20); };
+        for (int i = 0; i < 5; ++i)
+            motionButtons[(size_t)i].setBounds(at(m1, i));
+        motionButtons[5].setBounds(at(m2, 0));
+        motionButtons[7].setBounds(at(m2, 1));
+        motionButtons[6].setBounds(at(m2, 2));
+        drawButton.setBounds(at(m2, 3));
         mb.removeFromTop(2);
         if (rateRow)
             rateRow->setBounds(mb.removeFromTop(34));
@@ -1044,7 +1202,7 @@ void SpaceView::refresh()
 {
     const int mode =
         (int)proc.apvts.getRawParameterValue(RysumProcessor::motionParamId(selected))->load();
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < (int)motionButtons.size(); ++i)
         motionButtons[(size_t)i].setToggleState(i == mode, juce::dontSendNotification);
     {
         const auto &dp = proc.getDrawnPath(selected);
@@ -1060,14 +1218,19 @@ void SpaceView::refresh()
         jumpHard.setAlpha(mode == (int)Motion::Jumps ? 1.0f : 0.45f);
         if (depthRow)
             depthRow->setAlpha(mode == (int)Motion::Drawn || mode == (int)Motion::Rotation ||
-                                       mode == (int)Motion::Vertical
+                                       mode == (int)Motion::Vertical || mode == (int)Motion::Beat
                                    ? 0.45f
                                    : 1.0f);
     }
-    irDry->repaint();
-    irWet->repaint();
-    irEnvelop->repaint();
-    irDirect->repaint();
+    if (cloudTab)
+    {
+        const int n = proc.engine.cloudGrainsNow.load();
+        if (n != shownGrains)
+        {
+            shownGrains = n;
+            repaint(tabBox.withHeight(36));
+        }
+    }
     const auto mnames = motionNames();
     for (int s = 0; s < kNumStops; ++s)
     {
@@ -1106,18 +1269,7 @@ void SpaceView::refresh()
         }
         const float pk = proc.engine.inPeak.load();
         inMeterShown = juce::jmax(pk, inMeterShown * 0.85f);
-        if (inputSel)
-            for (auto *r : {inLevel.get(), inSend.get(), inAz.get(), inEl.get(), inDist.get(),
-                            inWidth.get(), inSpin.get(), inRelease.get()})
-                r->repaint();
     }
-    if (rateRow)
-        rateRow->repaint();
-    if (depthRow)
-        depthRow->repaint();
-    for (auto *r : {ellipseRow.get(), spreadRow.get(), ellDirRow.get(), ellTiltRow.get()})
-        if (r)
-            r->repaint();
     circle.repaint();
     pipeStrip.repaint();
     repaint(right);
@@ -1183,7 +1335,30 @@ void SpaceView::paint(juce::Graphics &g)
                    pipeStripLabel.withX(pipeStripLabel.getRight() - 50).withWidth(50),
                    juce::Justification::centredRight);
     }
-    if (!hallTab)
+    if (pipeTab)
+    {
+        drawSectionTitle(g, tabBox, "Pfeife");
+    }
+    else if (cloudTab)
+    {
+        drawSectionTitle(g, tabBox, "Wolke");
+        g.setFont(A.monoFont(10.0f));
+        g.setColour(col::faint);
+        const int n = proc.engine.cloudGrainsNow.load();
+        g.drawText(n > 0 ? juce::String(n) + u8(" K\xc3\xb6rner") : u8("K\xc3\xb6rnerwolke"),
+                   juce::Rectangle<int>(tabBox.getX() + 120, tabBox.getY() + 9,
+                                        tabMotion.getX() - 8 - tabBox.getX() - 120, 20),
+                   juce::Justification::centredRight);
+        g.setFont(A.sansFont(12.0f));
+        g.setColour(col::mute);
+        if (cloudNote.getHeight() > 14)
+            g.drawFittedText(u8("Jede klingende Pfeife dieses Registers sendet K\xc3\xb6rner ihres "
+                                "eigenen Klangs aus, jedes aus einer anderen Richtung "
+                                "um sie herum. Mit der Bewegung zieht die Wolke mit."),
+                             cloudNote, juce::Justification::topLeft,
+                             juce::jmax(1, cloudNote.getHeight() / 15));
+    }
+    else if (!hallTab)
     {
         drawSectionTitle(g, tabBox, "Bewegung");
         g.setFont(A.monoFont(10.0f));

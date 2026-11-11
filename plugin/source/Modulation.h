@@ -27,6 +27,10 @@ enum ModSource
     srcPressure,   // per note: MPE pressure / polyphonic aftertouch / channel pressure, 0..1
     srcSlide,      // per note: MPE "slide" (CC 74, the finger moving up and down the key), 0..1
     srcInput,      // loudness of the audio input, 0..1 (-54 .. 0 dB)
+    srcBeat,    // per pipe: how fast it beats with the other sounding pipes, 0..1 (0 Hz .. 32 Hz,
+                // logarithmic)
+    srcBellows, // the wind pressure of the shared bellows ("Lebendige Orgel"), 0 = empty .. 1 =
+                // full
     kNumSources
 };
 
@@ -47,7 +51,9 @@ inline juce::StringArray modSourceNames()
             juce::String::fromUTF8("Tonh\xc3\xb6henrad"),
             "Druck (MPE)",
             "Gleiten (MPE, CC 74)",
-            "Eingang (Pegel)"};
+            "Eingang (Pegel)",
+            "Schwebung",
+            "Balg (Winddruck)"};
 }
 
 /** targets 0..kNumPipeTargets-1 act on every pipe separately: only here do the per-pipe sources
@@ -70,6 +76,32 @@ enum PipeTarget
     tgtDegrade, // the pipe's amount of "Verfall" (per-pipe mode), +-100 %
     tgtWobble,  // the pipe's "Windschwankung", +-100 %
     tgtCrackle, // the pipe's crackle ("Knistern", Effekte page), +-100 %
+    // the pipe's own sound (Raum page, tab "Pfeife"), on top of its stop's setting
+    tgtAttack,    // Ansprache, +-1 (-1 soft swell .. +1 chiff)
+    tgtAttSharp,  // Ansprache Schaerfe, +-100 %
+    tgtAttIso,    // Nur Ansprache, +-100 %
+    tgtAttRep,    // Ansprache wiederholen, +-100 % (taken when the note starts)
+    tgtPuff,      // Abriss, +-100 % (taken when the key is released)
+    tgtHiFreq,    // Obertoene ab, +-4 octaves
+    tgtHiGain,    // Obertoene Pegel, +-24 dB
+    tgtHiShape,   // Obertoene Anschlag, +-100 %
+    tgtAirInvert, // Luft umkehren, +-100 %
+    // the pipe's grain cloud (Raum page, tab "Wolke")
+    tgtCloudMix,     // Menge, +-100 %
+    tgtCloudDens,    // Dichte, x8 / :8
+    tgtCloudSpread,  // Streuung, +-180 deg
+    tgtCloudSize,    // Korngroesse, x8 / :8
+    tgtCloudScatter, // Zeitstreuung, +-150 ms
+    // the pipe's Verfall (only in the mode "pro Pfeife")
+    tgtDegGrain, // Koernung, +-100 %
+    tgtDegBits,  // Bittiefe, +-13 bits
+    tgtDegRate,  // Abtastrate, +-6 octaves
+    tgtDegDrops, // Aussetzer, +-100 %
+    // the pipe's glitches (Spieltisch, Verfall - Glitch)
+    tgtStutter,
+    tgtSplice,
+    tgtZero,
+    tgtClip, // +-100 % (harte Kanten: at the start and the release of the note)
     kNumPipeTargets
 };
 constexpr int kGlobalTargetBase = 100;
@@ -86,7 +118,30 @@ inline juce::StringArray pipeTargetNames()
             "Pfeife: Wind",
             "Pfeife: Verfall",
             "Pfeife: Windschwankung",
-            "Pfeife: Knistern"};
+            "Pfeife: Knistern",
+            "Pfeife: Ansprache",
+            juce::String::fromUTF8("Pfeife: Ansprache Sch\xc3\xa4rfe"),
+            "Pfeife: Nur Ansprache",
+            "Pfeife: Ansprache wiederholen",
+            "Pfeife: Abriss",
+            juce::String::fromUTF8("Pfeife: Obert\xc3\xb6ne ab"),
+            juce::String::fromUTF8("Pfeife: Obert\xc3\xb6ne Pegel"),
+            juce::String::fromUTF8("Pfeife: Obert\xc3\xb6ne Anschlag"),
+            "Pfeife: Luft umkehren",
+            "Pfeife: Wolke Menge",
+            "Pfeife: Wolke Dichte",
+            "Pfeife: Wolke Streuung",
+            juce::String::fromUTF8("Pfeife: Wolke Korngr\xc3\xb6\xc3\x9f"
+                                   "e"),
+            "Pfeife: Wolke Zeitstreuung",
+            juce::String::fromUTF8("Pfeife: K\xc3\xb6rnung"),
+            "Pfeife: Bittiefe",
+            "Pfeife: Abtastrate",
+            "Pfeife: Aussetzer",
+            "Pfeife: Glitch Stottern",
+            "Pfeife: Glitch Bandschnitt",
+            "Pfeife: Glitch harte Kanten",
+            "Pfeife: Glitch Clipping"};
 }
 inline juce::String pipeTargetId(int t)
 {

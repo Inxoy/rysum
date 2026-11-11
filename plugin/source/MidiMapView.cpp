@@ -10,8 +10,12 @@ juce::String paramGroup(const juce::String &id)
         id.startsWith("rate") || id.startsWith("depth") || id.startsWith("ellipse") ||
         id.startsWith("motion"))
         return id == "motionSync" ? juce::String("Klang") : juce::String("Register");
-    if (id.startsWith("deg"))
+    if (id.startsWith("deg") || id.startsWith("spc"))
         return "Verfall";
+    if (id.startsWith("cloud") || id.startsWith("pipe"))
+        return "Register";
+    if (id.startsWith("clickRes"))
+        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
         id == "wind" || id == "master")
         return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");

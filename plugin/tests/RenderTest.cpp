@@ -10,6 +10,7 @@
 #include "RoomTail.h"
 #include "Scala.h"
 #include "Speakers.h"
+#include "Transaural.h"
 #include <chrono>
 #include <complex>
 #include <iostream>
@@ -467,6 +468,164 @@ static void testBinaural(const juce::File &sofa)
             std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - t0).count();
         std::cout << "binaural decoder 5th order: " << rt << " x real time" << std::endl;
         check(rt > 8.0, "binaural decoder is cheap");
+    }
+}
+
+// transaural: binaural over two loudspeakers - the crosstalk to the far ear cancelled
+static void testTransaural()
+{
+    juce::String err;
+    auto fab = HrirSet::fabian(err);
+    if (fab == nullptr)
+    {
+        check(false, "transaural: FABIAN " + err);
+        return;
+    }
+    const double fs = 48000.0;
+    // the acoustic way: speaker feeds -> ears (FABIAN at +-angle), by direct convolution
+    auto conv = [](const std::vector<float> &x, const float *h, int hl)
+    {
+        std::vector<float> y(x.size() + (size_t)hl, 0.0f);
+        for (size_t i = 0; i < x.size(); ++i)
+            if (x[i] != 0.0f)
+                for (int k = 0; k < hl; ++k)
+                    y[i + (size_t)k] += x[i] * h[k];
+        return y;
+    };
+    auto nearest = [&](float az)
+    {
+        int best = 0;
+        float bd = 1e9f;
+        for (int d = 0; d < fab->numDirections(); ++d)
+        {
+            const float da = std::abs(std::remainder(fab->az[(size_t)d] - az, 360.0f)),
+                        de = std::abs(fab->el[(size_t)d]);
+            if (da + de < bd)
+            {
+                bd = da + de;
+                best = d;
+            }
+        }
+        return best;
+    };
+    auto band = [&](std::vector<float> x, double lo, double hi)
+    {
+        juce::IIRFilter a, b;
+        a.setCoefficients(juce::IIRCoefficients::makeHighPass(fs, lo));
+        b.setCoefficients(juce::IIRCoefficients::makeLowPass(fs, hi));
+        double e = 0;
+        for (auto v : x)
+        {
+            const double y = b.processSingleSampleRaw(a.processSingleSampleRaw(v));
+            e += y * y;
+        }
+        return e;
+    };
+    for (float angle : {90.0f, 60.0f, 30.0f})
+    {
+        auto run = [&](float amount, double &farOverNearDb, double &nearDbRel)
+        {
+            auto f = TransauralFilters::design(*fab, angle, amount, 10.0f, false, fs);
+            // a click meant only for the left ear (binaural L = impulse, R = 0)
+            std::vector<float> L((size_t)4096, 0.0f), R((size_t)4096, 0.0f);
+            L[0] = 1.0f;
+            std::vector<float> mid((size_t)4096), side((size_t)4096);
+            for (size_t i = 0; i < L.size(); ++i)
+            {
+                mid[i] = 0.5f * (L[i] + R[i]);
+                side[i] = 0.5f * (L[i] - R[i]);
+            }
+            const auto m = conv(mid, f->cs.data(), f->length),
+                       sd = conv(side, f->cd.data(), f->length);
+            std::vector<float> spL(m.size()), spR(m.size());
+            for (size_t i = 0; i < m.size(); ++i)
+            {
+                spL[i] = m[i] + sd[i];
+                spR[i] = m[i] - sd[i];
+            }
+            const int dl = nearest(angle), dr = nearest(-angle);
+            const int hl = fab->length;
+            auto add = [](std::vector<float> a, const std::vector<float> &b)
+            {
+                for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+                    a[i] += b[i];
+                return a;
+            };
+            const auto earL = add(conv(spL, fab->get(dl, 0), hl), conv(spR, fab->get(dr, 0), hl));
+            const auto earR = add(conv(spL, fab->get(dl, 1), hl), conv(spR, fab->get(dr, 1), hl));
+            const double nearE = band(earL, 250.0, 6000.0), farE = band(earR, 250.0, 6000.0);
+            farOverNearDb = 10.0 * std::log10(farE / juce::jmax(1e-30, nearE));
+            nearDbRel = 10.0 * std::log10(nearE);
+            return f;
+        };
+        double plainX, plainN, ctcX, ctcN;
+        auto f0 = run(0.0f, plainX, plainN);
+        auto f1 = run(1.0f, ctcX, ctcN);
+        std::cout << "transaural +-" << angle << " deg: far ear / near ear " << plainX
+                  << " dB plain, " << ctcX << " dB cancelled (design says " << f1->crossDb
+                  << " dB); ITD " << f1->itdMs << " ms; near ear level change " << (ctcN - plainN)
+                  << " dB" << std::endl;
+        check(std::isfinite(ctcX) && ctcX < plainX - (angle >= 60.0f ? 10.0 : 6.0),
+              juce::String("transaural: crosstalk cancelled at +-") + juce::String(angle, 0) +
+                  " deg");
+        // amount 0 = a pure delay (the plain binaural signal over the speakers)
+        if (angle == 90.0f)
+        {
+            double off = 0;
+            for (int i = 0; i < f0->length; ++i)
+                if (i != f0->delay)
+                    off = juce::jmax(off, (double)std::abs(f0->cs[(size_t)i]) +
+                                              std::abs(f0->cd[(size_t)i]));
+            std::cout << "transaural amount 0: tap at " << f0->delay << " = "
+                      << f0->cs[(size_t)f0->delay] << " / " << f0->cd[(size_t)f0->delay]
+                      << ", elsewhere at most " << off << std::endl;
+            check(std::abs(f0->cs[(size_t)f0->delay] - 1.0f) < 1e-3f &&
+                      std::abs(f0->cd[(size_t)f0->delay] - 1.0f) < 1e-3f && off < 1e-3,
+                  "transaural: amount 0 = the binaural signal, only delayed");
+            // the boost limit holds (side filter, the low end)
+            for (float lim : {6.0f, 15.0f})
+            {
+                auto fl = TransauralFilters::design(*fab, 90.0f, 1.0f, lim, false, fs);
+                juce::dsp::FFT fft(13);
+                std::vector<float> b((size_t)16384, 0.0f);
+                std::copy(fl->cd.begin(), fl->cd.end(), b.begin());
+                fft.performFrequencyOnlyForwardTransform(b.data());
+                float mx = 0;
+                for (int k = 0; k <= 4096; ++k)
+                    mx = juce::jmax(mx, b[(size_t)k]);
+                std::cout << "transaural limit " << lim << " dB: side filter peaks at "
+                          << juce::Decibels::gainToDecibels(mx) << " dB" << std::endl;
+                check(juce::Decibels::gainToDecibels(mx) < lim + 1.5f,
+                      juce::String("transaural: boost limited to ") + juce::String(lim, 0) + " dB");
+            }
+            // real time: the convolutions run (filters loaded in the background), output finite and
+            // the click comes through
+            auto ff = TransauralFilters::design(*fab, 90.0f, 1.0f, 10.0f, true, fs);
+            TransauralCtc ctc;
+            ctc.prepare(fs, 512);
+            ctc.load(*ff);
+            std::vector<float> l(512), r(512);
+            double e = 0;
+            bool fin = true;
+            for (int b = 0; b < 400; ++b)
+            {
+                std::fill(l.begin(), l.end(), 0.0f);
+                std::fill(r.begin(), r.end(), 0.0f);
+                if (b % 50 == 0)
+                    l[0] = 1.0f;
+                ctc.process(l.data(), r.data(), 512);
+                for (int i = 0; i < 512; ++i)
+                {
+                    e += l[(size_t)i] * l[(size_t)i];
+                    fin = fin && std::isfinite(l[(size_t)i]) && std::isfinite(r[(size_t)i]);
+                }
+                if (b % 50 == 0)
+                    juce::Thread::sleep(20);
+            }
+            std::cout << "transaural real time: " << ff->description << ", energy out " << e
+                      << std::endl;
+            check(fin && e > 1e-3, "transaural: real-time convolution runs");
+        }
     }
 }
 
@@ -1637,7 +1796,8 @@ static void testRoomsAndSpread(std::shared_ptr<const SampleLibrary> lib)
     {
         int c = 0;
         for (auto v : m)
-            c += __builtin_popcountll(v);
+            for (uint64_t b = v; b != 0; b &= b - 1)
+                ++c;
         return c;
     };
     std::array<uint64_t, kNumStops> m0{}, m1{}, m2{}, m3{};
@@ -1819,6 +1979,13 @@ int main(int argc, char **argv)
                                           nullptr; // quick run: just the wind model tests
     const bool onlyLucier = std::getenv("RYSUM_ONLY_LUCIER") != nullptr;
     const bool onlyInput = std::getenv("RYSUM_ONLY_INPUT") != nullptr;
+    if (std::getenv("RYSUM_ONLY_TRANSAURAL") != nullptr)
+    {
+        testTransaural();
+        std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string(failures))
+                  << std::endl;
+        return failures;
+    }
     if (std::getenv("RYSUM_ONLY_SPEAKERS") != nullptr)
     {
         testSpeakers();
@@ -1834,6 +2001,7 @@ int main(int argc, char **argv)
         testMotion();
         testBinaural(argc > 3 ? juce::File(argv[3])
                               : juce::File()); // optional 3rd argument: a SOFA file to test with
+        testTransaural();
         testSpeakers();
     }
     if (argc < 3)
@@ -3845,6 +4013,1190 @@ int main(int argc, char **argv)
             check(maxStep < 2.0 * rms, "plan: no clicks when reflection paths come and go");
         }
 
+        // ---------------- the sound of the pipe: Ansprache, Abriss, upper partials, air, resonated
+        // clicks, glitches ----------------
+        {
+            // one Praestant 8' note (key a', MIDI 69), stereo, clicks off unless asked; released at
+            // 'relAt' seconds
+            auto note = [&](std::function<void(EngineParams &)> setup, double secs, double relAt,
+                            const juce::String &file, bool clicks = false, float dist = 0.0f,
+                            std::shared_ptr<const SampleLibrary> clickLibrary = nullptr)
+            {
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(clickLibrary != nullptr ? clickLibrary : lib);
+                if (dist > 0.0f)
+                    e.baseDist[0][(size_t)keyA] = dist;
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = true;
+                p.outputMode = 0;
+                p.wind = 0;
+                p.stopPull = 0;
+                if (!clicks)
+                {
+                    p.clickLevel = 0;
+                    p.releaseClick = 0;
+                }
+                setup(p);
+                const int total = (int)(secs * fsr);
+                juce::AudioBuffer<float> outB(2, total), b(2, B);
+                outB.clear();
+                for (int pos = 0; pos < total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, 69, (juce::uint8)110), 0);
+                    if (relAt > 0 && pos <= (int)(relAt * fsr) && pos + B > (int)(relAt * fsr))
+                        mb.addEvent(juce::MidiMessage::noteOff(1, 69), (int)(relAt * fsr) - pos);
+                    e.process(b, mb, p);
+                    for (int c = 0; c < 2; ++c)
+                        outB.copyFrom(c, pos, b, c, 0, juce::jmin(B, total - pos));
+                }
+                if (file.isNotEmpty())
+                    writeWav(outDir.getChildFile(file + ".wav"), outB, fsr);
+                return outB;
+            };
+            auto energy = [](const juce::AudioBuffer<float> &b, double t0, double t1, double sr0)
+            {
+                double e = 0;
+                for (int i = (int)(t0 * sr0); i < juce::jmin(b.getNumSamples(), (int)(t1 * sr0));
+                     ++i)
+                    e += (double)b.getSample(0, i) * b.getSample(0, i);
+                return e;
+            };
+            auto db = [](double a, double b)
+            { return 10.0 * std::log10(juce::jmax(1e-30, a) / juce::jmax(1e-30, b)); };
+            // energy above (high) or below a frequency, 6th order (three cascaded biquads), channel
+            // 0, t0..t1
+            auto bandE =
+                [&](const juce::AudioBuffer<float> &b, double f, bool high, double t0, double t1)
+            {
+                juce::IIRFilter fl[3];
+                for (auto &x : fl)
+                    x.setCoefficients(high ? juce::IIRCoefficients::makeHighPass(fsr, f)
+                                           : juce::IIRCoefficients::makeLowPass(fsr, f));
+                double e = 0;
+                for (int i = 0; i < juce::jmin(b.getNumSamples(), (int)(t1 * fsr)); ++i)
+                {
+                    float y = b.getSample(0, i);
+                    for (auto &x : fl)
+                        y = x.processSingleSampleRaw(y);
+                    if (i >= (int)(t0 * fsr))
+                        e += (double)y * y;
+                }
+                return e;
+            };
+            auto finite = [](const juce::AudioBuffer<float> &b)
+            {
+                for (int c = 0; c < b.getNumChannels(); ++c)
+                    for (int i = 0; i < b.getNumSamples(); ++i)
+                        if (!std::isfinite(b.getSample(c, i)))
+                            return false;
+                return true;
+            };
+            const auto &pa = lib->pipes[0][(size_t)keyA];
+            const double tOn = pa.onset / 48000.0, tAttFull = pa.attackEnd / 48000.0;
+            const double tAtt =
+                tOn + 0.4 * (tAttFull - tOn); // the chiff: the first part of the measured attack
+            std::cout << "pipe sound: Praestant a' attack " << (tAttFull - tOn) * 1000.0 << " ms"
+                      << std::endl;
+            auto dry = note([](EngineParams &) {}, 2.0, -1, "");
+            auto dryLong = note([](EngineParams &) {}, 1.5, -1, "");
+            const double dA = energy(dry, tOn, tAtt, fsr), dS = energy(dry, 1.0, 1.8, fsr);
+            // Ansprache: louder / softer chiff, the sustain the same
+            auto up = note([](EngineParams &p) { p.pipeSnd[0].attGain = 1.0f; }, 2.0, -1,
+                           "60_ansprache_plus");
+            auto down = note([](EngineParams &p) { p.pipeSnd[0].attGain = -1.0f; }, 2.0, -1, "");
+            std::cout << "Ansprache +1: attack " << db(energy(up, tOn, tAtt, fsr), dA)
+                      << " dB, sustain " << db(energy(up, 1.0, 1.8, fsr), dS) << " dB; -1: attack "
+                      << db(energy(down, tOn, tAtt, fsr), dA) << " dB" << std::endl;
+            check(db(energy(up, tOn, tAtt, fsr), dA) > 4.0 &&
+                      std::abs(db(energy(up, 1.0, 1.8, fsr), dS)) < 0.05 &&
+                      db(energy(down, tOn, tAtt, fsr), dA) < -4.0,
+                  "Ansprache: the attack louder / softer, the sustain unchanged");
+            // sharpness: more highs in the attack
+            {
+                auto sh = note([](EngineParams &p) { p.pipeSnd[0].attSharp = 1.0f; }, 1.0, -1, "");
+                auto hp = [&](const juce::AudioBuffer<float> &b)
+                { return bandE(b, 4000.0, true, tOn, tAtt); };
+                std::cout << "Ansprache Schaerfe: highs in the attack " << db(hp(sh), hp(dry))
+                          << " dB" << std::endl;
+                check(db(hp(sh), hp(dry)) > 3.0,
+                      "Ansprache: sharpness lifts the highs of the chiff");
+            }
+            // isolation: only the chiff
+            {
+                auto iso = note([](EngineParams &p) { p.pipeSnd[0].attIso = 1.0f; }, 2.0, -1,
+                                "61_nur_ansprache");
+                std::cout << "nur Ansprache: attack "
+                          << db(energy(iso, tOn, tOn + 0.3 * (tAtt - tOn), fsr),
+                                energy(dry, tOn, tOn + 0.3 * (tAtt - tOn), fsr))
+                          << " dB, sustain " << db(energy(iso, 1.0, 1.8, fsr), dS) << " dB"
+                          << std::endl;
+                check(db(energy(iso, 1.0, 1.8, fsr), dS) < -60.0 &&
+                          db(energy(iso, tOn, tOn + 0.3 * (tAtt - tOn), fsr),
+                             energy(dry, tOn, tOn + 0.3 * (tAtt - tOn), fsr)) > -3.0,
+                      "Ansprache: isolated, only the chiff remains");
+            }
+            // repeated chiffs: a burst (count the energy peaks of the isolated attack)
+            {
+                auto rep = note(
+                    [](EngineParams &p)
+                    {
+                        p.pipeSnd[0].attRep = 1.0f;
+                        p.pipeSnd[0].attIso = 1.0f;
+                    },
+                    1.5, -1, "62_ansprache_wiederholt");
+                auto one = note([](EngineParams &p) { p.pipeSnd[0].attIso = 1.0f; }, 1.5, -1, "");
+                std::cout << "Ansprache wiederholt: energy after the attack "
+                          << db(energy(rep, tAtt, 1.2, fsr), energy(one, tAtt, 1.2, fsr))
+                          << " dB more" << std::endl;
+                check(finite(rep) &&
+                          db(energy(rep, tAtt, 1.2, fsr), energy(one, tAtt, 1.2, fsr)) > 6.0,
+                      "Ansprache: the chiff repeats as a burst");
+            }
+            // Abriss: a puff at the release, stronger with a harder key
+            {
+                auto pf =
+                    note([](EngineParams &p) { p.pipeSnd[0].puff = 1.0f; }, 2.0, 1.0, "63_abriss");
+                auto np = note([](EngineParams &) {}, 2.0, 1.0, "");
+                double d = 0, ref = 0;
+                for (int i = (int)(1.0 * fsr); i < (int)(1.15 * fsr); ++i)
+                {
+                    const double x = pf.getSample(0, i) - np.getSample(0, i);
+                    d += x * x;
+                }
+                ref = energy(np, 1.0, 1.15, fsr);
+                double before = 0;
+                for (int i = 0; i < (int)(0.99 * fsr); ++i)
+                {
+                    const double x = pf.getSample(0, i) - np.getSample(0, i);
+                    before += x * x;
+                }
+                std::cout << "Abriss: puff " << db(d, ref) << " dB against the release, before it "
+                          << before << std::endl;
+                check(before == 0.0 && db(d, ref) > -30.0 && db(d, ref) < 6.0,
+                      "Abriss: a puff when the key is let go (and nothing before)");
+            }
+            // upper partials: +12 dB above 3 kHz, the lows the same
+            {
+                auto hi = note(
+                    [](EngineParams &p)
+                    {
+                        p.pipeSnd[0].hiFreq = 3000.0f;
+                        p.pipeSnd[0].hiGain = 12.0f;
+                    },
+                    1.5, -1, "64_obertoene_laut");
+                auto band = [&](const juce::AudioBuffer<float> &b, bool high)
+                { return bandE(b, high ? 6000.0 : 1200.0, high, 0.8, 1.4); };
+                std::cout << "Obertoene +12 dB: highs " << db(band(hi, true), band(dry, true))
+                          << " dB, lows " << db(band(hi, false), band(dry, false)) << " dB"
+                          << std::endl;
+                check(db(band(hi, true), band(dry, true)) > 5.0 &&
+                          std::abs(db(band(hi, false), band(dry, false))) < 1.5,
+                      "Obertoene: the upper partials alone get louder");
+                auto sp = note(
+                    [](EngineParams &p)
+                    {
+                        p.pipeSnd[0].hiFreq = 2000.0f;
+                        p.pipeSnd[0].hiShape = 1.0f;
+                    },
+                    1.5, -1, "");
+                check(finite(sp), "Obertoene: transient shaper finite");
+            }
+            // air inversion: a far pipe gets its highs back
+            {
+                auto far = [&](float inv)
+                {
+                    return note(
+                        [inv](EngineParams &p)
+                        {
+                            p.air = 1.0f;
+                            p.airInvert = inv;
+                            p.distAmount = 1.0f;
+                        },
+                        1.2, -1, "", false, 40.0f);
+                };
+                auto f0 = far(0.0f), fH = far(0.5f), f1 = far(1.0f);
+                auto hiE = [&](const juce::AudioBuffer<float> &b)
+                {
+                    return bandE(b, 5000.0, true, 0.6, 1.1) /
+                           juce::jmax(1e-30, bandE(b, 1500.0, false, 0.6, 1.1));
+                };
+                auto noAir = note(
+                    [](EngineParams &p)
+                    {
+                        p.air = 0.0f;
+                        p.distAmount = 1.0f;
+                    },
+                    1.2, -1, "", false, 40.0f);
+                std::cout << "(air off vs on at 40 m: highs " << db(hiE(noAir), hiE(f0)) << " dB)"
+                          << std::endl;
+                std::cout << "Luft umkehren (pipe at 40 m): highs 50 % " << db(hiE(fH), hiE(f0))
+                          << " dB, 100 % " << db(hiE(f1), hiE(f0)) << " dB" << std::endl;
+                check(db(hiE(fH), hiE(f0)) > 2.0 && db(hiE(f1), hiE(fH)) > 2.0,
+                      "Luft umkehren: distant highs restored and exaggerated");
+            }
+            // resonated clicks: the key click rings at the pitch of the key
+            {
+                // A recorded click can still contain broadband sound in the tail window.
+                // Use a short impulse so this test measures the resonator's own ringing.
+                auto clickLibrary = std::make_shared<SampleLibrary>(*lib);
+                auto impulse = std::make_shared<Sample>();
+                impulse->sampleRate = fsr;
+                impulse->data.assign(128, 0.0f);
+                impulse->data.front() = 1.0f;
+                NoiseSample click;
+                click.sample = impulse;
+                click.kind = "down";
+                clickLibrary->clicksDown = {click};
+                clickLibrary->clicksUp.clear();
+                auto plain = note([](EngineParams &p) { p.stopOn = {}; }, 1.0, 0.5, "", true,
+                                  0.0f, clickLibrary);
+                auto res = note(
+                    [](EngineParams &p)
+                    {
+                        p.stopOn = {};
+                        p.resClick = 1.0f;
+                        p.resDecay = 0.6f;
+                    },
+                    1.0, 0.5, "65_klick_resonanz", true, 0.0f, clickLibrary);
+                // where is the energy of the ringing? a resonator test at the key's pitch vs. half
+                // a tone away
+                const double hz = (pa.measuredHz > 0 ? pa.measuredHz : pa.nominalHz);
+                auto atF = [&](const juce::AudioBuffer<float> &b, double f)
+                {
+                    double c = 0, s2 = 0;
+                    for (int i = (int)(0.05 * fsr); i < (int)(0.45 * fsr); ++i)
+                    {
+                        const double ph = juce::MathConstants<double>::twoPi * f * i / fsr;
+                        c += b.getSample(0, i) * std::cos(ph);
+                        s2 += b.getSample(0, i) * std::sin(ph);
+                    }
+                    return c * c + s2 * s2;
+                };
+                const double tail = energy(res, 0.15, 0.45, fsr),
+                             tailPlain = energy(plain, 0.15, 0.45, fsr);
+                std::cout << "Klick-Resonanz: tail " << db(tail, tailPlain)
+                          << " dB over the plain click, at the key's pitch "
+                          << db(atF(res, hz), atF(res, hz * 1.06)) << " dB over a semitone up"
+                          << std::endl;
+                check(finite(res) && tail > 1.0e-12 && db(tail, tailPlain) > 6.0 &&
+                          db(atF(res, hz), atF(res, hz * 1.06)) > 10.0,
+                      "Klick-Resonanz: the click rings at the key's pitch");
+            }
+            // glitches: all four, each changes the sound, everything finite
+            {
+                const char *names[]{"stutter", "splice", "zero", "clip"};
+                for (int k = 0; k < 4; ++k)
+                {
+                    auto g = note(
+                        [k](EngineParams &p)
+                        {
+                            float *f[]{&p.glitch.stutter, &p.glitch.splice, &p.glitch.zero,
+                                       &p.glitch.clip};
+                            *f[k] = 1.0f;
+                        },
+                        7.0, 6.5, "66_glitch_" + juce::String(names[k]));
+                    auto ref = note([](EngineParams &) {}, 7.0, 6.5, "");
+                    double d = 0;
+                    for (int i = 0; i < g.getNumSamples(); ++i)
+                    {
+                        const double x = g.getSample(0, i) - ref.getSample(0, i);
+                        d += x * x;
+                    }
+                    float pk = 0;
+                    for (int i = 0; i < g.getNumSamples(); ++i)
+                        pk = juce::jmax(pk, std::abs(g.getSample(0, i)));
+                    std::cout << "glitch " << names[k] << ": difference "
+                              << db(d, energy(ref, 0, 7.0, fsr)) << " dB, peak "
+                              << juce::Decibels::gainToDecibels(pk) << " dB" << std::endl;
+                    check(finite(g) && db(d, energy(ref, 0, 7.0, fsr)) > -40.0 && pk < 1.0f,
+                          juce::String("glitch ") + names[k] + " changes the sound, finite");
+                }
+            }
+            // per-pipe modulation of the new targets: a route from a constant source (LFO 1,
+            // square, almost still: +1) must sound exactly like setting the stop's parameter by
+            // hand
+            {
+                auto lfoOne = [](EngineParams &p, int tgt, float amt)
+                {
+                    p.mod.lfo[0].shape = shSquare;
+                    p.mod.lfo[0].rate = 1.0e-4f;
+                    p.mod.lfo[0].spread = 0.0f;
+                    p.mod.routes[0] = {srcLfo1, tgt, amt, false};
+                };
+                auto maxDiff =
+                    [](const juce::AudioBuffer<float> &a, const juce::AudioBuffer<float> &b)
+                {
+                    float m = 0.0f;
+                    for (int c = 0; c < 2; ++c)
+                        for (int i = 0; i < a.getNumSamples(); ++i)
+                            m = juce::jmax(m, std::abs(a.getSample(c, i) - b.getSample(c, i)));
+                    return m;
+                };
+                struct Case
+                {
+                    const char *name;
+                    int tgt;
+                    float amt;
+                    std::function<void(EngineParams &)> direct;
+                    bool degMode;
+                };
+                const std::vector<Case> cases{
+                    {"Ansprache", tgtAttack, 0.5f,
+                     [](EngineParams &p) { p.pipeSnd[0].attGain = 0.5f; }, false},
+                    {"Ansprache Schaerfe", tgtAttSharp, 0.75f,
+                     [](EngineParams &p) { p.pipeSnd[0].attSharp = 0.75f; }, false},
+                    {"Nur Ansprache", tgtAttIso, 1.0f,
+                     [](EngineParams &p) { p.pipeSnd[0].attIso = 1.0f; }, false},
+                    {"Ansprache wiederholen", tgtAttRep, 0.6f,
+                     [](EngineParams &p) { p.pipeSnd[0].attRep = 0.6f; }, false},
+                    {"Abriss", tgtPuff, 1.0f, [](EngineParams &p) { p.pipeSnd[0].puff = 1.0f; },
+                     false},
+                    {"Obertoene ab", tgtHiFreq, 0.25f,
+                     [](EngineParams &p)
+                     {
+                         p.pipeSnd[0].hiFreq = 8000.0f;
+                         p.pipeSnd[0].hiGain = 9.0f;
+                     },
+                     false},
+                    {"Obertoene Pegel", tgtHiGain, 0.25f,
+                     [](EngineParams &p) { p.pipeSnd[0].hiGain = 6.0f; }, false},
+                    {"Obertoene Anschlag", tgtHiShape, 1.0f,
+                     [](EngineParams &p) { p.pipeSnd[0].hiShape = 1.0f; }, false},
+                    {"Luft umkehren", tgtAirInvert, 1.0f,
+                     [](EngineParams &p) { p.airInvert = 1.0f; }, false},
+                    {"Wolke Menge", tgtCloudMix, 0.7f,
+                     [](EngineParams &p) { p.cloud[0].mix = 0.7f; }, false},
+                    {"Koernung", tgtDegGrain, 0.5f, [](EngineParams &p) { p.deg.grain = 1.0f; },
+                     true},
+                    {"Bittiefe", tgtDegBits, -1.0f, [](EngineParams &p) { p.deg.bits = 3.0f; },
+                     true},
+                    {"Abtastrate", tgtDegRate, -0.5f,
+                     [](EngineParams &p) { p.deg.rateHz = 2756.25f; }, true},
+                };
+                for (const auto &cs : cases)
+                {
+                    const bool hiFreqCase = cs.tgt == tgtHiFreq;
+                    auto base = [&](EngineParams &p)
+                    {
+                        p.airInvert = 0.0f;
+                        if (cs.degMode)
+                        {
+                            p.deg.perPipe = true;
+                            p.deg.amount = 1.0f;
+                            p.deg.grain = 0.5f;
+                            p.deg.bits = 16.0f;
+                            p.deg.rateHz = 22050.0f;
+                            p.deg.dropouts = 0.0f;
+                            p.deg.wobble = 0.0f;
+                        }
+                        if (hiFreqCase)
+                            p.pipeSnd[0].hiGain = 9.0f; // the frequency only matters with a level
+                    };
+                    const float dist = cs.tgt == tgtAirInvert ? 30.0f : 0.0f;
+                    auto viaMod = note(
+                        [&](EngineParams &p)
+                        {
+                            base(p);
+                            lfoOne(p, cs.tgt, cs.amt);
+                        },
+                        1.6, 1.0, "", false, dist);
+                    auto byHand = note(
+                        [&](EngineParams &p)
+                        {
+                            base(p);
+                            cs.direct(p);
+                        },
+                        1.6, 1.0, "", false, dist);
+                    auto plain = note([&](EngineParams &p) { base(p); }, 1.6, 1.0, "", false, dist);
+                    const float d = maxDiff(viaMod, byHand), changed = maxDiff(byHand, plain);
+                    std::cout << "per-pipe target " << cs.name << ": route vs by hand max diff "
+                              << d << " (the setting itself changes up to " << changed << ")"
+                              << std::endl;
+                    check(finite(viaMod) && d < 1.0e-6f && changed > 1.0e-4f,
+                          juce::String("per-pipe target ") + cs.name + " = the parameter by hand");
+                }
+                // glitches (random draws differ): the route turns them on, the result changes and
+                // stays finite
+                const int gt[]{tgtStutter, tgtSplice, tgtZero, tgtClip};
+                const char *gn[]{"stutter", "splice", "zero", "clip"};
+                auto ref = note([](EngineParams &) {}, 7.0, 6.5, "");
+                for (int k = 0; k < 4; ++k)
+                {
+                    auto g = note([&](EngineParams &p) { lfoOne(p, gt[k], 1.0f); }, 7.0, 6.5,
+                                  k == 0 ? "67_glitch_per_pipe_mod" : "");
+                    double d2 = 0;
+                    for (int i = 0; i < g.getNumSamples(); ++i)
+                    {
+                        const double x = g.getSample(0, i) - ref.getSample(0, i);
+                        d2 += x * x;
+                    }
+                    std::cout << "per-pipe target glitch " << gn[k] << ": difference "
+                              << db(d2, energy(ref, 0, 7.0, fsr)) << " dB" << std::endl;
+                    check(finite(g) && db(d2, energy(ref, 0, 7.0, fsr)) > -40.0,
+                          juce::String("per-pipe target glitch ") + gn[k] + " works");
+                }
+                // a different value for every pipe: Ansprache from the key position, low key vs.
+                // high key are not the same
+                {
+                    auto keyed =
+                        note([&](EngineParams &p)
+                             { p.mod.routes[0] = {srcKey, tgtAttack, 1.0f, false}; }, 1.0, -1, "");
+                    auto flat = note([](EngineParams &) {}, 1.0, -1, "");
+                    const double kr =
+                        db(energy(keyed, tOn, tAtt, fsr), energy(flat, tOn, tAtt, fsr));
+                    std::cout << "per-pipe Ansprache from the key position (a' sits a bit above "
+                                 "the middle): attack "
+                              << kr << " dB" << std::endl;
+                    check(std::abs(kr) > 0.3,
+                          "per-pipe target: Ansprache follows the key position");
+                }
+            }
+        }
+
+        // ---------------- the tuning in space: beats, Tonnetz, difference tones; ice walls; double
+        // / long exposure ----------------
+        {
+            // two (or more) Praestant notes held together; returns the engine so its state can be
+            // read
+            auto chord = [&](OrganEngine &e, std::function<void(EngineParams &)> setup,
+                             std::vector<int> midis, double secs, int outMode,
+                             juce::AudioBuffer<float> *keepOut)
+            {
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = true;
+                p.clickLevel = 0;
+                p.releaseClick = 0;
+                p.wind = 0;
+                p.stopPull = 0;
+                p.outputMode = outMode;
+                setup(p);
+                const int ch = outMode == 0 ? 2 : (outMode + 1) * (outMode + 1);
+                const int total = (int)(secs * fsr);
+                juce::AudioBuffer<float> b(ch, B);
+                if (keepOut != nullptr)
+                {
+                    keepOut->setSize(ch, total);
+                    keepOut->clear();
+                }
+                for (int pos = 0; pos < total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                        for (int m : midis)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)100), 0);
+                    b.clear();
+                    e.process(b, mb, p);
+                    if (keepOut != nullptr)
+                        for (int c = 0; c < ch; ++c)
+                            keepOut->copyFrom(c, pos, b, c, 0, juce::jmin(B, total - pos));
+                }
+            };
+            auto finiteB = [](const juce::AudioBuffer<float> &b)
+            {
+                for (int c = 0; c < b.getNumChannels(); ++c)
+                    for (int i = 0; i < b.getNumSamples(); ++i)
+                        if (!std::isfinite(b.getSample(c, i)))
+                            return false;
+                return true;
+            };
+            // beats in 1/4-comma meantone (ideal): pure third c'-e' still, fifth c'-g' slow, wolf
+            // g#-eb' fast
+            {
+                struct Iv
+                {
+                    const char *name;
+                    int a, b;
+                    float lo, hi;
+                };
+                const Iv ivs[]{{"major third c'-e' (pure)", 60, 64, -0.01f, 0.05f},
+                               {"fifth c'-g'", 60, 67, 1.8f, 3.2f},
+                               {"minor third e'-g'", 64, 67, 2.0f, 6.5f},
+                               {"wolf fifth g#-eb'", 56, 63, 6.0f, 16.0f}};
+                float rates[4]{};
+                for (int k = 0; k < 4; ++k)
+                {
+                    OrganEngine e;
+                    chord(
+                        e, [](EngineParams &p) { p.motionMode[0] = (int)Motion::Beat; },
+                        {ivs[k].a, ivs[k].b}, 2.0, 1, nullptr);
+                    rates[k] = e.beatMaxNow.load();
+                    std::cout << "beats " << ivs[k].name << ": " << rates[k] << " Hz" << std::endl;
+                    check(rates[k] >= ivs[k].lo && rates[k] <= ivs[k].hi,
+                          juce::String("beats: ") + ivs[k].name);
+                }
+                // as recorded: the pure third beats a little (the pipes are not exactly in tune)
+                OrganEngine er;
+                chord(
+                    er,
+                    [](EngineParams &p)
+                    {
+                        p.beatIdeal = false;
+                        p.motionMode[0] = (int)Motion::Beat;
+                    },
+                    {60, 64}, 2.0, 1, nullptr);
+                std::cout << "beats major third as recorded: " << er.beatMaxNow.load() << " Hz"
+                          << std::endl;
+                check(er.beatMaxNow.load() > rates[0],
+                      "beats: the recorded pipes beat where the tuning is pure");
+                // motion "Schwebung": the wolf pipes have turned far, the pure third has not moved
+                OrganEngine ew, et;
+                auto beatMotion = [](EngineParams &p)
+                {
+                    p.motionMode[0] = (int)Motion::Beat;
+                    p.motionRate[0] = 0.08f;
+                };
+                chord(ew, beatMotion, {56, 63}, 3.0, 1, nullptr);
+                chord(et, beatMotion, {60, 64}, 3.0, 1, nullptr);
+                const float turnWolf = ew.beatTurn[0][(size_t)keyIndexForMidi(56)].load(),
+                            turnThird = et.beatTurn[0][(size_t)keyIndexForMidi(60)].load();
+                std::cout << "Schwebung motion after 3 s: wolf pipe turned to " << turnWolf
+                          << " deg, pure third " << turnThird << " deg" << std::endl;
+                check(std::abs(std::remainder(turnThird, 360.0f)) < 2.0f && turnWolf > 20.0f,
+                      "Schwebung: the wolf spins, the pure third stands still");
+            }
+            // Tonnetz: meantone keeps c-e-g together and puts g# and eb at opposite edges;
+            // Pythagorean lines the fifths up
+            {
+                auto placeOf = [&](int t, int midi)
+                {
+                    float sf, st;
+                    const auto kt = makeKeyTuning(t);
+                    return tonnetzPlaces(kt, tuningStepCents(t), sf,
+                                         st)[(size_t)keyIndexForMidi(midi)];
+                };
+                auto show = [&](int t, const char *name)
+                {
+                    std::cout << "Tonnetz " << name << ":";
+                    for (int m : {60, 62, 64, 65, 67, 69, 71, 63, 68})
+                    {
+                        auto q = placeOf(t, m);
+                        std::cout << " " << helmholtzName(m) << "(" << q.a << "," << q.b << ")";
+                    }
+                    std::cout << std::endl;
+                };
+                show(0, "1/4-comma");
+                show(5, "Pythagorean");
+                show(6, "equal");
+                const auto c = placeOf(0, 60), e = placeOf(0, 64), g = placeOf(0, 67),
+                           gs = placeOf(0, 68), eb = placeOf(0, 63);
+                auto dist = [](TonnetzPlace x, TonnetzPlace y)
+                { return std::abs(x.a - y.a) + std::abs(x.b - y.b); };
+                bool pythLine = true;
+                for (int m = 60; m < 72; ++m)
+                    if (keyIndexForMidi(m) >= 0)
+                        pythLine = pythLine && placeOf(5, m).b == 0;
+                check(dist(c, e) <= 1 && dist(c, g) <= 1 && dist(gs, eb) >= 4 && pythLine,
+                      "Tonnetz: meantone triad compact, the wolf a seam, Pythagorean a chain of "
+                      "fifths");
+                std::array<Pos, kNumKeys> pos{};
+                LayoutSettings ls;
+                ls.type = (int)Layout::Tonnetz;
+                const auto kt = makeKeyTuning(0);
+                generateLayout(ls, 0, pos, &kt, 0.0);
+                bool ok = true;
+                for (auto &q : pos)
+                    ok = ok && std::isfinite(q.az) && std::abs(q.el) <= 85.0f;
+                check(ok, "Tonnetz: a layout on the sphere");
+            }
+            // difference tones: a held fifth c'-g' sounds c (an octave below c') between / below
+            // the pipes
+            {
+                const double fC = meantoneHz(60), fG = meantoneHz(67), fd = fG - fC;
+                juce::AudioBuffer<float> with, without;
+                OrganEngine e1, e0;
+                chord(
+                    e1,
+                    [](EngineParams &p)
+                    {
+                        p.ghostLevel = 1.0f;
+                        p.ghostPlace = 1.0f;
+                    },
+                    {60, 67}, 2.5, 1, &with);
+                chord(e0, [](EngineParams &) {}, {60, 67}, 2.5, 1, &without);
+                auto atF = [&](const juce::AudioBuffer<float> &b, int c, double f)
+                {
+                    double re = 0, im = 0;
+                    for (int i = (int)(1.2 * fsr); i < (int)(2.4 * fsr); ++i)
+                    {
+                        const double ph = juce::MathConstants<double>::twoPi * f * i / fsr;
+                        re += b.getSample(c, i) * std::cos(ph);
+                        im += b.getSample(c, i) * std::sin(ph);
+                    }
+                    return re * re + im * im;
+                };
+                const double gain =
+                    10.0 * std::log10(atF(with, 0, fd) / juce::jmax(1e-30, atF(without, 0, fd)));
+                // the ghost sits below: Z (ACN 2) negative relative to W at the difference
+                // frequency
+                double zw = 0;
+                for (int i = (int)(1.2 * fsr); i < (int)(2.4 * fsr); ++i)
+                    zw += (double)(with.getSample(2, i) - without.getSample(2, i)) *
+                          (with.getSample(0, i) - without.getSample(0, i));
+                std::cout << "difference tone of c'-g': " << fd << " Hz, " << gain
+                          << " dB over the plain fifth at that frequency, ghosts "
+                          << e1.ghostsNow.load()
+                          << ", below the listener: " << (zw < 0 ? "yes" : "no") << std::endl;
+                writeWav(outDir.getChildFile("70_differenzton_quinte.wav"), with, fsr);
+                check(e1.ghostsNow.load() >= 1 && gain > 10.0 && zw < 0 && finiteB(with),
+                      "difference tones: the fifth's ghost an octave below c', under the floor");
+            }
+            // ice: the reflections chirp - low frequencies of the early reflections arrive later
+            {
+                DispersionBank bank;
+                const int N = 8192;
+                std::vector<float> x((size_t)N, 0.0f);
+                x[0] = 1.0f;
+                float *px = x.data();
+                bank.process(&px, 1, N, 64, -0.9f);
+                auto peakAt = [&](bool low)
+                {
+                    juce::IIRFilter fl;
+                    fl.setCoefficients(low ? juce::IIRCoefficients::makeLowPass(fsr, 300.0)
+                                           : juce::IIRCoefficients::makeHighPass(fsr, 4000.0));
+                    double best = 0;
+                    int at = 0, i0 = 0;
+                    double acc = 0, tot = 0;
+                    for (int i = 0; i < N; ++i)
+                    {
+                        const double y = fl.processSingleSampleRaw(x[(size_t)i]);
+                        acc += y * y * i;
+                        tot += y * y;
+                        if (std::abs(y) > best)
+                        {
+                            best = std::abs(y);
+                            i0 = i;
+                        }
+                    }
+                    at = (int)(acc / juce::jmax(1e-30, tot));
+                    (void)i0;
+                    return at;
+                };
+                const int tl = peakAt(true), th = peakAt(false);
+                std::cout << "ice: all-pass chain, energy arrives at " << tl / 48.0
+                          << " ms (below 300 Hz) and " << th / 48.0 << " ms (above 4 kHz)"
+                          << std::endl;
+                juce::AudioBuffer<float> iceB, plainB;
+                OrganEngine e1, e0;
+                auto room = [](EngineParams &p)
+                {
+                    p.room.on = true;
+                    p.room.width = 12;
+                    p.room.length = 18;
+                    p.room.height = 8;
+                    p.clickLevel = 0.8f;
+                };
+                chord(
+                    e1,
+                    [&](EngineParams &p)
+                    {
+                        room(p);
+                        p.ice = 1.0f;
+                        p.iceLen = 0.8f;
+                    },
+                    {69}, 1.5, 3, &iceB);
+                chord(e0, room, {69}, 1.5, 3, &plainB);
+                double d = 0, e = 0;
+                for (int i = 0; i < iceB.getNumSamples(); ++i)
+                {
+                    const double t = iceB.getSample(0, i) - plainB.getSample(0, i);
+                    d += t * t;
+                    e += (double)plainB.getSample(0, i) * plainB.getSample(0, i);
+                }
+                std::cout << "ice in the Saal: difference "
+                          << 10.0 * std::log10(d / juce::jmax(1e-30, e)) << " dB" << std::endl;
+                writeWav(outDir.getChildFile("71_eis_saal.wav"), iceB, fsr);
+                check(tl > th + 48 && finiteB(iceB) && d > 1e-4 * e,
+                      "ice: the lows come later (a falling chirp), the Saal changes");
+            }
+            // double exposure (class): an impulse from the left comes back 0.5 s later, mirrored to
+            // the right / turned to the front
+            {
+                const int N = (int)(1.0 * fsr);
+                auto runDex = [&](int mirror, float turn, double &azBack, double &level)
+                {
+                    DoubleExposure dx;
+                    dx.prepare(fsr, 2);
+                    std::vector<std::vector<float>> ch(16, std::vector<float>((size_t)N, 0.0f));
+                    float enc[kMaxAmbiChannels]{};
+                    encodeAmbiX(90.0f, 0.0f, 3, enc); // from the left
+                    for (int c = 0; c < 16; ++c)
+                        ch[(size_t)c][100] = enc[c];
+                    std::vector<float *> pp;
+                    for (auto &v : ch)
+                        pp.push_back(v.data());
+                    DoubleExposureParams dp;
+                    dp.mix = 1.0f;
+                    dp.time = 0.5f;
+                    dp.mirror = mirror;
+                    dp.turn = turn;
+                    dp.fade = 0.0f;
+                    for (int pos = 0; pos < N; pos += 256)
+                    {
+                        std::vector<float *> q;
+                        for (auto *x : pp)
+                            q.push_back(x + pos);
+                        dx.process(q.data(), 16, false, juce::jmin(256, N - pos), dp);
+                    }
+                    double w = 0, y = 0, x = 0, e2 = 0;
+                    for (int i = (int)(0.45 * fsr); i < N; ++i)
+                    {
+                        w += ch[0][(size_t)i];
+                        y += ch[1][(size_t)i];
+                        x += ch[3][(size_t)i];
+                        e2 += ch[0][(size_t)i] * ch[0][(size_t)i];
+                    }
+                    azBack = juce::radiansToDegrees(std::atan2(y, x));
+                    level = e2;
+                };
+                double a0, l0, a1, l1, a2, l2;
+                runDex(0, 0.0f, a0, l0);
+                runDex(1, 0.0f, a1, l1);
+                runDex(0, -90.0f, a2, l2);
+                std::cout << "double exposure: the copy comes from " << a0 << " deg (plain), " << a1
+                          << " deg (mirrored), " << a2 << " deg (turned -90)" << std::endl;
+                check(std::abs(a0 - 90.0) < 3.0 && std::abs(a1 + 90.0) < 3.0 &&
+                          std::abs(a2) < 3.0 && l0 > 0.0,
+                      "double exposure: delayed, mirrored, turned");
+                // in the engine: the field of 1 s ago laid over the present, everything finite
+                juce::AudioBuffer<float> dexB;
+                OrganEngine ed;
+                chord(
+                    ed,
+                    [](EngineParams &p)
+                    {
+                        p.dex.mix = 0.8f;
+                        p.dex.time = 0.7f;
+                        p.dex.turn = 120.0f;
+                        p.dex.again = 0.5f;
+                    },
+                    {60, 64, 67}, 2.0, 3, &dexB);
+                std::vector<float *> chp;
+                for (int c = 0; c < dexB.getNumChannels(); ++c)
+                    chp.push_back(dexB.getWritePointer(c));
+                EngineParams pp;
+                pp.dex.mix = 0.8f;
+                pp.dex.time = 0.7f;
+                pp.dex.turn = 120.0f;
+                pp.dex.again = 0.5f;
+                pp.outputMode = 3;
+                for (int pos = 0; pos < dexB.getNumSamples(); pos += 512)
+                {
+                    std::vector<float *> q;
+                    for (auto *x : chp)
+                        q.push_back(x + pos);
+                    ed.applyPhotoFx(q.data(), 3, juce::jmin(512, dexB.getNumSamples() - pos), pp);
+                }
+                writeWav(outDir.getChildFile("72_doppelbelichtung.wav"), dexB, fsr);
+                check(finiteB(dexB), "double exposure in the engine: finite");
+            }
+            // long exposure (class): a burst from the front leaves a trail there that fades over
+            // the exposure time
+            {
+                const int N = (int)(3.0 * fsr);
+                LongExposure lx;
+                lx.prepare(fsr);
+                std::vector<std::vector<float>> ch(16, std::vector<float>((size_t)N, 0.0f));
+                float enc[kMaxAmbiChannels]{};
+                encodeAmbiX(0.0f, 0.0f, 3, enc);
+                juce::Random rnd(3);
+                for (int i = 0; i < (int)(0.1 * fsr); ++i)
+                {
+                    const float v = 0.3f * (rnd.nextFloat() * 2.0f - 1.0f);
+                    for (int c = 0; c < 16; ++c)
+                        ch[(size_t)c][(size_t)i] = v * enc[c];
+                }
+                std::vector<float *> pp;
+                for (auto &v : ch)
+                    pp.push_back(v.data());
+                LongExposureParams lp;
+                lp.mix = 1.0f;
+                lp.time = 2.0f;
+                lp.bright = 0.6f;
+                for (int pos = 0; pos < N; pos += 256)
+                {
+                    std::vector<float *> q;
+                    for (auto *x : pp)
+                        q.push_back(x + pos);
+                    lx.process(q.data(), 16, false, juce::jmin(256, N - pos), lp);
+                }
+                auto win = [&](double t0, double t1, double &w2, double &az)
+                {
+                    double y = 0, x = 0;
+                    w2 = 0;
+                    for (int i = (int)(t0 * fsr); i < (int)(t1 * fsr); ++i)
+                    {
+                        const double w = ch[0][(size_t)i];
+                        w2 += w * w;
+                        y += w * ch[1][(size_t)i];
+                        x += w * ch[3][(size_t)i];
+                    }
+                    az = juce::radiansToDegrees(std::atan2(y, x));
+                };
+                double eBurst, azB, e05, az05, e15, az15;
+                win(0.0, 0.1, eBurst, azB);
+                win(0.4, 0.6, e05, az05);
+                win(1.4, 1.6, e15, az15);
+                const double d05 = 10.0 * std::log10(e05 / eBurst * 0.5),
+                             d15 = 10.0 * std::log10(e15 / eBurst * 0.5);
+                std::cout << "long exposure (2 s): trail at 0.5 s " << d05 << " dB, at 1.5 s "
+                          << d15 << " dB (burst = 0 dB), from " << az05 << " deg" << std::endl;
+                check(d05 > -30.0 && d15 < d05 - 10.0 && std::abs(az05) < 15.0,
+                      "long exposure: a trail where the sound was, fading");
+                // in the engine: a rotating pipe paints a ring
+                juce::AudioBuffer<float> exB;
+                OrganEngine ex;
+                chord(
+                    ex,
+                    [](EngineParams &p)
+                    {
+                        p.motionMode[0] = (int)Motion::Rotation;
+                        p.motionRate[0] = 0.5f;
+                    },
+                    {69}, 2.0, 3, &exB);
+                std::vector<float *> chp;
+                for (int c = 0; c < exB.getNumChannels(); ++c)
+                    chp.push_back(exB.getWritePointer(c));
+                EngineParams pp2;
+                pp2.expo.mix = 0.8f;
+                pp2.expo.time = 6.0f;
+                pp2.outputMode = 3;
+                for (int pos = 0; pos < exB.getNumSamples(); pos += 512)
+                {
+                    std::vector<float *> q;
+                    for (auto *x : chp)
+                        q.push_back(x + pos);
+                    ex.applyPhotoFx(q.data(), 3, juce::jmin(512, exB.getNumSamples() - pos), pp2);
+                }
+                writeWav(outDir.getChildFile("73_belichtung_ring.wav"), exB, fsr);
+                check(finiteB(exB), "long exposure in the engine: finite");
+            }
+        }
+
+        // ---------------- "Raumverfall" and "Körnerwolke" ----------------
+        {
+            // energy per Ambisonics degree (0..3) of a rendered buffer, and the direction of the
+            // first-order vector
+            auto degreeEnergy =
+                [](const juce::AudioBuffer<float> &b, int from, std::array<double, 4> &e)
+            {
+                e.fill(0.0);
+                for (int c = 0; c < juce::jmin(16, b.getNumChannels()); ++c)
+                {
+                    const int l = (int)std::floor(std::sqrt((double)c) + 1e-9);
+                    for (int i = from; i < b.getNumSamples(); ++i)
+                        e[(size_t)l] += (double)b.getSample(c, i) * b.getSample(c, i);
+                }
+            };
+            auto direction = [](const juce::AudioBuffer<float> &b, int from, double &az, double &rE)
+            {
+                double wy = 0, wx = 0, wz = 0, ww = 0, yy = 0, xx = 0, zz = 0;
+                for (int i = from; i < b.getNumSamples(); ++i)
+                {
+                    const double w = b.getSample(0, i), y = b.getSample(1, i),
+                                 z = b.getSample(2, i), x = b.getSample(3, i);
+                    wy += w * y;
+                    wx += w * x;
+                    wz += w * z;
+                    ww += w * w;
+                    yy += y * y;
+                    xx += x * x;
+                    zz += z * z;
+                }
+                az = juce::radiansToDegrees(std::atan2(wy, wx));
+                rE = std::sqrt(wx * wx + wy * wy + wz * wz) /
+                     juce::jmax(1e-30, ww); // 1 = one direction, 0 = all around
+            };
+            auto place = [&](OrganEngine &e, float az, float el)
+            {
+                e.baseAz[0][(size_t)keyA] = az;
+                e.baseEl[0][(size_t)keyA] = el;
+                e.baseDist[0][(size_t)keyA] = 4.0f;
+            };
+            const int from = (int)(0.3 * fsr);
+            std::array<double, 4> e0{}, e1{}, e2{};
+            OrganEngine a0, a1, a2, a3;
+            for (auto *e : {&a0, &a1, &a2, &a3})
+                place(*e, -50.0f, 10.0f);
+            auto dry = run([](EngineParams &) {}, 1.5, -1, "", 16, &a0);
+            auto half = run([](EngineParams &p) { p.space.erode = 0.5f; }, 1.5, -1,
+                            "50_space_erode_half", 16, &a1);
+            auto full = run([](EngineParams &p) { p.space.erode = 1.0f; }, 1.5, -1, "", 16, &a2);
+            degreeEnergy(dry, from, e0);
+            degreeEnergy(half, from, e1);
+            degreeEnergy(full, from, e2);
+            auto rel = [](double a, double b)
+            { return 10.0 * std::log10(juce::jmax(1e-30, a) / juce::jmax(1e-30, b)); };
+            std::cout << "space erode 50 %: degree 0 " << rel(e1[0], e0[0]) << " dB, 1 "
+                      << rel(e1[1], e0[1]) << " dB, 2 " << rel(e1[2], e0[2]) << " dB, 3 "
+                      << rel(e1[3], e0[3]) << " dB; 100 %: degree 1 " << rel(e2[1], e0[1]) << " dB"
+                      << std::endl;
+            check(std::abs(rel(e1[0], e0[0])) < 0.01 && std::abs(rel(e1[1], e0[1])) < 0.01 &&
+                      std::abs(rel(e1[2], e0[2]) + 6.0) < 1.0 && rel(e1[3], e0[3]) < -60.0 &&
+                      rel(e2[1], e0[1]) < -60.0,
+                  "space: erosion takes the orders away from the top (1.5 of 3 left)");
+
+            // the direction grid: four directions - the pipe is heard from the nearest one
+            {
+                OrganEngine g;
+                place(g, -50.0f, 10.0f);
+                auto b = run([](EngineParams &p) { p.space.grid = 1.0f; }, 1.0, -1, "", 16, &g);
+                double az, rE;
+                direction(b, from, az, rE);
+                float gaz[4], gel[4];
+                fibonacciDirs(4, gaz, gel);
+                double best = 1e9;
+                for (int i = 0; i < 4; ++i)
+                    best = juce::jmin(best, std::abs(std::remainder(az - (double)gaz[i], 360.0)));
+                double azDry, rEDry;
+                direction(dry, from, azDry, rEDry);
+                std::cout << "space grid (4 directions): heard from az " << az << " (pipe at "
+                          << azDry << "), " << best << " deg from a grid direction" << std::endl;
+                check(gridCount(1.0f) == 4 && gridCount(0.0f) == 0 && best < 3.0,
+                      "space: directions snap to the grid");
+            }
+            // bit depth / sample-and-hold of the directional channels: W untouched, the higher
+            // orders hit hardest
+            {
+                OrganEngine g;
+                place(g, -50.0f, 10.0f);
+                auto b = run(
+                    [](EngineParams &p)
+                    {
+                        p.space.bits = 4.0f;
+                        p.space.rateHz = 2000.0f;
+                    },
+                    1.0, -1, "51_space_crush", 16, &g);
+                std::array<double, 4> err{}, ref{};
+                for (int c = 0; c < 16; ++c)
+                {
+                    const int l = (int)std::floor(std::sqrt((double)c) + 1e-9);
+                    for (int i = from; i < b.getNumSamples(); ++i)
+                    {
+                        const double d = b.getSample(c, i) - dry.getSample(c, i);
+                        err[(size_t)l] += d * d;
+                        ref[(size_t)l] += (double)dry.getSample(c, i) * dry.getSample(c, i);
+                    }
+                }
+                std::cout << "space crush: error per degree " << rel(err[0] + 1e-30, ref[0])
+                          << " / " << rel(err[1], ref[1]) << " / " << rel(err[2], ref[2]) << " / "
+                          << rel(err[3], ref[3]) << " dB" << std::endl;
+                check(err[0] < 1e-20 && rel(err[1], ref[1]) < rel(err[3], ref[3]) &&
+                          rel(err[3], ref[3]) > -20.0,
+                      "space: crushing grows with the order, W stays clean");
+            }
+            // dropouts: directional channels fall silent now and then, W never
+            {
+                OrganEngine g;
+                place(g, -50.0f, 10.0f);
+                auto b = run([](EngineParams &p) { p.space.drops = 1.0f; }, 6.0, -1,
+                             "52_space_dropouts", 16, &g);
+                int silentFrames = 0, wSilent = 0, frames = 0;
+                for (int pos = from; pos + 480 < b.getNumSamples(); pos += 480)
+                {
+                    ++frames;
+                    for (int c = 1; c < 16; ++c)
+                        if (b.getRMSLevel(c, pos, 480) <
+                            1e-3f *
+                                juce::jmax(1e-9f,
+                                           dry.getRMSLevel(
+                                               c, juce::jmin(pos, dry.getNumSamples() - 480), 480)))
+                        {
+                            ++silentFrames;
+                            break;
+                        }
+                    if (b.getRMSLevel(0, pos, 480) < 1e-6f)
+                        ++wSilent;
+                }
+                std::cout << "space dropouts: " << silentFrames << " of " << frames
+                          << " frames with a silent channel, W silent " << wSilent << std::endl;
+                check(silentFrames > 5 && wSilent == 0,
+                      "space: dropouts silence directional channels, never W");
+            }
+            // aliasing: the field sampled at too few points - the level stays, the direction smears
+            {
+                OrganEngine g;
+                place(g, -50.0f, 10.0f);
+                auto b = run([](EngineParams &p) { p.space.alias = 1.0f; }, 1.5, -1,
+                             "53_space_alias", 16, &g);
+                degreeEnergy(b, from, e1);
+                double d = 0;
+                for (int c = 0; c < 16; ++c)
+                    for (int i = from; i < b.getNumSamples(); ++i)
+                    {
+                        const double x = b.getSample(c, i) - dry.getSample(c, i);
+                        d += x * x;
+                    }
+                const double tot0 = e0[0] + e0[1] + e0[2] + e0[3];
+                std::cout << "space alias: W " << rel(e1[0], e0[0]) << " dB, change "
+                          << rel(d, tot0) << " dB, degree 3 " << rel(e1[3], e0[3]) << " dB"
+                          << std::endl;
+                bool fin = true;
+                for (int c = 0; c < 16; ++c)
+                    for (int i = 0; i < b.getNumSamples(); ++i)
+                        fin = fin && std::isfinite(b.getSample(c, i));
+                check(fin && std::abs(rel(e1[0], e0[0])) < 4.0 && rel(d, tot0) > -12.0,
+                      "space: aliasing changes the field, not the level");
+            }
+            // weathering: the sphere wears away while it plays (2 s), and grows back in silence
+            {
+                OrganEngine g;
+                place(g, -50.0f, 10.0f);
+                auto b = run([](EngineParams &p) { p.space.weather = 2.0f; }, 3.0, -1,
+                             "54_space_weather", 16, &g);
+                const float worn = g.spaceErosionNow.load();
+                std::array<double, 4> early{}, late{};
+                juce::AudioBuffer<float> eb(16, (int)(0.3 * fsr)), lb(16, (int)(0.3 * fsr));
+                for (int c = 0; c < 16; ++c)
+                {
+                    eb.copyFrom(c, 0, b, c, (int)(0.2 * fsr), eb.getNumSamples());
+                    lb.copyFrom(c, 0, b, c, (int)(2.6 * fsr), lb.getNumSamples());
+                }
+                degreeEnergy(eb, 0, early);
+                degreeEnergy(lb, 0, late);
+                std::cout << "space weather 2 s: erosion after 3 s " << worn
+                          << ", degree 1 share early " << early[1] / early[0] << ", late "
+                          << late[1] / juce::jmax(1e-30, late[0]) << std::endl;
+                check(worn > 0.99f &&
+                          late[1] / juce::jmax(1e-30, late[0]) < 1e-4 * early[1] / early[0],
+                      "space: weathering erodes the sphere over time");
+            }
+            // default: nothing changes (the shoebox reference files stay bit-identical, see the
+            // null test)
+
+            // grain cloud: the pipe dissolves into grains around it
+            {
+                OrganEngine c1, c2, c3;
+                for (auto *e : {&c1, &c2, &c3})
+                    place(*e, -50.0f, 0.0f);
+                auto wide = run(
+                    [](EngineParams &p)
+                    {
+                        auto &c = p.cloud[0];
+                        c.mix = 1.0f;
+                        c.spread = 180.0f;
+                        c.density = 60.0f;
+                        c.sizeMs = 80.0f;
+                    },
+                    3.0, -1, "55_cloud_sphere", 16, &c1);
+                auto narrow = run(
+                    [](EngineParams &p)
+                    {
+                        auto &c = p.cloud[0];
+                        c.mix = 1.0f;
+                        c.spread = 15.0f;
+                        c.density = 60.0f;
+                        c.sizeMs = 80.0f;
+                    },
+                    3.0, -1, "", 16, &c2);
+                auto halfMix = run(
+                    [](EngineParams &p)
+                    {
+                        auto &c = p.cloud[0];
+                        c.mix = 0.5f;
+                        c.spread = 90.0f;
+                    },
+                    3.0, -1, "55_cloud_half", 16, &c3);
+                double azD, rD, azW, rW, azN, rN, azH, rH;
+                direction(dry, from, azD, rD);
+                direction(wide, from, azW, rW);
+                direction(narrow, from, azN, rN);
+                direction(halfMix, from, azH, rH);
+                std::array<double, 4> ew{}, eh{};
+                degreeEnergy(wide, from, ew);
+                degreeEnergy(halfMix, from, eh);
+                const double dryLen = (double)dry.getNumSamples() - from,
+                             wideLen = (double)wide.getNumSamples() - from;
+                const double lvlW = rel(ew[0] / wideLen, e0[0] / dryLen),
+                             lvlH = rel(eh[0] / wideLen, e0[0] / dryLen);
+                std::cout << "cloud: dry az " << azD << " rE " << rD << "; whole sphere rE " << rW
+                          << ", level " << lvlW << " dB; 15 deg: az " << azN << " rE " << rN
+                          << "; half mix level " << lvlH << " dB, rE " << rH << "; grains "
+                          << c1.cloudGrainsNow.load() << std::endl;
+                bool fin = true;
+                for (auto *b : {&wide, &narrow, &halfMix})
+                    for (int c = 0; c < 16; ++c)
+                        for (int i = 0; i < b->getNumSamples(); ++i)
+                            fin = fin && std::isfinite(b->getSample(c, i));
+                check(fin && rW < 0.35 * rD && std::abs(lvlW) < 4.0,
+                      "cloud: on the whole sphere the pipe has no direction any more, at about its "
+                      "level");
+                check(std::abs(std::remainder(azN - azD, 360.0)) < 10.0 && rN > 0.7 * rD,
+                      "cloud: a narrow cloud stays at the pipe");
+                check(std::abs(lvlH) < 3.0 && rH < rD && rH > rW, "cloud: half dry, half grains");
+            }
+            { // stereo, and many pipes: finite, cheap enough
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = p.stopOn[1] = true;
+                p.outputMode = 3;
+                for (auto &c : p.cloud)
+                {
+                    c.mix = 0.7f;
+                    c.density = 80.0f;
+                    c.sizeMs = 120.0f;
+                    c.spread = 120.0f;
+                }
+                p.space.erode = 0.3f;
+                p.space.bits = 8.0f;
+                p.space.drops = 0.3f;
+                p.space.alias = 0.4f;
+                p.space.grid = 0.3f;
+                juce::AudioBuffer<float> b(16, B);
+                const int blocks = (int)(6.0 * fsr / B);
+                bool fin = true;
+                auto t0 = std::chrono::high_resolution_clock::now();
+                for (int i = 0; i < blocks; ++i)
+                {
+                    juce::MidiBuffer mb;
+                    if (i == 0)
+                        for (int m = 48; m < 72; ++m)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)90), 0);
+                    if (i == blocks / 2)
+                        for (int m = 48; m < 72; ++m)
+                            mb.addEvent(juce::MidiMessage::noteOff(1, m), 0);
+                    e.process(b, mb, p);
+                    for (int c = 0; c < 16; ++c)
+                        fin = fin && std::isfinite(b.getMagnitude(c, 0, B));
+                }
+                const double rt = 6.0 / std::chrono::duration<double>(
+                                            std::chrono::high_resolution_clock::now() - t0)
+                                            .count();
+                std::cout << "cloud + Raumverfall, 48 pipes, 3rd order: " << rt
+                          << " x real time, grains at the end " << e.cloudGrainsNow.load()
+                          << std::endl;
+                check(fin && rt > 3.0,
+                      "cloud + Raumverfall: finite and cheap enough with 48 pipes");
+                OrganEngine st;
+                st.prepare(fsr, B);
+                st.setLibrary(lib);
+                EngineParams q = p;
+                q.outputMode = 0;
+                juce::AudioBuffer<float> b2(2, B);
+                bool fin2 = true;
+                double en = 0;
+                for (int i = 0; i < 200; ++i)
+                {
+                    juce::MidiBuffer mb;
+                    if (i == 0)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)90), 0);
+                    st.process(b2, mb, q);
+                    fin2 = fin2 && std::isfinite(b2.getMagnitude(0, 0, B));
+                    en += b2.getRMSLevel(0, 0, B);
+                }
+                check(fin2 && en > 0.0, "cloud in stereo works");
+            }
+        }
+
         { // long sessions: the reflections must sound the same after the plugin has run for a long
           // time
             // (the read position of the delay lines once lost its fraction after ~6 minutes ->
@@ -4405,6 +5757,587 @@ int main(int argc, char **argv)
                     if (stops == 3 && ord == 2)
                         check(rt > 2.0, "room simulation runs in real time (18 pipes)");
                 }
+        }
+
+        // ---------------- the living organ: bellows, pallets, the walking listener, wear,
+        // sympathetic pipes, pure tuning, the Tonnetz walker ----------------
+        {
+            // notes held on the Praestant (or what 'setup' pulls); 'each' is called after every
+            // block
+            auto play = [&](OrganEngine &e, std::function<void(EngineParams &)> setup,
+                            std::vector<int> midis, double secs, int outMode, int vel = 100,
+                            double offAt = -1.0, std::function<void(int)> each = {})
+            {
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = true;
+                p.clickLevel = 0;
+                p.releaseClick = 0;
+                p.wind = 0;
+                p.stopPull = 0;
+                p.outputMode = outMode;
+                setup(p);
+                const int ch = outMode == 0 ? 2 : (outMode + 1) * (outMode + 1);
+                const int total = (int)(secs * fsr);
+                juce::AudioBuffer<float> keep(ch, total), b(ch, B);
+                keep.clear();
+                bool off = false;
+                for (int pos = 0; pos < total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                        for (int m : midis)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)vel), 0);
+                    if (offAt >= 0.0 && !off && pos >= (int)(offAt * fsr))
+                    {
+                        off = true;
+                        for (int m : midis)
+                            mb.addEvent(juce::MidiMessage::noteOff(1, m), 0);
+                    }
+                    b.clear();
+                    e.process(b, mb, p);
+                    for (int c = 0; c < ch; ++c)
+                        keep.copyFrom(c, pos, b, c, 0, juce::jmin(B, total - pos));
+                    if (each)
+                        each(pos);
+                }
+                return keep;
+            };
+            auto rmsDb = [&](const juce::AudioBuffer<float> &b, double t0, double t1)
+            {
+                double s = 0;
+                int n = 0;
+                for (int i = (int)(t0 * fsr); i < juce::jmin(b.getNumSamples(), (int)(t1 * fsr));
+                     ++i)
+                {
+                    s += (double)b.getSample(0, i) * b.getSample(0, i);
+                    ++n;
+                }
+                return 10.0 * std::log10(juce::jmax(1.0e-30, s / juce::jmax(1, n)));
+            };
+            auto finiteB = [](const juce::AudioBuffer<float> &b)
+            {
+                for (int c = 0; c < b.getNumChannels(); ++c)
+                    for (int i = 0; i < b.getNumSamples(); ++i)
+                        if (!std::isfinite(b.getSample(c, i)))
+                            return false;
+                return true;
+            };
+            auto allStops = [](EngineParams &p)
+            {
+                for (int s = 0; s < 4; ++s)
+                    p.stopOn[(size_t)s] = true;
+            };
+
+            // Balg, blower: one pipe hardly moves the pressure, a big chord on four stops pulls it
+            // down (quieter, flatter)
+            {
+                OrganEngine e1, e2, e0;
+                auto bel = [&](EngineParams &p)
+                {
+                    allStops(p);
+                    p.live.bellows = 1.0f;
+                    p.live.bellowsSize = 2.0f;
+                };
+                play(
+                    e1,
+                    [](EngineParams &p)
+                    {
+                        p.live.bellows = 1.0f;
+                        p.live.bellowsSize = 2.0f;
+                    },
+                    {72}, 2.0, 0);
+                const auto starved = play(e2, bel, {41, 48, 55, 60, 64, 67}, 3.0, 0);
+                const auto full = play(e0, allStops, {41, 48, 55, 60, 64, 67}, 3.0, 0);
+                const double drop = rmsDb(starved, 2.0, 3.0) - rmsDb(full, 2.0, 3.0);
+                std::cout << "bellows (blower): pressure with one high pipe "
+                          << e1.bellowsNow.load() << ", with 24 pipes " << e2.bellowsNow.load()
+                          << ", level " << drop << " dB; without the bellows "
+                          << e0.bellowsNow.load() << std::endl;
+                check(e1.bellowsNow.load() > 0.85f && e2.bellowsNow.load() < 0.6f &&
+                          e0.bellowsNow.load() == 1.0f,
+                      "bellows: big chords pull the shared wind down");
+                check(drop < -3.0 && finiteB(starved), "bellows: the starved organ is quieter");
+                writeWav(outDir.getChildFile("80_balg_geblaese.wav"), starved, fsr);
+            }
+            // Balg, Kalkant: the bellows sinks while the chord sounds and is lifted again by the
+            // tread
+            {
+                OrganEngine e;
+                float lo = 2.0f, hiAfter = 0.0f;
+                int firstTread = -1;
+                const auto b = play(
+                    e,
+                    [&](EngineParams &p)
+                    {
+                        allStops(p);
+                        p.live.bellows = 1.0f;
+                        p.live.bellowsSize = 1.5f;
+                        p.live.blower = 1;
+                        p.live.treadRate = 20.0f;
+                    },
+                    {41, 48, 55, 60, 64, 67}, 7.0, 0, 100, -1.0,
+                    [&](int pos)
+                    {
+                        const float f = e.bellowsFillNow.load();
+                        if (e.treadCount.load() == 0)
+                            lo = juce::jmin(lo, f);
+                        else
+                        {
+                            if (firstTread < 0)
+                                firstTread = pos;
+                            hiAfter = juce::jmax(hiAfter, f);
+                        }
+                    });
+                const double tTread = firstTread / fsr;
+                const double before = rmsDb(b, tTread - 0.4, tTread - 0.05),
+                             after = rmsDb(b, tTread + 0.5, tTread + 0.9);
+                std::cout << "bellows (Kalkant): fill down to " << lo
+                          << " before the first tread at " << tTread << " s, up to " << hiAfter
+                          << " after it; level before " << before << " dB, after " << after << " dB"
+                          << std::endl;
+                check(lo < 0.15f && hiAfter > 0.9f && firstTread > 0,
+                      "Kalkant: the bellows empties and is lifted by the tread");
+                check(after > before + 6.0 && finiteB(b),
+                      "Kalkant: the organ comes back with the tread");
+                writeWav(outDir.getChildFile("81_balg_kalkant.wav"), b, fsr);
+            }
+            // Ventil: a slowly pressed key lets the wind in hesitantly, a fast one speaks at once;
+            // both arrive at the same tone
+            {
+                OrganEngine es, ef;
+                auto pal = [](EngineParams &p) { p.live.pallet = 1.0f; };
+                const auto slow = play(es, pal, {60}, 3.5, 0, 8),
+                           fast = play(ef, pal, {60}, 3.5, 0, 127);
+                const double early = rmsDb(slow, 0.1, 0.4) - rmsDb(fast, 0.1, 0.4),
+                             late = rmsDb(slow, 2.8, 3.4) - rmsDb(fast, 2.8, 3.4);
+                std::cout << "pallet: slow key against fast key, level at 0.1-0.4 s " << early
+                          << " dB, at 2.8-3.4 s " << late << " dB" << std::endl;
+                check(early < -6.0 && std::abs(late) < 1.5 && finiteB(slow),
+                      "pallet: a slow key speaks hesitantly and arrives at the full tone");
+                writeWav(outDir.getChildFile("82_ventil_langsam.wav"), slow, fsr);
+            }
+            // the listener walks to the right: the pipe is heard further to the left; walking in a
+            // circle changes the direction all the time
+            {
+                auto azOf = [&](const juce::AudioBuffer<float> &b, double t0, double t1)
+                {
+                    double y = 0, x = 0;
+                    for (int i = (int)(t0 * fsr); i < (int)(t1 * fsr); ++i)
+                    {
+                        y += (double)b.getSample(0, i) * b.getSample(1, i);
+                        x += (double)b.getSample(0, i) * b.getSample(3, i);
+                    }
+                    return juce::radiansToDegrees(std::atan2(y, x));
+                };
+                OrganEngine e0, e1, e2;
+                const auto here = play(e0, [](EngineParams &) {}, {69}, 1.5, 1);
+                const auto right =
+                    play(e1, [](EngineParams &p) { p.live.listenX = 6.0f; }, {69}, 1.5, 1);
+                const auto round = play(
+                    e2,
+                    [](EngineParams &p)
+                    {
+                        p.live.walkShape = 1;
+                        p.live.walkSize = 5.0f;
+                        p.live.walkRate = 0.5f;
+                    },
+                    {69}, 2.0, 1);
+                const double a0 = azOf(here, 0.5, 1.4), a1 = azOf(right, 0.8, 1.4),
+                             r0 = azOf(round, 0.4, 0.6), r1 = azOf(round, 1.4, 1.6);
+                std::cout << "listener: the pipe from " << a0
+                          << " deg, after 6 m to the right from " << a1
+                          << " deg; walking a circle: " << r0 << " -> " << r1 << " deg"
+                          << std::endl;
+                check(std::remainder(a1 - a0, 360.0) > 15.0 &&
+                          std::abs(std::remainder(r1 - r0, 360.0)) > 20.0 && finiteB(round),
+                      "listener: walking changes where the pipes are heard");
+                check(std::abs(e1.listenerXNow.load() - 6.0f) < 0.05f,
+                      "listener: arrives where the slider says");
+            }
+            // out of sight: in an L-shaped room the listener walks round the corner; the pipe is
+            // heard around it
+            {
+                auto roomL = [](EngineParams &p, int shape)
+                {
+                    p.room.on = true;
+                    p.room.width = 16;
+                    p.room.length = 22;
+                    p.room.height = 8;
+                    p.room.order = 1;
+                    p.room.shape = shape;
+                    p.room.shapeAmt = 1.0f;
+                    p.room.erGain = 0.0f;
+                    p.room.tailGain = 0.0f; // the direct sound alone
+                };
+                // the geometry first: find a place in the plan from where the pipe (straight ahead,
+                // 7 m) is hidden
+                RoomParams r;
+                r.width = 16;
+                r.length = 22;
+                r.height = 8;
+                r.shape = shapeL;
+                r.shapeAmt = 1.0f;
+                finishPlan(r, defaultDrawnPlan());
+                const auto g = planGeo(r);
+                const auto corners = planCorners(g);
+                Pos pipe;
+                pipe.az = 0.0f;
+                pipe.el = 0.0f;
+                pipe.dist = 7.0f;
+                const Vec3f S = roomPoint(r, pipe), home = listenerPos(r);
+                float wx = 0.0f, wy = 0.0f;
+                bool found = false;
+                Pos heard;
+                float lossDb = 0.0f, fc = 20000.0f;
+                for (int iy = 0; iy < 44 && !found; ++iy)
+                    for (int ix = 0; ix < 32 && !found; ++ix)
+                    {
+                        Vec3f L{0.25f + 0.5f * (float)ix, 0.25f + 0.5f * (float)iy, home.z};
+                        if (!insidePlan(g, L.x, L.y) || planEdgeDist(g, L.x, L.y) < 1.0f)
+                            continue;
+                        float ld, lf;
+                        Pos h;
+                        if (diffractedPath(g, corners, L, S, h, ld, lf) && ld > 4.0f)
+                        {
+                            found = true;
+                            wx = L.x - home.x;
+                            wy = L.y - home.y;
+                            heard = h;
+                            lossDb = ld;
+                            fc = lf;
+                        }
+                    }
+                std::cout << "out of sight: " << corners.n << " corners to bend around; from " << wx
+                          << " / " << wy << " m off the usual place the pipe is hidden, heard from "
+                          << heard.az << " deg over " << heard.dist << " m, " << lossDb
+                          << " dB quieter, cut above " << fc << " Hz" << std::endl;
+                check(found && corners.n > 0 &&
+                          heard.dist > std::sqrt((S.x - home.x - wx) * (S.x - home.x - wx) +
+                                                 (S.y - home.y - wy) * (S.y - home.y - wy)) -
+                                           0.01f,
+                      "out of sight: an L-shaped plan hides the pipe from somewhere, and the way "
+                      "around is longer");
+                // the engine: the same walk, in the L and in a plain rectangle of the same size
+                OrganEngine eh, eb;
+                for (auto *en : {&eh, &eb})
+                    for (int k = 0; k < kNumKeys; ++k)
+                    {
+                        en->baseAz[0][(size_t)k] = 0.0f;
+                        en->baseEl[0][(size_t)k] = 0.0f;
+                        en->baseDist[0][(size_t)k] = 7.0f;
+                    }
+                const auto hidden = play(
+                    eh,
+                    [&](EngineParams &p)
+                    {
+                        roomL(p, shapeL);
+                        p.live.listenX = wx;
+                        p.live.listenY = wy;
+                    },
+                    {69}, 2.0, 1);
+                const int hidCount = eh.hiddenNow.load();
+                const auto open = play(
+                    eb,
+                    [&](EngineParams &p)
+                    {
+                        roomL(p, shapeBox);
+                        p.live.listenX = wx;
+                        p.live.listenY = wy;
+                    },
+                    {69}, 2.0, 1);
+                const double dh = rmsDb(hidden, 1.0, 1.8), db = rmsDb(open, 1.0, 1.8);
+                std::cout << "out of sight: " << hidCount
+                          << " pipe(s) heard around the corner; level " << dh << " dB against "
+                          << db << " dB in plain sight" << std::endl;
+                check(hidCount > 0 && dh < db - 4.0 && finiteB(hidden),
+                      "out of sight: a pipe behind the corner is heard around it, quieter");
+                writeWav(outDir.getChildFile("85_um_die_ecke.wav"), hidden, fsr);
+                // walking to and fro across the shadow's edge: no jump in level (against the same
+                // walk in plain sight)
+                {
+                    OrganEngine ew, eo;
+                    for (auto *en : {&ew, &eo})
+                        for (int k = 0; k < kNumKeys; ++k)
+                        {
+                            en->baseAz[0][(size_t)k] = 0.0f;
+                            en->baseEl[0][(size_t)k] = 0.0f;
+                            en->baseDist[0][(size_t)k] = 7.0f;
+                        }
+                    auto walk = [&](int shape)
+                    {
+                        return [&, shape](EngineParams &p)
+                        {
+                            roomL(p, shape);
+                            p.live.listenX = wx - 2.5f;
+                            p.live.listenY = wy;
+                            p.live.walkShape = 2;
+                            p.live.walkSize = 3.5f;
+                            p.live.walkRate = 0.15f;
+                        };
+                    }; // (running: up to 3.3 m/s)
+                    int changes = 0, last = -1;
+                    juce::String when;
+                    const auto across = play(ew, walk(shapeL), {69}, 8.0, 1, 100, -1.0,
+                                             [&](int pos)
+                                             {
+                                                 const int now = ew.hiddenNow.load() > 0 ? 1 : 0;
+                                                 if (last >= 0 && now != last)
+                                                 {
+                                                     ++changes;
+                                                     when << juce::String(pos / fsr, 2)
+                                                          << (now ? " in " : " out ");
+                                                 }
+                                                 last = now;
+                                             });
+                    const auto plain = play(eo, walk(shapeBox), {69}, 8.0, 1);
+                    auto maxJumpDb = [&](const juce::AudioBuffer<float> &b)
+                    {
+                        // the largest change of level from one 5 ms window to the next (W channel),
+                        // after the attack
+                        const int win = (int)(0.02 * fsr);
+                        double prev = -1000.0, worst = 0.0;
+                        double at = 0.0;
+                        for (int i = (int)(0.6 * fsr); i + win < b.getNumSamples(); i += win)
+                        {
+                            double s = 0;
+                            for (int j = 0; j < win; ++j)
+                                s += (double)b.getSample(0, i + j) * b.getSample(0, i + j);
+                            const double db = 10.0 * std::log10(s / win + 1e-12);
+                            if (prev > -900.0 && std::abs(db - prev) > worst)
+                            {
+                                worst = std::abs(db - prev);
+                                at = i / fsr;
+                            }
+                            prev = db;
+                        }
+                        std::cout << "  (largest step at " << at << " s)" << std::endl;
+                        return worst;
+                    };
+                    const double jA = maxJumpDb(across), jP = maxJumpDb(plain);
+                    std::cout << "out of sight: walking across the shadow's edge (" << changes
+                              << " times in or out of sight): largest step " << jA
+                              << " dB per 20 ms, the same walk in plain sight " << jP
+                              << " dB; shadow: " << when << std::endl;
+                    check(changes >= 2 && jA < jP + 1.5 && finiteB(across),
+                          "out of sight: stepping in and out of the shadow does not jump");
+                    // ... and does not click: the sharpest sample-to-sample bend (2nd difference,
+                    // all four channels) against the same walk in plain sight
+                    auto sharpest = [&](const juce::AudioBuffer<float> &b, double &at)
+                    {
+                        double worst = 0.0;
+                        for (int c = 0; c < juce::jmin(4, b.getNumChannels()); ++c)
+                            for (int i = (int)(0.6 * fsr); i < b.getNumSamples(); ++i)
+                            {
+                                const double d2 =
+                                    std::abs((double)b.getSample(c, i) -
+                                             2.0 * b.getSample(c, i - 1) + b.getSample(c, i - 2));
+                                if (d2 > worst)
+                                {
+                                    worst = d2;
+                                    at = i / fsr;
+                                }
+                            }
+                        return worst;
+                    };
+                    double atA = 0, atP = 0;
+                    const double sA = sharpest(across, atA), sP = sharpest(plain, atP);
+                    std::cout << "out of sight: sharpest 2nd difference " << sA << " at " << atA
+                              << " s, in plain sight " << sP << " at " << atP << " s" << std::endl;
+                    check(sA < 1.3 * sP,
+                          "out of sight: stepping in and out of the shadow does not click");
+                    // the hard case: a cross-shaped church with its reflections, all stops, a
+                    // chord, walking a circle through the arms (pipes vanish behind one corner,
+                    // then two) - against the very same run with no hiding
+                    OrganEngine ec, en;
+                    en.occlusionEnabled = false;
+                    auto cross = [](EngineParams &p)
+                    {
+                        p.room.on = true;
+                        p.room.width = 14;
+                        p.room.length = 28;
+                        p.room.height = 11;
+                        p.room.order = 2;
+                        p.room.tailGain = 0.0f;
+                        p.room.shape = shapeCross;
+                        p.room.shapeAmt = 0.8f;
+                        p.room.erGain = 1.0f;
+                        for (int s = 0; s < kNumStops; ++s)
+                            p.stopOn[(size_t)s] = true;
+                        p.live.walkShape = 1;
+                        p.live.walkSize = 6.0f;
+                        p.live.walkRate = 0.08f;
+                    };
+                    int crossChanges = 0, lastHid = -1, maxHid = 0;
+                    const auto withWalls = play(ec, cross, {48, 55, 60, 64, 67}, 12.0, 1, 100, -1.0,
+                                                [&](int)
+                                                {
+                                                    const int h = ec.hiddenNow.load();
+                                                    if (lastHid >= 0 && h != lastHid)
+                                                        ++crossChanges;
+                                                    lastHid = h;
+                                                    maxHid = juce::jmax(maxHid, h);
+                                                });
+                    const auto noWalls = play(en, cross, {48, 55, 60, 64, 67}, 12.0, 1);
+                    double atC = 0, atN = 0;
+                    const double sC = sharpest(withWalls, atC), sN = sharpest(noWalls, atN);
+                    std::cout << "out of sight: cross, walking a circle: up to " << maxHid
+                              << " pipes hidden, " << crossChanges
+                              << " changes; sharpest 2nd difference " << sC << " at " << atC
+                              << " s, without hiding " << sN << " at " << atN << " s" << std::endl;
+                    check(maxHid > 0 && crossChanges > 4 && sC < 1.3 * sN && finiteB(withWalls),
+                          "out of sight: walking through a cross-shaped church does not click");
+                    writeWav(outDir.getChildFile("87_kreuz_rundgang.wav"), withWalls, fsr);
+                    // the same chord standing still in the cross: walking must not be sharper than
+                    // that (it clicked before: the listener jumped at the inner corners, the pipe
+                    // was placed by a ray from where it walked to)
+                    {
+                        OrganEngine es;
+                        const auto standing = play(
+                            es,
+                            [&](EngineParams &p)
+                            {
+                                cross(p);
+                                p.live.walkShape = 0;
+                            },
+                            {48, 55, 60, 64, 67}, 12.0, 1);
+                        double atS = 0;
+                        const double sS = sharpest(standing, atS);
+                        std::cout << "out of sight: cross, sharpest 2nd difference walking " << sC
+                                  << ", standing still " << sS << std::endl;
+                        check(sC < 1.5 * sS, "out of sight: walking through the cross is as smooth "
+                                             "as standing in it");
+                    }
+                    writeWav(outDir.getChildFile("86_schattenkante.wav"), across, fsr);
+                }
+            }
+            // Verschleiss: a pipe held for half its life is half worn, and sounds different; reset
+            // makes it new
+            {
+                OrganEngine e, en;
+                auto wearOn = [](EngineParams &p)
+                {
+                    p.live.wear = 1.0f;
+                    p.live.wearMinutes = 0.1f;
+                };
+                play(e, wearOn, {60}, 3.0, 0);
+                const float w = e.wear[0][(size_t)keyIndexForMidi(60)].load(),
+                            other = e.wear[0][(size_t)keyIndexForMidi(62)].load();
+                // the same engine again (prepare keeps the wear): the worn pipe against a new one
+                const auto worn = play(e, wearOn, {60}, 2.0, 0);
+                const auto fresh = play(en, [](EngineParams &) {}, {60}, 2.0, 0);
+                double d = 0, r = 0;
+                for (int i = (int)(0.5 * fsr); i < worn.getNumSamples(); ++i)
+                {
+                    const double t = worn.getSample(0, i) - fresh.getSample(0, i);
+                    d += t * t;
+                    r += (double)fresh.getSample(0, i) * fresh.getSample(0, i);
+                }
+                std::cout << "wear: after 3 s of a 6 s life " << w
+                          << " (a pipe not played: " << other << "); worn against new "
+                          << 10.0 * std::log10(d / r) << " dB" << std::endl;
+                check(w > 0.45f && w < 0.55f && other == 0.0f, "wear: a pipe ages while it sounds");
+                check(10.0 * std::log10(d / r) > -20.0 && finiteB(worn),
+                      "wear: the worn pipe sounds different");
+                e.wearReset = true;
+                play(e, [](EngineParams &) {}, {}, 0.1, 0);
+                check(e.wear[0][(size_t)keyIndexForMidi(60)].load() == 0.0f,
+                      "wear: reset makes all pipes new");
+                writeWav(outDir.getChildFile("83_verschleiss.wav"), worn, fsr);
+            }
+            // sympathetic pipes: silent pipes ring along (more with them than without), and stop
+            // some time after the note
+            {
+                OrganEngine e, e0;
+                int ringing = 0;
+                const auto with = play(
+                    e,
+                    [](EngineParams &p)
+                    {
+                        p.live.sympLevel = 2.0f;
+                        p.live.sympDecay = 0.8f;
+                    },
+                    {60}, 4.0, 1, 100, 1.5,
+                    [&](int pos)
+                    {
+                        if (pos < (int)(1.4 * fsr))
+                            ringing = juce::jmax(ringing, e.sympNow.load());
+                    });
+                const auto without = play(e0, [](EngineParams &) {}, {60}, 4.0, 1, 100, 1.5);
+                double d = 0, r = 0;
+                for (int i = (int)(0.5 * fsr); i < (int)(1.4 * fsr); ++i)
+                {
+                    const double t = with.getSample(0, i) - without.getSample(0, i);
+                    d += t * t;
+                    r += (double)without.getSample(0, i) * without.getSample(0, i);
+                }
+                const double rel = 10.0 * std::log10(juce::jmax(1.0e-30, d) / r);
+                std::cout << "sympathetic pipes: " << ringing << " ring along, " << rel
+                          << " dB against the pipe; still ringing at the end: " << e.sympNow.load()
+                          << std::endl;
+                check(ringing >= 3 && rel > -50.0 && rel < 0.0 && finiteB(with),
+                      "sympathetic pipes ring along");
+                check(e.sympNow.load() == 0, "sympathetic pipes fall silent after the note");
+                writeWav(outDir.getChildFile("84_mitklingen.wav"), with, fsr);
+            }
+            // Reinheit: the meantone fifth c'-g' (beating at about 2.5 Hz) pulls itself pure; the
+            // wolf is tamed too
+            {
+                auto beatOf = [&](std::vector<int> notes, float pure, float &cents)
+                {
+                    OrganEngine e;
+                    play(
+                        e,
+                        [&](EngineParams &p)
+                        {
+                            p.motionMode[0] = (int)Motion::Beat;
+                            p.live.pure = pure;
+                            p.live.pureTime = 0.4f;
+                        },
+                        notes, 3.0, 1);
+                    cents = e.pureNow.load();
+                    return e.beatMaxNow.load();
+                };
+                float c0, c1, cw;
+                const float b0 = beatOf({60, 67}, 0.0f, c0), b1 = beatOf({60, 67}, 1.0f, c1),
+                            w0 = beatOf({56, 63}, 0.0f, c0), w1 = beatOf({56, 63}, 1.0f, cw);
+                std::cout << "pure tuning: fifth c'-g' beats " << b0 << " -> " << b1
+                          << " Hz (moved " << c1 << " ct), wolf " << w0 << " -> " << w1
+                          << " Hz (moved " << cw << " ct)" << std::endl;
+                check(b0 > 1.5f && b1 < 0.3f && c1 > 1.0f && c1 < 5.0f,
+                      "pure tuning: the fifth stops beating");
+                check(w1 < 0.25f * w0 && cw > 10.0f, "pure tuning: the wolf is tamed");
+            }
+            // Tonnetz walker: one key held, the walker goes along the fifths and sounds other keys;
+            // all ends after the key is let go
+            {
+                OrganEngine e;
+                uint64_t seen = 0;
+                const auto b = play(
+                    e,
+                    [](EngineParams &p)
+                    {
+                        p.live.netOn = true;
+                        p.live.netPath = 0;
+                        p.live.netRate = 8.0f;
+                        p.live.netGate = 0.6f;
+                    },
+                    {60}, 4.0, 0, 100, 2.0, [&](int) { seen |= e.soundingMask[0].load(); });
+                int keys = 0;
+                for (int k = 0; k < kNumKeys; ++k)
+                    keys += (seen >> k) & 1 ? 1 : 0;
+                const bool g = (seen >> keyIndexForMidi(67)) & 1,
+                           d = ((seen >> keyIndexForMidi(62)) & 1) ||
+                               ((seen >> keyIndexForMidi(74)) & 1);
+                std::cout << "Tonnetz walker (fifths from c'): " << keys << " keys sounded, g' "
+                          << g << ", d " << d << "; voices left at the end "
+                          << e.activeVoices.load() << std::endl;
+                check(keys >= 8 && g && d && finiteB(b), "Tonnetz walker: walks along the fifths");
+                check(e.activeVoices.load() == 0, "Tonnetz walker: stops when the keys are let go");
+                writeWav(outDir.getChildFile("85_tonnetz_wanderer.wav"), b, fsr);
+            }
         }
     }
 

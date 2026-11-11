@@ -13,9 +13,9 @@ bool RysumProcessor::takesPartInScenes(const juce::String &id) const
 {
     // the player's setup and the output stay as they are; switching the tuning would cut the notes
     static const juce::StringArray never{
-        "sceneMorph", "output",  "master",  "binOrder",    "binYaw",        "binDfEq",
-        "irFuma",     "irN3D",   "irOrder", "temperament", "mtsContinuous", "midiCC",
-        "mpe",        "mpeBend", "inpOn",   "spkOrder",    "spkDistComp"};
+        "sceneMorph",    "output",  "master",   "binOrder", "binYaw", "binDfEq",  "trAngle",
+        "trAmount",      "trBoost", "trSideEq", "irFuma",   "irN3D",  "irOrder",  "temperament",
+        "mtsContinuous", "midiCC",  "mpe",      "mpeBend",  "inpOn",  "spkOrder", "spkDistComp"};
     return !id.startsWith("dsf") && !never.contains(id);
 }
 
@@ -181,12 +181,15 @@ int RysumProcessor::diceGroupOf(const juce::String &id) const
     };
     if (stopParam("stop") || stopParam("vol") || stopParam("swind"))
         return dgRegister;
-    for (auto *p : {"motion", "rate", "depth", "ellipse", "ellDir", "ellTilt", "ellForm",
-                    "pathSpread", "jumpHard"})
+    for (auto *p :
+         {"motion",    "rate",         "depth",      "ellipse",    "ellDir",    "ellTilt",
+          "ellForm",   "pathSpread",   "jumpHard",   "cloudMix",   "cloudDens", "cloudSpread",
+          "cloudSize", "cloudScatter", "pipeAtt",    "pipeSharp",  "pipeIso",   "pipeRep",
+          "pipePuff",  "pipeHiFreq",   "pipeHiGain", "pipeHiShape"})
         if (stopParam(p))
             return dgRaum;
-    if (id == "doppler" || id == "air" || id == "distAmount" || id == "irDry" || id == "irWet" ||
-        id == "irEnvelop" || id == "irDirect")
+    if (id == "doppler" || id == "air" || id == "airInvert" || id == "distAmount" ||
+        id == "irDry" || id == "irWet" || id == "irEnvelop" || id == "irDirect")
         return dgRaum;
     if (id.startsWith("sim") && id != "simOrder")
         return dgSaal;
@@ -194,7 +197,7 @@ int RysumProcessor::diceGroupOf(const juce::String &id) const
         id == "windModel")
         return dgKlang;
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
-        id == "wind" || id.startsWith("deg"))
+        id == "wind" || id.startsWith("deg") || id.startsWith("spc") || id.startsWith("clickRes"))
         return dgSpieltisch;
     if (id.startsWith("fx"))
         return dgEffekte;

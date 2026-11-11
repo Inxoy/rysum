@@ -10,6 +10,7 @@
 #include "SpaceView.h"
 #include "SpeakerView.h"
 #include "Theme.h"
+#include "WalkView.h"
 
 /** the full-screen toggle in the header: four corner marks (outwards = go full screen, inwards =
  * back) */
@@ -147,6 +148,7 @@ private:
     rysum::ui::SaalView saal;
     rysum::ui::OrganView organ;
     rysum::ui::SpeakerView speakers{proc}; // view 7: the loudspeaker layout
+    rysum::ui::WalkView walk{proc};        // view 8: the Saal in 3D, walked with WASD and the mouse
     juce::TextButton outInfoButton;        // over the channel info in the top bar: opens it
     /** the "Rysum" in the top bar opens the page about the organ (and goes back) */
     struct LogoButton : juce::Button
@@ -174,6 +176,28 @@ private:
     int current = 0;
     bool speakerPageShown = false;
     juce::Image grainLayer, vignette;
+    // performance readout (Ctrl+Shift+P): what a repaint costs, how often, how much of the window;
+    // logged to a file
+    struct PaintStats
+    {
+        bool on = false;
+        double paintStart = 0.0, secondStart = 0.0, lastTick = 0.0;
+        int paints = 0, ticks = 0;
+        double paintMs = 0.0, paintMax = 0.0, area = 0.0, tickMax = 0.0;
+        juce::String shown;
+    } stats;
+    void updateStats();
+    void tickBody();
+
+public:
+    int paintsDone = 0; // (counted for the benchmark)
+private:
+    void cycleRenderer();
+
+public:
+    void startStats();
+
+private:
 };
 
 class RysumEditor : public juce::AudioProcessorEditor, private juce::MultiTimer

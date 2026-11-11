@@ -138,10 +138,27 @@ struct Assets
     }
 };
 
+/** benchmark switches: drawing effects that can be left out, to measure what each one costs (0 =
+ * draw all) */
+namespace dbg
+{
+inline int skip = 0;
+enum
+{
+    skipOverlay = 1,
+    skipCover = 2,
+    skipGrain = 4,
+    skipClipPath = 8,
+    skipTranslucent = 16
+};
+} // namespace dbg
+
 /** draws an image like CSS object-fit: cover */
 inline void drawCover(juce::Graphics &g, const juce::Image &img, juce::Rectangle<float> r,
                       float yAlign = 0.5f)
 {
+    if (dbg::skip & dbg::skipCover)
+        return;
     if (!img.isValid())
         return;
     const float s =
@@ -158,6 +175,8 @@ inline void drawCover(juce::Graphics &g, const juce::Image &img, juce::Rectangle
 /** tiles the grain texture over an area */
 inline void drawGrain(juce::Graphics &g, juce::Rectangle<int> r, float opacity)
 {
+    if (dbg::skip & dbg::skipGrain)
+        return;
     auto &t = Assets::get().grainTile;
     if (!t.isValid())
         return;
@@ -839,9 +858,19 @@ private:
         std::array<int, 3> rr{};
         const int nr = access->routesFor(index, rr.data(), 3);
         const bool was = !std::isnan(modNorm), is = !std::isnan(n);
-        if (was != is || (is && std::abs(n - modNorm) > 0.0005f) || nr != nHandles)
+        // the routing ranges too (their amounts, the value they hang from): the pages no longer
+        // repaint every row every frame - a repaint only when something here changed (in full
+        // screen each one costs a lot)
+        float sig = param != nullptr ? param->getValue() : 0.0f;
+        for (int i = 0; i < nr; ++i)
+            if (auto *ap = access->routeAmountParam(rr[(size_t)i]))
+                sig += (float)(i + 2) * 7.31f * ap->getValue() +
+                       (float)access->routeSource(rr[(size_t)i]);
+        if (was != is || (is && std::abs(n - modNorm) > 0.0005f) || nr != nHandles ||
+            std::abs(sig - routeSig) > 1.0e-6f)
         {
             modNorm = n;
+            routeSig = sig;
             repaint();
         }
         const int cc = access->midiControllerFor(index);
@@ -859,6 +888,7 @@ private:
     ModUiAccess *access = nullptr;
     int index = -1;
     float modNorm = std::numeric_limits<float>::quiet_NaN();
+    float routeSig = 0.0f; // what the routing ranges were drawn from
     juce::RangedAudioParameter *param = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     InlineValueEditor editor;

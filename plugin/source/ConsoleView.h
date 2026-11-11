@@ -26,17 +26,25 @@ private:
 class KeyStrip : public juce::Component
 {
 public:
-    explicit KeyStrip(RysumProcessor &p) : proc(p) {}
-    void paint(juce::Graphics &) override;
-    void mouseDown(const juce::MouseEvent &) override;
-    void mouseDrag(const juce::MouseEvent &) override;
-    void mouseUp(const juce::MouseEvent &) override;
+    explicit KeyStrip (RysumProcessor& p) : proc (p) {}
+    /** repaints only when the keys shown down changed */
+    void refresh()
+    {
+        uint64_t held = proc.engine.heldMask.load();
+        if (const int nk = proc.engine.netKeyNow.load(); nk >= 0) held |= (uint64_t) 1 << nk;
+        if (held != shownHeld) { shownHeld = held; repaint(); }
+    }
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
 
 private:
     int midiAt(juce::Point<int>) const;
     void play(int midi);
     RysumProcessor &proc;
     int playing = -1;
+    uint64_t shownHeld = ~(uint64_t) 0;
 };
 
 /** a scene slot A..D: click = go there (an empty one stores the sound), right-click = store / clear
@@ -78,6 +86,19 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> testToneAttachment;
     std::unique_ptr<ParamRow> testToneLevel, testToneColour;
     juce::TextButton perPipe{"pro Pfeife"}, onSum{"Summe"};
+    // Verfall: of the sound ("Klang") or of the spatial image ("Raum")
+    juce::TextButton tabSound { "Klang" }, tabSpace { "Raum" }, tabGlitch { "Glitch" };
+    std::vector<std::unique_ptr<ParamRow>> spaceRows, glitchRows;
+    bool spaceTab = false;
+    int decayTab = 0;                          // 0 Klang, 1 Raum, 2 Glitch
+    void showDecayTab (int tab);
+    // Traktur: the noises, or the resonated clicks
+    juce::TextButton tabNoise { juce::String::fromUTF8 ("Ger\xc3\xa4usche") }, tabRes { "Resonanz" };
+    std::vector<std::unique_ptr<ParamRow>> resRows;
+    bool resTab = false;
+    void showNoiseTab (bool res);
+    juce::String shownSpaceInfo;
+    juce::String spaceInfo() const;
     juce::Slider volume;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAttachment;
     juce::TextButton folderButton{

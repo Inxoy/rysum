@@ -9,8 +9,12 @@ juce::String groupFor(const juce::String &id)
     if (id.startsWith("vol") || id.startsWith("swind") || id.startsWith("rate") ||
         id.startsWith("depth") || id.startsWith("ellipse"))
         return "Register";
-    if (id.startsWith("deg"))
+    if (id.startsWith("deg") || id.startsWith("spc"))
         return "Verfall";
+    if (id.startsWith("cloud") || id.startsWith("pipe"))
+        return "Register";
+    if (id.startsWith("clickRes"))
+        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
         id == "wind" || id == "master")
         return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
@@ -42,8 +46,23 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
     const auto pipeNames = pipeTargetNames();
     menu.addSectionHeader(juce::String::fromUTF8("Je Pfeife (Versatz, H\xc3\xbcllkurve pro Pfeife, "
                                                  "Tastenlage, Zufall, Anschlag wirken einzeln)"));
-    for (int t = 0; t < kNumPipeTargets; ++t)
+    for (int t = 0; t < tgtAttack; ++t)
         menu.addItem(idOffset + t + 1, pipeNames[t]);
+    // the newer per-pipe targets in groups ("Pfeife: " left out inside the groups)
+    auto group = [&](const juce::String &title, int from, int to)
+    {
+        juce::PopupMenu sub;
+        for (int t = from; t <= to; ++t)
+            sub.addItem(idOffset + t + 1,
+                        pipeNames[t].fromFirstOccurrenceOf("Pfeife: ", false, false));
+        menu.addSubMenu(title, sub);
+    };
+    group(juce::String::fromUTF8("Pfeife: Ansprache \xc2\xb7 Abriss \xc2\xb7 Obert\xc3\xb6ne"),
+          tgtAttack, tgtAirInvert);
+    group("Pfeife: Wolke", tgtCloudMix, tgtCloudScatter);
+    group(juce::String::fromUTF8("Pfeife: Verfall (nur \xe2\x80\x9epro Pfeife\xe2\x80\x9c)"),
+          tgtDegGrain, tgtDegDrops);
+    group("Pfeife: Glitch", tgtStutter, tgtClip);
     menu.addSeparator();
     menu.addSectionHeader(juce::String::fromUTF8("Global (ein Wert f\xc3\xbcr alle Pfeifen)"));
     const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),

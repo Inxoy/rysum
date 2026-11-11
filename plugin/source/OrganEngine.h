@@ -6,7 +6,9 @@
 #include "RoomSim.h"
 #include "RoomTail.h"
 #include "SampleLibrary.h"
+#include "SpaceFx.h"
 #include "Spatial.h"
+#include "SpatialDegrade.h"
 #include "WindChaos.h"
 #include <atomic>
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -16,6 +18,42 @@
 namespace rysum
 {
 /** the "Effekte" page: sounds and effects that are easy to locate in space */
+/** the sound of the pipe itself, per stop (Raum page, tab "Pfeife"); all neutral by default */
+struct PipeSoundParams
+{
+    // Ansprache: the measured attack of every pipe (onset .. attack end from the preprocessing)
+    float attGain =
+        0.0f; // -1 = the attack swells in softly .. 0 = as recorded .. +1 = +12 dB chiff
+    float attSharp = 0.0f; // 0..1: the highs of the attack lifted (a sharper chiff)
+    float attIso = 0.0f;   // 0..1: the sustain falls away after the attack (1 = only the chiff)
+    float attRep = 0.0f;   // 0..1: the chiff repeats as a short burst (up to 6 times)
+    // Abriss: a puff of air when the pallet closes
+    float puff = 0.0f;
+    // upper partials above hiFreq as their own layer: gain and transient shaping
+    float hiFreq = 4000.0f, hiGain = 0.0f /* dB */, hiShape = 0.0f /* -1 soft .. +1 spiky */;
+    bool attOn() const noexcept
+    {
+        return attGain != 0.0f || attSharp > 0.0f || attIso > 0.0f;
+    }
+    bool hiOn() const noexcept
+    {
+        return hiGain != 0.0f || hiShape != 0.0f;
+    }
+};
+
+/** "Verfall · Glitch": transients of a failing playback (per pipe); all off by default */
+struct GlitchParams
+{
+    float stutter = 0.0f; // a short slice of the pipe repeats 2..6 times
+    float splice = 0.0f;  // loop points become hard tape splices (with a tick)
+    float zero = 0.0f;    // no care for zero crossings: hard note starts and releases
+    float clip = 0.0f;    // short bursts of hard digital clipping
+    bool on() const noexcept
+    {
+        return stutter > 0.0f || splice > 0.0f || zero > 0.0f || clip > 0.0f;
+    }
+};
+
 struct FxParams
 {
     // own sounds (samples/noise/eigene), triggered by the keys
@@ -67,6 +105,42 @@ struct NoteTable
         mapped{}; // 0 = this note does not sound (unmapped in the .kbm / by the master)
 };
 
+/** "Lebendige Orgel": the organ as one physical thing - a wind supply shared by all pipes, pallets
+   that open as the key is played, a listener who walks, pipes that wear out, silent pipes that ring
+   along, a tuning that pulls itself pure, and a walker in the Tonnetz. Everything off by default.
+ */
+struct LiveParams
+{
+    // Balg: one finite wind supply for all stops
+    float bellows = 0.0f;     // 0 = endless wind (as before) .. 1 = big chords drain it quickly
+    float bellowsSize = 4.0f; // s: how long the bellows lasts / how slowly the blower answers
+    int blower = 0; // 0 = blower (steady feed), 1 = Kalkant (treads, free), 2 = Kalkant in tempo
+    float treadRate = 20.0f; // treads per minute (Kalkant, free)
+    int treadDiv = 3;        // Kalkant in tempo: a tread every 8 / 4 / 2 / 1 bars, 1/2, 1/4
+    float treadNoise = 0.3f; // the thump of the tread at the console
+    // Ventil: how far the pallet opens
+    float pallet = 0.0f; // 0 = always fully open
+    int palletSrc = 0;   // 0 = velocity (a slow key opens slowly), 1 = pressure, 2 = slide (CC 74)
+    // the listener walks (metres from the usual place; x = to the right, y = forward)
+    float listenX = 0.0f, listenY = 0.0f;
+    int walkShape =
+        0; // 0 = stands, 1 = circle, 2 = left / right, 3 = forward / back, 4 = figure eight
+    float walkRate = 0.05f, walkSize = 3.0f; // rounds per second, metres
+    // Verschleiss: pipes wear out by being played (the engine keeps the wear per pipe)
+    float wear = 0.0f;        // how strongly the wear is heard
+    float wearMinutes = 5.0f; // minutes of sounding until a pipe is fully worn
+    // sympathetic pipes: silent pipes ring when a partial of a sounding one meets their pitch
+    float sympLevel = 0.0f, sympDecay = 0.6f; // linear, s
+    // Reinheit: held chords pull themselves towards pure intervals
+    float pure = 0.0f, pureTime = 1.5f; // 0..1, s
+    // Tonnetz-Wanderer: while keys are held, a walker steps through the lattice of fifths and
+    // thirds and plays what it passes
+    bool netOn = false;
+    int netPath = 0; // 0 fifths, 1 chain of thirds, 2 random, 3 random that comes home, 4 spiral
+    int netDiv = 0;  // 0 = free (netRate), else a note value
+    float netRate = 3.0f, netGate = 0.9f; // steps per second, note length in steps
+};
+
 struct EngineParams
 {
     std::array<bool, kNumStops> stopOn{};
@@ -89,6 +163,8 @@ struct EngineParams
     float wind = 0.15f; // global wind: blower noise, above ~35 % increasingly unstable (gusts)
     float consoleAz = 0.0f, consoleEl = -10.0f;
     DegradeParams deg;
+    SpaceDegParams space;                       // "Raumverfall": degradation of the spatial image
+    std::array<CloudParams, kNumStops> cloud{}; // "Körnerwolke" per stop
 
     // movement
     std::array<int, kNumStops> motionMode{};
@@ -112,8 +188,29 @@ struct EngineParams
     bool playing = false;
 
     // distance
-    float doppler = 1.0f;    // 0 = off, 1 = physical, up to 4 = exaggerated
-    float air = 0.5f;        // air absorption amount
+    float doppler = 1.0f; // 0 = off, 1 = physical, up to 4 = exaggerated
+    float air = 0.5f;     // air absorption amount
+    float airInvert =
+        0.0f; // 0 = natural, 0.5 = the highs of distant pipes restored, 1 = exaggerated
+    // resonated clicks: key clicks ring a bank of resonators tuned to the harmonics of the pressed
+    // key
+    float resClick = 0.0f, resDecay = 0.4f /* s */, resBright = 0.5f;
+    std::array<PipeSoundParams, kNumStops> pipeSnd{};
+    GlitchParams glitch;
+    // tuning made audible in space: beats ("Schwebung", motion mode and modulation source) and
+    // difference tones
+    bool beatIdeal =
+        true; // beats from the tuning as it should be (true) or from the pipes as recorded
+    float ghostLevel = 0.0f; // difference tones of sounding pairs (linear, 0 = off)
+    float ghostPlace = 0.3f; // 0 = between the two pipes .. 1 = deep below the listener
+    float ghostCons =
+        0.5f; // 0 = every pair .. 1 = only pairs with simple ratios (fifths, octaves, thirds)
+    // "Eis": dispersive walls - every early reflection becomes a falling chirp
+    float ice = 0.0f, iceLen = 0.5f;
+    // photographic operations on the whole field (applied by the processor after the room, see
+    // applyPhotoFx)
+    DoubleExposureParams dex;
+    LongExposureParams expo;
     float distAmount = 0.7f; // 0 = distance does not change the level, 1 = 1/r
 
     // tuning
@@ -148,6 +245,7 @@ struct EngineParams
     ModParams mod;
 
     FxParams fx;
+    LiveParams live;
 
     InputParams input;
 
@@ -277,10 +375,39 @@ public:
     std::array<std::atomic<uint64_t>, kNumStops>
         soundingMask{}; // bit k = pipe k of that stop sounds
 
+    // ---- "Lebendige Orgel", for the display and the project state
+    std::atomic<float> bellowsNow{1.0f},
+        bellowsFillNow{1.0f};       // wind pressure, how full the bellows is (0..1)
+    std::atomic<int> treadCount{0}; // counts the Kalkant's treads
+    std::atomic<float> listenerXNow{0.0f},
+        listenerYNow{0.0f}; // where the listener is right now (m)
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops>
+        wear;                                   // 0 = new .. 1 = worn out (saved with the project)
+    std::atomic<bool> wearReset{false};         // UI: all pipes new again
+    std::atomic<int> sympNow{0}, netKeyNow{-1}; // pipes ringing along; the key the walker sounds
+    std::atomic<float> pureNow{0.0f};           // largest correction right now (cents)
+    // ---- "Begehen" (the 3D view): while it is open the camera is the listener. Offset from the
+    // listener's place
+    //      in the room (m, like listenX / listenY) and where the head points (degrees, + = left,
+    //      like binYaw)
+    std::atomic<bool> viewWalkOn{false};
+    std::atomic<float> viewX{0.0f}, viewY{0.0f}, viewYaw{0.0f};
+    std::atomic<int> hiddenNow{0}; // sounding pipes heard around a corner (out of sight)
+    bool occlusionEnabled = true;  // (tests: the same walk with and without the walls hiding pipes)
+
     void setModHook(ModHook *h) noexcept
     {
         modHook = h;
     }
+    /** "Raumverfall" on the Ambisonics channels. The processor calls it itself after the impulse
+       response (then set spaceDegInProcess = false); otherwise process() does it at the end. */
+    bool spaceDegInProcess = true;
+    void applySpaceDegradation(float *const *ch, int order, int n, const EngineParams &p) noexcept
+    {
+        eroder.process(ch, order, n, p.space, activeVoices.load() > 0);
+    }
+    std::atomic<float> spaceErosionNow{0.0f}; // for the display
+    std::atomic<int> cloudGrainsNow{0};
 
     /** audio thread, before process(): the input of this block (left / right; right may be null =
        mono, both null = silence). The pointers must stay valid until process() returns. */
@@ -365,8 +492,11 @@ private:
         float windSm = -1.0f;            // smoothed stop wind (-1 = take target directly)
         float lp = 0.0f, lpA = 1.0f;     // tone filter for under-winded pipes
         float lpAir = 0.0f, airA = 1.0f; // air absorption by distance
-        WindChaos chaos;                 // wind model 2: resonances, intermittent jet, hiss
-        float chAir = 0.0f;              // its own air filter
+        float hidLp = 0.0f, hidA = 1.0f,
+              hidAc = 1.0f; // out of sight: the direct sound comes around a corner, duller (1 =
+                            // open; target, now)
+        WindChaos chaos;    // wind model 2: resonances, intermittent jet, hiss
+        float chAir = 0.0f; // its own air filter
         float prevDist = -1.0f, dop = 1.0f, dopTarget = 1.0f;
         float detuneRnd = 0.0f; // -1..1, fixed per pipe
         // modulation
@@ -379,8 +509,44 @@ private:
         float pmAz = 0.0f, pmEl = 0.0f, pmDist = 1.0f, gainLin = 1.0f;
         float pmWind = 0.0f, pmDeg = 0.0f, pmWob = 0.0f,
               pmCrk = 0.0f; // per-pipe modulation of stop wind, Verfall, Windschwankung, crackle
+        // per-pipe modulation of the pipe sound, cloud, Verfall details and glitches (pmx: all
+        // per-pipe targets of this block)
+        std::array<float, kNumPipeTargets> pmx{};
+        bool pmNew = false; // anything routed to the targets from tgtAttack on
+        float hiGSm = -1.0f,
+              airInvSm = -1.0f; // (smoothed while modulated: no steps from block to block)
+        // beats: the pipe's frequency now, how fast it beats with the others (Hz, smoothed) and as
+        // a modulation source
+        float hzNow = 0.0f, beatT = 0.0f, beatHz = 0.0f, beatNorm = 0.0f;
+        // grain cloud: the pipe's sound history (a ring of the pool), when the next grain is due,
+        // where the pipe is
+        int cloudRing = -1;
+        double cloudAcc = 0.0;
+        Pos spPos;
+        float spK = 0.0f, cloudDry = 1.0f;
         float noteCents = 0.0f; // free tuning: shift from the pipe's own pitch
+        // living organ: the pallet (how far open, the wind it lets through), the wear of this pipe,
+        // the pull towards pure intervals (cents: target and now)
+        float palOpen = 1.0f, palWind = 1.0f, wearNow = 0.0f, wearSign = 1.0f, pureT = 0.0f,
+              pureC = 0.0f;
         float modCents0 = 0.0f, modCents1 = 0.0f;
+        // Ansprache: the attack (gain, sharpness, isolation) and the repeated chiff (a second
+        // reader)
+        float attLp = 0.0f;
+        int chLeft = 0, chWait = 0, chLen = 0, chAge = 0, chCount = 0;
+        double chPos = 0.0;
+        // Abriss: the release puff (band-passed noise)
+        bool puffPending = false;
+        float puffEnv = 0.0f, puffDec = 0.0f, puffAmp = 0.0f, pb1 = 0.0f, pb2 = 0.0f, py1 = 0.0f,
+              py2 = 0.0f, pLp = 0.0f, pLpA = 1.0f;
+        // upper partials as their own layer
+        float hiS1 = 0.0f, hiS2 = 0.0f, hiEf = 0.0f,
+              hiEs = 0.0f; // (2nd-order high-pass state, envelopes)
+        // glitch: stutter (a slice repeated), clipping bursts
+        double stStart = 0.0;
+        int stLen = 0, stAcc = 0, stCount = 0, glTimer = 0, clipLeft = 0, clipTimer = 0,
+            splLeft = 0;
+        float clipDrive = 1.0f;
         // crackle
         int crkCount = 0;
         float crkAmp = 0.0f, crkEnv = 1.0f;
@@ -413,6 +579,10 @@ private:
         float azVel = 0.0f;                       // deg per second, 0 = still
         std::array<float, kMaxRoomSends> sendW{}; // room-send weights (direction harmonics)
         int erSlot = -1;                          // simulated room: early reflections
+        // resonated clicks: up to 6 two-pole resonators on the harmonics of the key
+        int resN = 0, resTail = 0;
+        float resMix = 0.0f;
+        std::array<float, 6> rb1{}, rb2{}, rg{}, ry1{}, ry2{};
     };
 
     // ---- simulated room ----
@@ -529,8 +699,8 @@ private:
     void releaseVoice(Voice &v);
     void freezeVoice(Voice &v);
     void releaseStopKey(int stop, int key, int noteId = -1);
-    void playNoise(const std::vector<NoiseSample> &pool, float gain, const float *gains,
-                   int &lastIndex, float send, float tone = 1.0f);
+    NoiseVoice *playNoise(const std::vector<NoiseSample> &pool, float gain, const float *gains,
+                          int &lastIndex, float send, float tone = 1.0f);
     void spawnSound(const Sample &s, float gain, float tone, double rate, Pos pos, float azVel,
                     float send);
     void schedule(const Scheduled &e);
@@ -545,10 +715,12 @@ private:
     void resetFdn(RoomTail &R) noexcept;
     int allocSlot(int voice, int noiseVoice) noexcept;
     void releaseSlot(int &slot) noexcept;
+    /** placeFrom: the room as seen from the listener's usual place, where srcPos is measured from
+     * (null = room itself) */
     void updateSlotTaps(ErSlot &s, Pos srcPos, float base, const EngineParams &p,
-                        const RoomParams &room) noexcept;
+                        const RoomParams &room, const RoomParams *placeFrom = nullptr) noexcept;
     void updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const EngineParams &p,
-                            const RoomParams &room) noexcept;
+                            const RoomParams &room, const RoomParams *placeFrom) noexcept;
     void renderEchoes(juce::AudioBuffer<float> &out, int n, const EngineParams &p);
     void renderInput(juce::AudioBuffer<float> &out, int n, const EngineParams &p) noexcept;
     void followInput(int start, int len, const EngineParams &p) noexcept;
@@ -571,6 +743,15 @@ private:
     void renderRange(juce::AudioBuffer<float> &out, int start, int end, int blockLen,
                      const EngineParams &p);
     void updateVoiceSpatial(Voice &v, const EngineParams &p, double blockSeconds) noexcept;
+    /** beats between the sounding pipes (motion "Schwebung", source "Schwebung") and the difference
+     * tones that go with them */
+    void updateBeats(const EngineParams &p, double blockSeconds) noexcept;
+    void renderGhosts(float *const *outs, int start, int n, float inv) noexcept;
+    // a stop's settings with this pipe's own modulation on top (exact copies when nothing is routed
+    // there)
+    static PipeSoundParams pipeSndFor(const PipeSoundParams &b, const Voice &v) noexcept;
+    static GlitchParams glitchFor(const GlitchParams &b, const Voice &v) noexcept;
+    static CloudParams cloudFor(const CloudParams &b, const Voice &v) noexcept;
     float readSample(const float *d, int len, double pos) const noexcept;
     void advanceModulation(const EngineParams &p, double dt) noexcept;
     float voiceSource(const Voice &v, int src, const EngineParams &p) const noexcept;
@@ -636,7 +817,9 @@ private:
     uint32_t ageCounter = 0;
     XorShift rng{4711};
     int lastDown = -1, lastUp = -1, lastPull = -1;
-    std::vector<float> scratch, scratchRamp;
+    int lastDownKey = -1; // the key struck last (the Tonnetz walker starts there)
+    std::vector<float> scratch, scratchRamp,
+        hidBuf; // hidBuf: the direct sound of a pipe heard around a corner (and its ramp)
     std::array<std::vector<float>, kMaxRoomSends> roomSend;
     int roomSends = 1;                             // used this block: 2 * roomHarmonics + 1
     std::array<float, kMaxRoomSends> noiseRoomW{}; // room weights of the click / pull sounds
@@ -708,8 +891,127 @@ private:
     double gustPhase = 0.0, tremPhase = 0.0;
     std::vector<float> gust, trem; // one value per 16 samples
 
+    // ---- living organ (OrganLive.cpp)
+    void updateLive(const EngineParams &p, double blockSeconds) noexcept;
+    void renderLive(float *const *outs, int n, const EngineParams &p) noexcept;
+    void updateSympathy(const EngineParams &p) noexcept;
+    void updatePure(const EngineParams &p, double blockSeconds) noexcept;
+    void stepWalker(const EngineParams &p, int numSamples);
+    Pos heardFrom(Pos pos) const noexcept;
+    float pipeHzIdeal(int stop, int key, const EngineParams &p) const noexcept;
+    float bellowsP = 1.0f, bellowsV = 1.0f;
+    bool bellowsRising = false;
+    double treadPhase = 0.0, treadTone = 0.0, treadLast = -1.0e18;
+    float treadEnv = 0.0f, treadLp = 0.0f, treadLp2 = 0.0f;
+    float walkX = 0.0f, walkY = 0.0f;
+    double walkPhase = 0.0;
+    bool liveWalk = false;
+    std::array<RoomParams, kNumRooms> roomsEr{}; // the rooms as the walking listener stands in them
+    std::array<Vec3f, kNumRooms>
+        walkSlid{}; // where the listener stands in a shaped room (slid along its walls)
+    std::array<bool, kNumRooms> walkSlidOk{};
+    // line of sight: in a plan that is not convex a walking listener can lose sight of a pipe
+    // (heard around the corner)
+    std::array<PlanGeo, kNumRooms> occGeo{};
+    std::array<PlanCorners, kNumRooms> occCorners{};
+    std::array<bool, kNumRooms> occOn{}, planOn{};
+    std::array<RoomParams, kNumRooms> occUsual{}; // the room with the listener at the usual place
+                                                  // (where the pipes are placed from)
+    std::array<Vec3f, kNumRooms> occL{};          // the walked listener in it
+    int occCount = 0;
+    /** the pipe at 'home' (as placed from the listener's usual place) heard from where the listener
+       stands: false if nothing is in the way; else where it is heard from and how much is lost */
+    int aroundCorner(int room, Pos home, Pos &heard, float &lossDb, float &cutoffHz)
+        const noexcept; // 0 = not walking in a shaped room, 1 = in sight, 2 = around a corner
+    // sympathetic pipes
+    static constexpr int kSymp = 16;
+    struct Symp
+    {
+        bool on = false, seen = false;
+        int stop = 0, key = 0;
+        float b1 = 0.0f, b2 = 0.0f, gain = 0.0f, gainT = 0.0f, y1 = 0.0f, y2 = 0.0f, hz = 0.0f,
+              send = 0.0f;
+        std::array<float, kMaxAmbiChannels> g0{}, g1{};
+    };
+    std::array<Symp, kSymp> symps{};
+    std::vector<float> sympBus; // what the silent pipes hear: all sounding pipes (mono)
+    int sympTick = 0;
+    bool sympBusOn = false;
+    // adaptive tuning
+    uint64_t pureHash = 0;
+    // Tonnetz walker
+    struct NetNote
+    {
+        int key = -1, left = 0;
+    };
+    std::array<NetNote, 8> netNotes{};
+    double netPhase = 0.0, netLastStep = -1.0e18;
+    int netA = 0, netB = 0, netStep = 0, netSeed = -1, netPrev = -1, netLastDir = -1;
+    uint64_t netHeld = 0; // the keys the player holds (not the walker's own)
+    bool netRunning = false;
+    XorShift netRng{0x7e77};
+
     // sum-mode degradation
     DegradeState sumDeg{99};
+    // ---- the sound of the pipe (Ansprache, Abriss, upper partials) and glitches: this block's
+    // settings,
+    //      for the places that have no params at hand (voice start, release)
+    std::array<PipeSoundParams, kNumStops> pipeSndNow{};
+    GlitchParams glitchNow;
+    void setupResonators(NoiseVoice &nv, int key, float velocity, const EngineParams &p) noexcept;
+    // ---- spatial degradation
+    SpaceEroder eroder;
+    int gridN = 0; // direction grid (0 = off)
+    std::array<float, 64> gridX{}, gridY{}, gridZ{}, gridAz{}, gridEl{};
+    void updateGrid(float amount) noexcept;
+    // ---- grain cloud: a pool of sound histories (rings) and of grains
+    static constexpr int kCloudRings = 64, kCloudGrains = 256;
+    struct CloudGrain
+    {
+        bool on = false, dying = false;
+        int ring = -1, len = 0, age = 0;
+        uint32_t rp = 0, owner = 0;
+        float fade = 1.0f;
+        std::array<float, kMaxAmbiChannels> g{};
+    };
+    std::vector<float> cloudData;
+    int ringSize = 0;
+    uint32_t ringMask = 0;
+    std::array<uint32_t, kCloudRings> ringPos{},
+        ringOwner{}; // owner = the voice's age stamp (0 = free)
+    std::array<int, kCloudRings> ringRefs{};
+    std::array<CloudGrain, kCloudGrains> grains{};
+    XorShift cloudRng{0xc10d};
+    int cloudGrainsActive = 0;
+    void cloudWrite(Voice &v, const float *buf, const float *bufH, int n,
+                    const EngineParams &p) noexcept;
+    void renderCloud(float *const *outs, int start, int n) noexcept;
+
+public:
+    /** Doppelbelichtung and Belichtung on the finished field (the processor calls it after the
+     * room, before Raumverfall) */
+    void applyPhotoFx(float *const *ch, int outputMode, int n, const EngineParams &p) noexcept;
+    /** "Schwebung" motion: how far every pipe has turned so far (degrees) */
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> beatTurn;
+    std::atomic<int> ghostsNow{0};       // difference tones sounding (for tests / display)
+    std::atomic<float> beatMaxNow{0.0f}; // fastest beat right now (Hz)
+private:
+    struct Ghost
+    {
+        bool on = false;
+        uint32_t ageA = 0, ageB = 0; // the pair (voice age stamps)
+        float hz = 0.0f, hzT = 0.0f, amp = 0.0f, ampT = 0.0f;
+        double ph = 0.0;
+        bool seen = false;
+        std::array<float, kMaxAmbiChannels> g0{}, g1{};
+    };
+    static constexpr int kGhosts = 12;
+    std::array<Ghost, kGhosts> ghosts{};
+    DoubleExposure dexFx;
+    LongExposure expoFx;
+    DispersionBank iceHi, iceLo;
+    bool iceWasOn = false;
+    std::vector<float> iceBus; // early reflections collected for the dispersion (16 + 4 channels)
     std::array<float, kMaxOutChannels> sumHeld{}, sumEnv{};
     float masterSmoothed = 1.0f;
 
