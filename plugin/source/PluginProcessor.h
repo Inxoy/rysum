@@ -821,6 +821,9 @@ private:
     }
 
     juce::File irFile;
+    // an impulse response was chosen (loaded, removed, or set by a restored project): the built-in
+    // default is not applied any more
+    bool irChosen = false;
     juce::File customOverride; // chosen folder for own sounds (empty = samples/noise/eigene)
     bool customReloading = false;
     juce::String irStatus{juce::String::fromUTF8("keine \xe2\x80\x93 nur trocken")};

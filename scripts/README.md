@@ -5,6 +5,7 @@ Run the examples below from the repository root. Python dependencies are separat
 | Script | Purpose / output |
 |---|---|
 | `rysum_preprocess.py` | Current preparation pipeline: `raw_unprocessed_files/` → `rysum-samples/`, including `rysum_samples.json` and analysis images |
+| `process_oct30.py` | Measurements of 30 Oct 2026: `october30_samples/` → wind loop without the phone-like interference, best clap IRs (`rysum-samples/irs/`, built into the plugin), extra key clicks; updates `rysum_samples.json` (`--plots DIR` for analysis plots) |
 | `analyse_sample_pitch.py` | Non-destructive final-WAV audit → `docs/in-progress/pitch-analysis/` |
 | `test_analyse_sample_pitch.py`, `test_pitch_metadata.py` | Synthetic estimator checks and metadata/evidence validation |
 | `make_photos.py` | Current image preparation → `plugin/resources/`; reads original photos from `_archive/newpics/` and `_archive/photos/` |

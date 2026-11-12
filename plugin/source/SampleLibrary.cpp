@@ -358,6 +358,16 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load(const juce::File &folder, juc
                     lib->wind.push_back(s);
     }
 
+    if (auto *irs = root["irs"].getArray())
+        for (auto &e : *irs)
+        {
+            const auto f = folder.getChildFile(e["file"].toString());
+            if (e["file"].toString().isNotEmpty() && f.existsAsFile())
+                lib->irs.push_back({e.hasProperty("name") ? e["name"].toString()
+                                                          : f.getFileNameWithoutExtension(),
+                                    f});
+        }
+
     lib->custom = loadCustom(folder, shouldExit);
 
     if (lib->loadedPipes == 0)

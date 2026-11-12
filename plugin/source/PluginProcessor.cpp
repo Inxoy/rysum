@@ -2370,6 +2370,7 @@ void RysumProcessor::handleAsyncUpdate()
 void RysumProcessor::loadIr(const juce::File &file)
 {
     irFile = file;
+    irChosen = true;
     const auto settings = currentIrSettings();
     builtIrKey = irSettingsKey(settings);
     setIrStatus(u8("lade ") + file.getFileName() + u8(" \xe2\x80\xa6"));
@@ -2913,6 +2914,7 @@ void RysumProcessor::rebuildTransaural()
 void RysumProcessor::clearIr()
 {
     irFile = juce::File();
+    irChosen = true;
     retiredIr = irUi;
     retireCountdown = 20;
     irUi.reset();
@@ -3008,6 +3010,9 @@ void RysumProcessor::onLoaded(std::shared_ptr<const SampleLibrary> lib, const ju
         s << ", " << (int)lib->custom.size() << juce::String::fromUTF8(" eigene Ger\xc3\xa4usche");
     setStatus(s);
     ++changeCounter;
+    // a new instance starts in the measured room: the first built-in impulse response (claps)
+    if (!irChosen && irFile == juce::File() && !lib->irs.empty())
+        loadIr(lib->irs.front().file);
     // a full load reads the standard folder: a chosen one is read right after
     if (!wasCustomReload && customOverride != juce::File())
         reloadCustomSounds();
@@ -3567,6 +3572,8 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
             }
         }
         const juce::File irf(extra["irFile"].toString());
+        if (!forPatch && extra.hasProperty("irFile"))
+            irChosen = true; // a project knows its room (also "none"): no built-in default
         if (irf != juce::File() && irf != irFile && irf.existsAsFile())
         {
             irFile = irf;

@@ -260,6 +260,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> irFumaAttachment,
         irN3DAttachment, irFollowAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
+    std::function<void()> chooseIrFile;
     juce::Rectangle<int> left, right, stopsBox, layoutBox, motionBox, hallBox, tabBox;
     bool updating = false;
 };

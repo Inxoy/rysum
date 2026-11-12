@@ -65,6 +65,14 @@ public:
     std::vector<NoiseSample> clicksDown, clicksUp, clicksOther, stopPulls;
     std::vector<NoiseSample> custom; // own sounds from noise/eigene (screws, clanks, ...)
     std::vector<std::shared_ptr<const Sample>> wind;
+    /** impulse responses measured in the room ("irs" in rysum_samples.json); the first is the
+        default for a new instance */
+    struct BuiltinIr
+    {
+        juce::String name;
+        juce::File file;
+    };
+    std::vector<BuiltinIr> irs;
     juce::File folder;
     juce::StringArray warnings;
     int loadedPipes = 0, substitutedPipes = 0;

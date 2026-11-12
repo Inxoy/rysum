@@ -756,6 +756,29 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     addAndMakeVisible(irFuma);
     irLoad.onClick = [this]
     {
+        // the impulse responses measured in the room (from the sample library), then any file
+        juce::PopupMenu m;
+        std::vector<juce::File> builtIn;
+        if (auto lib = proc.getLibrary())
+            for (auto &ir : lib->irs)
+            {
+                builtIn.push_back(ir.file);
+                m.addItem((int)builtIn.size(), ir.name, true, ir.file == proc.getIrFile());
+            }
+        if (!builtIn.empty())
+            m.addSeparator();
+        m.addItem(1000, juce::String::fromUTF8("Datei laden \xe2\x80\xa6"));
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&irLoad),
+                        [this, builtIn](int r)
+                        {
+                            if (r >= 1 && r <= (int)builtIn.size())
+                                proc.loadIr(builtIn[(size_t)(r - 1)]);
+                            else if (r == 1000)
+                                chooseIrFile();
+                        });
+    };
+    chooseIrFile = [this]
+    {
         chooser =
             std::make_unique<juce::FileChooser>("Impulsantwort (WAV, AmbiX / Stereo / Mono)",
                                                 proc.getIrFile(), "*.wav;*.aif;*.aiff;*.flac");
@@ -802,8 +825,9 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         "her = genauer, aber mehr Rechenlast."));
     addAndMakeVisible(irOrder);
     irLoad.setTooltip(juce::String::fromUTF8(
-        "Impulsantwort laden: WAV/AIFF/FLAC, Mono, Stereo oder AmbiX 1.\xe2\x80\x93"
-        "5. Ordnung"));
+        "Impulsantwort: die im Raum gemessenen (Klatschen) oder eine Datei laden "
+        "(WAV/AIFF/FLAC, Mono, Stereo oder AmbiX 1.\xe2\x80\x93"
+        "5. Ordnung)"));
     irN3DAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         proc.apvts, "irN3D", irN3D);
     irFollowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
