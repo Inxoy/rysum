@@ -354,6 +354,120 @@ public:
                     " m, pushed away to " + juce::String(dPush, 2) + " m",
                 d0 > 0.0f && std::abs(dRest - d0) < 0.2f && dPull < d0 - 1.0f && dPush > dPull + 2.0f);
             setReal("lvPlayerMode", 0.0f);
+
+            // ---- the player's hands: shockwave, freeze, call home, carry and throw, knock, clap
+            setReal(RysumProcessor::depthParamId(0), 60.0f);
+            wv.setPoseForTest(0, 0, 0);
+            wv.callHome();
+            run(400, {});
+            const float dA = meanDist();
+            wv.shock();
+            run(40, {});
+            const float dB = meanDist();
+            wv.setFreeze(true);
+            run(4, {});
+            const float dF0 = meanDist();
+            run(60, {});
+            const float dF1 = meanDist();
+            wv.setFreeze(false);
+            shot("walk_shock.png");
+            wv.callHome();
+            run(400, {});
+            const float dC = meanDist();
+            say("hands: at home " + juce::String(dA, 2) + " m, after a shockwave " + juce::String(dB, 2) +
+                    " m, frozen " + juce::String(dF0, 3) + " -> " + juce::String(dF1, 3) +
+                    " m, called home " + juce::String(dC, 2) + " m",
+                dB > dA + 0.5f && std::abs(dF1 - dF0) < 0.005f && std::abs(dC - dA) < 0.1f);
+
+            // look at the nearest pipe ahead, take it, turn a quarter and let go
+            int kNear = -1;
+            float best = 1.0e9f;
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                Vec3f b;
+                if (!proc->engine.bodyAt(0, k, b))
+                    continue;
+                const float d = std::sqrt((b.x - home.x) * (b.x - home.x) + (b.y - home.y) * (b.y - home.y));
+                if (d > 1.5f && d < best)
+                {
+                    best = d;
+                    kNear = k;
+                }
+            }
+            Vec3f at;
+            proc->engine.bodyAt(0, juce::jmax(0, kNear), at);
+            const float yawTo = juce::radiansToDegrees(std::atan2(-(at.x - home.x), at.y - home.y));
+            wv.setPoseForTest(0, 0, yawTo);
+            wv.setPitchForTest(juce::radiansToDegrees(std::atan2(at.z - home.z, best)));
+            run(2, {});
+            shot("walk_aim.png");
+            const int aS = wv.aimStopForTest(), aK = wv.aimKeyForTest();
+            const uint32_t knocks0 = proc->engine.impactCount.load();
+            const bool hit = wv.strikeAt(wv.getLocalBounds().getCentre().toFloat());
+            run(4, {});
+            const uint32_t knocks1 = proc->engine.impactCount.load();
+            say("hands: the cross is on pipe " + juce::String(aS) + "/" + juce::String(aK) + " (" +
+                    juce::String(best, 1) + " m away), a click knocks on it: " +
+                    juce::String((int)(knocks1 - knocks0)) + " knock",
+                aS == 0 && aK >= 0 && hit && knocks1 == knocks0 + 1);
+            wv.setGrab(true);
+            wv.setPitchForTest(0.0f);
+            for (int i = 0; i < 120; ++i)
+            {
+                wv.setPoseForTest(0, 0, yawTo + juce::jmin(90.0f, (float)i * 1.5f));
+                wv.updateActionsForTest();
+                run(1, {});
+            }
+            Vec3f held;
+            proc->engine.bodyAt(0, juce::jmax(0, aK), held);
+            const float ya = juce::degreesToRadians(yawTo + 90.0f);
+            const float hd = std::sqrt((held.x - home.x) * (held.x - home.x) + (held.y - home.y) * (held.y - home.y));
+            const float along = (held.x - home.x) * -std::sin(ya) + (held.y - home.y) * std::cos(ya);
+            shot("walk_carry.png");
+            wv.setGrab(false);
+            run(300, {});
+            Vec3f thrown;
+            proc->engine.bodyAt(0, juce::jmax(0, aK), thrown);
+            run(200, {});
+            Vec3f rest;
+            proc->engine.bodyAt(0, juce::jmax(0, aK), rest);
+            const float flew = std::sqrt((thrown.x - held.x) * (thrown.x - held.x) + (thrown.y - held.y) * (thrown.y - held.y));
+            const float crept = std::sqrt((rest.x - thrown.x) * (rest.x - thrown.x) + (rest.y - thrown.y) * (rest.y - thrown.y));
+            say("hands: carried " + juce::String(hd, 2) + " m ahead (" + juce::String(along, 2) +
+                    " m along the view), thrown " + juce::String(flew, 2) + " m, then it stays (" +
+                    juce::String(crept, 3) + " m in 2 s)",
+                hd > 1.0f && hd < 3.2f && along > 0.9f * hd && flew > 1.0f && crept < 0.3f);
+
+            // a clap is heard (the late reverb is built in the background by the plugin, not in this test)
+            {
+                juce::AudioBuffer<float> buf(
+                    juce::jmax(2, proc->getTotalNumInputChannels(), proc->getTotalNumOutputChannels()), 512);
+                auto level = [&](int blocks)
+                {
+                    double sum = 0.0;
+                    for (int b = 0; b < blocks; ++b)
+                    {
+                        juce::MidiBuffer mb;
+                        mb.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+                        for (int n : {48, 55, 60, 64, 67})
+                            mb.addEvent(juce::MidiMessage::noteOff(1, n), 0);
+                        buf.clear();
+                        proc->processBlock(buf, mb);
+                        sum += (double)buf.getRMSLevel(0, 0, 512) * (double)buf.getRMSLevel(0, 0, 512);
+                    }
+                    return 10.0 * std::log10(sum / blocks + 1.0e-12);
+                };
+                wv.callHome();
+                level(900); // (the notes of the pictures let go, their reverb gone)
+                const double quiet = level(20);
+                wv.clap();
+                const double loud = level(10);
+                level(30);
+                const double after = level(20);
+                say("hands: a clap " + juce::String(loud, 1) + " dB, over after half a second (" +
+                        juce::String(after, 1) + " dB; silence before " + juce::String(quiet, 1) + " dB)",
+                    loud > quiet + 20.0 && loud > -50.0 && after < loud - 40.0);
+            }
             setReal(RysumProcessor::motionParamId(0), 0.0f);
         }
     }

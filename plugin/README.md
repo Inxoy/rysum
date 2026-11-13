@@ -645,7 +645,7 @@ reflections (longer ways) chirp more. *Eis* blends from the plain reflections to
 
 *Saal · Begehen* (button *3D begehen* on the floor plan): the Saal in 3D, seen through your own
 eyes. The pipes float where Ambisonics places them (with their motion and modulation); sounding
-pipes glow. **W A S D** walk, **dragging the mouse** looks around, **Q / E** or the arrow keys
+pipes glow. **W A S D** walk, **dragging the mouse** looks around, the left and right arrow keys
 turn, **Shift** runs, **Space** jumps, the **mouse wheel** changes the field of view, **Esc**
 goes back. Walking is smooth: the speed builds up and dies away, the view follows the mouse
 within a few hundredths of a second, and the ears go up with a jump. The
@@ -682,6 +682,18 @@ away (*stößt ab*), lets them circle (*Umlaufbahn*) or drags them along (*Sog*)
 *Reichweite*. It acts on stops whose motion takes place in the Saal (Flug, Fall, Schwarm,
 Strömung) – and on the new motion *Schweben*, where the pipes rest at their place until the
 player moves them (*Tiefe* = how free they are, *Geschwindigkeit* = an unrest of their own).
+*The player's hands* (keys in the 3D view; with **Shift** stronger):
+**E** – a shockwave: a deep burst pushes every pipe away from you, the nearer the harder, and
+they knock on the walls. **Q** (held) – takes the pipe under the cross (it gets a ring when a
+pipe is within 9 m), carries it ahead of you, and throws it when you let go – with the speed
+of your hand and your walk; a hovering pipe stays where it comes to rest. **F** (held) – holds
+everything that moves still. **R** – calls every pipe back to its place in the organ.
+**C** – a hand clap where you stand, to hear the room from there. A **click** on a pipe knocks
+on it: it rings with its own modes and faintly its note, without its key.
+Pushing, carrying and throwing need the pipes to be bodies in the Saal: a stop that stands still
+is given the motion *Schweben* by E and Q (the 3D view says so); stops with another motion
+(Rotation, Pendel …) are left as they are. Pipes the player has just moved knock on walls even
+when *Aufprall* is turned down.
 The pipes are real 3D pipes – a conical foot, the
 round body, the mouth turned towards the listener's place. The view is drawn on several
 threads at the screen's full resolution and lowers it by itself when a frame takes too long.

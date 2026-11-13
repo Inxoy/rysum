@@ -4739,7 +4739,8 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         }
         else
         {
-            const double scale = p.sync ? p.bpm / 120.0 : 1.0;
+            // (the player holds everything still: "freeze" in the 3D view)
+            const double scale = actFreeze.load() ? 0.0 : (p.sync ? p.bpm / 120.0 : 1.0);
             ph = motionPhase[(size_t)s].load() +
                  (double)p.motionRate[(size_t)s] * scale * blockSeconds;
         }

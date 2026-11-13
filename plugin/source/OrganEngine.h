@@ -412,6 +412,20 @@ public:
         std::atomic_store(&meshShared, std::move(m));
     }
     std::atomic<bool> meshActive{false}; // the model hides pipes right now (for the display)
+
+    // ---- the player's actions (the keys of the 3D view). Message thread -> audio thread.
+    enum class Act
+    {
+        Shock,  // a burst at the player's place: every pipe that is a body in the Saal is pushed away
+        Home,   // every pipe flies back to its place in the organ
+        Throw,  // the pipe (stop, key) let go with the speed v (m/s) added
+        Strike, // the pipe (stop, key), at the place v, knocked: it rings without its key
+        Clap    // a hand clap where the player stands: the room answers
+    };
+    void playerAct(Act a, int stop = -1, int key = -1, Vec3f v = {}, float amount = 1.0f) noexcept;
+    std::atomic<bool> actFreeze{false};      // held: everything that moves stands still
+    std::atomic<int> grabStop{-1}, grabKey{-1}; // the pipe carried by the player (-1: none)
+    std::atomic<float> grabX{0.0f}, grabY{0.0f}, grabZ{0.0f}; // where the hand holds it (m, in its room)
     std::atomic<int> hiddenNow{0}; // sounding pipes heard around a corner (out of sight)
 
     // ---- room motion (Flug, Fall, Schwarm, Strömung): every pipe a body in the Saal, for the
@@ -971,7 +985,10 @@ private:
     struct Body
     {
         float x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, rest = 0;
-        float hx = 0, hy = 0, hz = 0; // where it started ("Schweben" comes back to it)
+        float hx = 0, hy = 0, hz = 0; // where it rests ("Schweben" comes back to it)
+        float ox = 0, oy = 0, oz = 0; // its place in the organ (where it started: "call home")
+        float pushed = 0;             // s: the player has just moved it - it knocks whatever "Aufprall" says
+        bool loose = false;           // thrown ("Schweben"): it stays where it comes to rest
         XorShift rng{1};
     };
     std::array<std::array<Body, kNumKeys>, kNumStops> bodies{};
@@ -986,7 +1003,31 @@ private:
         float x = 0, y = 0, z = 0, speed = 0, absorb = 0, high = 0;
         int stop = 0, key = 0, room = 0;
         bool floor = false;
+        float level = -1.0f; // < 0: as loud as "Aufprall" says
+        bool struck = false; // knocked by the player's hand: no wall thumps
     };
+    // the player's actions
+    struct ActCmd
+    {
+        Act act = Act::Clap;
+        int stop = -1, key = -1;
+        Vec3f v;
+        float amount = 1.0f;
+    };
+    juce::AbstractFifo actFifo{32};
+    std::array<ActCmd, 32> actQueue{};
+    float homing = 0.0f; // s left of the flight home
+    /** the sounds the player makes itself: the clap, the burst of the shockwave */
+    struct Burst
+    {
+        bool on = false;
+        int type = 0, pos = 0, len = 0; // 0 = clap, 1 = shockwave
+        float gain = 0, low = 0, band = 0, lp = 0;
+        double phase = 0;
+    };
+    std::array<Burst, 4> bursts{};
+    void handleActs(const EngineParams &p) noexcept;
+    void renderBursts(float *const *outs, int n) noexcept;
     static constexpr int kMaxImpactEvents = 24, kNumImpactVoices = 32, kImpactModes = 5;
     std::array<ImpactEvent, kMaxImpactEvents> impactQueue{};
     int numImpacts = 0;

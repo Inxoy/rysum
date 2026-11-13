@@ -11,7 +11,9 @@ namespace rysum::ui
     can be loaded: it is seen, its walls stop you and its floors carry you, and - unless switched off - it is heard
     (pipes behind its walls come around them, the late reverb is ray-traced through it). The Saal's shoebox stays
     underneath: its floor and ceiling close an open model, it gives the early reflections and the size.
-    Every surface of the Saal can be of its own material: point at it and press M. */
+    Every surface of the Saal can be of its own material: point at it and press M.
+    The player's hands: E a shockwave, Q (held) carries the pipe under the cross and throws it, F (held) holds
+    everything still, R calls the pipes home, C claps, a click knocks on a pipe. */
 class WalkView : public juce::Component, private juce::Timer
 {
 public:
@@ -41,6 +43,24 @@ public:
     int aimForTest() const noexcept { return aimSurf; }
     void cycleMaterialForTest() { cycleMaterial(); }
     void loadModelForTest (const juce::File& f) { loadModel (f); }
+    // ---- the player's actions (the keys; also for the tests)
+    /** E: a burst that pushes every pipe away from you (strength 1 = the usual one) */
+    void shock (float strength = 1.0f);
+    /** R: every pipe flies back to its place in the organ */
+    void callHome();
+    /** C: a hand clap where you stand */
+    void clap();
+    /** a click: the pipe at this point of the view is knocked and rings; false = no pipe there */
+    bool strikeAt (juce::Point<float> at, float strength = 1.0f);
+    /** Q down: take the pipe under the cross; Q up: throw it (fast = harder) */
+    void setGrab (bool on, bool fast = false);
+    /** F: while on, everything that moves stands still */
+    void setFreeze (bool on);
+    /** tests: what the timer does for the actions (the hand's place, a pipe taken once its stop hovers) */
+    void updateActionsForTest() { updateActions (heldStop >= 0, frozen); }
+    /** tests: the pipe under the cross (-1 = none), from the last frame drawn */
+    int aimStopForTest() const noexcept { return aimStop; }
+    int aimKeyForTest() const noexcept { return aimKey; }
     /** tests: a fixed resolution (no adapting to the frame time); how long the last frame took */
     void setTestMode (bool on) { testMode = on; if (on) { resScale = 1.0f; resLevel = 0; } }
     float frameMs() const noexcept { return lastFrameMs; }
@@ -92,6 +112,23 @@ private:
     float bobPhase = 0.0f, bobAmt = 0.0f, landDip = 0.0f;      // the steps, and giving in the knees after a jump
     bool onGround = true;
     int aimSurf = -1;                                          // the Saal's surface under the cross (kSurfFloor ...)
+    // the player's actions
+    struct Shown { V3 c; float len = 0.0f, rad = 0.0f; bool on = false; };
+    std::array<std::array<Shown, kNumKeys>, kNumStops> shown {};   // the pipes as the last frame drew them
+    float viewScale = 1.0f;                                    // component pixels per pixel of the picture
+    int aimStop = -1, aimKey = -1;                             // the pipe under the cross
+    int heldStop = -1, heldKey = -1;                           // the pipe in the hand (or about to be)
+    float holdDist = 1.8f;
+    bool qWas = false, frozen = false;
+    double shockAt = 0.0, lastShock = 0.0, lastClap = 0.0, shockFx = 0.0;
+    float shockAmt = 1.0f, dragged = 0.0f;
+    juce::Point<float> downPos;
+    bool pickPipe (juce::Point<float> at, float maxDist, int& stop, int& key) const;
+    bool makeHover (int stop, bool tell);
+    void updateActions (bool qDown, bool fDown);
+    void say (const juce::String& text, double ms = 2500.0);
+    V3 eyeNow() const;
+    V3 lookDir() const;
     juce::Point<float> lastMouse;
     bool looking = false;
     double lastTime = 0.0;

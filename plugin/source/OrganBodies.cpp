@@ -135,6 +135,8 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 const float v1 = mode == (int) Motion::Hover ? 0.0f : v0;
                 b.vx = dx / l * v1; b.vy = dy / l * v1; b.vz = dz / l * v1;
                 b.hx = b.x; b.hy = b.y; b.hz = b.z;
+                b.ox = b.x; b.oy = b.y; b.oz = b.z;
+                b.pushed = 0.0f; b.loose = false;
                 b.rest = 0.0f;
             }
         }
@@ -149,6 +151,11 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         const float pForce = juce::jlimit (0.0f, 1.0f, lv.playerForce), pRange = juce::jlimit (0.5f, 30.0f, lv.playerRange);
         const bool pOn = pMode > 0 && pForce > 0.0f;
         const float eFloor = mode == (int) Motion::Fall ? 0.3f + 0.65f * depth : eWall;
+        // the player's hands: everything held still (freeze), one pipe carried, all of them called home
+        const bool frozen = actFreeze.load();
+        const int heldKey = grabStop.load() == s ? grabKey.load() : -1;
+        const Vec3f hand { grabX.load(), grabY.load(), grabZ.load() };
+        const bool goHome = homing > 0.0f;
 
         // Schwarm: the flock's middle and heading, once per 1/60 s (flocking per stop)
         float cx = 0, cy = 0, cz = 0, ax = 0, ay = 0, az = 0;
@@ -181,7 +188,37 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
             {
                 auto& b = bs[(size_t) k];
                 const float zMin = zLo[(size_t) k], zMax = zHi[(size_t) k];
+                if (b.pushed > 0.0f) b.pushed -= h;
+                const bool held = k == heldKey;
+                if (frozen && ! held) continue;
 
+                // ---- in the player's hand: it follows the hand (and keeps the hand's speed when let go)
+                if (held)
+                {
+                    float tx = (hand.x - b.x) * 14.0f, ty = (hand.y - b.y) * 14.0f, tz = (hand.z - b.z) * 14.0f;
+                    const float tl = len3 (tx, ty, tz);
+                    if (tl > 25.0f) { tx *= 25.0f / tl; ty *= 25.0f / tl; tz *= 25.0f / tl; }
+                    const float k2 = juce::jmin (1.0f, 30.0f * h);
+                    b.vx += (tx - b.vx) * k2; b.vy += (ty - b.vy) * k2; b.vz += (tz - b.vz) * k2;
+                    b.hx = b.x; b.hy = b.y; b.hz = b.z;
+                    b.pushed = 3.0f; b.loose = false; b.rest = 0.0f;
+                }
+                // ---- called home: straight back to its place in the organ, arriving without overshooting
+                else if (goHome)
+                {
+                    b.vx += (9.0f * (b.ox - b.x) - 6.0f * b.vx) * h;
+                    b.vy += (9.0f * (b.oy - b.y) - 6.0f * b.vy) * h;
+                    b.vz += (9.0f * (b.oz - b.z) - 6.0f * b.vz) * h;
+                }
+                // ---- thrown while hovering: it glides on, the air stops it, and there it stays
+                else if (b.loose && mode == (int) Motion::Hover)
+                {
+                    const float damp = 1.0f - 0.9f * h;
+                    b.vx *= damp; b.vy *= damp; b.vz *= damp;
+                    b.hx = b.x; b.hy = b.y; b.hz = b.z;
+                    if (len3 (b.vx, b.vy, b.vz) < 0.12f) b.loose = false;
+                }
+                else
                 // ---- the forces of the mode
                 switch ((Motion) mode)
                 {
@@ -259,7 +296,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 }
 
                 // ---- the player: a mass the pipes fall towards, or flee; a centre they circle; a wake that takes them along
-                if (pOn)
+                if (pOn && ! held && ! goHome)
                 {
                     const float rx = br.player.x - b.x, ry = br.player.y - b.y, rz = br.player.z - b.z;
                     const float d2 = rx * rx + ry * ry + rz * rz, d = std::sqrt (d2) + 1.0e-4f;
@@ -358,10 +395,13 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     if (! br.free (b.x, b.y, kWallMargin * 0.9f)) br.nudge (b.x, b.y);
                 }
 
-                if (hitSpeed > kMinImpact && knocks && ! muted[(size_t) s][(size_t) k].load()
-                    && (lv.impAll || ((sounding >> k) & 1)))
+                // (a pipe the player has just pushed, thrown or carried knocks whatever "Aufprall" is set to)
+                const bool own = b.pushed > 0.0f && p.stopOn[(size_t) s] && ! goHome;
+                if (hitSpeed > kMinImpact && ! muted[(size_t) s][(size_t) k].load()
+                    && (own || (knocks && (lv.impAll || ((sounding >> k) & 1)))))
                 {
                     ImpactEvent e;
+                    if (own) e.level = juce::jmax (lv.impLevel, 0.7f);
                     e.x = b.x; e.y = b.y; e.z = floorHit ? (b.z < 0.5f * br.H ? 0.0f : br.H) : b.z;
                     e.speed = hitSpeed; e.absorb = hitAbs; e.high = br.r.highDamp; e.stop = s; e.key = k; e.room = ri; e.floor = floorHit;
                     queueImpact (e);
@@ -376,6 +416,154 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         bodyOn[(size_t) s] = true;
     }
     bodyStepCount += (uint32_t) steps;
+    if (homing > 0.0f)
+    {
+        homing -= (float) blockSeconds;
+        // (arrived: at rest there, as if it had never left)
+        if (homing <= 0.0f)
+            for (auto& bs : bodies) for (auto& b : bs) { b.hx = b.ox; b.hy = b.oy; b.hz = b.oz; b.loose = false; b.pushed = 0.0f; }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// the player's actions (the keys of the 3D view)
+// ---------------------------------------------------------------------------
+void OrganEngine::playerAct (Act a, int stop, int key, Vec3f v, float amount) noexcept
+{
+    const auto scope = actFifo.write (1);
+    ActCmd c; c.act = a; c.stop = stop; c.key = key; c.v = v; c.amount = amount;
+    if (scope.blockSize1 > 0) actQueue[(size_t) scope.startIndex1] = c;
+    else if (scope.blockSize2 > 0) actQueue[(size_t) scope.startIndex2] = c;
+}
+
+void OrganEngine::handleActs (const EngineParams& p) noexcept
+{
+    const int ready = actFifo.getNumReady();
+    if (ready <= 0) return;
+    const auto scope = actFifo.read (ready);
+    auto startBurst = [this] (int type, float gain, float seconds)
+    {
+        Burst* use = &bursts[0];
+        for (auto& b : bursts) { if (! b.on) { use = &b; break; } if (b.pos > use->pos) use = &b; }
+        *use = Burst {};
+        use->on = true; use->type = type; use->gain = gain; use->len = juce::jmax (1, (int) (seconds * sr));
+    };
+    auto valid = [] (int s, int k) { return s >= 0 && s < kNumStops && k >= 0 && k < kNumKeys; };
+    auto isBody = [this] (int s) { return bodyOn[(size_t) s].load() && isRoomMotion (bodyMode[(size_t) s]); };
+    for (int i = 0; i < scope.blockSize1 + scope.blockSize2; ++i)
+    {
+        const ActCmd c = actQueue[(size_t) (i < scope.blockSize1 ? scope.startIndex1 + i : scope.startIndex2 + i - scope.blockSize1)];
+        switch (c.act)
+        {
+            case Act::Clap:
+                startBurst (0, 0.16f * juce::jlimit (0.1f, 2.0f, c.amount), 0.3f);
+                break;
+            case Act::Shock:
+            {
+                // away from the player, strongest close by, fading over sixteen metres; a little upwards
+                const float amt = juce::jlimit (0.1f, 3.0f, c.amount);
+                for (int s = 0; s < kNumStops; ++s)
+                {
+                    if (! isBody (s)) continue;
+                    const int ri = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) s]);
+                    const Vec3f P = listenerPos (roomsEr[(size_t) ri]);
+                    for (auto& b : bodies[(size_t) s])
+                    {
+                        float dx = b.x - P.x, dy = b.y - P.y, dz = b.z - P.z;
+                        const float d = len3 (dx, dy, dz);
+                        if (d > 16.0f) continue;
+                        if (d < 1.0e-3f) { dx = b.rng.bi(); dy = b.rng.bi(); dz = 0.0f; }
+                        const float l = juce::jmax (1.0e-3f, len3 (dx, dy, dz));
+                        const float dv = 12.0f * amt / (1.0f + (d / 6.0f) * (d / 6.0f)) * (1.0f - d / 16.0f);
+                        b.vx += dv * dx / l; b.vy += dv * dy / l; b.vz += dv * (dz / l + 0.3f);
+                        b.pushed = 5.0f; b.rest = 0.0f;
+                    }
+                }
+                startBurst (1, 0.22f * juce::jmin (1.5f, amt), 0.7f);
+                break;
+            }
+            case Act::Home:
+                homing = 3.0f;
+                for (auto& bs : bodies) for (auto& b : bs) { b.loose = false; b.pushed = 0.0f; }
+                break;
+            case Act::Throw:
+                if (valid (c.stop, c.key) && isBody (c.stop))
+                {
+                    auto& b = bodies[(size_t) c.stop][(size_t) c.key];
+                    b.vx += c.v.x; b.vy += c.v.y; b.vz += c.v.z;
+                    b.loose = true; b.pushed = 6.0f; b.rest = 0.0f;
+                }
+                break;
+            case Act::Strike:
+                if (valid (c.stop, c.key))
+                {
+                    const int ri = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) c.stop]);
+                    ImpactEvent e;
+                    e.x = c.v.x; e.y = c.v.y; e.z = c.v.z;
+                    e.speed = 2.0f + 3.0f * juce::jlimit (0.0f, 2.0f, c.amount);
+                    e.stop = c.stop; e.key = c.key; e.room = ri;
+                    e.level = juce::jmax (1.0f, p.live.impLevel); e.struck = true;
+                    queueImpact (e);
+                    if (isBody (c.stop))
+                    {
+                        // (and it gives way a little, away from the hand)
+                        auto& b = bodies[(size_t) c.stop][(size_t) c.key];
+                        const Vec3f P = listenerPos (roomsEr[(size_t) ri]);
+                        const float dx = b.x - P.x, dy = b.y - P.y, l = juce::jmax (1.0e-3f, std::sqrt (dx * dx + dy * dy));
+                        b.vx += 1.2f * dx / l; b.vy += 1.2f * dy / l;
+                    }
+                }
+                break;
+        }
+    }
+}
+
+void OrganEngine::renderBursts (float* const* outs, int n) noexcept
+{
+    const float fsr = (float) sr;
+    float* y = scratch.data();
+    for (auto& b : bursts)
+    {
+        if (! b.on) continue;
+        if (b.type == 0)
+        {
+            // a clap: the palms meet three times within a few milliseconds, then the hollow of the hands rings
+            // out; noise through a band around 1.2 kHz
+            const float f = 2.0f * std::sin (juce::MathConstants<float>::pi * 1200.0f / fsr), q = 0.75f;
+            const float at[4] { 0.0f, 0.009f, 0.018f, 0.027f };
+            for (int i = 0; i < n; ++i)
+            {
+                const float t = (float) (b.pos + i) / fsr;
+                float env = 0.0f;
+                for (int j = 0; j < 4; ++j)
+                    if (t >= at[j]) env = juce::jmax (env, (j == 3 ? 1.0f : 0.8f) * std::exp (-(t - at[j]) / (j == 3 ? 0.03f : 0.004f)));
+                const float x = impactRng.bi() * env;
+                const float high = x - b.low - q * b.band;
+                b.band += f * high; b.low += f * b.band;
+                y[i] = b.gain * (2.2f * b.band + 0.35f * high);
+            }
+        }
+        else
+        {
+            // the shockwave: a deep thump falling in pitch, and the air it moves
+            const float a = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 260.0f / fsr);
+            for (int i = 0; i < n; ++i)
+            {
+                const float t = (float) (b.pos + i) / fsr;
+                const float hz = 42.0f + 70.0f * std::exp (-t / 0.05f);
+                b.phase += (double) hz / (double) fsr;
+                b.lp += a * (impactRng.bi() - b.lp);
+                const float on = juce::jmin (1.0f, t / 0.004f);
+                y[i] = b.gain * on * (1.6f * std::sin ((float) (juce::MathConstants<double>::twoPi * b.phase)) * std::exp (-t / 0.16f)
+                                      + 2.5f * b.lp * std::exp (-t / 0.09f));
+            }
+        }
+        b.pos += n;
+        if (b.pos >= b.len) b.on = false;
+        // (your own hands: from everywhere and nowhere - and into the room, which answers)
+        juce::FloatVectorOperations::add (outs[0], y, n);
+        juce::FloatVectorOperations::addWithMultiply (roomSend[0].data() + roomOffset, y, b.type == 0 ? 2.5f : 0.8f, n);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -389,7 +577,7 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
     // how hard: louder with speed (somewhat faster than proportional), a soft wall takes much of it
     const float hard = juce::jlimit (0.0f, 2.5f, std::pow (e.speed / 3.0f, 1.25f));
     // (calibrated: a 3 m/s knock on stone at 0 dB peaks a little below a pipe sounding at the same distance)
-    const float gain = 0.045f * lv.impLevel * hard * (1.0f - 0.65f * a);
+    const float gain = 0.045f * (e.level >= 0.0f ? e.level : lv.impLevel) * hard * (1.0f - 0.65f * a);
     if (gain < 1.0e-5f) return;
 
     // a free voice, else the quietest one (if this one is louder)
@@ -414,7 +602,7 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
     const float fc = juce::jlimit (300.0f, 0.45f * fsr, (700.0f + 11000.0f * juce::jmin (1.0f, e.speed / 6.0f)) * (1.0f - 0.7f * a) * (1.0f - 0.35f * e.high));
     v.noiseA = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / fsr);
     // the wall (or floor) itself: a dull thump, more of it when the floor is hit
-    v.thud = (e.floor ? 0.9f : 0.5f) * gain * (1.0f - 0.4f * a);
+    v.thud = e.struck ? 0.0f : (e.floor ? 0.9f : 0.5f) * gain * (1.0f - 0.4f * a);
     v.thudA = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * (e.floor ? 110.0f : 180.0f) / fsr);
     v.thudDec = std::exp (-1.0f / (0.03f * fsr));
 
@@ -465,9 +653,11 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
 
 void OrganEngine::renderImpacts (float* const* outs, int n, const EngineParams& p) noexcept
 {
+    handleActs (p);
     for (int i = 0; i < numImpacts; ++i) startImpact (impactQueue[(size_t) i], p);
     numImpacts = 0;
     if (n <= 0) return;
+    renderBursts (outs, n);
     float* y = scratch.data();
     for (auto& v : impactVoices)
     {

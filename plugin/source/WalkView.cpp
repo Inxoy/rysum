@@ -163,7 +163,11 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     updateButtons();
 }
 
-WalkView::~WalkView() { proc.engine.viewWalkOn = false; proc.engine.viewZ = 0.0f; }
+WalkView::~WalkView()
+{
+    proc.engine.viewWalkOn = false; proc.engine.viewZ = 0.0f;
+    proc.engine.grabStop = -1; proc.engine.actFreeze = false;
+}
 
 void WalkView::updateButtons()
 {
@@ -218,6 +222,7 @@ void WalkView::visibilityChanged()
     {
         stopTimer();
         looking = false;
+        updateActions (false, false);          // (nothing stays in the hand, nothing stays frozen)
         proc.engine.viewWalkOn = false;
         proc.engine.viewZ = 0.0f;
     }
@@ -409,12 +414,15 @@ void WalkView::timerCallback()
         float turn = 0.0f;
         if (down (juce::KeyPress::leftKey)) turn += 90.0f * (float) dt;
         if (down (juce::KeyPress::rightKey)) turn -= 90.0f * (float) dt;
-        if (down ('Q') || down ('q')) turn += 90.0f * (float) dt;
-        if (down ('E') || down ('e')) turn -= 90.0f * (float) dt;
         const bool fast = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
         advance (dt, f, b, l, r, turn / (90.0f * (float) juce::jmax (1.0e-4, dt)), fast, down (juce::KeyPress::spaceKey));
+        updateActions (down ('Q') || down ('q'), down ('F') || down ('f'));
     }
-    else advance (dt, false, false, false, false, 0.0f, false, false);      // (keys let go by losing the focus: coming to rest, landing)
+    else
+    {
+        advance (dt, false, false, false, false, 0.0f, false, false);      // (keys let go by losing the focus: coming to rest, landing)
+        updateActions (false, false);
+    }
     repaint();
 }
 
@@ -423,7 +431,11 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress::escapeKey) { if (onBack) onBack(); return true; }
     const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
     if (c == 'm') { cycleMaterial(); return true; }
-    if (c == 'w' || c == 'a' || c == 's' || c == 'd' || c == 'q' || c == 'e' || c == ' ') return true;
+    const bool hard = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
+    if (c == 'e') { shock (hard ? 1.7f : 1.0f); return true; }
+    if (c == 'r') { callHome(); return true; }
+    if (c == 'c') { clap(); return true; }
+    if (c == 'w' || c == 'a' || c == 's' || c == 'd' || c == 'q' || c == 'f' || c == ' ') return true;
     const int code = k.getKeyCode();
     if (code == juce::KeyPress::spaceKey) return true;
     return code == juce::KeyPress::upKey || code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey;
@@ -438,7 +450,8 @@ void WalkView::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
     looking = true;
-    lastMouse = e.position;
+    lastMouse = downPos = e.position;
+    dragged = 0.0f;
     e.source.enableUnboundedMouseMovement (true);
 }
 
@@ -447,6 +460,7 @@ void WalkView::mouseDrag (const juce::MouseEvent& e)
     if (! looking) return;
     const auto d = e.position - lastMouse;
     lastMouse = e.position;
+    dragged += std::abs (d.x) + std::abs (d.y);
     // (where to look; the view gets there within a few hundredths of a second: see advance)
     yawT = wrapAz (yawT - d.x * 0.22f);
     pitchT = juce::jlimit (-85.0f, 85.0f, pitchT - d.y * 0.22f);
@@ -456,6 +470,198 @@ void WalkView::mouseUp (const juce::MouseEvent& e)
 {
     looking = false;
     e.source.enableUnboundedMouseMovement (false);
+    // a click (not a look around): a knock on the pipe there
+    if (dragged < 5.0f) strikeAt (downPos, e.mods.isShiftDown() ? 1.7f : 1.0f);
+}
+
+// ---------------------------------------------------------------------------
+// the player's hands
+// ---------------------------------------------------------------------------
+void WalkView::say (const juce::String& text, double ms)
+{
+    status = text;
+    statusUntil = juce::Time::getMillisecondCounterHiRes() + ms;
+}
+
+V3 WalkView::eyeNow() const
+{
+    const auto r = roomNow();
+    const auto hp = listenerPos (r);
+    return { hp.x + px, hp.y + py, hp.z + fz };
+}
+
+V3 WalkView::lookDir() const
+{
+    const float ya = juce::degreesToRadians (yaw), pa = juce::degreesToRadians (juce::jlimit (-89.0f, 89.0f, pitch));
+    return { -std::sin (ya) * std::cos (pa), std::cos (ya) * std::cos (pa), std::sin (pa) };
+}
+
+/** the pipe drawn at this point of the view (the nearest one, not hidden behind a wall) */
+bool WalkView::pickPipe (juce::Point<float> at, float maxDist, int& stop, int& key) const
+{
+    if (rast.width() <= 0 || viewScale <= 0.0f) return false;
+    const float qx = at.x / viewScale, qy = at.y / viewScale;
+    float best = 1.0e30f;
+    bool found = false;
+    for (int s = 0; s < kNumStops; ++s)
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const auto& sh = shown[(size_t) s][(size_t) k];
+            if (! sh.on) continue;
+            float cx, cy, cd;
+            if (! rast.project (sh.c, cx, cy, cd) || cd > maxDist || cd >= best) continue;
+            float ax = cx, ay = cy, ad, bx = cx, by = cy, bd;
+            const V3 half { 0.0f, 0.0f, 0.5f * sh.len };
+            float tx, ty;
+            if (rast.project (sh.c - half, tx, ty, ad)) { ax = tx; ay = ty; }
+            if (rast.project (sh.c + half, tx, ty, bd)) { bx = tx; by = ty; }
+            // how far the point is from the pipe's axis on the screen
+            const float ex = bx - ax, ey = by - ay, l2 = ex * ex + ey * ey;
+            const float u = l2 > 1.0e-6f ? juce::jlimit (0.0f, 1.0f, ((qx - ax) * ex + (qy - ay) * ey) / l2) : 0.0f;
+            const float dx = qx - (ax + u * ex), dy = qy - (ay + u * ey);
+            const float radPx = sh.rad / juce::jmax (0.1f, cd) * 0.5f * (float) rast.width();
+            const float tol = juce::jmax (1.5f * radPx, 7.0f / viewScale);
+            if (dx * dx + dy * dy > tol * tol) continue;
+            if (cx >= 0.0f && cy >= 0.0f && cx < (float) rast.width() && cy < (float) rast.height())
+            {
+                const float zd = rast.depthAt ((int) cx, (int) cy);
+                if (zd > 0.0f && zd < cd * 0.95f - 0.4f) continue;         // (behind a wall)
+            }
+            best = cd; stop = s; key = k; found = true;
+        }
+    return found;
+}
+
+/** the pipes of this stop become bodies in the Saal (so they can be pushed, carried, thrown): a stop that
+    stands still gets the motion "Schweben"; one that moves in another way is left as it is */
+bool WalkView::makeHover (int stop, bool tell)
+{
+    if (stop < 0 || stop >= kNumStops) return false;
+    const int m = proc.readParams().motionMode[(size_t) stop];
+    if (isRoomMotion (m)) return true;
+    if (m != (int) Motion::Static)
+    {
+        if (tell) say (U ("Dieses Register bewegt sich anders (") + motionNames()[m] + U ("): zum Greifen die Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c w\xc3\xa4hlen (Raum-Seite)"), 4000.0);
+        return false;
+    }
+    if (auto* prm = proc.apvts.getParameter (RysumProcessor::motionParamId (stop)))
+    {
+        prm->setValueNotifyingHost (prm->convertTo0to1 ((float) (int) Motion::Hover));
+        if (tell) say (U ("Register ") + juce::String (stop + 1) + U (": Bewegung jetzt \xe2\x80\x9eSchweben\xe2\x80\x9c"));
+        return true;
+    }
+    return false;
+}
+
+void WalkView::shock (float strength)
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - lastShock < 300.0) return;                 // (a held key: three bursts a second, not thirty)
+    lastShock = now;
+    // the stops that stand still start to hover, so there is something to push
+    const auto params = proc.readParams();
+    int bodies = 0, woken = 0;
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        if (! params.stopOn[(size_t) s]) continue;
+        if (isRoomMotion (params.motionMode[(size_t) s])) ++bodies;
+        else if (makeHover (s, false)) ++woken;
+    }
+    shockAmt = strength;
+    shockFx = now;
+    if (woken > 0)
+    {
+        shockAt = now + 90.0;                            // (once their pipes are bodies: a few blocks from now)
+        say (juce::String (woken) + U (" Register schweben jetzt (Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c) \xe2\x80\x93 die Druckwelle treibt sie fort, sie kehren zur\xc3\xbc" "ck"), 4000.0);
+    }
+    else
+    {
+        proc.engine.playerAct (OrganEngine::Act::Shock, -1, -1, {}, strength);
+        if (bodies == 0) say (U ("Druckwelle: kein Register, dessen Pfeifen frei im Saal sind (Bewegung Schweben, Flug, Fall, Schwarm, Str\xc3\xb6mung)"), 4000.0);
+    }
+}
+
+void WalkView::callHome()
+{
+    proc.engine.playerAct (OrganEngine::Act::Home);
+    say (U ("Alle Pfeifen fliegen an ihren Platz zur\xc3\xbc" "ck"));
+}
+
+void WalkView::clap()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - lastClap < 160.0) return;
+    lastClap = now;
+    proc.engine.playerAct (OrganEngine::Act::Clap);
+}
+
+bool WalkView::strikeAt (juce::Point<float> at, float strength)
+{
+    int s = -1, k = -1;
+    if (! pickPipe (at, 40.0f, s, k)) return false;
+    const auto& sh = shown[(size_t) s][(size_t) k];
+    proc.engine.playerAct (OrganEngine::Act::Strike, s, k, { sh.c.x, sh.c.y, sh.c.z }, strength);
+    glow[(size_t) s][(size_t) k] = 1.0f;
+    return true;
+}
+
+void WalkView::setGrab (bool on, bool fast)
+{
+    auto& en = proc.engine;
+    if (on)
+    {
+        if (heldStop >= 0) return;
+        if (aimStop < 0) { say (U ("Keine Pfeife im Blick (das Kreuz auf eine Pfeife richten, h\xc3\xb6" "chstens 9 m entfernt)")); return; }
+        if (! makeHover (aimStop, true)) return;
+        heldStop = aimStop; heldKey = aimKey;
+        const V3 eye = eyeNow();
+        const auto& sh = shown[(size_t) heldStop][(size_t) heldKey];
+        holdDist = juce::jlimit (1.2f, 3.0f, std::sqrt (dot (sh.c - eye, sh.c - eye)));
+        updateActions (true, frozen);
+        return;
+    }
+    if (heldStop < 0) return;
+    if (en.grabStop.load() >= 0)
+    {
+        // let go: it flies on with the hand's speed, your own, and a push ahead
+        const V3 d = lookDir();
+        const float push = fast ? 9.0f : 4.5f;
+        en.playerAct (OrganEngine::Act::Throw, heldStop, heldKey, { d.x * push + vx, d.y * push + vy, d.z * push + juce::jmax (0.0f, vz) });
+        en.grabStop = -1; en.grabKey = -1;
+    }
+    heldStop = heldKey = -1;
+}
+
+void WalkView::setFreeze (bool on)
+{
+    frozen = on;
+    proc.engine.actFreeze = on;
+}
+
+void WalkView::updateActions (bool qDown, bool fDown)
+{
+    auto& en = proc.engine;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (fDown != frozen) setFreeze (fDown);
+    if (frozen) say (U ("Angehalten \xe2\x80\x93 solange F gehalten wird"), 250.0);
+    if (qDown != qWas)
+    {
+        qWas = qDown;
+        setGrab (qDown, juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown());
+    }
+    if (heldStop >= 0)
+    {
+        // the hand: ahead of the eyes (the pipe is taken as soon as it is a body in the Saal)
+        const V3 eye = eyeNow(), d = lookDir();
+        en.grabX = eye.x + d.x * holdDist; en.grabY = eye.y + d.y * holdDist; en.grabZ = juce::jmax (0.3f, eye.z + d.z * holdDist);
+        Vec3f b;
+        if (en.grabStop.load() < 0 && en.bodyAt (heldStop, heldKey, b)) { en.grabKey = heldKey; en.grabStop = heldStop; }
+    }
+    if (shockAt > 0.0 && now >= shockAt)
+    {
+        shockAt = 0.0;
+        en.playerAct (OrganEngine::Act::Shock, -1, -1, {}, shockAmt);
+    }
 }
 
 void WalkView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
@@ -733,6 +939,7 @@ void WalkView::paint (juce::Graphics& g)
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     rast.setSize (juce::roundToInt ((float) area.getWidth() * sc), juce::roundToInt ((float) area.getHeight() * sc));
     rast.setCamera (eye, yaw, pitch, fov);
+    viewScale = (float) area.getWidth() / (float) juce::jmax (1, rast.width());
     const float fogDist = juce::jmax (12.0f, 1.5f * juce::jmax (r.W(), r.L()));      // (floor and ceiling stay readable to the far end)
     rast.begin (0.07f, fogDist, 0.12f, ++frame);
 
@@ -828,6 +1035,7 @@ void WalkView::paint (juce::Graphics& g)
     std::vector<Glow> glows;
     for (int s = 0; s < kNumStops; ++s)
     {
+        for (auto& sh : shown[(size_t) s]) sh.on = false;
         if (! params.stopOn[(size_t) s]) { for (auto& v : glow[(size_t) s]) v = 0.0f; continue; }
         const uint64_t sounding = proc.engine.soundingMask[(size_t) s].load();
         const float metalTone = kMetal[s].getPerceivedBrightness() * 1.05f;
@@ -836,6 +1044,7 @@ void WalkView::paint (juce::Graphics& g)
             if (proc.engine.muted[(size_t) s][(size_t) k].load()) continue;
             auto& gl = glow[(size_t) s][(size_t) k];
             gl = ((sounding >> k) & 1) ? juce::jmin (1.0f, gl + 0.35f) : gl * 0.9f;
+            if (s == heldStop && k == heldKey) gl = juce::jmax (gl, 0.3f);        // (in your hand)
             const Pos pos = proc.engine.displayPosition (s, k, params);
             const V3 c = pipeAt (r, homeP, pos, s, k);
             float len, rad;
@@ -846,6 +1055,7 @@ void WalkView::paint (juce::Graphics& g)
             const V3 bottom { c.x, c.y, c.z - 0.5f * len + bob };
             const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x);       // the mouth towards the listener's place
             addPipe (bottom, len, rad, face, metalTone, gl);
+            shown[(size_t) s][(size_t) k] = { { c.x, c.y, c.z + bob }, len, rad, true };
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });
         }
     }
@@ -870,6 +1080,8 @@ void WalkView::paint (juce::Graphics& g)
     }
     geoMs = (float) (juce::Time::getMillisecondCounterHiRes() - t0);
     rast.finish();
+    // the pipe under the cross (Q takes it)
+    if (! pickPipe (area.getCentre().toFloat(), 9.0f, aimStop, aimKey)) aimStop = aimKey = -1;
     const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
     lastFrameMs = (float) ms;
     if (! testMode)
@@ -940,14 +1152,24 @@ void WalkView::paint (juce::Graphics& g)
     // a small cross in the middle
     {
         const auto c = area.getCentre().toFloat();
-        g.setColour (col::ink.withAlpha (0.45f));
+        const bool onPipe = aimStop >= 0 || heldStop >= 0;
+        g.setColour (col::ink.withAlpha (onPipe ? 0.9f : 0.45f));
         g.drawLine (c.x - 6, c.y, c.x + 6, c.y, 1.0f);
         g.drawLine (c.x, c.y - 6, c.x, c.y + 6, 1.0f);
+        if (onPipe) g.drawEllipse (juce::Rectangle<float> (18.0f, 18.0f).withCentre (c), 1.0f);     // (a pipe to take, or taken)
+        // the shockwave: a ring running outwards
+        const float age = (float) ((juce::Time::getMillisecondCounterHiRes() - shockFx) / 450.0);
+        if (shockFx > 0.0 && age >= 0.0f && age < 1.0f)
+        {
+            const float rad = (0.04f + 0.6f * std::sqrt (age)) * (float) area.getWidth();
+            g.setColour (col::ink.withAlpha (0.5f * (1.0f - age) * (1.0f - age)));
+            g.drawEllipse (juce::Rectangle<float> (2.0f * rad, 2.0f * rad).withCentre (c), 1.0f + 5.0f * (1.0f - age));
+        }
     }
 
     // heading, hints, status (on dark bands, so they stay readable over a bright model)
     {
-        const auto top = area.toFloat().removeFromTop (84.0f), bottom = area.toFloat().removeFromBottom (54.0f);
+        const auto top = area.toFloat().removeFromTop (84.0f), bottom = area.toFloat().removeFromBottom (72.0f);
         g.setGradientFill (juce::ColourGradient (col::bg.withAlpha (0.72f), 0.0f, top.getY(), col::bg.withAlpha (0.0f), 0.0f, top.getBottom(), false));
         g.fillRect (top);
         g.setGradientFill (juce::ColourGradient (col::bg.withAlpha (0.0f), 0.0f, bottom.getY(), col::bg.withAlpha (0.78f), 0.0f, bottom.getBottom(), false));
@@ -962,9 +1184,11 @@ void WalkView::paint (juce::Graphics& g)
                     + (aimSurf >= 0 ? U ("   \xc2\xb7   ") + surfaceName (r, aimSurf) + U ("  [M: Material]") : juce::String());
     g.drawText (info, area.reduced (18, 0).withTrimmedTop (44).removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (col::faint);
-    g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  Q E / \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
+    g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
                   "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
                 area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
+    g.drawText (U ("E Druckwelle  \xc2\xb7  Q halten: Pfeife greifen und tragen, loslassen: werfen  \xc2\xb7  F halten: alles anhalten  \xc2\xb7  R Pfeifen zur\xc3\xbc" "ckrufen  \xc2\xb7  C klatschen  \xc2\xb7  Klick: Pfeife anschlagen  \xc2\xb7  mit Shift: st\xc3\xa4rker"),
+                area.reduced (18, 0).withTrimmedBottom (20).removeFromBottom (16), juce::Justification::centredLeft);
     {
         // the player moves pipes, but no stop has pipes that can be moved: say how
         bool anyBodies = false;
@@ -980,7 +1204,7 @@ void WalkView::paint (juce::Graphics& g)
     {
         g.setColour (col::rubric.brighter (0.2f));
         g.drawText (U ("Die Kopfdrehung ist nur bei Kopfh\xc3\xb6rer-Ausgabe (binaural) zu h\xc3\xb6ren; Gehen \xc3\xbc" "berall."),
-                    area.reduced (18, 0).withTrimmedBottom (24).removeFromBottom (16), juce::Justification::centredLeft);
+                    area.reduced (18, 0).withTrimmedBottom (38).removeFromBottom (16), juce::Justification::centredLeft);
     }
     if (juce::Time::getMillisecondCounterHiRes() < statusUntil && status.isNotEmpty())
     {
