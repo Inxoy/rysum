@@ -1,4 +1,5 @@
 #include "RoomTail.h"
+#include "MeshAcoustics.h"
 
 namespace rysum
 {
@@ -10,7 +11,7 @@ int TailIR::maxLength(double sr) noexcept
 }
 
 std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int outputOrder,
-                                            double sr, uint32_t serial)
+                                            double sr, uint32_t serial, const MeshAcoustics *mesh)
 {
     auto ir = std::make_shared<TailIR>();
     ir->serial = serial;
@@ -20,8 +21,11 @@ std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int 
     ir->channels = ir->order == 0 ? 2 : (ir->order + 1) * (ir->order + 1);
 
     // ---- decay per band from ray tracing
-    const auto res =
-        traceRoom(r, air, 4000, 1234u); // same rays every time: no random jumps while modulating
+    // (a loaded model: the rays go through its geometry, the Saal's shoebox underneath)
+    const auto res = mesh != nullptr
+                         ? traceMesh(*mesh, r, air, 1500, 1234u)
+                         : traceRoom(r, air, 4000,
+                                     1234u); // same rays every time: no random jumps while modulating
     ir->rtLow = juce::jlimit(0.05f, 30.0f, res.rtLow);
     ir->rtHigh = juce::jlimit(0.05f, 30.0f, juce::jmin(res.rtHigh, res.rtLow));
     ir->rays = res.rays;

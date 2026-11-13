@@ -529,6 +529,9 @@ public:
         lvImpLevel,
         lvImpSrc,
         lvImpRing,
+        lvPlayerMode,
+        lvPlayerForce,
+        lvPlayerRange,
         kNumLive
     };
     static constexpr const char *kLiveIds[kNumLive]{
@@ -536,15 +539,16 @@ public:
         "lvPallet",   "lvPalletSrc",   "lvListenX",  "lvListenY",   "lvWalkShape", "lvWalkRate",
         "lvWalkSize", "lvWear",        "lvWearTime", "lvSympLevel", "lvSympDecay", "lvPure",
         "lvPureTime", "lvNetOn",       "lvNetPath",  "lvNetDiv",    "lvNetRate",   "lvNetGate",
-        "lvImpLevel", "lvImpSrc",      "lvImpRing"};
+        "lvImpLevel", "lvImpSrc",      "lvImpRing",  "lvPlayerMode", "lvPlayerForce", "lvPlayerRange"};
     /** Verschleiss: all pipes new again (message thread) */
     void resetWear()
     {
         engine.wearReset = true;
     }
 
-    // ---- "Begehen": the 3D view's room model (an OBJ file; only seen, the sound uses the Saal's
-    // room) and pose
+    // ---- "Begehen": the 3D view's room model (an OBJ file) and pose. The model is seen, stops
+    // the walker and - unless switched off - is heard: its walls hide pipes, the late reverb is
+    // ray-traced through it; the Saal's shoebox stays underneath (early reflections, the size)
     std::shared_ptr<const rysum::RoomMesh> getWalkMesh() const
     {
         return std::atomic_load(&walkMesh);
@@ -560,12 +564,33 @@ public:
         walkZUp = zUp;
         walkScale = scale;
         std::atomic_store(&walkMesh, std::shared_ptr<const rysum::RoomMesh>(std::move(m)));
+        applyWalkAcoustics();
         return {};
     }
     void clearWalkModel()
     {
         walkModelFile = juce::File();
         std::atomic_store(&walkMesh, std::shared_ptr<const rysum::RoomMesh>());
+        applyWalkAcoustics();
+    }
+    /** the model as the sound sees it (null: none loaded) */
+    std::shared_ptr<const rysum::MeshAcoustics> getWalkAcoustics() const
+    {
+        return std::atomic_load(&walkAc);
+    }
+    /** the model is heard (line of sight, reverb), not only seen */
+    bool getWalkHear() const noexcept
+    {
+        return walkHear;
+    }
+    void setWalkHear(bool on);
+    /** the material of one surface of a Saal (kSurfFloor, kSurfCeiling, kSurfWall0 + wall;
+        material: an index for surfMaterial, -1 = as the sliders say) */
+    void setSurfaceMaterial(int room, int surf, int material);
+    int getSurfaceMaterial(int room, int surf) const
+    {
+        return drawnPlans[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, room)]
+            .surf[(size_t)juce::jlimit(0, rysum::kMaxSurf - 1, surf)];
     }
     juce::File walkModelFile;
     bool walkZUp = false;
@@ -645,7 +670,7 @@ private:
         int airInvert = -1, clickRes = -1, clickResDecay = -1, clickResBright = -1;
         std::array<int, 4> glitch{};
         std::array<int, 15> space2{};
-        std::array<int, 24> live{};
+        std::array<int, kNumLive> live{}; // (one per LiveIndex: never a fixed number)
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex
@@ -896,6 +921,15 @@ private:
     std::vector<rysum::KeyTuning> tunings; // every entry of the tuning list, computed once
     std::array<DrawnPath, rysum::kNumStops> drawnPaths;
     std::array<rysum::FloorPlan, rysum::kNumRooms> drawnPlans;
+    // the room model for the sound: the engine uses it on the audio thread, the last few are kept
+    // alive here (so the engine never frees one)
+    void applyWalkAcoustics();
+    std::shared_ptr<const rysum::MeshAcoustics> walkAc;
+    std::array<std::shared_ptr<const rysum::MeshAcoustics>, 4> walkAcKeep;
+    juce::CriticalSection walkAcLock;
+    uint32_t walkAcSerial = 0;
+    unsigned walkAcKeepPos = 0;
+    bool walkHear = true;
     void sendPath(int stop);
     // free tuning
     rysum::ScalaTuning scala; // message thread

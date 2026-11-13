@@ -6,9 +6,12 @@
 
 namespace rysum::ui
 {
-/** "Begehen": the Saal in 3D, walked with WASD and the mouse. The camera is the listener: where you stand and
-    where you look is what you hear (the pipes float where Ambisonics places them). A room model (OBJ) can be
-    loaded; it is only seen - the sound keeps using the Saal's room. */
+/** "Begehen": the Saal in 3D, walked with WASD and the mouse (and a jump). The camera is the listener: where you
+    stand and where you look is what you hear (the pipes float where Ambisonics places them). A room model (OBJ)
+    can be loaded: it is seen, its walls stop you and its floors carry you, and - unless switched off - it is heard
+    (pipes behind its walls come around them, the late reverb is ray-traced through it). The Saal's shoebox stays
+    underneath: its floor and ceiling close an open model, it gives the early reflections and the size.
+    Every surface of the Saal can be of its own material: point at it and press M. */
 class WalkView : public juce::Component, private juce::Timer
 {
 public:
@@ -29,7 +32,14 @@ public:
     /** for the tests: one step of the walk without a timer (dt in seconds, keys as if held) */
     void stepForTest (double dt, bool fwd, bool back, bool left, bool right, float turnDeg);
     /** tests: stand at an offset from the listener's place (held inside the walls like walking), looking along yaw */
-    void setPoseForTest (float x, float y, float yawDeg) { px = x; py = y; yaw = yawDeg; pitch = 0.0f; keepInside(); pushPose(); }
+    void setPoseForTest (float x, float y, float yawDeg) { px = x; py = y; yaw = yawT = yawDeg; pitch = pitchT = 0.0f; vx = vy = vz = 0.0f; keepInside(); pushPose(); }
+    void setPitchForTest (float pitchDeg) { pitch = pitchT = pitchDeg; pushPose(); }
+    /** tests: the smooth walk of the timer for dt seconds with these keys held */
+    void advanceForTest (double dt, bool fwd, bool bwd, bool left, bool right, bool jump, bool fast = false) { advance (dt, fwd, bwd, left, right, 0.0f, fast, jump); }
+    float heightForTest() const noexcept { return fz; }
+    /** tests: the surface the cross points at (-1 = none), and M */
+    int aimForTest() const noexcept { return aimSurf; }
+    void cycleMaterialForTest() { cycleMaterial(); }
     void loadModelForTest (const juce::File& f) { loadModel (f); }
     /** tests: a fixed resolution (no adapting to the frame time); how long the last frame took */
     void setTestMode (bool on) { testMode = on; if (on) { resScale = 1.0f; resLevel = 0; } }
@@ -39,7 +49,7 @@ public:
     juce::String renderStats() const { return "raster + shade " + juce::String (rast.rasterMs, 1) + " ms, " + juce::String (rast.workerCount()) + " workers, " + juce::String (rast.trianglesDrawn) + " triangles"; }
 
 private:
-    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark };
+    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWall0 = 8 };   // (kSlotWall0 + i: wall i, each with its own material)
     struct RTri { Raster::Vert a, b, c; int slot; float tone; };
     void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt);
     V3 pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const;
@@ -55,7 +65,13 @@ private:
     bool testMode = false;
     Material::Kind wallLook = Material::plain;
     void timerCallback() override;
-    void step (double dt, bool fwd, bool back, bool left, bool right, float turn, bool fast);
+    void step (double dt, bool fwd, bool back, bool left, bool right, float turn, bool fast);            // (at once: the tests)
+    void advance (double dt, bool fwd, bool back, bool left, bool right, float turnKeys, bool fast, bool jump);   // (smooth: the timer)
+    void moveBy (float dx, float dy);
+    float groundAt (float x, float y) const;
+    int surfaceAhead (const RoomParams& r, V3 eye) const;
+    void cycleMaterial();
+    juce::String surfaceName (const RoomParams& r, int surf) const;
     void pushPose();
     void keepInside();
     RoomParams roomNow() const;
@@ -69,6 +85,13 @@ private:
     Raster rast;
     std::vector<RTri> roomTris;
     float px = 0.0f, py = 0.0f, yaw = 0.0f, pitch = 0.0f, fov = 80.0f;    // pose (offset from the listener's place)
+    // moving: speeds that build up and die away instead of starting and stopping at once; the mouse sets where to
+    // look and the view follows within a few hundredths of a second; a jump (Space)
+    float vx = 0.0f, vy = 0.0f, vz = 0.0f, fz = 0.0f;         // m/s; the feet above the Saal's floor (m)
+    float yawT = 0.0f, pitchT = 0.0f, turnV = 0.0f;            // where to look; turning speed from the keys (degrees/s)
+    float bobPhase = 0.0f, bobAmt = 0.0f, landDip = 0.0f;      // the steps, and giving in the knees after a jump
+    bool onGround = true;
+    int aimSurf = -1;                                          // the Saal's surface under the cross (kSurfFloor ...)
     juce::Point<float> lastMouse;
     bool looking = false;
     double lastTime = 0.0;
@@ -76,7 +99,11 @@ private:
     juce::TextButton back { juce::String::fromUTF8 ("\xe2\x86\x90 Saal") }, load { juce::String::fromUTF8 ("Raummodell laden \xe2\x80\xa6") },
                      clear { "Modell entfernen" }, fit { juce::String::fromUTF8 ("Ma\xc3\x9f" "e \xc3\xbc" "bernehmen") },
                      zUp { "Z oben" }, home { "Zum Platz" };
-    juce::ComboBox units;
+    juce::TextButton hear { juce::String::fromUTF8 ("Modell h\xc3\xb6rbar") };
+    juce::ComboBox units, playerMode;
+    juce::Slider playerForce;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> playerModeAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> playerForceAtt;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Image glowSprite;
     juce::String status;

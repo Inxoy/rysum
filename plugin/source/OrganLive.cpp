@@ -12,7 +12,7 @@ Pos OrganEngine::heardFrom (Pos pos) const noexcept
     if (! liveWalk) return pos;
     const float a = juce::degreesToRadians (pos.az), e = juce::degreesToRadians (pos.el);
     const float x = -std::sin (a) * std::cos (e) * pos.dist - walkX, y = std::cos (a) * std::cos (e) * pos.dist - walkY;
-    const float z = std::sin (e) * pos.dist;
+    const float z = std::sin (e) * pos.dist - walkZ;
     const float rh = std::sqrt (x * x + y * y), r = std::sqrt (rh * rh + z * z);
     Pos q;
     // (walking right through a pipe: never nearer than a metre, or than it was)
@@ -22,15 +22,48 @@ Pos OrganEngine::heardFrom (Pos pos) const noexcept
     return q;
 }
 
-int OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz, const Vec3f* body) const noexcept
+int OrganEngine::aroundCorner (int room, Pos home, Pos& heard, float& lossDb, float& cutoffHz, const Vec3f* body, Voice::MeshOcc* cache) const noexcept
 {
     const int ri = juce::jlimit (0, kNumRooms - 1, room);
-    if (! planOn[(size_t) ri]) return 0;
-    if (body == nullptr && ! liveWalk) return 0;             // (standing still: only the flying pipes can go out of sight)
+    const bool mesh = meshOn && ri == 0 && meshNow != nullptr;      // (a loaded model: its walls hide pipes, also from the usual place)
+    if (! planOn[(size_t) ri] && ! mesh) return 0;
+    if (body == nullptr && ! liveWalk && ! mesh) return 0;             // (standing still: only the flying pipes can go out of sight)
     // the pipe where the room simulation (and the 3D view) has it: from the usual place, inside the walls - or where
     // it flies; the listener where it has walked to. Heard from there - straight, or around a corner.
     const Vec3f S = body != nullptr ? *body : roomPoint (occUsual[(size_t) ri], home), L = occL[(size_t) ri];
     if (occOn[(size_t) ri] && diffractedPath (occGeo[(size_t) ri], occCorners[(size_t) ri], L, S, heard, lossDb, cutoffHz)) return 2;
+    if (mesh)
+    {
+        // the search for the way around is not cheap: what was found is kept while listener and pipe stay within
+        // 12 cm of where they were, and only a few voices search in one block (the others keep what they had)
+        auto far = [] (Vec3f a, Vec3f b) { const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z; return dx * dx + dy * dy + dz * dz > 0.12f * 0.12f; };
+        Voice::MeshOcc local;
+        auto& c = cache != nullptr ? *cache : local;
+        const bool moved = c.valid && (far (c.L, L) || far (c.S, S));
+        if (! c.valid || (moved && meshBudget > 0))
+        {
+            if (meshBudget > 0)
+            {
+                --meshBudget;
+                c.blocked = meshDetour (*meshNow, L, S, c.heard, c.loss, c.fc);
+                c.valid = true;
+            }
+            else
+            {
+                // (no search left in this block: through the wall for now, the way around comes with the next)
+                c.blocked = meshNow->blocked (L, S);
+                c.heard = seenFrom (L, S); c.loss = 12.0f; c.fc = 1500.0f;
+                c.valid = false;
+            }
+            c.L = L; c.S = S;
+        }
+        if (c.blocked)
+        {
+            heard = c.heard; lossDb = c.loss; cutoffHz = c.fc;
+            heard.dist = juce::jlimit (kMinDist, kMaxDist, heard.dist);
+            return 2;
+        }
+    }
     heard = seenFrom (L, S);
     heard.dist = juce::jlimit (kMinDist, kMaxDist, heard.dist);
     return 1;
@@ -80,24 +113,41 @@ void OrganEngine::updateLive (const EngineParams& p, double dt) noexcept
         const float k = 1.0f - std::exp (-fdt / (walking3d ? 0.04f : 0.12f));
         walkX += k * (tx - walkX); walkY += k * (ty - walkY);
         if (std::abs (tx) + std::abs (ty) < 1.0e-4f && std::abs (walkX) + std::abs (walkY) < 0.003f) walkX = walkY = 0.0f;
-        liveWalk = walkX != 0.0f || walkY != 0.0f;
+        // (a jump in the 3D view: the ears go up with it)
+        const float tz = walking3d ? viewZ.load() : 0.0f;
+        walkZ += (1.0f - std::exp (-fdt / 0.02f)) * (tz - walkZ);
+        if (std::abs (tz) < 1.0e-4f && std::abs (walkZ) < 0.003f) walkZ = 0.0f;
+        liveWalk = walkX != 0.0f || walkY != 0.0f || walkZ != 0.0f;
         listenerXNow = walkX; listenerYNow = walkY;
     }
 
     // ---- line of sight: which rooms can hide a pipe from the walked listener (the plan's walls, floor to ceiling)
     hiddenNow = occCount;
     occCount = 0;
+    // a loaded model (the processor keeps it alive: taking it here never frees one on this thread)
+    meshNow = std::atomic_load (&meshShared);
+    meshOn = meshNow != nullptr && occlusionEnabled && roomOnNow;
+    meshActive = meshOn;
+    meshBudget = 6;
     bool anyBodies = false;                     // (a pipe flying in the room can go out of sight of a standing listener)
     for (int s = 0; s < kNumStops; ++s) anyBodies = anyBodies || isRoomMotion (p.motionMode[(size_t) s]);
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         const auto& r = roomsEr[(size_t) ri];
         occOn[(size_t) ri] = planOn[(size_t) ri] = false;
+        if (meshOn && ri == 0)
+        {
+            // (the model: the pipes where the room simulation has them, the listener where it stands)
+            occUsual[0] = r;
+            occUsual[0].listenerX = roomsNow[0].listenerX; occUsual[0].listenerY = roomsNow[0].listenerY; occUsual[0].listenerZ = 0.0f;
+            occL[0] = listenerPos (r);
+        }
         if (! occlusionEnabled || ! roomOnNow || (! liveWalk && ! anyBodies) || r.box() || r.plan.n < 3) continue;
         // (walking in a shaped room: the pipes are heard where they stand in it, inside its walls)
         planOn[(size_t) ri] = true;
         occUsual[(size_t) ri] = r;
         occUsual[(size_t) ri].listenerX = roomsNow[(size_t) ri].listenerX; occUsual[(size_t) ri].listenerY = roomsNow[(size_t) ri].listenerY;
+        occUsual[(size_t) ri].listenerZ = 0.0f;
         occL[(size_t) ri] = listenerPos (r);
         occGeo[(size_t) ri] = planGeo (r);
         if (occGeo[(size_t) ri].convex) continue;

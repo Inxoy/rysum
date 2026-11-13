@@ -198,7 +198,7 @@ Material floorMaterial (float af, float hi, float scatter, bool ceiling)
     af = juce::jlimit (0.0f, 1.0f, af);
     if (ceiling) m.kind = af < 0.18f ? Material::plaster : (af < 0.32f ? Material::boards : Material::carpet);
     else         m.kind = af < 0.12f ? Material::slabs : (af < 0.3f ? Material::boards : Material::carpet);
-    m.tone = juce::jlimit (0.1f, 1.0f, (0.78f - 0.6f * std::sqrt (af)) * (1.0f - 0.1f * hi) * (ceiling ? 0.62f : 1.0f));
+    m.tone = juce::jlimit (0.1f, 1.0f, (0.78f - 0.6f * std::sqrt (af)) * (1.0f - 0.1f * hi) * (ceiling ? 0.78f : 1.0f));   // (the ceiling darker than the floor, but its pattern stays readable)
     m.rough = 0.04f + 0.3f * juce::jlimit (0.0f, 1.0f, scatter);
     m.gloss = (m.kind == Material::slabs ? 0.35f : (m.kind == Material::boards ? 0.2f : 0.0f)) * (1.0f - af) * (1.0f - 0.6f * hi);
     return m;

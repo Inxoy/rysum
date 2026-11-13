@@ -859,8 +859,20 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         materials.push_back(std::make_unique<juce::TextButton>(m.name));
         auto &b = *materials.back();
         const Mat mm = m;
-        b.onClick = [this, mm]
+        const int matIndex = (int)materials.size() - 1;
+        b.onClick = [this, mm, matIndex]
         {
+            const int surf = targetSurface();
+            if (surf >= 0)
+            {
+                // one surface: this material (pressed again: as the sliders say)
+                proc.setSurfaceMaterial(editRoom, surf,
+                                        proc.getSurfaceMaterial(editRoom, surf) == matIndex ? -1
+                                                                                            : matIndex);
+                refreshSurfaces();
+                return;
+            }
+            proc.setSurfaceMaterial(editRoom, -1, -1); // all: the sliders, no surface on its own
             const std::pair<juce::String, float> vals[]{
                 {RysumProcessor::roomParamId(editRoom, "Abs"), mm.aw},
                 {RysumProcessor::roomParamId(editRoom, "AbsFloor"), mm.af},
@@ -877,6 +889,13 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
     }
     materials[5]->setTooltip(
         U("Ein unm\xc3\xb6glicher Raum: nichts wird geschluckt (nur die Luft d\xc3\xa4mpft)"));
+    surfTarget.setTooltip(
+        U("Wof\xc3\xbcr die Material-Kn\xc3\xb6pfe gelten: f\xc3\xbcr alle Fl\xc3\xa4" "chen (sie stellen die Regler) "
+          "oder f\xc3\xbcr eine einzelne - Boden, Decke, jede Wand kann aus etwas anderem sein. "
+          "Eine einzelne Fl\xc3\xa4" "che beh\xc3\xa4lt ihr Material, bis du es noch einmal dr\xc3\xbc" "ckst. "
+          "Im 3D-Saal: auf die Fl\xc3\xa4" "che schauen und M dr\xc3\xbc" "cken."));
+    surfTarget.onChange = [this] { refreshSurfaces(); };
+    addAndMakeVisible(surfTarget);
 
     for (int r = 0; r < rysum::kNumRooms; ++r)
     {
@@ -1312,6 +1331,7 @@ void SaalView::resized()
     }
     right.removeFromTop(8);
     surfBox = take(kTitle + 50 + 4 + 4 * kRow);
+    surfTarget.setBounds(surfBox.withTrimmedTop(9).withHeight(20).removeFromRight(juce::jmin(170, surfBox.getWidth() / 2)));
     {
         auto b = surfBox.withTrimmedTop(kTitle);
         for (int rr = 0; rr < 2; ++rr)
@@ -1405,6 +1425,62 @@ void SaalView::showAssignMenu(int slot)
                     });
 }
 
+int SaalView::targetSurface() const
+{
+    return surfTarget.getSelectedId() <= 1 ? -1 : surfTarget.getSelectedId() - 2;
+}
+
+/** the list of surfaces of the edited room (it changes with the floor plan), and which material
+    button is lit for the chosen one */
+void SaalView::refreshSurfaces()
+{
+    auto now = proc.readParams().roomAt(editRoom);
+    finishPlan(now, proc.getDrawnPlan(editRoom));
+    const bool box = now.box() || now.plan.n < 3;
+    const int walls = box ? 4 : now.plan.n;
+    if (surfListRoom != editRoom || surfListShape != now.shape || surfListN != walls)
+    {
+        const int keep = surfListRoom == editRoom ? surfTarget.getSelectedId() : 1;
+        surfListRoom = editRoom;
+        surfListShape = now.shape;
+        surfListN = walls;
+        surfTarget.clear(juce::dontSendNotification);
+        surfTarget.addItem(U("alle Fl\xc3\xa4" "chen"), 1);
+        surfTarget.addItem("Boden", 2 + rysum::kSurfFloor);
+        surfTarget.addItem("Decke", 2 + rysum::kSurfCeiling);
+        const juce::StringArray boxNames{U("R\xc3\xbc" "ckwand"), "rechte Wand", "Vorderwand",
+                                         "linke Wand"};
+        for (int i = 0; i < walls; ++i)
+            surfTarget.addItem(box ? boxNames[i] : "Wand " + juce::String(i + 1),
+                               2 + rysum::kSurfWall0 + i);
+        surfTarget.setSelectedId(keep <= 2 + rysum::kSurfWall0 + walls - 1 ? keep : 1,
+                                 juce::dontSendNotification);
+    }
+    const int surf = targetSurface();
+    const int mat = surf >= 0 ? proc.getSurfaceMaterial(editRoom, surf) : -1;
+    for (int i = 0; i < (int)materials.size(); ++i)
+        materials[(size_t)i]->setToggleState(i == mat, juce::dontSendNotification);
+    // (surfaces that have a material of their own are marked in the list)
+    for (int i = 0; i < 2 + walls; ++i)
+    {
+        const int id = 2 + i;
+        const int m = proc.getSurfaceMaterial(editRoom, i);
+        const int idx = surfTarget.indexOfItemId(id);
+        if (idx < 0)
+            continue;
+        const auto base = surfTarget.getItemText(idx).upToFirstOccurrenceOf(
+            juce::String::fromUTF8(" \xc2\xb7"), false, false);
+        const auto text =
+            m >= 0 ? base + juce::String::fromUTF8(" \xc2\xb7 ") + rysum::surfMaterial(m).name : base;
+        if (text != surfTarget.getItemText(idx))
+        {
+            surfTarget.changeItemText(id, text);
+            if (surfTarget.getSelectedId() == id)
+                surfTarget.setText(text, juce::dontSendNotification);
+        }
+    }
+}
+
 void SaalView::refresh()
 {
     for (int slot = 0; slot <= kNumStops; ++slot)
@@ -1421,6 +1497,7 @@ void SaalView::refresh()
     }
     plan.repaint();
     shapes.refresh();
+    refreshSurfaces();
     const auto st = proc.getRoomStatus();
     if (st != shownStatus)
     {
@@ -1643,8 +1720,7 @@ void SaalView::paint(juce::Graphics &g)
     drawSectionTitle(g, surfBox,
                      U("Oberfl\xc3\xa4"
                        "chen \xc2\xb7 Saal ") +
-                         juce::String(editRoom + 1),
-                     "Material setzt die Absorption");
+                         juce::String(editRoom + 1));
     drawSectionTitle(g, levelBox, U("H\xc3\xb6rer \xc2\xb7 Pegel"));
     g.setColour(col::mute);
     g.setFont(A.monoFont(11.0f));

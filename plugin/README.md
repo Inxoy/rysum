@@ -646,7 +646,9 @@ reflections (longer ways) chirp more. *Eis* blends from the plain reflections to
 *Saal · Begehen* (button *3D begehen* on the floor plan): the Saal in 3D, seen through your own
 eyes. The pipes float where Ambisonics places them (with their motion and modulation); sounding
 pipes glow. **W A S D** walk, **dragging the mouse** looks around, **Q / E** or the arrow keys
-turn, **Shift** runs, the **mouse wheel** changes the field of view, **Esc** goes back. The
+turn, **Shift** runs, **Space** jumps, the **mouse wheel** changes the field of view, **Esc**
+goes back. Walking is smooth: the speed builds up and dies away, the view follows the mouse
+within a few hundredths of a second, and the ears go up with a jump. The
 camera is the listener: walking moves the listener of the room simulation and the direct sound
 (as *Hörer* on the living-organ tab does), the walls stop you. Turning your head is heard with
 headphones (binaural, transaural) only; with the Ambisonics or loudspeaker outputs the field
@@ -654,7 +656,12 @@ stays still. A small map (bottom right) is turned with your view. While the view
 the walking keys do not play notes: play over MIDI, or hold a chord with *Halten*.
 *Raummodell laden …* takes an OBJ file (with its MTL colours, up to 80,000 triangles) as the
 room you see; *Meter / Zentimeter / …* and *Z oben* (Z instead of Y as the up axis) fix the
-import. The model is only seen: the sound keeps using the Saal's room, drawn as a red outline.
+import. The model is seen, walked (its walls stop you, steps up to 45 cm are climbed) and –
+with *Modell hörbar* – heard: a pipe behind a wall or pillar of the model comes around its edge,
+quieter and duller the longer the detour, and the late reverb is ray-traced through the model's
+triangles. The Saal's shoebox stays underneath (drawn as a red outline): it gives the early
+reflections, closes a model that is open somewhere, and its floor and ceiling are drawn far
+beyond the model, so a model without a floor or a roof never shows a black void.
 *Maße übernehmen* gives the Saal the model's width, length and height (as a rectangle).
 *Zum Platz* goes back to the listener's place. The model's file and where you stand are saved
 with the project (not with patches); a missing file is kept by name.
@@ -663,7 +670,19 @@ the Saal's acoustics: the wall absorption and high damping pick the nearest of t
 materials (*Stein*: ashlar blocks, *Putz*: plaster, *Holz*: panelling, *Glas*: leaded panes,
 *Vorhang*: heavy folds, *Spiegel*: bright and smooth); the more a surface swallows, the darker it
 is, *Streuung* makes it rougher, high damping duller. The floor and ceiling follow their own
-absorption (stone slabs, boards, carpet). The pipes are real 3D pipes – a conical foot, the
+absorption (stone slabs, boards, carpet).
+*Single surfaces*: the floor, the ceiling and every wall can be of its own material. On the Saal
+page choose the surface next to *Oberflächen* and press a material (again: back to the sliders);
+in the 3D view look at a surface and press **M**. A surface with its own material reflects,
+damps the highs and feeds the ray-traced reverb with that material's absorption, and looks like
+it; they are saved with the project.
+*The player and the pipes* (*Pfeifen: …* in the 3D view, or *Spieler bewegt die Pfeifen* on
+Effekte · Lebendige Orgel): the listener pulls the pipes like a mass (*zieht an*), pushes them
+away (*stößt ab*), lets them circle (*Umlaufbahn*) or drags them along (*Sog*), with *Kraft* and
+*Reichweite*. It acts on stops whose motion takes place in the Saal (Flug, Fall, Schwarm,
+Strömung) – and on the new motion *Schweben*, where the pipes rest at their place until the
+player moves them (*Tiefe* = how free they are, *Geschwindigkeit* = an unrest of their own).
+The pipes are real 3D pipes – a conical foot, the
 round body, the mouth turned towards the listener's place. The view is drawn on several
 threads at the screen's full resolution and lowers it by itself when a frame takes too long.
 *Out of sight* (floor plans that are not convex: L, cross, apse …, also when walking with

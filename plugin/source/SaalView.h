@@ -109,6 +109,12 @@ private:
     juce::ComboBox order;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> orderAtt;
     std::vector<std::unique_ptr<juce::TextButton>> roomPresets, materials;
+    // which surface the material buttons set: all (the sliders), or a single one (floor, ceiling,
+    // each wall) with a material of its own
+    juce::ComboBox surfTarget;
+    int surfListRoom = -1, surfListShape = -1, surfListN = -1;
+    void refreshSurfaces();
+    int targetSurface() const; // -1 = all
     std::vector<std::unique_ptr<ParamRow>> rows;
     juce::Rectangle<int> saalBox, dimBox, surfBox, levelBox, planBox;
     juce::String shownStatus;

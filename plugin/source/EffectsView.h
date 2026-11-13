@@ -68,6 +68,10 @@ private:
     ParamRow *treadRate = nullptr, *netRate = nullptr;
     std::array<ParamRow*, 6> bellowsRows {}, palletRows {}, walkRows {}, wearRows {}, sympRows {}, pureRows {}, netRows {}, impRows {};
     juce::ComboBox* impSrc = nullptr;
+    // Spieler: the walked listener moves the pipes that are bodies in the Saal
+    juce::ComboBox* playerMode = nullptr;
+    std::array<ParamRow*, 6> playerRows {};
+    juce::Rectangle<int> playerLabel;
     juce::Rectangle<int> impBox, impNote;
     uint32_t impCountShown = 0; double impTime = 0.0; float impRate = 0.0f;      // knocks per second, for the title
     juce::Rectangle<int> bellowsBox, palletBox, walkBox, sympBox, wearBox, pureBox, netBox;

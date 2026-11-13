@@ -23,3 +23,7 @@ scripts/output_notes*/
 
 # macOS folder metadata
 .DS_Store
+
+# raw recordings (large; prepared versions live in rysum-samples/)
+raw_unprocessed_files/
+october30_samples/

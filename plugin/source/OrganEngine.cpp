@@ -731,8 +731,10 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     // a body in the room (room motion) is where it is - not placed by a ray from the listener's
     // usual place
     v.hasBody = isRoomMotion(p.motionMode[(size_t)v.stop]) && bodyAt(v.stop, v.key, v.bodyPos);
+    if (v.fresh)
+        v.mocc.valid = false;
     if (aroundCorner(p.stopRoom[(size_t)v.stop], homePos, dpos, hidDb, hidFc,
-                     v.hasBody ? &v.bodyPos : nullptr) == 2)
+                     v.hasBody ? &v.bodyPos : nullptr, &v.mocc) == 2)
         ++occCount;
     {
         // Ventil: how far this pipe's pallet is open (a slow key opens it slowly; or the finger's
@@ -2714,7 +2716,7 @@ void OrganEngine::updateSlotTaps(ErSlot &s, Pos srcPos, float base, const Engine
             srcPos.az, srcPos.el,      srcPos.dist, base,          r.W(),      r.L(),
             r.H(),     r.listenerX,    r.listenerY, r.absWalls,    r.absFloor, r.highDamp,
             r.scatter, (float)r.order, r.erGain,    distAmountNow, p.air,      (float)order,
-            0.0f,      0.0f,           0.0f};
+            surfKey(r), r.listenerZ,   0.0f};
         if (!s.fresh && s.keyValid && key == s.key)
             return;
         s.key = key;
@@ -2726,25 +2728,47 @@ void OrganEngine::updateSlotTaps(ErSlot &s, Pos srcPos, float base, const Engine
     const float rd = seenFrom(L, S).dist;
     std::array<ImageSource, kMaxTaps> ims;
     const int n = imageSources(r, S, r.order, ims.data(), kMaxTaps);
-    const auto ab = BandAbsorption::from(r);
-    const float Rw = std::sqrt(1.0f - ab.wallLow), Rf = std::sqrt(1.0f - ab.floorLow);
-    const float shW = std::sqrt((1.0f - ab.wallHigh) / juce::jmax(1e-4f, 1.0f - ab.wallLow));
-    const float shF = std::sqrt((1.0f - ab.floorHigh) / juce::jmax(1e-4f, 1.0f - ab.floorLow));
+    // every surface with its own absorption (walls, floor and ceiling can be of different stuff):
+    // the reflection factor and the loss of highs per hit
+    const auto ab = SurfAbs::from(r);
+    float Rs[kMaxSurf], Sh[kMaxSurf];
+    for (int k = 0; k < kMaxSurf; ++k)
+    {
+        Rs[k] = std::sqrt(1.0f - ab.low[(size_t)k]);
+        Sh[k] = std::sqrt((1.0f - ab.high[(size_t)k]) / juce::jmax(1e-4f, 1.0f - ab.low[(size_t)k]));
+    }
     const float spec = std::sqrt(
         juce::jlimit(0.0f, 1.0f, 1.0f - r.scatter)); // the scattered part goes to the tail
     const float airDiff = 0.5f * (airHigh(p.air) - airLow());
     const int encOrder = order == 0 ? 0 : juce::jmin(order, 3);
     const float maxDelay = (float)(kErRing - 4 * kSubBlock);
     float tmp[kMaxAmbiChannels];
-    // (reflection counts are 0..3: the powers once per slot instead of per image source)
-    float powW[4], powF[4], powSW[4], powSF[4];
-    for (int k = 0; k < 4; ++k)
+    const float specPow[4]{1.0f, spec, spec * spec, spec * spec * spec};
+    // the walls an image's path meets, from its numbers: along x the left / right wall, along y the
+    // back / front wall, along z floor / ceiling
+    auto imageLoss = [&](const ImageSource &im, float &g, float &sh)
     {
-        powW[k] = std::pow(Rw * spec, (float)k);
-        powF[k] = std::pow(Rf * spec, (float)k);
-        powSW[k] = std::pow(shW, (float)k);
-        powSF[k] = std::pow(shF, (float)k);
-    }
+        g = sh = 1.0f;
+        auto hit = [&](int surf, int times)
+        {
+            for (int q = 0; q < times; ++q)
+            {
+                g *= Rs[surf];
+                sh *= Sh[surf];
+            }
+        };
+        int lo, hi;
+        axisHits(im.mx, lo, hi);
+        hit(kSurfWall0 + 3, lo);
+        hit(kSurfWall0 + 1, hi);
+        axisHits(im.my, lo, hi);
+        hit(kSurfWall0 + 0, lo);
+        hit(kSurfWall0 + 2, hi);
+        axisHits(im.mz, lo, hi);
+        hit(kSurfFloor, lo);
+        hit(kSurfCeiling, hi);
+        g *= specPow[juce::jlimit(0, 3, im.hitsWalls + im.hitsFloor)];
+    };
     for (int i = 0; i < n; ++i)
     {
         const auto &im = ims[(size_t)i];
@@ -2756,7 +2780,10 @@ void OrganEngine::updateSlotTaps(ErSlot &s, Pos srcPos, float base, const Engine
         seen.dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         const int hw = juce::jlimit(0, 3, im.hitsWalls), hf = juce::jlimit(0, 3, im.hitsFloor);
         float delay = (seen.dist - rd) / kSpeedOfSoundRoom * (float)sr;
-        float gain = base * distanceGain(seen.dist, distAmountNow) * r.erGain * powW[hw] * powF[hf];
+        float refl, shelf;
+        imageLoss(im, refl, shelf);
+        juce::ignoreUnused(hw, hf);
+        float gain = base * distanceGain(seen.dist, distAmountNow) * r.erGain * refl;
         gain *= juce::jlimit(0.0f, 1.0f,
                              (maxDelay - delay) /
                                  (0.15f * maxDelay)); // longer than the buffer: left to the tail
@@ -2765,7 +2792,7 @@ void OrganEngine::updateSlotTaps(ErSlot &s, Pos srcPos, float base, const Engine
         auto &t = s.taps[(size_t)i];
         t.d1 = juce::jmax(0.0f, delay);
         t.g1 = gain;
-        t.r1 = powSW[hw] * powSF[hf] * std::exp(-airDiff * seen.dist);
+        t.r1 = shelf * std::exp(-airDiff * seen.dist);
         std::fill(tmp, tmp + kMaxAmbiChannels, 0.0f);
         // first reflections sharp (up to 3rd order), the later ones at first order: they are many,
         // quieter and more diffuse anyway, and this keeps the cost down
@@ -2813,7 +2840,7 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
         srcPos.az,      srcPos.el,      srcPos.dist,    base,          r.W(),      r.L(),
         r.H(),          r.listenerX,    r.listenerY,    r.absWalls,    r.absFloor, r.highDamp,
         r.scatter,      (float)r.order, r.erGain,       distAmountNow, p.air,      (float)order,
-        (float)r.shape, r.shapeAmt,     (float)r.plan.n};
+        (float)r.shape, r.shapeAmt,     (float)r.plan.n, surfKey(r),   r.listenerZ};
     if (!s.fresh && s.keyValid && key == s.key && !s.fading)
         return;
     bool roomChanged = !s.keyValid;
@@ -2903,23 +2930,45 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
         s.visN = r.plan.n;
     }
 
-    const auto ab = BandAbsorption::from(r);
-    const float Rw = std::sqrt(1.0f - ab.wallLow), Rf = std::sqrt(1.0f - ab.floorLow);
-    const float shW = std::sqrt((1.0f - ab.wallHigh) / juce::jmax(1e-4f, 1.0f - ab.wallLow));
-    const float shF = std::sqrt((1.0f - ab.floorHigh) / juce::jmax(1e-4f, 1.0f - ab.floorLow));
+    // every surface with its own absorption (walls, floor and ceiling can be of different stuff):
+    // the reflection factor and the loss of highs per hit
+    const auto ab = SurfAbs::from(r);
+    float Rs[kMaxSurf], Sh[kMaxSurf];
+    for (int k = 0; k < kMaxSurf; ++k)
+    {
+        Rs[k] = std::sqrt(1.0f - ab.low[(size_t)k]);
+        Sh[k] = std::sqrt((1.0f - ab.high[(size_t)k]) / juce::jmax(1e-4f, 1.0f - ab.low[(size_t)k]));
+    }
     const float spec = std::sqrt(juce::jlimit(0.0f, 1.0f, 1.0f - r.scatter));
     const float airDiff = 0.5f * (airHigh(p.air) - airLow());
     const int encOrder = order == 0 ? 0 : juce::jmin(order, 3);
     const float maxDelay = (float)(kErRing - 4 * kSubBlock);
     const float step = (float)erBlockN / (float)(0.025 * sr);
-    float powW[4], powF[4], powSW[4], powSF[4];
-    for (int k = 0; k < 4; ++k)
+    const float specPow[4]{1.0f, spec, spec * spec, spec * spec * spec};
+    // the walls a path meets (in order), floor and ceiling from its image number
+    auto tapLoss = [&](const ErTap &t, float &g, float &sh)
     {
-        powW[k] = std::pow(Rw * spec, (float)k);
-        powF[k] = std::pow(Rf * spec, (float)k);
-        powSW[k] = std::pow(shW, (float)k);
-        powSF[k] = std::pow(shF, (float)k);
-    }
+        g = sh = 1.0f;
+        for (int j = 0; j < juce::jmin(3, t.k); ++j)
+        {
+            const int surf = kSurfWall0 + juce::jmin((int)t.w[(size_t)j], kMaxPlanVerts - 1);
+            g *= Rs[surf];
+            sh *= Sh[surf];
+        }
+        int lo, hi;
+        axisHits(t.mz, lo, hi);
+        for (int q = 0; q < lo; ++q)
+        {
+            g *= Rs[kSurfFloor];
+            sh *= Sh[kSurfFloor];
+        }
+        for (int q = 0; q < hi; ++q)
+        {
+            g *= Rs[kSurfCeiling];
+            sh *= Sh[kSurfCeiling];
+        }
+        g *= specPow[juce::jlimit(0, 3, t.hw + t.hf)];
+    };
     float tmp[kMaxAmbiChannels];
     bool fading = false;
     int last = -1;
@@ -2971,8 +3020,9 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
             const float rh = std::sqrt(dx * dx + dy * dy);
             const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
             float delay = (dist - rd) / kSpeedOfSoundRoom * (float)sr;
-            float gain =
-                base * distanceGain(dist, distAmountNow) * r.erGain * powW[t.hw] * powF[t.hf];
+            float refl, shelf;
+            tapLoss(t, refl, shelf);
+            float gain = base * distanceGain(dist, distAmountNow) * r.erGain * refl;
             gain *=
                 juce::jlimit(0.0f, 1.0f,
                              (maxDelay - delay) /
@@ -2981,7 +3031,7 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
             t.d1 = juce::jmax(0.0f, delay);
             t.gFull = gain;
             t.g1 = gain * t.vis;
-            t.r1 = powSW[t.hw] * powSF[t.hf] * std::exp(-airDiff * dist);
+            t.r1 = shelf * std::exp(-airDiff * dist);
             std::fill(tmp, tmp + kMaxAmbiChannels, 0.0f);
             const int o = (t.hw + t.hf == 1) ? encOrder : juce::jmin(encOrder, 1);
             const double cosAz = rh > 1.0e-6f ? dy / rh : 1.0,
@@ -3058,6 +3108,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         // the reflections are heard from where the listener has walked to (the late reverb stays
         // that of the usual place)
         roomsEr[(size_t)ri] = rr;
+        roomsEr[(size_t)ri].listenerZ = walkZ; // (the reflections are heard from the ears' height)
         if (liveWalk && !rr.box() && rr.plan.n >= 3)
         {
             // a shaped room: the listener walks there and slides along the walls - pushed back onto

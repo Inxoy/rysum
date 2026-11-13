@@ -1,4 +1,5 @@
 #include "WalkView.h"
+#include "MeshAcoustics.h"
 #include "RoomSim.h"
 #include <algorithm>
 
@@ -96,7 +97,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
 {
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::CrosshairCursor);
-    for (auto* b : { &back, &load, &clear, &fit, &zUp, &home })
+    for (auto* b : { &back, &load, &clear, &fit, &zUp, &home, &hear })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -104,7 +105,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     back.onClick = [this] { if (onBack) onBack(); };
     back.setTooltip (U ("Zur\xc3\xbc" "ck zum Saal (Esc)"));
     load.onClick = [this] { chooseModel(); };
-    load.setTooltip (U ("Ein 3D-Modell (OBJ, mit MTL-Farben) als Raum: nur zu sehen \xe2\x80\x93 der Klang bleibt der des Saals."));
+    load.setTooltip (U ("Ein 3D-Modell (OBJ, mit MTL-Farben) als Raum: zu sehen, zu begehen (seine W\xc3\xa4nde halten dich auf) und \xe2\x80\x93 mit \xe2\x80\x9eModell h\xc3\xb6rbar\xe2\x80\x9c \xe2\x80\x93 zu h\xc3\xb6ren. Der Quader des Saals liegt darunter."));
     clear.onClick = [this] { proc.clearWalkModel(); status = U ("Modell entfernt"); statusUntil = juce::Time::getMillisecondCounterHiRes() + 2500; updateButtons(); repaint(); };
     fit.setTooltip (U ("Der Saal bekommt die Ma\xc3\x9f" "e des Modells (rechteckig, Breite \xc3\x97 L\xc3\xa4nge \xc3\x97 H\xc3\xb6he)"));
     fit.onClick = [this]
@@ -127,7 +128,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     zUp.setTooltip (U ("Das Modell hat Z als Hochachse (sonst Y, wie meist bei OBJ)"));
     zUp.onClick = [this] { if (proc.walkModelFile.existsAsFile()) { proc.walkZUp = zUp.getToggleState(); loadModel (proc.walkModelFile); } else proc.walkZUp = zUp.getToggleState(); };
     home.setTooltip (U ("Zur\xc3\xbc" "ck an den H\xc3\xb6rerplatz des Saals, Blick nach vorn"));
-    home.onClick = [this] { px = py = yaw = pitch = 0.0f; pushPose(); repaint(); };
+    home.onClick = [this] { px = py = yaw = pitch = yawT = pitchT = vx = vy = vz = fz = turnV = 0.0f; onGround = true; pushPose(); repaint(); };
     units.addItemList ({ "Meter", "Zentimeter", "Millimeter", "Zoll", U ("Fu\xc3\x9f") }, 1);
     units.setTooltip (U ("Einheit des Modells"));
     units.setWantsKeyboardFocus (false);
@@ -137,16 +138,40 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
         if (proc.walkModelFile.existsAsFile()) loadModel (proc.walkModelFile);
     };
     addAndMakeVisible (units);
+    hear.setClickingTogglesState (true);
+    hear.setTooltip (U ("Das Modell ist auch zu h\xc3\xb6ren: Pfeifen hinter seinen W\xc3\xa4nden kommen um die Ecke, der Nachhall wird per "
+                        "Raytracing durch das Modell berechnet. Der Quader des Saals liegt darunter (fr\xc3\xbche Reflexionen, Gr\xc3\xb6\xc3\x9f" "e). "
+                        "Aus: das Modell ist nur zu sehen."));
+    hear.onClick = [this] { proc.setWalkHear (hear.getToggleState()); };
+    // the player and the pipes ("Spieler": the pipes that are bodies in the Saal follow, flee or circle the walker)
+    for (int i = 0; i < 5; ++i)
+        playerMode.addItem (juce::StringArray { U ("Pfeifen: ruhig"), U ("Pfeifen: ich ziehe an"), U ("Pfeifen: ich sto\xc3\x9f" "e ab"), U ("Pfeifen: umkreisen mich"), U ("Pfeifen: Sog") }[i], i + 1);
+    playerMode.setWantsKeyboardFocus (false);
+    playerMode.setTooltip (U ("Wie du die Pfeifen bewegst, w\xc3\xa4hrend du gehst: wie eine Masse, zu der sie fallen (anziehen), vor der sie fliehen "
+                              "(absto\xc3\x9f" "en), um die sie kreisen (Umlaufbahn) oder die sie im Vorbeigehen mitrei\xc3\x9ft (Sog). "
+                              "Wirkt auf Register, deren Bewegung (Raum-Seite) im Saal stattfindet: Flug, Fall, Schwarm, Str\xc3\xb6mung - und "
+                              "Schweben, das nur auf dich reagiert."));
+    playerModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "lvPlayerMode", playerMode);
+    playerMode.onChange = [this] { if (isShowing()) grabKeyboardFocus(); };
+    addAndMakeVisible (playerMode);
+    playerForce.setSliderStyle (juce::Slider::LinearBar);
+    playerForce.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    playerForce.setWantsKeyboardFocus (false);
+    playerForce.setTooltip (U ("Kraft, mit der du die Pfeifen bewegst"));
+    playerForceAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "lvPlayerForce", playerForce);
+    addAndMakeVisible (playerForce);
     updateButtons();
 }
 
-WalkView::~WalkView() { proc.engine.viewWalkOn = false; }
+WalkView::~WalkView() { proc.engine.viewWalkOn = false; proc.engine.viewZ = 0.0f; }
 
 void WalkView::updateButtons()
 {
     const bool have = proc.getWalkMesh() != nullptr;
     clear.setEnabled (have);
     fit.setEnabled (have);
+    hear.setEnabled (have);
+    hear.setToggleState (proc.getWalkHear(), juce::dontSendNotification);
     zUp.setToggleState (proc.walkZUp, juce::dontSendNotification);
     int u = 0;
     for (int i = 0; i < 5; ++i) if (std::abs (kUnitScale[i] - proc.walkScale) < 1.0e-6f) u = i;
@@ -168,6 +193,12 @@ void WalkView::resized()
     clear.setBounds (r.removeFromRight (124));
     r.removeFromRight (6);
     load.setBounds (r.removeFromRight (150));
+    r.removeFromRight (6);
+    hear.setBounds (r.removeFromRight (104));
+    r.removeFromRight (14);
+    playerForce.setBounds (r.removeFromRight (juce::jmin (84, juce::jmax (0, r.getWidth() - 160))).reduced (0, 5));
+    r.removeFromRight (4);
+    playerMode.setBounds (r.removeFromRight (juce::jmin (176, juce::jmax (0, r.getWidth() - 8))));
 }
 
 void WalkView::visibilityChanged()
@@ -175,6 +206,7 @@ void WalkView::visibilityChanged()
     if (isVisible())
     {
         px = proc.walkPose[0].load(); py = proc.walkPose[1].load(); yaw = proc.walkPose[2].load(); pitch = proc.walkPose[3].load();
+        yawT = yaw; pitchT = pitch; vx = vy = vz = turnV = 0.0f; fz = 0.0f; onGround = true;
         proc.engine.viewWalkOn = true;
         pushPose();
         updateButtons();
@@ -187,6 +219,7 @@ void WalkView::visibilityChanged()
         stopTimer();
         looking = false;
         proc.engine.viewWalkOn = false;
+        proc.engine.viewZ = 0.0f;
     }
 }
 
@@ -194,6 +227,7 @@ void WalkView::pushPose()
 {
     proc.walkPose[0] = px; proc.walkPose[1] = py; proc.walkPose[2] = yaw; proc.walkPose[3] = pitch;
     proc.engine.viewX = px; proc.engine.viewY = py; proc.engine.viewYaw = yaw;
+    proc.engine.viewZ = fz;          // (a jump, a step of the model: the ears go up with it)
 }
 
 RoomParams WalkView::roomNow() const
@@ -207,9 +241,57 @@ RoomParams WalkView::roomNow() const
     return now;
 }
 
+void WalkView::moveBy (float dx, float dy)
+{
+    if (dx == 0.0f && dy == 0.0f) return;
+    const auto r = roomNow();
+    const auto homeP = listenerPos (r);
+    float x = homeP.x + px, y = homeP.y + py;
+    float tx = x + dx, ty = y + dy;
+    // a loaded model: its walls stop you (what is lower than a step - 45 cm - is climbed, see groundAt). Two
+    // rays a body's width ahead, at the height of the shins and of the chest; blocked: along the wall instead.
+    if (const auto ac = proc.getWalkAcoustics())
+    {
+        auto blockedTo = [&] (float bx, float by)
+        {
+            const float ddx = bx - x, ddy = by - y, l = std::sqrt (ddx * ddx + ddy * ddy);
+            if (l < 1.0e-6f) return false;
+            const float ext = (l + 0.3f) / l;
+            for (float hgt : { 0.5f, 1.3f })
+                if (ac->blocked ({ x, y, fz + hgt }, { x + ddx * ext, y + ddy * ext, fz + hgt })) return true;
+            return false;
+        };
+        if (blockedTo (tx, ty))
+        {
+            if (! blockedTo (tx, y)) ty = y;
+            else if (! blockedTo (x, ty)) tx = x;
+            else { tx = x; ty = y; }
+        }
+    }
+    // the Saal's walls hold you and you slide along them (as the listener of the room simulation does); never a jump
+    if (r.box() || r.plan.n < 3) { x = juce::jlimit (0.3f, r.W() - 0.3f, tx); y = juce::jlimit (0.3f, r.L() - 0.3f, ty); }
+    else
+    {
+        const auto geo = planGeo (r);
+        if (! planSlide (geo, x, y, tx, ty, 0.3f)) { x = tx; y = ty; keepInsidePlan (geo, x, y, 0.3f); }   // (not inside yet: the room changed)
+    }
+    px = x - homeP.x; py = y - homeP.y;
+}
+
+/** what you stand on: the Saal's floor, or a floor / step of the model below your knees */
+float WalkView::groundAt (float x, float y) const
+{
+    const auto ac = proc.getWalkAcoustics();
+    if (ac == nullptr) return 0.0f;
+    const float from = fz + 0.5f;                       // (the height a step may have)
+    float t;
+    if (ac->cast ({ x, y, from }, { 0.0f, 0.0f, -1.0f }, from + 0.5f, t) >= 0) return juce::jmax (0.0f, from - t);
+    return 0.0f;                                        // (nothing of the model below: the Saal's floor underneath)
+}
+
 void WalkView::step (double dt, bool fwd, bool bwd, bool left, bool right, float turn, bool fast)
 {
-    yaw = wrapAz (yaw + turn);
+    yaw = yawT = wrapAz (yaw + turn);
     const float v = (fast ? 4.2f : 1.6f) * (float) dt;
     const float ya = juce::degreesToRadians (yaw);
     const float fx = -std::sin (ya), fy = std::cos (ya), rx = std::cos (ya), ry = std::sin (ya);
@@ -219,21 +301,84 @@ void WalkView::step (double dt, bool fwd, bool bwd, bool left, bool right, float
     if (right) { dx += rx; dy += ry; }
     if (left)  { dx -= rx; dy -= ry; }
     const float l = std::sqrt (dx * dx + dy * dy);
-    if (l > 0.0f)
+    if (l > 0.0f) moveBy (dx / l * v, dy / l * v);
+    pushPose();
+}
+
+void WalkView::advance (double dtD, bool fwd, bool bwd, bool left, bool right, float turnKeys, bool fast, bool jump)
+{
+    const float dt = (float) dtD;
+    if (dt <= 0.0f) return;
+    auto ease = [dt] (float tau) { return 1.0f - std::exp (-dt / tau); };
+
+    // ---- looking: the view follows where the mouse points, quickly but without the jerk of single mouse steps;
+    //      the turning keys build up a turning speed
+    turnV += (90.0f * turnKeys - turnV) * ease (0.09f);
+    if (std::abs (turnV) < 0.05f && turnKeys == 0.0f) turnV = 0.0f;
+    yawT = wrapAz (yawT + turnV * dt);
+    yaw = wrapAz (yaw + turnV * dt);
+    yaw = wrapAz (yaw + wrapAz (yawT - yaw) * ease (0.035f));
+    pitch += (pitchT - pitch) * ease (0.035f);
+
+    // ---- walking: the speed builds up and dies away (in the air there is little to push against)
+    const float ya = juce::degreesToRadians (yaw);
+    const float fx = -std::sin (ya), fy = std::cos (ya), rx = std::cos (ya), ry = std::sin (ya);
+    float dx = 0.0f, dy = 0.0f;
+    if (fwd)   { dx += fx; dy += fy; }
+    if (bwd)   { dx -= fx; dy -= fy; }
+    if (right) { dx += rx; dy += ry; }
+    if (left)  { dx -= rx; dy -= ry; }
+    const float l = std::sqrt (dx * dx + dy * dy);
+    const float speed = fast ? 4.2f : 1.6f;
+    const float tvx = l > 0.0f ? dx / l * speed : 0.0f, tvy = l > 0.0f ? dy / l * speed : 0.0f;
+    const float k = ease (onGround ? (l > 0.0f ? 0.12f : 0.16f) : 0.7f);
+    vx += (tvx - vx) * k; vy += (tvy - vy) * k;
+    if (l == 0.0f && vx * vx + vy * vy < 0.0004f) vx = vy = 0.0f;
+    if (vx != 0.0f || vy != 0.0f)
     {
-        const auto r = roomNow();
-        const auto homeP = listenerPos (r);
-        const float tx = homeP.x + px + dx / l * v, ty = homeP.y + py + dy / l * v;
-        // the walls hold you and you slide along them (as the listener of the room simulation does); never a jump
-        float x = homeP.x + px, y = homeP.y + py;
-        if (r.box() || r.plan.n < 3) { x = juce::jlimit (0.3f, r.W() - 0.3f, tx); y = juce::jlimit (0.3f, r.L() - 0.3f, ty); }
-        else
-        {
-            const auto geo = planGeo (r);
-            if (! planSlide (geo, x, y, tx, ty, 0.3f)) { x = tx; y = ty; keepInsidePlan (geo, x, y, 0.3f); }   // (not inside yet: the room changed)
-        }
-        px = x - homeP.x; py = y - homeP.y;
+        const float x0 = px, y0 = py;
+        moveBy (vx * dt, vy * dt);
+        // (against a wall: the speed into it is gone, the speed along it stays)
+        const float ax = (px - x0) / dt, ay = (py - y0) / dt;
+        if (std::abs (ax - vx) > 0.02f || std::abs (ay - vy) > 0.02f) { vx = ax; vy = ay; }
     }
+
+    // ---- up and down: a jump, falling, the steps of a model
+    const auto r = roomNow();
+    const auto ac = proc.getWalkAcoustics();
+    const float homeX = listenerPos (r).x + px, homeY = listenerPos (r).y + py;
+    const float ground = groundAt (homeX, homeY);
+    if (jump && onGround) { vz = 4.6f; onGround = false; }
+    if (! onGround || fz > ground + 0.02f)
+    {
+        vz -= 12.5f * dt;                     // (a little heavier than the earth: a jump that does not float)
+        fz += vz * dt;
+        onGround = false;
+        if (fz <= ground)
+        {
+            landDip = juce::jlimit (0.0f, 0.12f, -vz * 0.016f);
+            fz = ground; vz = 0.0f; onGround = true;
+        }
+    }
+    else fz += (ground - fz) * ease (0.05f);  // (a step up: lifted, not teleported)
+    {
+        // the head stays below the ceiling (the Saal's, or the higher model's) - and below what the model has there
+        const float ear = listenerHeight (r);
+        float top = juce::jmax (r.H(), ac != nullptr ? ac->size.z : 0.0f) - 0.2f;
+        if (ac != nullptr && vz > 0.0f)
+        {
+            float t;
+            if (ac->cast ({ homeX, homeY, fz + ear }, { 0.0f, 0.0f, 1.0f }, 0.3f + vz * dt, t) >= 0) top = juce::jmin (top, fz + ear + t - 0.2f);
+        }
+        if (fz + ear > top) { fz = juce::jmax (0.0f, top - ear); vz = juce::jmin (vz, 0.0f); }
+    }
+    landDip *= std::exp (-dt / 0.09f);
+
+    // ---- the steps: a slight sway of the view while walking on the ground
+    const float sp = std::sqrt (vx * vx + vy * vy);
+    bobAmt += ((onGround && sp > 0.3f ? juce::jmin (1.0f, sp / 1.6f) : 0.0f) - bobAmt) * ease (0.15f);
+    if (onGround) bobPhase += sp * dt * 4.4f;             // (a step every 70 cm or so)
+    if (bobPhase > 1000.0f) bobPhase -= 1000.0f;
     pushPose();
 }
 
@@ -267,8 +412,9 @@ void WalkView::timerCallback()
         if (down ('Q') || down ('q')) turn += 90.0f * (float) dt;
         if (down ('E') || down ('e')) turn -= 90.0f * (float) dt;
         const bool fast = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
-        if (f || b || l || r || turn != 0.0f) step (dt, f, b, l, r, turn, fast);
+        advance (dt, f, b, l, r, turn / (90.0f * (float) juce::jmax (1.0e-4, dt)), fast, down (juce::KeyPress::spaceKey));
     }
+    else advance (dt, false, false, false, false, 0.0f, false, false);      // (keys let go by losing the focus: coming to rest, landing)
     repaint();
 }
 
@@ -276,8 +422,10 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
 {
     if (k == juce::KeyPress::escapeKey) { if (onBack) onBack(); return true; }
     const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
-    if (c == 'w' || c == 'a' || c == 's' || c == 'd' || c == 'q' || c == 'e') return true;
+    if (c == 'm') { cycleMaterial(); return true; }
+    if (c == 'w' || c == 'a' || c == 's' || c == 'd' || c == 'q' || c == 'e' || c == ' ') return true;
     const int code = k.getKeyCode();
+    if (code == juce::KeyPress::spaceKey) return true;
     return code == juce::KeyPress::upKey || code == juce::KeyPress::downKey || code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey;
 }
 
@@ -299,10 +447,9 @@ void WalkView::mouseDrag (const juce::MouseEvent& e)
     if (! looking) return;
     const auto d = e.position - lastMouse;
     lastMouse = e.position;
-    yaw = wrapAz (yaw - d.x * 0.22f);
-    pitch = juce::jlimit (-85.0f, 85.0f, pitch - d.y * 0.22f);
-    pushPose();
-    repaint();
+    // (where to look; the view gets there within a few hundredths of a second: see advance)
+    yawT = wrapAz (yawT - d.x * 0.22f);
+    pitchT = juce::jlimit (-85.0f, 85.0f, pitchT - d.y * 0.22f);
 }
 
 void WalkView::mouseUp (const juce::MouseEvent& e)
@@ -338,7 +485,7 @@ void WalkView::loadModel (const juce::File& f)
                + juce::String (m->size.y, 1) + U (" \xc3\x97 ") + juce::String (m->size.z, 1) + " m" + (m->message.isNotEmpty() ? " - " + m->message : juce::String());
     if (m != nullptr && err.isEmpty())
     {
-        // you stand and are stopped by the Saal's walls, not the model's: say so when they differ
+        // the Saal's shoebox lies underneath (early reflections, the outer limit): say so when the sizes differ
         const auto r = roomNow();
         if (std::abs (m->size.x - r.W()) > 1.0f || std::abs (m->size.y - r.L()) > 1.0f || std::abs (m->size.z - r.H()) > 1.0f)
             status << U ("  \xc2\xb7  der Saal ist ") << juce::String (r.W(), 1) << U (" \xc3\x97 ") << juce::String (r.L(), 1) << U (" \xc3\x97 ")
@@ -407,8 +554,9 @@ void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
         }
     // walls: the material from the absorption; a darker plinth of the same stuff
     float along = 0.0f;
-    auto wall = [&] (float ax, float ay, float bx, float by)
+    auto wall = [&] (float ax, float ay, float bx, float by, int index)
     {
+        const int slot = kSlotWall0 + juce::jlimit (0, kMaxPlanVerts - 1, index);        // (every wall its own material)
         const float len = std::hypot (bx - ax, by - ay);
         if (len < 1.0e-3f) return;
         const V3 n = normalised ({ -(by - ay), bx - ax, 0.0f });
@@ -419,27 +567,88 @@ void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
             const float t0 = (float) i / (float) nSeg, t1 = (float) (i + 1) / (float) nSeg;
             const V3 p0 { ax + (bx - ax) * t0, ay + (by - ay) * t0, 0 }, p1 { ax + (bx - ax) * t1, ay + (by - ay) * t1, 0 };
             const float u0 = along + len * t0, u1 = along + len * t1;
-            quad (vt (p0, n, u0, 0), vt (p1, n, u1, 0), vt (p1 + V3 { 0, 0, plinth }, n, u1, plinth), vt (p0 + V3 { 0, 0, plinth }, n, u0, plinth), 0, 0.55f);
+            quad (vt (p0, n, u0, 0), vt (p1, n, u1, 0), vt (p1 + V3 { 0, 0, plinth }, n, u1, plinth), vt (p0 + V3 { 0, 0, plinth }, n, u0, plinth), slot, 0.55f);
             const int bands = juce::jmax (1, (int) std::ceil ((H - plinth) / 3.0f));
             for (int b = 0; b < bands; ++b)
             {
                 const float z0 = plinth + (H - plinth) * (float) b / (float) bands, z1 = plinth + (H - plinth) * (float) (b + 1) / (float) bands;
                 quad (vt (p0 + V3 { 0, 0, z0 }, n, u0, z0), vt (p1 + V3 { 0, 0, z0 }, n, u1, z0),
-                      vt (p1 + V3 { 0, 0, z1 }, n, u1, z1), vt (p0 + V3 { 0, 0, z1 }, n, u0, z1), 0, 1.0f - 0.06f * (float) b / (float) bands);
+                      vt (p1 + V3 { 0, 0, z1 }, n, u1, z1), vt (p0 + V3 { 0, 0, z1 }, n, u0, z1), slot, 1.0f - 0.06f * (float) b / (float) bands);
             }
         }
         along += len;
     };
     if (box)
     {
-        wall (0, 0, W, 0); wall (W, 0, W, L); wall (W, L, 0, L); wall (0, L, 0, 0);
+        wall (0, 0, W, 0, 0); wall (W, 0, W, L, 1); wall (W, L, 0, L, 2); wall (0, L, 0, 0, 3);       // (back, right, front, left: as kSurfWall0 + i)
     }
     else
         for (int i = 0; i < r.plan.n; ++i)
         {
             const int j = (i + 1) % r.plan.n;
-            wall (r.plan.x[(size_t) i] * W, r.plan.y[(size_t) i] * L, r.plan.x[(size_t) j] * W, r.plan.y[(size_t) j] * L);
+            wall (r.plan.x[(size_t) i] * W, r.plan.y[(size_t) i] * L, r.plan.x[(size_t) j] * W, r.plan.y[(size_t) j] * L, i);
         }
+}
+
+/** the Saal's surface the middle of the view points at (kSurfFloor, kSurfCeiling, kSurfWall0 + wall), -1 = none */
+int WalkView::surfaceAhead (const RoomParams& r, V3 eye) const
+{
+    const float ya = juce::degreesToRadians (yaw), pa = juce::degreesToRadians (juce::jlimit (-89.0f, 89.0f, pitch));
+    const V3 d { -std::sin (ya) * std::cos (pa), std::cos (ya) * std::cos (pa), std::sin (pa) };
+    float best = 1.0e30f;
+    int surf = -1;
+    if (d.z < -1.0e-5f) { best = -eye.z / d.z; surf = kSurfFloor; }
+    else if (d.z > 1.0e-5f) { best = (r.H() - eye.z) / d.z; surf = kSurfCeiling; }
+    auto wall = [&] (float ax, float ay, float bx, float by, int index)
+    {
+        // (the wall's inward normal is to the left of a -> b; only a wall the view runs towards)
+        const float ex = bx - ax, ey = by - ay, len = std::sqrt (ex * ex + ey * ey);
+        if (len < 1.0e-3f) return;
+        const float nx = -ey / len, ny = ex / len;
+        const float dn = nx * d.x + ny * d.y;
+        if (dn > -1.0e-6f) return;
+        const float t = (nx * (eye.x - ax) + ny * (eye.y - ay)) / -dn;
+        if (t <= 0.0f || t >= best) return;
+        const float u = ((eye.x + d.x * t - ax) * ex + (eye.y + d.y * t - ay) * ey) / (len * len);
+        if (u < 0.0f || u > 1.0f) return;
+        best = t; surf = kSurfWall0 + index;
+    };
+    const float W = r.W(), L = r.L();
+    if (r.box() || r.plan.n < 3) { wall (0, 0, W, 0, 0); wall (W, 0, W, L, 1); wall (W, L, 0, L, 2); wall (0, L, 0, 0, 3); }
+    else
+        for (int i = 0; i < r.plan.n; ++i)
+        {
+            const int j = (i + 1) % r.plan.n;
+            wall (r.plan.x[(size_t) i] * W, r.plan.y[(size_t) i] * L, r.plan.x[(size_t) j] * W, r.plan.y[(size_t) j] * L, i);
+        }
+    return surf;
+}
+
+juce::String WalkView::surfaceName (const RoomParams& r, int surf) const
+{
+    juce::String n;
+    if (surf == kSurfFloor) n = "Boden";
+    else if (surf == kSurfCeiling) n = "Decke";
+    else if (r.box() || r.plan.n < 3) n = juce::StringArray { U ("R\xc3\xbc" "ckwand"), "rechte Wand", "Vorderwand", "linke Wand" }[juce::jlimit (0, 3, surf - kSurfWall0)];
+    else n = "Wand " + juce::String (surf - kSurfWall0 + 1);
+    const int m = r.plan.surf[(size_t) juce::jlimit (0, kMaxSurf - 1, surf)];
+    return n + ": " + (m < 0 ? juce::String ("wie Regler") : juce::String (surfMaterial (m).name));
+}
+
+/** M: the surface under the cross gets the next material (after the last: as the sliders say again) */
+void WalkView::cycleMaterial()
+{
+    if (aimSurf < 0)
+    {
+        status = proc.getWalkMesh() != nullptr ? U ("Material: nur f\xc3\xbcr die Fl\xc3\xa4" "chen des Saals (ohne Modell)") : U ("Keine Fl\xc3\xa4" "che im Blick");
+        statusUntil = juce::Time::getMillisecondCounterHiRes() + 2500;
+        return;
+    }
+    const int cur = proc.getSurfaceMaterial (0, aimSurf);
+    proc.setSurfaceMaterial (0, aimSurf, cur + 1 >= kNumSurfMaterials ? -1 : cur + 1);
+    status = surfaceName (roomNow(), aimSurf);
+    statusUntil = juce::Time::getMillisecondCounterHiRes() + 2500;
+    repaint();
 }
 
 void WalkView::addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt)
@@ -495,7 +704,7 @@ V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) 
     if (proc.engine.bodyAt (stop, key, b)) return { b.x, b.y, b.z };
     // walking in a shaped Saal the engine hears every pipe where the room simulation has it, inside the walls
     // (so what you see hidden behind a wall is what you hear around the corner); otherwise where Ambisonics puts it
-    if (pipesInRoom && ! r.box() && r.plan.n >= 3)
+    if (pipesInRoom)
     {
         const auto q = roomPoint (r, pos);
         return { q.x, q.y, q.z };
@@ -508,10 +717,14 @@ void WalkView::paint (juce::Graphics& g)
 {
     auto& A = Assets::get();
     const auto params = proc.readParams();
-    pipesInRoom = params.room.on && (proc.engine.listenerXNow.load() != 0.0f || proc.engine.listenerYNow.load() != 0.0f);
     const auto r = roomNow();
+    // (walking in a shaped Saal, or with a model that is heard: the pipes are where the room simulation has them)
+    pipesInRoom = params.room.on && ((! r.box() && r.plan.n >= 3 && (proc.engine.listenerXNow.load() != 0.0f || proc.engine.listenerYNow.load() != 0.0f))
+                                     || proc.engine.meshActive.load());
     const V3 homeP { listenerPos (r).x, listenerPos (r).y, listenerPos (r).z };
-    const V3 eye { homeP.x + px, homeP.y + py, homeP.z };
+    // the eyes: where you stand (or jump), swaying a little with the steps, giving in the knees after a jump
+    const float sway = 0.022f * bobAmt * std::sin (bobPhase) - landDip;
+    const V3 eye { homeP.x + px, homeP.y + py, juce::jmax (0.25f, homeP.z + fz + sway) };
     const auto area = getLocalBounds();
 
     // as sharp as the screen allows (in full screen the window is scaled up), less when a frame takes too long
@@ -520,14 +733,37 @@ void WalkView::paint (juce::Graphics& g)
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     rast.setSize (juce::roundToInt ((float) area.getWidth() * sc), juce::roundToInt ((float) area.getHeight() * sc));
     rast.setCamera (eye, yaw, pitch, fov);
-    const float fogDist = juce::jmax (8.0f, 0.9f * juce::jmax (r.W(), r.L()));
+    const float fogDist = juce::jmax (12.0f, 1.5f * juce::jmax (r.W(), r.L()));      // (floor and ceiling stay readable to the far end)
     rast.begin (0.07f, fogDist, 0.12f, ++frame);
 
     // the surfaces from the Saal's absorption, scatter and high damping
     const auto wm = wallMaterial (r.absWalls, r.highDamp, r.scatter);
     rast.setMaterial (kSlotWall, wm);
-    rast.setMaterial (kSlotFloor, floorMaterial (r.absFloor, r.highDamp, r.scatter, false));
-    rast.setMaterial (kSlotCeiling, floorMaterial (r.absFloor, r.highDamp, r.scatter, true));
+    {
+        // every surface as what it is made of: its own material (Saal page, or M here), else what the sliders say
+        const auto sa = SurfAbs::from (r);
+        auto look = [&] (int surf)
+        {
+            const int own = r.plan.surf[(size_t) surf];
+            const bool level = surf < kSurfWall0;
+            if (own < 0) return level ? floorMaterial (r.absFloor, r.highDamp, r.scatter, surf == kSurfCeiling) : wm;
+            const auto& sm = surfMaterial (own);
+            Material m = wallMaterial (sm.aw, sm.hi, r.scatter);
+            m.tone = juce::jlimit (0.12f, 1.0f, m.tone * (1.0f - 0.5f * (sa.low[(size_t) surf] - sm.aw)));
+            if (level)
+            {
+                // lying down: ashlar becomes slabs, panelling boards, a curtain a carpet
+                if (m.kind == Material::stone && surf == kSurfFloor) m.kind = Material::slabs;
+                else if (m.kind == Material::wood) m.kind = Material::boards;
+                else if (m.kind == Material::curtain) m.kind = Material::carpet;
+                if (surf == kSurfCeiling) m.tone *= 0.78f;
+            }
+            return m;
+        };
+        rast.setMaterial (kSlotFloor, look (kSurfFloor));
+        rast.setMaterial (kSlotCeiling, look (kSurfCeiling));
+        for (int i = 0; i < kMaxPlanVerts; ++i) rast.setMaterial (kSlotWall0 + i, look (kSurfWall0 + i));
+    }
     rast.setMaterial (kSlotModel, wm);
     { Material m; m.kind = Material::metal; m.tone = 1.0f; m.gloss = 1.0f; m.rough = 0.1f; rast.setMaterial (kSlotMetal, m); }
     { Material m; m.kind = Material::dark; m.tone = 1.0f; m.gloss = 0.0f; rast.setMaterial (kSlotDark, m); }
@@ -557,11 +793,33 @@ void WalkView::paint (juce::Graphics& g)
             const float lum = 0.3f + 0.9f * (0.3f * c.getFloatRed() + 0.59f * c.getFloatGreen() + 0.11f * c.getFloatBlue());
             rast.flatTriangle (t.a, t.b, t.c, meshSlots[i], lum);
         }
+        // the Saal's shoebox underneath: its floor and its ceiling, far beyond the model - a model without a floor
+        // or a roof, or open to one side, never shows a black void (a hair below / above the model's own, so the
+        // model's surfaces lie in front)
+        {
+            const float mx = juce::jmax (r.W(), mesh->size.x), my = juce::jmax (r.L(), mesh->size.y);
+            const float ext = juce::jmax (48.0f, 2.0f * juce::jmax (mx, my)), tile = 8.0f;
+            const float zTop = juce::jmax (r.H(), mesh->size.z) + 0.04f;
+            auto vt = [] (float x, float y, float z) { Raster::Vert q; q.p = { x, y, z }; q.n = { 0, 0, 1 }; q.u = x; q.v = y; return q; };
+            for (float x = -ext; x < mx + ext; x += tile)
+                for (float y = -ext; y < my + ext; y += tile)
+                    for (int top = 0; top < 2; ++top)
+                    {
+                        const float z = top ? zTop : -0.04f;
+                        const auto a = vt (x, y, z), b = vt (x + tile, y, z), cc = vt (x + tile, y + tile, z), d = vt (x, y + tile, z);
+                        rast.triangle (a, b, cc, top ? kSlotCeiling : kSlotFloor, 1.0f);
+                        rast.triangle (a, cc, d, top ? kSlotCeiling : kSlotFloor, 1.0f);
+                    }
+        }
+        aimSurf = -1;
     }
     else
     {
         buildRoomTris (r, roomTris);
-        for (const auto& t : roomTris) rast.triangle (t.a, t.b, t.c, t.slot, t.tone);
+        // (the surface the cross points at - the one M gives another material - a little lighter)
+        aimSurf = surfaceAhead (r, eye);
+        const int aimSlot = aimSurf < 0 ? -1 : (aimSurf == kSurfFloor ? (int) kSlotFloor : (aimSurf == kSurfCeiling ? (int) kSlotCeiling : kSlotWall0 + aimSurf - kSurfWall0));
+        for (const auto& t : roomTris) rast.triangle (t.a, t.b, t.c, t.slot, t.slot == aimSlot ? t.tone * 1.1f : t.tone);
     }
 
     // the pipes, where Ambisonics puts them (as heard from the listener's place; you walk among them)
@@ -700,12 +958,24 @@ void WalkView::paint (juce::Graphics& g)
     const auto info = U ("Begehen \xc2\xb7 ") + (mesh != nullptr ? mesh->name : U ("Saal ") + juce::String (r.W(), 1) + U (" \xc3\x97 ") + juce::String (r.L(), 1) + U (" \xc3\x97 ") + juce::String (r.H(), 1) + " m")
                     + U ("   \xc2\xb7   Platz ") + juce::String (eye.x, 1) + " / " + juce::String (eye.y, 1) + U (" m   Blick ") + juce::String (juce::roundToInt (-yaw)) + U ("\xc2\xb0")
                     + U ("   \xc2\xb7   W\xc3\xa4nde: ") + materialName (wallLook)
-                    + (proc.engine.hiddenNow.load() > 0 ? U ("   \xc2\xb7   ") + juce::String (proc.engine.hiddenNow.load()) + U (" Pfeifen um die Ecke geh\xc3\xb6rt") : juce::String());
+                    + (proc.engine.hiddenNow.load() > 0 ? U ("   \xc2\xb7   ") + juce::String (proc.engine.hiddenNow.load()) + U (" Pfeifen um die Ecke geh\xc3\xb6rt") : juce::String())
+                    + (aimSurf >= 0 ? U ("   \xc2\xb7   ") + surfaceName (r, aimSurf) + U ("  [M: Material]") : juce::String());
     g.drawText (info, area.reduced (18, 0).withTrimmedTop (44).removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (col::faint);
-    g.drawText (U ("W A S D gehen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  Q E / \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
+    g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  Q E / \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
                   "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
                 area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
+    {
+        // the player moves pipes, but no stop has pipes that can be moved: say how
+        bool anyBodies = false;
+        for (int s = 0; s < kNumStops; ++s) anyBodies = anyBodies || isRoomMotion (params.motionMode[(size_t) s]);
+        if (params.live.playerMode > 0 && ! anyBodies && juce::Time::getMillisecondCounterHiRes() >= statusUntil)
+        {
+            g.setColour (col::rubric.brighter (0.2f));
+            g.drawText (U ("Die Pfeifen reagieren auf dich, wenn die Bewegung eines Registers (Raum-Seite) im Saal stattfindet: Schweben, Flug, Fall, Schwarm oder Str\xc3\xb6mung."),
+                        area.reduced (18, 0).withTrimmedTop (62).removeFromTop (16), juce::Justification::centredLeft);
+        }
+    }
     if (! proc.isBinaural())
     {
         g.setColour (col::rubric.brighter (0.2f));

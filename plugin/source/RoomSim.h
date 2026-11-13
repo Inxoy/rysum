@@ -17,6 +17,27 @@ namespace rysum
    a flat ceiling. Shape 0 is the shoebox (the original code, unchanged); the others are polygons in
    fractions of width / length, counter-clockwise (x to the right, y to the front). */
 constexpr int kMaxPlanVerts = 12;
+/** the surfaces of a room: 0 = floor, 1 = ceiling, 2 + i = wall i (shoebox: 0 = back wall (y = 0),
+    1 = right (x = W), 2 = front (y = L), 3 = left (x = 0); a floor plan: wall i from corner i) */
+constexpr int kMaxSurf = 2 + kMaxPlanVerts;
+constexpr int kSurfFloor = 0, kSurfCeiling = 1, kSurfWall0 = 2;
+
+/** what a single surface can be made of (absorption as wall / as floor or ceiling, high damping).
+    The first six are the Saal page's materials. */
+struct SurfMaterial
+{
+    const char *name;
+    float aw, af, hi;
+};
+constexpr int kNumSurfMaterials = 6;
+inline const SurfMaterial &surfMaterial(int i) noexcept
+{
+    static const SurfMaterial mats[kNumSurfMaterials]{
+        {"Stein", 0.02f, 0.04f, 0.3f},   {"Putz", 0.05f, 0.10f, 0.4f},
+        {"Holz", 0.12f, 0.15f, 0.55f},   {"Glas", 0.04f, 0.06f, 0.1f},
+        {"Vorhang", 0.5f, 0.35f, 0.85f}, {"Spiegel", 0.0f, 0.0f, 0.0f}};
+    return mats[(size_t)juce::jlimit(0, kNumSurfMaterials - 1, i)];
+}
 enum RoomShape
 {
     shapeBox = 0,
@@ -35,9 +56,23 @@ struct FloorPlan
 {
     int n = 4;
     std::array<float, kMaxPlanVerts> x{0.0f, 1.0f, 1.0f, 0.0f}, y{0.0f, 0.0f, 1.0f, 1.0f};
+    /** the material of every surface (an index for surfMaterial), -1 = as the Saal's sliders say
+        (absorption walls / floor + ceiling, high damping). It travels with the plan. */
+    std::array<int8_t, kMaxSurf> surf = noSurf();
+    static constexpr std::array<int8_t, kMaxSurf> noSurf() noexcept
+    {
+        return {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    }
+    bool anySurf() const noexcept
+    {
+        for (auto v : surf)
+            if (v >= 0)
+                return true;
+        return false;
+    }
     bool operator==(const FloorPlan &o) const noexcept
     {
-        if (n != o.n)
+        if (n != o.n || surf != o.surf)
             return false;
         // Exact equality detects changes to stored coordinates, not geometric proximity.
         return std::equal(x.begin(), x.begin() + n, o.x.begin()) &&
@@ -57,6 +92,7 @@ struct RoomParams
     }
     float width = 14.0f, length = 28.0f, height = 11.0f, size = 1.0f; // size scales all three
     float listenerX = 0.5f, listenerY = 0.4f;                         // fractions of width / length
+    float listenerZ = 0.0f; // m above the usual ear height (the 3D view: a jump, a step of a model)
     float absWalls = 0.10f,
           absFloor = 0.25f; // absorption (floor = floor + ceiling), mid / low frequencies
     float highDamp = 0.5f;  // extra absorption of the highs
@@ -102,6 +138,75 @@ struct BandAbsorption
         return {w, hi(w), f, hi(f)};
     }
 };
+
+/** absorption of every single surface in the two bands (see kMaxSurf for the order). A surface
+    without a material of its own follows the sliders (BandAbsorption). */
+struct SurfAbs
+{
+    std::array<float, kMaxSurf> low{}, high{};
+    static SurfAbs from(const RoomParams &r) noexcept
+    {
+        const auto b = BandAbsorption::from(r);
+        SurfAbs s;
+        for (int i = 0; i < kMaxSurf; ++i)
+        {
+            const bool fl = i < kSurfWall0;
+            const int m = r.plan.surf[(size_t)i];
+            if (m < 0)
+            {
+                s.low[(size_t)i] = fl ? b.floorLow : b.wallLow;
+                s.high[(size_t)i] = fl ? b.floorHigh : b.wallHigh;
+            }
+            else
+            {
+                const auto &mat = surfMaterial(m);
+                const float a = juce::jlimit(0.0f, 0.99f, fl ? mat.af : mat.aw);
+                s.low[(size_t)i] = a;
+                s.high[(size_t)i] = juce::jlimit(0.0f, 0.99f, a + mat.hi * (1.0f - a) * 0.6f);
+            }
+        }
+        return s;
+    }
+    /** what the walls of a loaded model are made of: the mean of the Saal's walls */
+    void meanWall(int numWalls, float &lo, float &hi) const noexcept
+    {
+        lo = hi = 0.0f;
+        const int n = juce::jlimit(1, kMaxPlanVerts, numWalls);
+        for (int i = 0; i < n; ++i)
+        {
+            lo += low[(size_t)(kSurfWall0 + i)];
+            hi += high[(size_t)(kSurfWall0 + i)];
+        }
+        lo /= (float)n;
+        hi /= (float)n;
+    }
+};
+
+/** a mirror image m along one axis (imageCoord): how often its path hits the wall at 0 ('lo') and
+    the wall at D ('hi') */
+inline void axisHits(int m, int &lo, int &hi) noexcept
+{
+    const int a = std::abs(m);
+    if (m >= 0)
+    {
+        hi = (a + 1) / 2;
+        lo = a / 2;
+    }
+    else
+    {
+        lo = (a + 1) / 2;
+        hi = a / 2;
+    }
+}
+
+/** a number that changes when a surface's material does (for the caches keyed on the room) */
+inline float surfKey(const RoomParams &r) noexcept
+{
+    uint32_t h = 2166136261u;
+    for (auto v : r.plan.surf)
+        h = (h ^ (uint32_t)(v + 2)) * 16777619u;
+    return (float)(h & 0xffffffu);
+}
 
 /** air absorption (energy, per metre) in the two bands */
 inline float airLow() noexcept
@@ -288,7 +393,9 @@ inline FloorPlan defaultDrawnPlan() noexcept
 
 inline void finishPlan(RoomParams &r, const FloorPlan &drawn) noexcept
 {
+    const auto surf = drawn.surf;
     r.plan = r.box() ? FloorPlan() : makeFloorPlan(r.shape, r.shapeAmt, drawn);
+    r.plan.surf = surf; // (the materials belong to the room, whatever its shape)
 }
 
 /** does a polygon cross itself? (the drawn plan must not) */
@@ -712,6 +819,15 @@ inline bool planImageOf(const PlanGeo &g, int k, const std::array<uint8_t, 3> &w
     return true;
 }
 
+/** the ears: 1.6 m (half the height in a low room), plus what the listener stands or jumps on */
+inline float listenerHeight(const RoomParams &r) noexcept
+{
+    const float z = juce::jmin(RoomParams::kEarHeight, r.H() * 0.5f);
+    if (r.listenerZ == 0.0f)
+        return z;
+    return juce::jlimit(0.3f, juce::jmax(0.3f, r.H() - 0.2f), z + r.listenerZ);
+}
+
 inline Vec3f listenerPos(const RoomParams &r) noexcept
 {
     if (!r.box())
@@ -720,11 +836,10 @@ inline Vec3f listenerPos(const RoomParams &r) noexcept
         float x = juce::jlimit(0.0f, 1.0f, r.listenerX) * r.W(),
               y = juce::jlimit(0.0f, 1.0f, r.listenerY) * r.L();
         keepInsidePlan(g, x, y, 0.3f);
-        return {x, y, juce::jmin(RoomParams::kEarHeight, r.H() * 0.5f)};
+        return {x, y, listenerHeight(r)};
     }
     return {juce::jlimit(0.3f, r.W() - 0.3f, r.listenerX * r.W()),
-            juce::jlimit(0.3f, r.L() - 0.3f, r.listenerY * r.L()),
-            juce::jmin(RoomParams::kEarHeight, r.H() * 0.5f)};
+            juce::jlimit(0.3f, r.L() - 0.3f, r.listenerY * r.L()), listenerHeight(r)};
 }
 
 /** a direction / distance seen from the listener -> point in the room (kept 0.3 m inside the walls)
@@ -825,6 +940,22 @@ inline PlanCorners planCorners (const PlanGeo& g) noexcept
     return c;
 }
 
+/** How much of a sound gets around an edge, from the detour it has to make (the way around minus
+    the straight line, in metres) - the rule noise barriers are designed with (Maekawa): what counts
+    is the detour measured in wavelengths, so the highs are lost first and a long way around costs
+    more than a short one with the same bend. At the shadow's edge the detour is 0 and nothing is
+    lost: stepping past a corner never jumps. 'bend' (0..1 = 0..180 degrees) adds a little for a
+    sharp turn. lossDb is what the low and middle range loses, above cutoffHz it falls further. */
+inline void diffractionLoss(float detour, float bend, float &lossDb, float &cutoffHz) noexcept
+{
+    const float d = juce::jmax(0.0f, detour);
+    // Fresnel number at 250 Hz: N = 2 d / lambda; loss = 10 log10 (1 + 20 N)
+    lossDb = juce::jmin(26.0f, 10.0f * std::log10(1.0f + 20.0f * 2.0f * d * 250.0f / kSpeedOfSoundRoom) +
+                                   4.0f * juce::jlimit(0.0f, 1.0f, bend));
+    // the frequency whose loss is 6 dB more than that of the lows: there the lowpass begins
+    cutoffHz = juce::jlimit(280.0f, 20000.0f, 250.0f * (4.0f + 3.0f / (29.2f * juce::jmax(1.0e-4f, d))));
+}
+
 /** the way from listener L to source S if a wall is in between: over one or two corners. Returns false if the
     line of sight is free (nothing to change). 'out' = where it is heard from (the first corner's direction,
     the whole way's length); lossDb / cutoff grow with how sharply the sound bends. */
@@ -880,10 +1011,9 @@ inline bool diffractedPath (const PlanGeo& g, const PlanCorners& c, Vec3f L, Vec
     out.az = juce::radiansToDegrees (std::atan2 (-(c.x[(size_t) first] - L.x), c.y[(size_t) first] - L.y));
     out.el = total > 1.0e-6f ? juce::radiansToDegrees (std::asin (juce::jlimit (-1.0f, 1.0f, dz / total))) : 0.0f;
     out.dist = juce::jmax (horiz, total);
-    // (at the shadow's edge the bend is 0: nothing jumps when you step past the corner)
+    // (at the shadow's edge the detour is 0: nothing jumps when you step past the corner)
     const float b = juce::jlimit (0.0f, 1.0f, bend / juce::MathConstants<float>::pi);
-    lossDb = 20.0f * b;                                   // (10 dB around a right angle, growing gently from the edge)
-    cutoffHz = 20000.0f / (1.0f + 40.0f * b);
+    diffractionLoss (total - std::sqrt (horiz * horiz + dz * dz), b, lossDb, cutoffHz);
     return true;
 }
 
@@ -924,20 +1054,34 @@ inline int imageSources(const RoomParams &r, const Vec3f &src, int order, ImageS
 /** Eyring decay time (s) of the room in one band */
 inline float eyringRt(const RoomParams &r, bool high, float air) noexcept
 {
-    const auto a = BandAbsorption::from(r);
+    const auto sa = SurfAbs::from(r);
+    const auto &ab = high ? sa.high : sa.low;
     const float W = r.W(), L = r.L(), H = r.H();
-    float V = W * L * H;
-    float Sw = 2.0f * (W * H + L * H), Sf = 2.0f * W * L;
+    float V = W * L * H, S = 0.0f, aS = 0.0f; // (every surface with its own absorption)
+    auto add = [&](int surf, float area)
+    {
+        S += area;
+        aS += ab[(size_t)surf] * area;
+    };
     if (!r.box())
     {
         const auto g = planGeo(r);
         V = g.area * H;
-        Sw = g.perimeter * H;
-        Sf = 2.0f * g.area;
+        add(kSurfFloor, g.area);
+        add(kSurfCeiling, g.area);
+        for (int i = 0; i < g.n; ++i)
+            add(kSurfWall0 + i, g.w[(size_t)i].len * H);
     }
-    const float S = Sw + Sf;
-    const float am =
-        ((high ? a.wallHigh : a.wallLow) * Sw + (high ? a.floorHigh : a.floorLow) * Sf) / S;
+    else
+    {
+        add(kSurfFloor, W * L);
+        add(kSurfCeiling, W * L);
+        add(kSurfWall0 + 0, W * H);
+        add(kSurfWall0 + 2, W * H);
+        add(kSurfWall0 + 1, L * H);
+        add(kSurfWall0 + 3, L * H);
+    }
+    const float am = aS / juce::jmax(1.0e-6f, S);
     const float m = high ? airHigh(air) : airLow();
     const float denom = -S * std::log(juce::jmax(1.0e-4f, 1.0f - am)) + 4.0f * m * V;
     return juce::jlimit(0.05f, 30.0f, 0.161f * V / juce::jmax(1.0e-4f, denom));
@@ -970,11 +1114,48 @@ struct RayResult
     bool valid = false;
 };
 
+/** decay time from the ensemble energy over time: least-squares line through -5 .. -35 dB of the
+    backward-integrated curve */
+inline float fitDecay(const std::vector<double> &e, float binSec)
+{
+    const int bins = (int)e.size();
+    std::vector<double> sch((size_t)bins);
+    double acc = 0;
+    for (int b = bins - 1; b >= 0; --b)
+    {
+        acc += e[(size_t)b];
+        sch[(size_t)b] = acc;
+    }
+    if (acc <= 0)
+        return 30.0f;
+    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+    int n = 0;
+    for (int b = 0; b < bins; ++b)
+    {
+        const double db = 10.0 * std::log10(juce::jmax(1e-30, sch[(size_t)b] / acc));
+        if (db > -5.0)
+            continue;
+        if (db < -35.0)
+            break;
+        const double x = static_cast<double>(b) * binSec;
+        sx += x;
+        sy += db;
+        sxx += x * x;
+        sxy += x * db;
+        ++n;
+    }
+    if (n < 3)
+        return 30.0f;
+    const double slope =
+        (n * sxy - sx * sy) / juce::jmax(1e-12, n * sxx - sx * sx); // dB per second
+    return slope < -1e-3 ? juce::jlimit(0.05f, 30.0f, (float)(-60.0 / slope)) : 30.0f;
+}
+
 inline RayResult traceRoom(const RoomParams &r, float air, int numRays = 3000,
                            uint32_t seed = 12345)
 {
     RayResult res;
-    const auto ab = BandAbsorption::from(r);
+    const auto ab = SurfAbs::from(r);
     const float W = r.W(), L = r.L(), H = r.H();
     constexpr float binSec = 0.005f, maxSec = 30.0f;
     const int bins = (int)(maxSec / binSec);
@@ -1058,9 +1239,14 @@ inline RayResult traceRoom(const RoomParams &r, float air, int numRays = 3000,
             p = {p.x + d.x * dist, p.y + d.y * dist, p.z + d.z * dist};
             el *= std::exp(-mL * dist);
             eh *= std::exp(-mH * dist);
-            const bool floor = axis == 2;
-            el *= 1.0 - (floor ? ab.floorLow : ab.wallLow);
-            eh *= 1.0 - (floor ? ab.floorHigh : ab.wallHigh);
+            // which surface (each has its own absorption)
+            const int surf =
+                axis == 2 ? (d.z > 0 ? kSurfCeiling : kSurfFloor)
+                          : (plan ? kSurfWall0 + wallHit
+                                  : (axis == 0 ? (d.x > 0 ? kSurfWall0 + 1 : kSurfWall0 + 3)
+                                               : (d.y > 0 ? kSurfWall0 + 2 : kSurfWall0 + 0)));
+            el *= 1.0 - ab.low[(size_t)surf];
+            eh *= 1.0 - ab.high[(size_t)surf];
             ++totalRefl;
             if (plan && axis == 0)
             {
@@ -1125,43 +1311,8 @@ inline RayResult traceRoom(const RoomParams &r, float air, int numRays = 3000,
             p.z = juce::jlimit(1.0e-4f, H - 1.0e-4f, p.z);
         }
     }
-    // decay time from the ensemble energy: least-squares line through -5 .. -35 dB of the
-    // backward-integrated curve
-    auto fit = [&](const std::vector<double> &e)
-    {
-        std::vector<double> sch((size_t)bins);
-        double acc = 0;
-        for (int b = bins - 1; b >= 0; --b)
-        {
-            acc += e[(size_t)b];
-            sch[(size_t)b] = acc;
-        }
-        if (acc <= 0)
-            return 30.0f;
-        double sx = 0, sy = 0, sxx = 0, sxy = 0;
-        int n = 0;
-        for (int b = 0; b < bins; ++b)
-        {
-            const double db = 10.0 * std::log10(juce::jmax(1e-30, sch[(size_t)b] / acc));
-            if (db > -5.0)
-                continue;
-            if (db < -35.0)
-                break;
-            const double x = static_cast<double>(b) * binSec;
-            sx += x;
-            sy += db;
-            sxx += x * x;
-            sxy += x * db;
-            ++n;
-        }
-        if (n < 3)
-            return 30.0f;
-        const double slope =
-            (n * sxy - sx * sy) / juce::jmax(1e-12, n * sxx - sx * sx); // dB per second
-        return slope < -1e-3 ? juce::jlimit(0.05f, 30.0f, (float)(-60.0 / slope)) : 30.0f;
-    };
-    res.rtLow = fit(eLow);
-    res.rtHigh = fit(eHigh);
+    res.rtLow = fitDecay(eLow, binSec);
+    res.rtHigh = fitDecay(eHigh, binSec);
     res.rays = numRays;
     res.reflections = totalRefl;
     res.valid = true;

@@ -616,8 +616,12 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
             "Die Pfeifen des Registers fliegen als Schwarm durch den Saal. "
             "\xe2\x80\x9eTiefe\xe2\x80\x9c = wie eigenwillig jede einzelne.",
             "Eine langsame Str\xc3\xb6mung tr\xc3\xa4gt die Pfeifen durch den Saal. "
-            "\xe2\x80\x9eTiefe\xe2\x80\x9c = Wirbel."};
-        for (int i = 0; i < 4; ++i)
+            "\xe2\x80\x9eTiefe\xe2\x80\x9c = Wirbel.",
+            "Die Pfeifen ruhen an ihrem Platz, bis etwas sie bewegt: du selbst im 3D-Saal "
+            "(\xe2\x80\x9ePfeifen: ich ziehe an / sto\xc3\x9f" "e ab / umkreisen mich / Sog\xe2\x80\x9c) oder der "
+            "H\xc3\xb6rer auf seinem Weg. \xe2\x80\x9eTiefe\xe2\x80\x9c = wie frei sie sind (klein: sie "
+            "kehren an ihren Platz zur\xc3\xbc" "ck); \xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = eigene Unruhe."};
+        for (int i = 0; i < 5; ++i)
             motionButtons[(size_t)(8 + i)].setTooltip(
                 u8(tips[i]) + u8(" Die Pfeifen sind dann K\xc3\xb6rper im Saal (Grundriss, Boden, "
                                  "Decke) \xe2\x80\x93 "
@@ -1185,9 +1189,13 @@ void SpaceView::resized()
         motionButtons[6].setBounds(at(m2, 2));
         // the motions in the Saal: a row of their own, after a label
         auto m3 = mb.removeFromTop(22);
-        motionSaalLabel = at(m3, 0);
-        for (int i = 8; i < 12; ++i)
-            motionButtons[(size_t)i].setBounds(at(m3, i - 7));
+        // (six narrower fields: the label and the five motions in the Saal)
+        const int bw3 = (m3.getWidth() - 20) / 6;
+        auto at3 = [&](int col)
+        { return juce::Rectangle<int>(m3.getX() + col * (bw3 + 4), m3.getY(), bw3, 20); };
+        motionSaalLabel = at3(0);
+        for (int i = 8; i < 13; ++i)
+            motionButtons[(size_t)i].setBounds(at3(i - 7));
         drawButton.setBounds(at(m2, 3));
         mb.removeFromTop(2);
         if (rateRow)

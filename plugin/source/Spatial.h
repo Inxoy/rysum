@@ -167,7 +167,8 @@ enum class Motion
     Flight, // "Flug": straight lines, bouncing off the walls
     Fall,   // "Fall": gravity, bouncing on the floor, thrown up again
     Swarm,  // "Schwarm": flocking
-    Flow    // "Strömung": carried by a slow current through the room
+    Flow,   // "Strömung": carried by a slow current through the room
+    Hover   // "Schweben": at rest where it is, until something moves it (the player: "Spieler")
 };
 
 inline juce::StringArray motionNames()
@@ -177,14 +178,15 @@ inline juce::StringArray motionNames()
         "Statisch",       "Rotation",          "Pendel",
         "Drift",          "Vertikal",          juce::String::fromUTF8("Spr\xc3\xbcnge"),
         "Gezeichnet",     "Schwebung",         "Flug (im Saal)",
-        "Fall (im Saal)", "Schwarm (im Saal)", juce::String::fromUTF8("Str\xc3\xb6mung (im Saal)")};
+        "Fall (im Saal)", "Schwarm (im Saal)", juce::String::fromUTF8("Str\xc3\xb6mung (im Saal)"),
+        "Schweben (im Saal)"};
 }
 
 /** the modes where a pipe is a body in the room (a place and a speed in the Saal, not a direction
  * around the listener) */
 inline bool isRoomMotion(int mode) noexcept
 {
-    return mode >= (int)Motion::Flight && mode <= (int)Motion::Flow;
+    return mode >= (int)Motion::Flight && mode <= (int)Motion::Hover;
 }
 
 /** how long / wide a pipe is (m): an 8' C is 2.4 m, every octave halves it (the 3D view draws it

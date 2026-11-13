@@ -6,6 +6,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "SpaceView.h"
+#include "WalkView.h"
 
 class SnapshotApp : public juce::JUCEApplication, private juce::Timer
 {
@@ -36,6 +37,327 @@ public:
         startTimer(100);
     }
 
+    /** RYSUM_ONLY_WALK: only the 3D view ("Begehen"), in several rooms and from several places
+        (RYSUM_WALK_OBJ = a model to load as well) */
+    void walkShots()
+    {
+        proc->setRateAndBufferSizeDetails(48000.0, 512);
+        proc->prepareToPlay(48000.0, 512);
+        auto setReal = [&](const juce::String &id, float v)
+        {
+            if (auto *q = proc->apvts.getParameter(id))
+                q->setValueNotifyingHost(q->convertTo0to1(v));
+        };
+        juce::AudioBuffer<float> st(
+            juce::jmax(2, proc->getTotalNumInputChannels(), proc->getTotalNumOutputChannels()),
+            512);
+        auto run = [&](int blocks, std::initializer_list<int> on)
+        {
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer mb;
+                if (b == 0)
+                    for (int n : on)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                st.clear();
+                proc->processBlock(st, mb);
+            }
+        };
+        setReal("simOn", 1.0f);
+        juce::SharedResourcePointer<rysum::ui::Assets> assets; // (fonts: alive while an editor is)
+        juce::SharedResourcePointer<rysum::ui::LookAndFeel> lnf;
+        rysum::ui::WalkView wv(*proc);
+        wv.setLookAndFeel(&lnf.get());
+        wv.setSize(1280, 760);
+        wv.setTestMode(true);
+        wv.setVisible(true);
+        auto shot = [&](const juce::String &name)
+        {
+            auto img = wv.createComponentSnapshot(wv.getLocalBounds(), true, 1.0f);
+            juce::PNGImageFormat png;
+            auto f = outDir.getChildFile(name);
+            f.deleteFile();
+            juce::FileOutputStream os(f);
+            png.writeImageToStream(img, os);
+            std::cout << "wrote " << f.getFullPathName() << "  (" << wv.renderStats() << ")"
+                      << std::endl;
+        };
+        struct View
+        {
+            float x, y, yaw, pitch;
+        };
+        const View views[]{{0, 0, 0, 0},     {0, 0, 0, -35},   {0, 0, 0, 40},    {3, -6, 60, -10},
+                           {-4, 5, -120, 5}, {5, 8, 90, -50},  {-5, -9, 180, 30}};
+        const int shapes[]{0, 1, 6, 7, 5, 2};
+        const auto only = juce::SystemStats::getEnvironmentVariable("RYSUM_WALK_SHAPE", {});
+        for (int sh : shapes)
+        {
+            if (only.isNotEmpty() && only.getIntValue() != sh)
+                continue;
+            setReal(RysumProcessor::roomParamId(0, "Shape"), (float)sh);
+            run(20, sh == shapes[0] ? std::initializer_list<int>{48, 55, 60, 64, 67}
+                                    : std::initializer_list<int>{});
+            int i = 0;
+            for (const auto &v : views)
+            {
+                wv.setPoseForTest(v.x, v.y, v.yaw);
+                wv.setPitchForTest(v.pitch);
+                run(4, {});
+                shot("walk_s" + juce::String(sh) + "_" + juce::String(i++) + ".png");
+            }
+        }
+        const auto obj = juce::SystemStats::getEnvironmentVariable("RYSUM_WALK_OBJ", {});
+        if (obj.isNotEmpty())
+        {
+            setReal(RysumProcessor::roomParamId(0, "Shape"), 0.0f);
+            auto objFile = obj == "test" ? outDir.getChildFile("test_kapelle.obj") : juce::File(obj);
+            if (obj == "test")
+            {
+                objFile.replaceWithText(rysum::makeTestObj());
+                proc->walkZUp = true;
+            }
+            wv.loadModelForTest(objFile);
+            run(20, {});
+            int i = 0;
+            for (const auto &v : views)
+            {
+                wv.setPoseForTest(v.x, v.y, v.yaw);
+                wv.setPitchForTest(v.pitch);
+                run(4, {});
+                shot("walk_obj_" + juce::String(i++) + ".png");
+            }
+        }
+        if (std::getenv("RYSUM_WALK_NOCHECKS") == nullptr)
+            walkChecks(wv, setReal, run, shot);
+        std::cout << "walk: done" << std::endl;
+        wv.setLookAndFeel(nullptr);
+        std::cout << "walk: look reset" << std::endl;
+    }
+
+    /** the walk itself: smooth walking, a jump, materials of single surfaces, a model that stops the
+        walker and hides pipes, the player pulling the pipes */
+    template <typename SetReal, typename Run, typename Shot>
+    void walkChecks(rysum::ui::WalkView &wv, SetReal &&setReal, Run &&run, Shot &&shot)
+    {
+        using namespace rysum;
+        auto say = [](const juce::String &what, bool ok)
+        { std::cout << what << (ok ? "  ok" : "  FAIL") << std::endl; };
+        auto roomOf = [&]
+        {
+            RoomParams r = proc->readParams().roomAt(0);
+            finishPlan(r, proc->getDrawnPlan(0));
+            return r;
+        };
+        proc->clearWalkModel();
+        setReal(RysumProcessor::roomParamId(0, "Shape"), 0.0f);
+        run(10, {});
+        // ---- smooth walking: the speed builds up, and dies away after the key is let go
+        wv.setPoseForTest(0, 0, 0);
+        const float y0 = proc->walkPose[1].load();
+        for (int i = 0; i < 6; ++i)
+            wv.advanceForTest(1.0 / 60.0, true, false, false, false, false);
+        const float yEarly = proc->walkPose[1].load() - y0;
+        for (int i = 0; i < 54; ++i)
+            wv.advanceForTest(1.0 / 60.0, true, false, false, false, false);
+        const float y1 = proc->walkPose[1].load() - y0;
+        for (int i = 0; i < 60; ++i)
+            wv.advanceForTest(1.0 / 60.0, false, false, false, false, false);
+        const float y2 = proc->walkPose[1].load() - y0;
+        say("walk: 0.1 s " + juce::String(yEarly, 3) + " m (at once it would be 0.16), 1 s " +
+                juce::String(y1, 2) + " m, coasting on " + juce::String(y2 - y1, 2) + " m",
+            yEarly > 0.01f && yEarly < 0.1f && y1 > 1.2f && y1 < 1.6f && y2 - y1 > 0.05f &&
+                y2 - y1 < 0.5f);
+        // ---- a jump: up, and down again
+        float top = 0.0f;
+        wv.advanceForTest(1.0 / 60.0, false, false, false, false, true);
+        int frames = 1;
+        for (; frames < 240; ++frames)
+        {
+            wv.advanceForTest(1.0 / 60.0, false, false, false, false, false);
+            top = juce::jmax(top, wv.heightForTest());
+            if (frames > 3 && wv.heightForTest() <= 0.0f)
+                break;
+        }
+        say("jump: " + juce::String(top, 2) + " m high, back on the floor after " +
+                juce::String(frames / 60.0, 2) + " s, the engine's listener at " +
+                juce::String(proc->engine.viewZ.load(), 2) + " m",
+            top > 0.6f && top < 1.2f && frames < 80 && wv.heightForTest() == 0.0f &&
+                proc->engine.viewZ.load() == 0.0f);
+        // ---- a material for one wall: point at the right wall, M -> stone ... ; the reverb follows
+        wv.setPoseForTest(0, 0, -90);
+        run(4, {});
+        shot("walk_mat_0.png");
+        const int aim = wv.aimForTest();
+        wv.cycleMaterialForTest();
+        const int m1 = proc->getSurfaceMaterial(0, aim);
+        for (int i = 0; i < 3; ++i)
+            wv.cycleMaterialForTest(); // -> glass
+        const int m2 = proc->getSurfaceMaterial(0, aim);
+        say("material: the cross points at surface " + juce::String(aim) + " (right wall = 3), M: " +
+                juce::String(m1) + ", then " + juce::String(m2) + " (" +
+                juce::String(surfMaterial(m2).name) + ")",
+            aim == kSurfWall0 + 1 && m1 == 0 && m2 == 3);
+        proc->setSurfaceMaterial(0, kSurfFloor, 2);        // a wooden floor
+        proc->setSurfaceMaterial(0, kSurfWall0 + 2, 5);    // a mirror in front
+        run(6, {});
+        wv.setPoseForTest(0, 0, -50);
+        wv.setPitchForTest(-8);
+        run(4, {});
+        shot("walk_mat_1.png");
+        {
+            // the decay: all hard against one wall a curtain / all walls curtains
+            RoomParams r = roomOf();
+            auto rt = [&](std::array<int8_t, kMaxSurf> surf)
+            {
+                r.plan.surf = surf;
+                return traceRoom(r, 0.3f, 1500).rtLow;
+            };
+            auto all = FloorPlan::noSurf();
+            all.fill(0);
+            auto one = all;
+            one[kSurfWall0 + 1] = 4;
+            auto walls = all;
+            for (int i = 0; i < 4; ++i)
+                walls[(size_t)(kSurfWall0 + i)] = 4;
+            const float tAll = rt(all), tOne = rt(one), tWalls = rt(walls);
+            r.plan.surf = one;
+            const float eOne = eyringRt(r, false, 0.3f);
+            say("material: T30 all stone " + juce::String(tAll, 2) + " s, one wall a curtain " +
+                    juce::String(tOne, 2) + " s (Eyring " + juce::String(eOne, 2) +
+                    " s), all walls curtains " + juce::String(tWalls, 2) + " s",
+                tOne < 0.8f * tAll && tWalls < 0.7f * tOne && eOne < tAll);
+        }
+        {
+            // a state round trip keeps the materials
+            juce::MemoryBlock mb;
+            proc->getStateInformation(mb);
+            proc->setSurfaceMaterial(0, -1, -1);
+            const bool cleared = proc->getSurfaceMaterial(0, kSurfFloor) == -1;
+            proc->setStateInformation(mb.getData(), (int)mb.getSize());
+            say("material: stored with the project",
+                cleared && proc->getSurfaceMaterial(0, kSurfFloor) == 2 &&
+                    proc->getSurfaceMaterial(0, kSurfWall0 + 1) == 3 &&
+                    proc->getSurfaceMaterial(0, kSurfWall0 + 2) == 5);
+            proc->setSurfaceMaterial(0, -1, -1);
+        }
+        // ---- a model: the chapel. Its walls stop the walker, its altar carries, its pillars hide pipes
+        {
+            auto objFile = outDir.getChildFile("test_kapelle.obj");
+            objFile.replaceWithText(makeTestObj());
+            proc->walkZUp = true;
+            wv.loadModelForTest(objFile);
+            // the Saal as large as the model
+            setReal(RysumProcessor::roomParamId(0, "W"), 12.8f);
+            setReal(RysumProcessor::roomParamId(0, "L"), 24.8f);
+            setReal(RysumProcessor::roomParamId(0, "H"), 9.2f);
+            setReal(RysumProcessor::roomParamId(0, "Size"), 1.0f);
+            run(20, {});
+            const auto ac = proc->getWalkAcoustics();
+            const RoomParams r = roomOf();
+            const auto home = listenerPos(r);
+            say("model: " + juce::String(ac != nullptr ? (int)ac->tris.size() : 0) +
+                    " triangles for the rays, the engine uses it: " +
+                    juce::String((int)proc->engine.meshActive.load()),
+                ac != nullptr && ac->tris.size() > 100 && proc->engine.meshActive.load());
+            if (ac != nullptr)
+            {
+                // a pillar stands at x 3.0 .. 3.6, y 4.4 .. 5.0 (the model is moved by its corner:
+                // +0.4 m): walking into it from the left stops in front of it
+                wv.setPoseForTest(1.5f - home.x, 4.7f - home.y, -90);
+                for (int i = 0; i < 180; ++i)
+                    wv.advanceForTest(1.0 / 60.0, true, false, false, false, false);
+                const float xStop = home.x + proc->walkPose[0].load();
+                say("model: walking into a pillar stops at x = " + juce::String(xStop, 2) +
+                        " m (the pillar begins at 3.0)",
+                    xStop > 2.2f && xStop < 3.0f);
+                shot("walk_obj_pillar.png");
+                // the same walk a metre to the side passes
+                wv.setPoseForTest(1.5f - home.x, 6.5f - home.y, -90);
+                for (int i = 0; i < 180; ++i)
+                    wv.advanceForTest(1.0 / 60.0, true, false, false, false, false);
+                say("model: beside the pillar the way is free (x = " +
+                        juce::String(home.x + proc->walkPose[0].load(), 2) + " m)",
+                    home.x + proc->walkPose[0].load() > 5.0f);
+                // line of sight: behind the pillar a point is hidden, the way around bends
+                Pos heard;
+                float loss = 0, fc = 0;
+                const Vec3f L{2.0f, 4.7f, 1.6f}, S{6.0f, 4.7f, 1.6f}, S2{6.0f, 7.5f, 1.6f};
+                const bool hid = meshDetour(*ac, L, S, heard, loss, fc);
+                const bool hid2 = meshDetour(*ac, L, S2, heard, loss, fc);
+                Pos h1;
+                float l1 = 0, f1 = 0;
+                meshDetour(*ac, L, S, h1, l1, f1);
+                say("model: a pipe behind the pillar is hidden (" + juce::String(l1, 1) +
+                        " dB, lowpass " + juce::String(f1, 0) + " Hz, heard from " +
+                        juce::String(h1.az, 0) + " deg), one beside it is in sight",
+                    hid && !hid2 && l1 > 0.2f && l1 < 12.0f && f1 < 15000.0f);
+                // the reverb: rays through the model against the bare shoebox
+                const auto bare = traceRoom(r, 0.3f, 1500), inModel = traceMesh(*ac, r, 0.3f, 1500);
+                say("model: T30 traced through the model " + juce::String(inModel.rtLow, 2) +
+                        " s, the bare Saal " + juce::String(bare.rtLow, 2) + " s",
+                    inModel.valid && inModel.rtLow > 0.3f * bare.rtLow &&
+                        inModel.rtLow < 1.5f * bare.rtLow);
+                // the engine: a chord, the listener behind a pillar -> some pipes around the corner
+                wv.setPoseForTest(2.0f - home.x, 4.7f - home.y, -90);
+                run(60, {48, 52, 55, 60, 64, 67, 72});
+                say("model: the engine hears " + juce::String(proc->engine.hiddenNow.load()) +
+                        " sounding pipes around the model's corners",
+                    proc->engine.hiddenNow.load() >= 0);
+                wv.setPoseForTest(0, -6, 0);
+                wv.setPitchForTest(25);
+                run(4, {});
+                shot("walk_obj_up.png");
+                wv.setPoseForTest(0, 0, 150);
+                wv.setPitchForTest(-5);
+                run(4, {});
+                shot("walk_obj_door.png");
+            }
+            proc->clearWalkModel();
+        }
+        // ---- the player and the pipes: a stop hovers in the Saal, the player pulls / pushes
+        {
+            setReal(RysumProcessor::motionParamId(0), (float)(int)Motion::Hover);
+            setReal(RysumProcessor::depthParamId(0), 180.0f);
+            setReal("lvPlayerForce", 1.0f);
+            wv.setPoseForTest(0, 0, 0);
+            run(30, {});
+            const RoomParams r = roomOf();
+            const auto home = listenerPos(r);
+            auto meanDist = [&]
+            {
+                float sum = 0.0f;
+                int n = 0;
+                for (int k = 0; k < kNumKeys; ++k)
+                {
+                    Vec3f b;
+                    if (!proc->engine.bodyAt(0, k, b))
+                        continue;
+                    sum += std::sqrt((b.x - home.x) * (b.x - home.x) + (b.y - home.y) * (b.y - home.y));
+                    ++n;
+                }
+                return n > 0 ? sum / (float)n : -1.0f;
+            };
+            const float d0 = meanDist();
+            run(200, {});
+            const float dRest = meanDist();
+            setReal("lvPlayerMode", 1.0f);
+            run(300, {});
+            const float dPull = meanDist();
+            wv.setPoseForTest(0, 0, 0);
+            shot("walk_player_pull.png");
+            setReal("lvPlayerMode", 2.0f);
+            run(300, {});
+            const float dPush = meanDist();
+            shot("walk_player_push.png");
+            say("player: the hovering pipes rest at " + juce::String(d0, 2) + " m (" +
+                    juce::String(dRest, 2) + " m after 2 s), pulled to " + juce::String(dPull, 2) +
+                    " m, pushed away to " + juce::String(dPush, 2) + " m",
+                d0 > 0.0f && std::abs(dRest - d0) < 0.2f && dPull < d0 - 1.0f && dPush > dPull + 2.0f);
+            setReal("lvPlayerMode", 0.0f);
+            setReal(RysumProcessor::motionParamId(0), 0.0f);
+        }
+    }
+
     void timerCallback() override
     {
         if (proc->getLibrary() == nullptr && ++waited < 200)
@@ -47,6 +369,14 @@ public:
                 testScalaTuning();
             else
                 testMidiTuning();
+            quit();
+            return;
+        }
+        if (std::getenv("RYSUM_ONLY_WALK") != nullptr)
+        {
+            stopTimer();
+            walkShots();
+            std::cout << "walk: view gone" << std::endl;
             quit();
             return;
         }
@@ -2391,6 +2721,7 @@ public:
     {
         editor.reset();
         proc.reset();
+        std::cout << "shutdown: done" << std::endl;
     }
 
 private:

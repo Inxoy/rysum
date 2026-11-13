@@ -22,6 +22,8 @@ struct BodyRoom
 {
     RoomParams r;
     PlanGeo geo;
+    SurfAbs abs;                 // every surface with its own absorption (how dull a knock on it is)
+    Vec3f player, playerVel;     // the listener in this room (the pipes may follow or flee it)
     bool box = true, valid = false;
     float W = 14, L = 28, H = 11;
     Vec3f home;
@@ -57,6 +59,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
     {
         for (int s = 0; s < kNumStops; ++s) { bodyOn[(size_t) s] = false; bodyMode[(size_t) s] = p.motionMode[(size_t) s]; }
         bodySamples = 0; bodyStepCount = 0;
+        playerOk.fill (false);
         return;
     }
 
@@ -75,6 +78,20 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         br.W = br.r.W(); br.L = br.r.L(); br.H = br.r.H();
         br.home = listenerPos (br.r);
         homeX[(size_t) ri] = br.home.x; homeY[(size_t) ri] = br.home.y; homeZ[(size_t) ri] = br.home.z;
+        br.abs = SurfAbs::from (br.r);
+        // the player: where the listener stands now (walked there, or jumping), and how fast it moves
+        {
+            const Vec3f P = listenerPos (roomsEr[(size_t) ri]);
+            auto& pp = playerPos[(size_t) ri];
+            auto& pv = playerVel[(size_t) ri];
+            if (! playerOk[(size_t) ri] || blockSeconds <= 0.0) { pp = P; pv = {}; playerOk[(size_t) ri] = true; }
+            const float inv = blockSeconds > 1.0e-6 ? (float) (1.0 / blockSeconds) : 0.0f;
+            const Vec3f raw { juce::jlimit (-12.0f, 12.0f, (P.x - pp.x) * inv), juce::jlimit (-12.0f, 12.0f, (P.y - pp.y) * inv), juce::jlimit (-12.0f, 12.0f, (P.z - pp.z) * inv) };
+            const float k = 1.0f - std::exp (-(float) blockSeconds / 0.08f);
+            pv = { pv.x + k * (raw.x - pv.x), pv.y + k * (raw.y - pv.y), pv.z + k * (raw.z - pv.z) };
+            pp = P;
+            br.player = P; br.playerVel = pv;
+        }
         br.valid = true;
     }
 
@@ -115,7 +132,9 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 float dx = b.rng.bi(), dy = b.rng.bi(), dz = 0.4f * b.rng.bi();
                 const float l = juce::jmax (1.0e-3f, len3 (dx, dy, dz));
                 const float v0 = mode == (int) Motion::Fall ? 0.0f : speed;
-                b.vx = dx / l * v0; b.vy = dy / l * v0; b.vz = dz / l * v0;
+                const float v1 = mode == (int) Motion::Hover ? 0.0f : v0;
+                b.vx = dx / l * v1; b.vy = dy / l * v1; b.vz = dz / l * v1;
+                b.hx = b.x; b.hy = b.y; b.hz = b.z;
                 b.rest = 0.0f;
             }
         }
@@ -124,7 +143,11 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         const uint64_t sounding = soundingMask[(size_t) s].load();
         const bool knocks = lv.impLevel > 0.0f && p.stopOn[(size_t) s];
         // how bouncy the surfaces are in this mode
-        const float eWall = mode == (int) Motion::Flight ? 1.0f : (mode == (int) Motion::Fall ? 0.3f + 0.65f * depth : (mode == (int) Motion::Swarm ? 0.8f : 0.5f));
+        const float eWall = mode == (int) Motion::Flight ? 1.0f : (mode == (int) Motion::Fall ? 0.3f + 0.65f * depth : (mode == (int) Motion::Swarm ? 0.8f : (mode == (int) Motion::Hover ? 0.7f : 0.5f)));
+        // the player's force on this stop's pipes
+        const int pMode = lv.playerMode;
+        const float pForce = juce::jlimit (0.0f, 1.0f, lv.playerForce), pRange = juce::jlimit (0.5f, 30.0f, lv.playerRange);
+        const bool pOn = pMode > 0 && pForce > 0.0f;
         const float eFloor = mode == (int) Motion::Fall ? 0.3f + 0.65f * depth : eWall;
 
         // Schwarm: the flock's middle and heading, once per 1/60 s (flocking per stop)
@@ -207,6 +230,18 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                         if (v > 1.0e-4f) { const float f = 1.0f + (speed / v - 1.0f) * juce::jmin (1.0f, 3.0f * h); b.vx *= f; b.vy *= f; b.vz *= f; }
                         break;
                     }
+                    case Motion::Hover:
+                    {
+                        // at rest: the air slows it, and it is drawn back to where it started (Tiefe: how free it is -
+                        // at full depth nothing calls it back); Geschwindigkeit: a slight unrest of its own
+                        const float freeAmt = depth, back = 2.5f * (1.0f - freeAmt) * (1.0f - freeAmt);
+                        b.vx += (back * (b.hx - b.x) + 0.25f * speed * b.rng.bi()) * h;
+                        b.vy += (back * (b.hy - b.y) + 0.25f * speed * b.rng.bi()) * h;
+                        b.vz += (back * (b.hz - b.z) + 0.12f * speed * b.rng.bi()) * h;
+                        const float damp = 1.0f - (0.35f + 1.6f * (1.0f - freeAmt)) * h;
+                        b.vx *= damp; b.vy *= damp; b.vz *= damp;
+                        break;
+                    }
                     case Motion::Flow:
                     default:
                     {
@@ -223,6 +258,40 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     }
                 }
 
+                // ---- the player: a mass the pipes fall towards, or flee; a centre they circle; a wake that takes them along
+                if (pOn)
+                {
+                    const float rx = br.player.x - b.x, ry = br.player.y - b.y, rz = br.player.z - b.z;
+                    const float d2 = rx * rx + ry * ry + rz * rz, d = std::sqrt (d2) + 1.0e-4f;
+                    // (like gravity, softened near the player: strong within the range, never endless)
+                    const float acc = 30.0f * pForce * pRange * pRange / (d2 + 0.3f * pRange * pRange);
+                    const float ux = rx / d, uy = ry / d, uz = rz / d;
+                    switch (pMode)
+                    {
+                        case 1:  b.vx += acc * ux * h; b.vy += acc * uy * h; b.vz += acc * uz * h; break;
+                        case 2:  b.vx -= acc * ux * h; b.vy -= acc * uy * h; b.vz -= acc * uz * h; break;
+                        case 3:
+                        {
+                            // pulled in, and steered onto the circle whose speed holds it there (around the upright axis)
+                            b.vx += acc * ux * h; b.vy += acc * uy * h; b.vz += 0.5f * acc * uz * h;
+                            const float dh = std::sqrt (rx * rx + ry * ry) + 1.0e-4f;
+                            const float tx = -ry / dh, ty = rx / dh, vc = std::sqrt (acc * dh);
+                            const float k2 = juce::jmin (1.0f, 1.5f * h);
+                            b.vx += (br.playerVel.x + vc * tx - b.vx) * k2; b.vy += (br.playerVel.y + vc * ty - b.vy) * k2;
+                            break;
+                        }
+                        default:
+                        {
+                            // the wake: near the player a pipe takes on the player's speed
+                            const float w = juce::jmin (1.0f, 6.0f * pForce * pRange * pRange / (d2 + pRange * pRange) * h);
+                            b.vx += (br.playerVel.x - b.vx) * w; b.vy += (br.playerVel.y - b.vy) * w; b.vz += (br.playerVel.z - b.vz) * w;
+                            break;
+                        }
+                    }
+                    // (never through the player: pushed out of an arm's length)
+                    if (d < 0.45f && pMode != 2) { b.vx -= 20.0f * ux * h; b.vy -= 20.0f * uy * h; }
+                }
+
                 // ---- move, and meet the room
                 const float vMax = kMaxSpeed * 1.5f;
                 const float v = len3 (b.vx, b.vy, b.vz);
@@ -235,14 +304,14 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 // floor and ceiling
                 if (b.z < zMin)
                 {
-                    if (-b.vz > hitSpeed) { hitSpeed = -b.vz; floorHit = true; hitAbs = br.r.absFloor; }
+                    if (-b.vz > hitSpeed) { hitSpeed = -b.vz; floorHit = true; hitAbs = br.abs.low[kSurfFloor]; }
                     b.z = zMin + (zMin - b.z) * eFloor;
                     b.vz = -b.vz * eFloor;
                     if (std::abs (b.vz) < 0.05f) b.vz = 0.0f;
                 }
                 else if (b.z > zMax)
                 {
-                    if (b.vz > hitSpeed) { hitSpeed = b.vz; floorHit = true; hitAbs = br.r.absFloor; }
+                    if (b.vz > hitSpeed) { hitSpeed = b.vz; floorHit = true; hitAbs = br.abs.low[kSurfCeiling]; }
                     b.z = zMax - (b.z - zMax) * eWall;
                     b.vz = -b.vz * eWall;
                 }
@@ -250,6 +319,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 if (! br.free (b.x, b.y, kWallMargin))
                 {
                     float nx = 0.0f, ny = 0.0f, inside = 0.0f;
+                    int wallSurf = kSurfWall0;
                     if (br.box)
                     {
                         if (b.x < kWallMargin)               { nx = 1.0f;  inside = b.x - kWallMargin; }
@@ -258,6 +328,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                         else if (b.y > br.L - kWallMargin)   { ny = -1.0f; inside = juce::jmin (inside, br.L - kWallMargin - b.y); }
                         const float nl = std::sqrt (nx * nx + ny * ny);
                         if (nl > 0.0f) { nx /= nl; ny /= nl; }
+                        wallSurf = kSurfWall0 + (std::abs (nx) >= std::abs (ny) ? (nx > 0.0f ? 3 : 1) : (ny > 0.0f ? 0 : 2));
                     }
                     else
                     {
@@ -266,11 +337,12 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                         const auto& w = br.geo.w[(size_t) wi];
                         nx = w.nx; ny = w.ny;
                         inside = w.dist (b.x, b.y) - kWallMargin;
+                        wallSurf = kSurfWall0 + juce::jlimit (0, kMaxPlanVerts - 1, wi);
                     }
                     const float vn = b.vx * nx + b.vy * ny;
                     if (vn < 0.0f)
                     {
-                        if (-vn > hitSpeed) { hitSpeed = -vn; floorHit = false; hitAbs = br.r.absWalls; }
+                        if (-vn > hitSpeed) { hitSpeed = -vn; floorHit = false; hitAbs = br.abs.low[(size_t) wallSurf]; }
                         b.vx -= (1.0f + eWall) * vn * nx; b.vy -= (1.0f + eWall) * vn * ny;
                         if (mode == (int) Motion::Flight && depth > 0.0f)
                         {

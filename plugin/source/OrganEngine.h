@@ -2,6 +2,7 @@
 
 #include "Common.h"
 #include "Degrade.h"
+#include "MeshAcoustics.h"
 #include "Modulation.h"
 #include "RoomSim.h"
 #include "RoomTail.h"
@@ -144,6 +145,12 @@ struct LiveParams
     float impLevel = 0.0f; // linear (0 = silent)
     bool impAll = false;   // false: only sounding pipes knock, true: every pipe of a pulled stop
     float impRing = 0.6f;  // s: how long the struck pipe rings
+    // Spieler: the listener (walking in the 3D view, or on its automatic way) moves the pipes that
+    // are bodies in the Saal (the room motion modes; "Schweben" is made for it)
+    int playerMode = 0; // 0 = nothing, 1 = pulls them, 2 = pushes them away, 3 = they circle,
+                        // 4 = drags them along in its wake
+    float playerForce = 0.5f; // 0..1
+    float playerRange = 4.0f; // m: within this the force is strong
 };
 
 struct EngineParams
@@ -397,6 +404,14 @@ public:
     //      like binYaw)
     std::atomic<bool> viewWalkOn{false};
     std::atomic<float> viewX{0.0f}, viewY{0.0f}, viewYaw{0.0f};
+    std::atomic<float> viewZ{0.0f}; // m above standing on the Saal's floor (a jump, a step)
+    /** a loaded room model (Saal 1): pipes behind its walls are heard around them. Message thread;
+        the caller keeps the model alive for as long as the engine may use it. */
+    void setMesh(std::shared_ptr<const MeshAcoustics> m) noexcept
+    {
+        std::atomic_store(&meshShared, std::move(m));
+    }
+    std::atomic<bool> meshActive{false}; // the model hides pipes right now (for the display)
     std::atomic<int> hiddenNow{0}; // sounding pipes heard around a corner (out of sight)
 
     // ---- room motion (Flug, Fall, Schwarm, Strömung): every pipe a body in the Saal, for the
@@ -541,6 +556,14 @@ private:
               hidAc = 1.0f; // out of sight: the direct sound comes around a corner, duller (1 =
                             // open; target, now)
         bool hasBody = false;
+        // a loaded model: what was found the last time (searched again when listener or pipe moved)
+        struct MeshOcc
+        {
+            Vec3f L{}, S{};
+            Pos heard{};
+            float loss = 0.0f, fc = 20000.0f;
+            bool valid = false, blocked = false;
+        } mocc;
         Vec3f bodyPos{};    // room motion: where the pipe is in the Saal (this block)
         WindChaos chaos;    // wind model 2: resonances, intermittent jet, hiss
         float chAir = 0.0f; // its own air filter
@@ -660,7 +683,7 @@ private:
         std::array<ErTap, kMaxTaps> taps{};
         // what the taps were computed from: unchanged (a pipe that does not move) = nothing to
         // recompute
-        static constexpr int kKey = 21;
+        static constexpr int kKey = 23;
         std::array<float, kKey> key{};
         bool keyValid = false;
         // polygon rooms: where the visible paths were last found, and from which plan
@@ -948,6 +971,7 @@ private:
     struct Body
     {
         float x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, rest = 0;
+        float hx = 0, hy = 0, hz = 0; // where it started ("Schweben" comes back to it)
         XorShift rng{1};
     };
     std::array<std::array<Body, kNumKeys>, kNumStops> bodies{};
@@ -993,6 +1017,14 @@ private:
     double treadPhase = 0.0, treadTone = 0.0, treadLast = -1.0e18;
     float treadEnv = 0.0f, treadLp = 0.0f, treadLp2 = 0.0f;
     float walkX = 0.0f, walkY = 0.0f;
+    float walkZ = 0.0f; // the listener's height above standing (3D view)
+    // the room model of Saal 1 (line of sight), and how many searches a block may still do
+    std::shared_ptr<const MeshAcoustics> meshShared, meshNow;
+    bool meshOn = false;
+    mutable int meshBudget = 0;
+    // the player (the walked listener) as the flying pipes feel it: place and speed per room
+    std::array<Vec3f, kNumRooms> playerPos{}, playerVel{};
+    std::array<bool, kNumRooms> playerOk{};
     double walkPhase = 0.0;
     bool liveWalk = false;
     std::array<RoomParams, kNumRooms> roomsEr{}; // the rooms as the walking listener stands in them
@@ -1012,7 +1044,7 @@ private:
        stands: false if nothing is in the way; else where it is heard from and how much is lost */
     /** body: the pipe's own place in the room (room motion), else it is placed from "home" */
     int aroundCorner(int room, Pos home, Pos &heard, float &lossDb, float &cutoffHz,
-                     const Vec3f *body = nullptr)
+                     const Vec3f *body = nullptr, Voice::MeshOcc *cache = nullptr)
         const noexcept; // 0 = not walking in a shaped room, 1 = in sight, 2 = around a corner
     // sympathetic pipes
     static constexpr int kSymp = 16;

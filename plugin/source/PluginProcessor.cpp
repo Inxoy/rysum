@@ -1085,6 +1085,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                 return v < 1.0f ? String(roundToInt(v * 1000.0f)) + " ms"
                                 : String(v, v < 10.0f ? 2 : 1) + " s";
             })));
+    // Spieler: the walked listener moves the pipes that are bodies in the Saal
+    l.add(std::make_unique<AudioParameterChoice>(
+        ParameterID{"lvPlayerMode", 1}, "Spieler bewegt Pfeifen",
+        StringArray{"aus", "zieht an", String::fromUTF8("st\xc3\xb6\xc3\x9ft ab"), "Umlaufbahn",
+                    "Sog"},
+        0));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvPlayerForce", 1}, "Spieler Kraft", NormalisableRange<float>(0.0f, 1.0f, 0.001f),
+        0.5f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(roundToInt(v * 100.0f)) + " %"; })));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvPlayerRange", 1}, "Spieler Reichweite",
+        NormalisableRange<float>(0.5f, 20.0f, 0.01f, 0.5f), 4.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(v, 1) + " m"; })));
     return l;
 }
 
@@ -1560,6 +1576,9 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         lv.impLevel = Lv(lvImpLevel) <= -59.9f ? 0.0f : dbToGain(Lv(lvImpLevel));
         lv.impAll = Lv(lvImpSrc) > 0.5f;
         lv.impRing = Lv(lvImpRing);
+        lv.playerMode = juce::roundToInt(Lv(lvPlayerMode));
+        lv.playerForce = Lv(lvPlayerForce);
+        lv.playerRange = Lv(lvPlayerRange);
     }
     p.windModel = juce::roundToInt(V(ix.windModel));
 
@@ -2496,9 +2515,67 @@ void RysumProcessor::setDrawnPlan(int room, const rysum::FloorPlan &f)
 {
     if (room < 0 || room >= rysum::kNumRooms)
         return;
-    drawnPlans[(size_t)room] = f;
-    engine.setDrawnPlan(room, f);
+    // (the materials of the surfaces belong to the room: a new outline keeps them)
+    auto g = f;
+    g.surf = drawnPlans[(size_t)room].surf;
+    drawnPlans[(size_t)room] = g;
+    engine.setDrawnPlan(room, g);
     ++changeCounter;
+}
+
+void RysumProcessor::setSurfaceMaterial(int room, int surf, int material)
+{
+    if (room < 0 || room >= rysum::kNumRooms || surf >= rysum::kMaxSurf)
+        return;
+    auto &d = drawnPlans[(size_t)room];
+    const auto m = (int8_t)juce::jlimit(-1, rysum::kNumSurfMaterials - 1, material);
+    if (surf < 0)
+        d.surf.fill(m); // all of them
+    else
+        d.surf[(size_t)surf] = m;
+    engine.setDrawnPlan(room, d);
+    ++changeCounter;
+}
+
+void RysumProcessor::setWalkHear(bool on)
+{
+    walkHear = on;
+    engine.setMesh(on ? getWalkAcoustics() : nullptr);
+    ++changeCounter;
+}
+
+void RysumProcessor::applyWalkAcoustics()
+{
+    // the model's triangles in a tree for ray casts (line of sight, the reverb's rays, walking)
+    const auto mesh = getWalkMesh();
+    std::shared_ptr<const rysum::MeshAcoustics> ac;
+    if (mesh != nullptr && !mesh->tris.empty())
+    {
+        std::vector<float> v;
+        v.reserve(mesh->tris.size() * 9);
+        for (const auto &t : mesh->tris)
+            for (const auto &q : {t.a, t.b, t.c})
+            {
+                v.push_back(q.x);
+                v.push_back(q.y);
+                v.push_back(q.z);
+            }
+        ac = rysum::MeshAcoustics::build(v.data(), (int)mesh->tris.size(),
+                                         {mesh->size.x, mesh->size.y, mesh->size.z}, ++walkAcSerial);
+    }
+    const juce::ScopedLock sl(walkAcLock);
+    walkAcKeep[(size_t)(walkAcKeepPos++ & 3u)] = ac;
+    std::atomic_store(&walkAc, ac);
+    engine.setMesh(walkHear ? ac : nullptr);
+    ++changeCounter;
+}
+
+static juce::String surfString(const rysum::FloorPlan &f)
+{
+    juce::StringArray v;
+    for (auto m : f.surf)
+        v.add(juce::String((int)m));
+    return v.joinIntoString(",");
 }
 
 static juce::String planString(const rysum::FloorPlan &f)
@@ -2544,7 +2621,12 @@ juce::String RysumProcessor::roomKey(int room) const
            q(engine.roomAir.load(), 0.02f) + "|" +
            juce::String(juce::jmin(2, engine.roomOutOrder.load())) + "|" +
            juce::String(hostRate.load(), 0) +
-           (r.box() ? juce::String() : "|" + juce::String(r.shape) + "|" + planString(r.plan));
+           (r.box() ? juce::String() : "|" + juce::String(r.shape) + "|" + planString(r.plan)) +
+           (r.plan.anySurf() ? "|s" + surfString(r.plan) : juce::String()) +
+           // (Saal 1 with a model that is heard: the rays go through the model)
+           (room == 0 && walkHear && getWalkAcoustics() != nullptr
+                ? "|m" + juce::String(getWalkAcoustics()->serial)
+                : juce::String());
 }
 
 void RysumProcessor::buildTailNow(int room, const juce::String &key)
@@ -2556,10 +2638,12 @@ void RysumProcessor::buildTailNow(int room, const juce::String &key)
     const int ord = engine.roomOutOrder.load();
     const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
     const uint32_t serial = ++tailSerial;
+    const auto mesh = room == 0 && walkHear ? getWalkAcoustics()
+                                            : std::shared_ptr<const rysum::MeshAcoustics>();
     irPool.addJob(
-        [this, room, r, air, ord, rate, serial, alive = aliveFlag]
+        [this, room, r, air, ord, rate, serial, mesh, alive = aliveFlag]
         {
-            auto ir = rysum::TailIR::build(r, air, ord, rate, serial);
+            auto ir = rysum::TailIR::build(r, air, ord, rate, serial, mesh.get());
             juce::MessageManager::callAsync(
                 [this, room, ir, alive]
                 {
@@ -3243,6 +3327,7 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         wk.setProperty("model", walkModelFile.getFullPathName(), nullptr);
         wk.setProperty("zUp", walkZUp, nullptr);
         wk.setProperty("scale", walkScale, nullptr);
+        wk.setProperty("hear", walkHear, nullptr);
         wk.setProperty("x", walkPose[0].load(), nullptr);
         wk.setProperty("y", walkPose[1].load(), nullptr);
         wk.setProperty("yaw", walkPose[2].load(), nullptr);
@@ -3342,9 +3427,17 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         // the drawn floor plans (only the ones that were drawn)
         juce::ValueTree plans("SAALPLAN");
         for (int r = 0; r < rysum::kNumRooms; ++r)
-            if (!(drawnPlans[(size_t)r] == rysum::defaultDrawnPlan()))
+        {
+            // (compared without the materials: they are stored on their own)
+            auto outline = drawnPlans[(size_t)r];
+            outline.surf = rysum::FloorPlan::noSurf();
+            if (!(outline == rysum::defaultDrawnPlan()))
                 plans.setProperty("room" + juce::String(r), planString(drawnPlans[(size_t)r]),
                                   nullptr);
+            if (drawnPlans[(size_t)r].anySurf())
+                plans.setProperty("surf" + juce::String(r), surfString(drawnPlans[(size_t)r]),
+                                  nullptr);
+        }
         extra.appendChild(plans, nullptr);
     }
     if (!forPatch)
@@ -3456,6 +3549,21 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
             setDrawnPlan(r, plans.isValid() && plans.hasProperty(key)
                                 ? planFromString(plans[key].toString())
                                 : rysum::defaultDrawnPlan());
+            // the materials of the single surfaces (none stored: all as the sliders say)
+            auto surf = rysum::FloorPlan::noSurf();
+            if (plans.isValid() && plans.hasProperty("surf" + juce::String(r)))
+            {
+                juce::StringArray v;
+                v.addTokens(plans["surf" + juce::String(r)].toString(), ",", {});
+                for (int i = 0; i < juce::jmin(v.size(), rysum::kMaxSurf); ++i)
+                    surf[(size_t)i] =
+                        (int8_t)juce::jlimit(-1, rysum::kNumSurfMaterials - 1, v[i].getIntValue());
+            }
+            if (surf != drawnPlans[(size_t)r].surf)
+            {
+                drawnPlans[(size_t)r].surf = surf;
+                engine.setDrawnPlan(r, drawnPlans[(size_t)r]);
+            }
         }
     }
     if (loadTuning && extra.hasProperty("scl"))
@@ -3557,6 +3665,9 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                                   std::abs(scale - walkScale) < 1.0e-6f && getWalkMesh() != nullptr;
                 walkZUp = zUp;
                 walkScale = scale;
+                walkHear = (bool)wk.getProperty("hear", true);
+                if (same)
+                    setWalkHear(walkHear);
                 if (mf == juce::File())
                     clearWalkModel();
                 else if (!same)

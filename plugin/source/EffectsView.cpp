@@ -265,6 +265,18 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     impSrc = &combo("lvImpSrc");
     impSrc->setTooltip(U("Nur klingende Pfeifen klopfen \xe2\x80\x93 oder alle Pfeifen gezogener "
                          "Register, auch die stummen."));
+    playerMode = &combo("lvPlayerMode");
+    playerMode->setTooltip(
+        U("Der H\xc3\xb6rer - du im 3D-Saal, oder der H\xc3\xb6rer auf seinem Weg - bewegt die Pfeifen: wie eine "
+          "Masse, zu der sie fallen (zieht an), vor der sie fliehen (st\xc3\xb6\xc3\x9ft ab), um die sie "
+          "kreisen (Umlaufbahn) oder die sie mitrei\xc3\x9ft (Sog). Wirkt auf Register, deren Bewegung "
+          "(Raum-Seite) im Saal stattfindet: Schweben, Flug, Fall, Schwarm, Str\xc3\xb6mung."));
+    playerRows = {&row("lvPlayerForce", "Kraft"),
+                  &row("lvPlayerRange", "Reichweite"),
+                  nullptr,
+                  nullptr,
+                  nullptr,
+                  nullptr};
     for (int i = before2; i < getNumChildComponents(); ++i)
         page2.push_back(getChildComponent(i));
 
@@ -483,7 +495,13 @@ void EffectsView::resized()
         stack(b, impRows);
         b.removeFromTop(2);
         impSrc->setBounds(b.removeFromTop(24));
-        b.removeFromTop(8);
+        // the player and the pipes, in the same box (both are about the pipes as bodies in the Saal)
+        b.removeFromTop(10);
+        playerLabel = b.removeFromTop(16);
+        playerMode->setBounds(b.removeFromTop(24));
+        b.removeFromTop(4);
+        stack(b, playerRows);
+        b.removeFromTop(6);
         impNote = b;
     }
     {
@@ -589,6 +607,9 @@ void EffectsView::paintLive(juce::Graphics &g)
                      impRate > 0.05f ? juce::String(impRate, impRate < 10.0f ? 1 : 0) +
                                            U(" Schl\xc3\xa4ge pro Sekunde")
                                      : U("Pfeifen gegen die W\xc3\xa4nde"));
+    g.setColour(col::mute);
+    g.setFont(Assets::get().monoFont(11.0f));
+    g.drawText(U("Spieler bewegt die Pfeifen"), playerLabel, juce::Justification::centredLeft);
     drawSectionTitle(g, pureBox, "Reinheit",
                      pureCt > 0.05f ? U("zieht bis ") + juce::String(pureCt, 1) + " ct"
                                     : U("Akkorde ziehen sich rein"));
