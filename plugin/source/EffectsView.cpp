@@ -20,7 +20,7 @@ juce::TextButton &EffectsView::toggle(const char *id, const juce::String &text)
     auto &b = *toggles.back();
     b.setClickingTogglesState(true);
     addAndMakeVisible(b);
-    toggleAtts.push_back(std::make_unique<ButtonAtt>(proc.apvts, id, b));
+    toggleAtts.push_back(rysum::ui::attachButton(proc.apvts, id, b));
     return b;
 }
 

@@ -793,7 +793,7 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
     onButton.setTooltip(U("Simulierter Saal statt Impulsantwort: fr\xc3\xbche Reflexionen jeder "
                           "Pfeife (Spiegelquellen) und Nachhall (Strahlenverfolgung). "
                           "Alles modulierbar \xe2\x80\x93 der Raum ist spielbar."));
-    onAtt = std::make_unique<ButtonAtt>(proc.apvts, "simOn", onButton);
+    onAtt = rysum::ui::attachButton(proc.apvts, "simOn", onButton);
     addAndMakeVisible(onButton);
     if (auto *choice =
             dynamic_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("simOrder")))
@@ -1003,7 +1003,7 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
                        "Aufnahme wird in den Raum gespielt und neu aufgenommen, "
                        "immer wieder, bis nur die Resonanzen des Raums \xc3\xbc"
                        "brig sind. Hier live: der ganze Klang geht n-mal durch den Raum."));
-    lucOnAtt = std::make_unique<ButtonAtt>(proc.apvts, "lucOn", lucOn);
+    lucOnAtt = rysum::ui::attachButton(proc.apvts, "lucOn", lucOn);
     addAndMakeVisible(lucOn);
     if (auto *choice =
             dynamic_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("lucSource")))

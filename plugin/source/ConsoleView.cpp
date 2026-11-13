@@ -264,7 +264,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         auto t = std::make_unique<StopTile>(s);
         addAndMakeVisible(*t);
         tileAttachments.push_back(
-            std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            rysum::ui::attachButton(
                 proc.apvts, RysumProcessor::stopParamId(s), *t));
         tiles.push_back(std::move(t));
 
@@ -280,7 +280,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
     testToneButton.setClickingTogglesState(true);
     testToneButton.setTooltip("DSF-Referenzton. Stimmung und Frequenz auf der Seite Klang.");
     addAndMakeVisible(testToneButton);
-    testToneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    testToneAttachment = rysum::ui::attachButton(
         proc.apvts, "dsfOn", testToneButton);
     testToneLevel =
         std::make_unique<ParamRow>(proc.apvts, "dsfLevel", u8("Lautst\xc3\xa4rke"), true);

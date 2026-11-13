@@ -28,9 +28,21 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     std::function<void()> onBack;
+    /** "Immersiv": only the picture - no buttons, no writing, no map - over the whole window, and the mouse looks
+        around without a button held (the pointer is hidden and kept in the view). Esc, I or losing the keyboard
+        leaves it. */
+    void setImmersive (bool on);
+    bool isImmersive() const noexcept { return immersive; }
+    void toggleImmersive();
+    /** set by the editor: makes room before the immersive view starts (the full screen); true = the window
+        changed, the view starts a moment later */
+    std::function<bool()> prepareImmersive;
+    /** set by the editor: the immersive view went on / off (it fills the whole window while on) */
+    std::function<void (bool)> onImmersive;
     /** for the tests: one step of the walk without a timer (dt in seconds, keys as if held) */
     void stepForTest (double dt, bool fwd, bool back, bool left, bool right, float turnDeg);
     /** tests: stand at an offset from the listener's place (held inside the walls like walking), looking along yaw */
@@ -39,6 +51,7 @@ public:
     /** tests: the smooth walk of the timer for dt seconds with these keys held */
     void advanceForTest (double dt, bool fwd, bool bwd, bool left, bool right, bool jump, bool fast = false) { advance (dt, fwd, bwd, left, right, 0.0f, fast, jump); }
     float heightForTest() const noexcept { return fz; }
+    float lookYawForTest() const noexcept { return yawT; }
     /** tests: the surface the cross points at (-1 = none), and M */
     int aimForTest() const noexcept { return aimSurf; }
     void cycleMaterialForTest() { cycleMaterial(); }
@@ -136,7 +149,17 @@ private:
     juce::TextButton back { juce::String::fromUTF8 ("\xe2\x86\x90 Saal") }, load { juce::String::fromUTF8 ("Raummodell laden \xe2\x80\xa6") },
                      clear { "Modell entfernen" }, fit { juce::String::fromUTF8 ("Ma\xc3\x9f" "e \xc3\xbc" "bernehmen") },
                      zUp { "Z oben" }, home { "Zum Platz" };
-    juce::TextButton hear { juce::String::fromUTF8 ("Modell h\xc3\xb6rbar") };
+    // the player's hands as buttons (what the keys do; a MIDI button can be mapped to each)
+    juce::TextButton immerse { "Immersiv" }, actShock { "E Druckwelle" }, actHome { juce::String::fromUTF8 ("R Zur\xc3\xbc" "ckrufen") },
+                     actClap { "C Klatschen" }, actMat { "M Material" };
+    HoldButton actGrab { "Q Greifen" }, actFreeze { "F Anhalten" }, actJump { "Springen" };
+    juce::Rectangle<int> handsArea;
+    bool immersive = false, lockFresh = false;
+    int unfocused = 0;
+    juce::Point<float> lockRef;
+    void pollLockedMouse();
+    juce::TextButton hear {
+ juce::String::fromUTF8 ("Modell h\xc3\xb6rbar") };
     juce::ComboBox units, playerMode;
     juce::Slider playerForce;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> playerModeAtt;

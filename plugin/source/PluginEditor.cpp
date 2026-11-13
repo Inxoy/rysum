@@ -21,6 +21,38 @@ RysumContent::RysumContent(RysumProcessor &p)
         showView(8);
     };
     walk.onBack = [this] { showView(2); };
+    // "Immersiv": the picture on the whole screen
+    walk.prepareImmersive = [this]
+    {
+        if (fullButton.active || !onToggleFullscreen)
+            return false;
+        immersiveFull = true;
+        onToggleFullscreen();
+        return true;
+    };
+    walk.onImmersive = [this](bool on)
+    {
+        immersive = on;
+        resized();
+        if (on)
+            walk.toFront(true);
+        else if (immersiveFull)
+        {
+            // back to the window it came from
+            immersiveFull = false;
+            juce::Component::SafePointer<RysumContent> safe(this);
+            juce::MessageManager::callAsync(
+                [safe]
+                {
+                    if (safe == nullptr)
+                        return;
+                    if (safe->fullButton.active && safe->onToggleFullscreen)
+                        safe->onToggleFullscreen();
+                    if (safe->walk.isShowing())
+                        safe->walk.grabKeyboardFocus();
+                });
+        }
+    };
     outInfoButton.setTooltip(juce::String::fromUTF8("Lautsprecher einrichten (AllRAD)"));
     outInfoButton.setAlpha(0.0f);
     outInfoButton.onClick = [this] { showView(current == 7 ? viewBeforeOrgan : 7); };
@@ -147,8 +179,349 @@ RysumContent::RysumContent(RysumProcessor &p)
         g.drawImageAt(grainLayer, 0, 0);
     }
     grainLayer = {};
+    // MIDI buttons -> buttons on screen: everything directly in here has a fixed name, so the
+    // saved paths of the buttons do not depend on the order things are stacked in
+    {
+        const std::pair<juce::Component *, const char *> named[]{
+            {&console, "spieltisch"},  {&space, "raum"},         {&saal, "saal"},
+            {&klang, "klang"},         {&fx, "effekte"},         {&mod, "modulation"},
+            {&organ, "orgel"},         {&speakers, "lautsprecher"}, {&walk, "begehen"},
+            {&outInfoButton, "ausgabe-info"}, {&logoButton, "logo"}, {&diceButton, "zufall"},
+            {&keysButton, "tastatur"}, {&latchButton, "halten"}, {&fullButton, "vollbild"},
+            {&outputChoice, "ausgabe"}, {&patchPrev, "patch-zurueck"}, {&patchNext, "patch-vor"},
+            {&patchName, "patch"},     {&patchSave, "patch-speichern"}, {&learnOverlay, "midi-tasten"}};
+        for (auto &n : named)
+            n.first->setComponentID(n.second);
+        for (int i = 0; i < 6; ++i)
+            tabs[(size_t)i].setComponentID("seite-" + juce::String(i));
+    }
+    learnOverlay.onClose = [this] { stopButtonLearn(); };
+    addChildComponent(learnOverlay);
+    {
+        // presses that came in while no window was open are not made up for
+        int slot = 0;
+        bool down = false;
+        while (proc.nextButtonEvent(slot, down))
+        {
+        }
+    }
     setSize(kW, kH);
 }
+
+// ---------------------------------------------------------------------------
+// MIDI buttons -> buttons on screen
+// ---------------------------------------------------------------------------
+namespace rysum::ui
+{
+static juce::String stepName(juce::Component &c)
+{
+    auto clean = [](const juce::String &s) { return s.replaceCharacter('/', '_'); };
+    if (c.getComponentID().isNotEmpty())
+        return "@" + clean(c.getComponentID());
+    const auto name = c.getName();
+    int nth = 0;
+    if (auto *p = c.getParentComponent())
+        for (auto *s : p->getChildren())
+        {
+            if (s == &c)
+                break;
+            if (s->getComponentID().isEmpty() && s->getName() == name)
+                ++nth;
+        }
+    if (name.isEmpty())
+        return "#" + juce::String(nth);
+    return clean(name) + (nth > 0 ? "~" + juce::String(nth) : juce::String());
+}
+
+juce::String buttonPath(juce::Component &root, juce::Button &b)
+{
+    juce::StringArray steps;
+    for (juce::Component *c = &b; c != &root; c = c->getParentComponent())
+    {
+        if (c == nullptr)
+            return {}; // not inside the interface
+        steps.insert(0, stepName(*c));
+    }
+    return steps.joinIntoString("/");
+}
+
+juce::Button *findButton(juce::Component &root, const juce::String &path)
+{
+    if (path.isEmpty())
+        return nullptr;
+    juce::Component *c = &root;
+    for (const auto &step : juce::StringArray::fromTokens(path, "/", ""))
+    {
+        juce::Component *next = nullptr;
+        for (auto *ch : c->getChildren())
+            if (stepName(*ch) == step)
+            {
+                next = ch;
+                break;
+            }
+        if (next == nullptr)
+            return nullptr;
+        c = next;
+    }
+    return dynamic_cast<juce::Button *>(c);
+}
+
+ButtonLearnOverlay::ButtonLearnOverlay(RysumProcessor &p, juce::Component &r) : proc(p), root(r)
+{
+    setWantsKeyboardFocus(true);
+    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+}
+
+void ButtonLearnOverlay::collect(juce::Component &parent, juce::Rectangle<int> clip,
+                                 std::vector<Item> &out) const
+{
+    for (auto *ch : parent.getChildren())
+    {
+        if (ch == this || !ch->isVisible())
+            continue;
+        const auto area = getLocalArea(ch, ch->getLocalBounds()).getIntersection(clip);
+        if (area.isEmpty())
+            continue;
+        if (auto *b = dynamic_cast<juce::Button *>(ch))
+        {
+            // (not the arrows of scroll bars and number boxes)
+            if (dynamic_cast<juce::ScrollBar *>(&parent) == nullptr &&
+                dynamic_cast<juce::Slider *>(&parent) == nullptr)
+            {
+                Item it;
+                it.button = b;
+                it.area = area;
+                describe(*b, it.label, it.waiting);
+                out.push_back(it);
+            }
+            continue;
+        }
+        collect(*ch, area, out);
+    }
+}
+
+int ButtonLearnOverlay::paramOf(juce::Button &b) const
+{
+    const auto id = b.getProperties()["midiParam"].toString();
+    return id.isEmpty() ? -1 : proc.getParamIndex(id);
+}
+
+void ButtonLearnOverlay::describe(juce::Button &b, juce::String &label, bool &waiting) const
+{
+    label.clear();
+    waiting = false;
+    const int prm = paramOf(b);
+    if (prm >= 0)
+    {
+        for (int slot : proc.midiMapsFor(prm))
+        {
+            const auto m = proc.getMidiMap(slot);
+            if (slot == proc.getLearningSlot())
+                waiting = true;
+            else if (m.cc >= 0 && label.isEmpty())
+                label = RysumProcessor::triggerName(m.cc, m.channel);
+        }
+        return;
+    }
+    for (int slot : proc.buttonMapsFor(buttonPath(root, b)))
+    {
+        const auto m = proc.getButtonMap(slot);
+        if (slot == proc.getLearningButton())
+            waiting = true;
+        else if (m.code >= 0 && label.isEmpty())
+            label = RysumProcessor::triggerName(m.code, m.channel);
+    }
+}
+
+juce::String ButtonLearnOverlay::mappingOf(juce::Button &b) const
+{
+    juce::String label;
+    bool waiting = false;
+    describe(b, label, waiting);
+    return label;
+}
+
+void ButtonLearnOverlay::stopWaiting()
+{
+    proc.stopButtonLearn();
+    if (waitingParamSlot >= 0 && proc.getLearningSlot() == waitingParamSlot)
+        proc.clearMidiMap(waitingParamSlot); // nothing was pressed: no empty assignment stays
+    waitingParamSlot = -1;
+}
+
+void ButtonLearnOverlay::forget(juce::Button &b)
+{
+    stopWaiting();
+    const int prm = paramOf(b);
+    if (prm >= 0)
+    {
+        for (int slot : proc.midiMapsFor(prm))
+            proc.clearMidiMap(slot);
+        return;
+    }
+    for (int slot : proc.buttonMapsFor(buttonPath(root, b)))
+        proc.clearButtonMap(slot);
+}
+
+bool ButtonLearnOverlay::learn(juce::Button &b)
+{
+    forget(b); // (one MIDI button per button: a new one replaces the old)
+    const int prm = paramOf(b);
+    if (prm >= 0)
+    {
+        // a switch with a parameter: the MIDI button flips the parameter
+        const int slot = proc.learnMidiFor(prm);
+        if (slot < 0)
+            return false;
+        auto m = proc.getMidiMap(slot);
+        m.toggle = true;
+        proc.setMidiMap(slot, m);
+        waitingParamSlot = slot;
+        return true;
+    }
+    return proc.learnButton(buttonPath(root, b)) >= 0;
+}
+
+int ButtonLearnOverlay::itemAt(juce::Point<int> p) const
+{
+    for (int i = (int)items.size(); --i >= 0;)
+        if (items[(size_t)i].area.contains(p))
+            return i;
+    return -1;
+}
+
+void ButtonLearnOverlay::refresh()
+{
+    std::vector<Item> now;
+    collect(root, getLocalBounds(), now);
+    if (now == items)
+        return;
+    items = std::move(now);
+    hover = juce::jmin(hover, (int)items.size() - 1);
+    repaint();
+}
+
+void ButtonLearnOverlay::visibilityChanged()
+{
+    if (isVisible())
+    {
+        note.clear();
+        refresh();
+        if (isShowing())
+            grabKeyboardFocus();
+    }
+    else
+        stopWaiting();
+}
+
+void ButtonLearnOverlay::mouseMove(const juce::MouseEvent &e)
+{
+    const int h = itemAt(e.getPosition());
+    if (h != hover)
+    {
+        hover = h;
+        repaint();
+    }
+}
+
+void ButtonLearnOverlay::mouseExit(const juce::MouseEvent &)
+{
+    if (hover >= 0)
+    {
+        hover = -1;
+        repaint();
+    }
+}
+
+void ButtonLearnOverlay::mouseDown(const juce::MouseEvent &e)
+{
+    grabKeyboardFocus();
+    note.clear();
+    const int i = itemAt(e.getPosition());
+    if (i < 0)
+    {
+        stopWaiting();
+        refresh();
+        return;
+    }
+    auto &b = *items[(size_t)i].button;
+    if (e.mods.isPopupMenu())
+        forget(b);
+    else if (e.mods.isCtrlDown() || e.mods.isCommandDown())
+    {
+        // the button itself (to get to another page, for instance)
+        stopWaiting();
+        if (b.isEnabled())
+            b.triggerClick();
+    }
+    else if (!learn(b))
+        note = juce::String::fromUTF8("Alle Pl\xc3\xa4tze sind belegt.");
+    refresh();
+    repaint();
+}
+
+bool ButtonLearnOverlay::keyPressed(const juce::KeyPress &k)
+{
+    if (k == juce::KeyPress::escapeKey)
+    {
+        if (onClose)
+            onClose();
+        return true;
+    }
+    return false;
+}
+
+void ButtonLearnOverlay::paint(juce::Graphics &g)
+{
+    auto &A = Assets::get();
+    g.fillAll(col::bg.withAlpha(0.5f));
+    const auto font = A.monoFont(10.0f);
+    g.setFont(font);
+    for (int i = 0; i < (int)items.size(); ++i)
+    {
+        const auto &it = items[(size_t)i];
+        const auto r = it.area.toFloat().reduced(0.5f);
+        const bool mapped = it.label.isNotEmpty();
+        if (it.waiting)
+        {
+            g.setColour(col::rubric.withAlpha(0.35f));
+            g.fillRect(r);
+        }
+        g.setColour(it.waiting || mapped ? col::rubric.brighter(0.25f)
+                                         : col::ink.withAlpha(i == hover ? 0.85f : 0.3f));
+        g.drawRect(r, it.waiting ? 2.0f : (mapped || i == hover ? 1.5f : 1.0f));
+        const auto text =
+            it.waiting ? juce::String::fromUTF8("MIDI-Taste dr\xc3\xbc"
+                                                "cken \xe2\x80\xa6")
+                       : it.label;
+        if (text.isEmpty())
+            continue;
+        const float w = juce::GlyphArrangement::getStringWidth(font, text) + 8.0f;
+        auto tag = juce::Rectangle<float>(w, 13.0f)
+                       .withPosition(juce::jmin(r.getX(), (float)getWidth() - w), r.getY());
+        g.setColour(col::rubric);
+        g.fillRect(tag);
+        g.setColour(col::white);
+        g.drawText(text, tag, juce::Justification::centred);
+    }
+    // what to do, at the bottom
+    auto band = getLocalBounds().removeFromBottom(26);
+    g.setColour(col::bg.withAlpha(0.94f));
+    g.fillRect(band);
+    g.setColour(col::rubric);
+    g.fillRect(band.removeFromTop(1));
+    g.setFont(A.monoFont(11.0f));
+    g.setColour(col::ink);
+    g.drawText(note.isNotEmpty()
+                   ? note
+                   : juce::String::fromUTF8(
+                         "MIDI-Tasten zuordnen:  Knopf anklicken, dann die MIDI-Taste dr\xc3\xbc"
+                         "cken (Pad, Taster oder Klaviertaste)   \xc2\xb7   Rechtsklick: "
+                         "Zuordnung l\xc3\xb6schen   \xc2\xb7   Strg+Klick: Knopf bet\xc3\xa4tigen "
+                         "(z. B. Seite wechseln)   \xc2\xb7   Esc: fertig"),
+               band.reduced(14, 0), juce::Justification::centredLeft);
+}
+} // namespace rysum::ui
 
 void RysumContent::showView(int v)
 {
@@ -188,7 +561,8 @@ void RysumContent::resized()
     saal.setBounds(body);
     organ.setBounds(body);
     speakers.setBounds(body);
-    walk.setBounds(body);
+    walk.setBounds(immersive ? getLocalBounds() : body);
+    learnOverlay.setBounds(getLocalBounds());
     outInfoButton.setBounds(kOutX + kOutW + 2, 8, kFullX - 5 - (kOutX + kOutW + 2), kHeader - 16);
     logoButton.setBounds(24, 6, 116, 44);
     patchPrev.setBounds(152, 14, 22, 28);
@@ -252,6 +626,14 @@ bool RysumContent::keyPressed(const juce::KeyPress &k)
                 startStats();
             repaint();
         }
+        return true;
+    }
+    if (k.getModifiers().isCtrlDown() && !k.getModifiers().isShiftDown() && k.getKeyCode() == 'M')
+    {
+        if (learnOverlay.isVisible())
+            stopButtonLearn();
+        else
+            startButtonLearn();
         return true;
     }
     // F11: full screen on / off; Esc leaves it
@@ -324,9 +706,99 @@ void RysumContent::tick()
     tickBody();
 }
 
+void RysumContent::runImmersiveTest()
+{
+    auto log = std::make_shared<juce::String>();
+    juce::Component::SafePointer<RysumContent> safe(this);
+    showView(8);
+    const bool wasFull = fullButton.active;
+    walk.toggleImmersive();
+    auto mouse = juce::Desktop::getInstance().getMainMouseSource();
+    // a second later: still on? then the pointer is pushed 120 pixels to the right
+    juce::Timer::callAfterDelay(1200, [safe, log, mouse]() mutable
+    {
+        if (safe == nullptr)
+            return;
+        const float yaw0 = safe->walk.lookYawForTest();
+        *log << "immersive on after 1.2 s: " << (int)safe->walk.isImmersive()
+             << "   full screen: " << (int)safe->fullButton.active
+             << "   keyboard in the view: " << (int)safe->walk.hasKeyboardFocus(false)
+             << "   view fills the window: " << (int)(safe->walk.getBounds() == safe->getLocalBounds())
+             << "\n";
+        mouse.setScreenPosition(mouse.getScreenPosition() + juce::Point<float>(120.0f, 0.0f));
+        juce::Timer::callAfterDelay(400, [safe, log, mouse, yaw0]() mutable
+        {
+            if (safe == nullptr)
+                return;
+            const auto centre = safe->walk.getScreenBounds().getCentre().toFloat();
+            *log << "pointer pushed 120 px: the view turned by "
+                 << juce::String(safe->walk.lookYawForTest() - yaw0, 2)
+                 << " degrees (expected -18), pointer now "
+                 << juce::String(mouse.getScreenPosition().getDistanceFrom(centre), 1)
+                 << " px from the middle of the view\n";
+            safe->walk.setImmersive(false);
+            juce::Timer::callAfterDelay(600, [safe, log]
+            {
+                if (safe == nullptr)
+                    return;
+                *log << "after leaving: immersive " << (int)safe->walk.isImmersive()
+                     << "   full screen: " << (int)safe->fullButton.active
+                     << "   controls back: " << (int)(safe->walk.getNumChildComponents() > 0 &&
+                                                       safe->walk.getChildComponent(0)->isVisible())
+                     << "\n";
+                juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                    .getChildFile("Rysum")
+                    .getChildFile("immersive-test.txt")
+                    .replaceWithText(*log);
+                if (auto *app = juce::JUCEApplicationBase::getInstance())
+                    app->systemRequestedQuit();
+            });
+        });
+    });
+    juce::ignoreUnused(wasFull);
+}
+
+void RysumContent::startButtonLearn()
+{
+    if (walk.isImmersive())
+        walk.setImmersive(false);
+    releaseComputerKeys();
+    learnOverlay.setVisible(true);
+    learnOverlay.toFront(true);
+    learnOverlay.refresh();
+}
+
+void RysumContent::stopButtonLearn()
+{
+    learnOverlay.setVisible(false);
+    if (walk.isShowing())
+        walk.grabKeyboardFocus();
+    else
+        grabKeyboardFocus();
+}
+
 void RysumContent::tickBody()
 {
     updatePlayButtons();
+    // MIDI buttons mapped to buttons on screen
+    {
+        int slot = 0;
+        bool down = false;
+        while (proc.nextButtonEvent(slot, down))
+        {
+            if (learnOverlay.isVisible())
+                continue; // (while assigning nothing is operated)
+            auto *b = rysum::ui::findButton(*this, proc.getButtonMap(slot).target);
+            if (b == nullptr)
+                continue;
+            if (auto *h = dynamic_cast<rysum::ui::HoldButton *>(b))
+                h->midiHeld = down; // (held for as long as the MIDI button is)
+            else if (down && b->isEnabled())
+                b->triggerClick();
+        }
+        if (learnOverlay.isVisible())
+            learnOverlay.refresh();
+    }
     // the window lost the keyboard: let the computer keys go (they would hang otherwise)
     if (proc.computerKeys && !hasKeyboardFocus(true))
     {
@@ -806,6 +1278,13 @@ RysumEditor::RysumEditor(RysumProcessor &p) : AudioProcessorEditor(p), content(p
     // goes full screen,
     //  RYSUM_PAINT_VIEW=n opens page n)
     const auto ps = juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_STATS", {});
+    if (juce::SystemStats::getEnvironmentVariable("RYSUM_IMMERSIVE_TEST", {}).isNotEmpty())
+        juce::Timer::callAfterDelay(1500,
+                                    [safe = juce::Component::SafePointer<RysumEditor>(this)]
+                                    {
+                                        if (safe != nullptr)
+                                            safe->content.runImmersiveTest();
+                                    });
     if (ps.isNotEmpty())
     {
         content.startStats();

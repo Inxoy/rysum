@@ -2299,6 +2299,192 @@ public:
             P->setValueNotifyingHost(0.0f);
         }
 
+        if (auto *c = dynamic_cast<RysumContent *>(content))
+        {
+            // MIDI buttons -> buttons on screen ("MIDI-Tasten zuordnen"), and the immersive 3D view
+            juce::AudioBuffer<float> st(16, 512);
+            auto send = [&](const juce::MidiMessage &m)
+            {
+                juce::MidiBuffer mb;
+                mb.addEvent(m, 0);
+                st.clear(), proc->processBlock(st, mb);
+            };
+            auto pump = [&]
+            {
+                c->tick();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+            };
+            auto &learn = c->buttonLearn();
+            // every button of every page has a path of its own that leads back to it
+            int count = 0, wrong = 0;
+            {
+                juce::StringArray seen;
+                std::function<void(juce::Component *)> each = [&](juce::Component *p)
+                {
+                    for (auto *ch : p->getChildren())
+                    {
+                        if (auto *b = dynamic_cast<juce::Button *>(ch))
+                        {
+                            const auto path = rysum::ui::buttonPath(*c, *b);
+                            ++count;
+                            if (path.isEmpty() || seen.contains(path) ||
+                                rysum::ui::findButton(*c, path) != b)
+                                ++wrong;
+                            seen.add(path);
+                        }
+                        each(ch);
+                    }
+                };
+                each(c);
+            }
+            std::cout << "MIDI-Tasten: " << count << " buttons, " << wrong
+                      << " without a path of their own" << (count > 100 && wrong == 0 ? "  ok" : "  FAIL")
+                      << std::endl;
+            // a button without a parameter (the page "Klang"): a controller button clicks it
+            c->showView(0);
+            auto *tab = rysum::ui::findButton(*c, "@seite-3");
+            bool tabOk = false;
+            juce::String tabName;
+            if (tab != nullptr)
+            {
+                c->startButtonLearn();
+                const bool waits = learn.learn(*tab);
+                send(juce::MidiMessage::controllerEvent(1, 30, 127));
+                send(juce::MidiMessage::controllerEvent(1, 30, 0));
+                pump();
+                tabName = learn.mappingOf(*tab);
+                const bool notYet = !tab->getToggleState(); // (assigning does not operate)
+                c->stopButtonLearn();
+                send(juce::MidiMessage::controllerEvent(1, 30, 127));
+                send(juce::MidiMessage::controllerEvent(1, 30, 0));
+                pump();
+                tabOk = waits && notYet && tab->getToggleState() && tabName.startsWith("CC 30");
+            }
+            std::cout << "MIDI-Tasten: CC -> page button: \"" << tabName << "\""
+                      << (tabOk ? "  ok" : "  FAIL") << std::endl;
+            // a switch with a parameter ("Saal an"), learned from a pad that sends a note: the
+            // note flips the parameter and plays no pipe
+            {
+                juce::Button *sw = nullptr;
+                std::function<void(juce::Component *)> each = [&](juce::Component *p)
+                {
+                    for (auto *ch : p->getChildren())
+                    {
+                        if (auto *b = dynamic_cast<juce::Button *>(ch))
+                            if (b->getProperties()["midiParam"].toString() == "simOn")
+                                sw = b;
+                        each(ch);
+                    }
+                };
+                each(c);
+                bool ok = false;
+                juce::String name;
+                if (sw != nullptr)
+                {
+                    auto *q = proc->apvts.getParameter("simOn");
+                    const float before = q->getValue();
+                    c->startButtonLearn();
+                    learn.learn(*sw);
+                    send(juce::MidiMessage::noteOn(10, 36, (juce::uint8)100));
+                    send(juce::MidiMessage::noteOff(10, 36));
+                    pump();
+                    name = learn.mappingOf(*sw);
+                    c->stopButtonLearn();
+                    const bool same = std::abs(q->getValue() - before) < 0.01f;
+                    const int heldBefore = proc->keyboardState.isNoteOn(10, 36) ? 1 : 0;
+                    send(juce::MidiMessage::noteOn(10, 36, (juce::uint8)100));
+                    const bool silent = !proc->keyboardState.isNoteOn(10, 36);
+                    send(juce::MidiMessage::noteOff(10, 36));
+                    pump();
+                    const bool flipped = std::abs(q->getValue() - before) > 0.5f;
+                    // ... and it goes through the project
+                    juce::MemoryBlock state;
+                    proc->getStateInformation(state);
+                    learn.forget(*sw);
+                    const bool gone = learn.mappingOf(*sw).isEmpty();
+                    proc->setStateInformation(state.getData(), (int)state.getSize());
+                    pump();
+                    const bool back = learn.mappingOf(*sw) == name && tab != nullptr &&
+                                      learn.mappingOf(*tab) == tabName;
+                    ok = same && heldBefore == 0 && silent && flipped && gone && back &&
+                         name.startsWith("Note");
+                    std::cout << "MIDI-Tasten: note -> switch: \"" << name << "\"  not while assigning "
+                              << same << ", silent " << silent << ", flipped " << flipped
+                              << ", saved " << (gone && back) << (ok ? "  ok" : "  FAIL")
+                              << std::endl;
+                    learn.forget(*sw);
+                    q->setValueNotifyingHost(before);
+                }
+                else
+                    std::cout << "MIDI-Tasten: switch not found  FAIL" << std::endl;
+            }
+            // the page of assignments, as a picture
+            c->showView(0);
+            c->startButtonLearn();
+            shoot(0, "ui_midi_tasten.png");
+            c->stopButtonLearn();
+            // the 3D view: a held button (Q Greifen) follows the MIDI button; "Immersiv" shows
+            // nothing but the picture, over the whole window
+            std::function<rysum::ui::WalkView *(juce::Component *)> findWalk =
+                [&](juce::Component *p) -> rysum::ui::WalkView *
+            {
+                if (auto *w = dynamic_cast<rysum::ui::WalkView *>(p))
+                    return w;
+                for (auto *ch : p->getChildren())
+                    if (auto *f = findWalk(ch))
+                        return f;
+                return nullptr;
+            };
+            if (auto *wv = findWalk(c))
+            {
+                wv->setTestMode(true);
+                c->showView(8);
+                auto *grab = dynamic_cast<rysum::ui::HoldButton *>(
+                    rysum::ui::findButton(*c, "@begehen/Q Greifen"));
+                bool holdOk = false;
+                if (grab != nullptr)
+                {
+                    c->startButtonLearn();
+                    learn.learn(*grab);
+                    send(juce::MidiMessage::controllerEvent(1, 31, 127));
+                    send(juce::MidiMessage::controllerEvent(1, 31, 0));
+                    pump();
+                    c->stopButtonLearn();
+                    send(juce::MidiMessage::controllerEvent(1, 31, 127));
+                    c->tick();
+                    const bool down = grab->held();
+                    send(juce::MidiMessage::controllerEvent(1, 31, 0));
+                    c->tick();
+                    holdOk = down && !grab->held();
+                    learn.forget(*grab);
+                }
+                std::cout << "MIDI-Tasten: held button follows the MIDI button"
+                          << (holdOk ? "  ok" : "  FAIL") << std::endl;
+                const auto windowed = wv->getBounds();
+                wv->setImmersive(true);
+                int visibleChildren = 0;
+                for (auto *ch : wv->getChildren())
+                    visibleChildren += ch->isVisible() ? 1 : 0;
+                const bool fills = wv->getBounds() == c->getLocalBounds();
+                shoot(8, "ui_begehen_immersiv.png");
+                const bool stays = wv->isImmersive();
+                wv->setImmersive(false);
+                int shownAgain = 0;
+                for (auto *ch : wv->getChildren())
+                    shownAgain += ch->isVisible() ? 1 : 0;
+                std::cout << "Begehen immersiv: fills the window " << fills << ", controls shown "
+                          << visibleChildren << ", afterwards " << shownAgain
+                          << (fills && stays && visibleChildren == 0 && shownAgain > 10 &&
+                                      wv->getBounds() == windowed
+                                  ? "  ok"
+                                  : "  FAIL")
+                          << std::endl;
+            }
+            if (tab != nullptr)
+                learn.forget(*tab);
+            c->showView(0);
+        }
+
         {
             // "Begehen": the Saal in 3D. A chord sounds; walking moves the listener in the engine;
             // a model loads and goes through the project state

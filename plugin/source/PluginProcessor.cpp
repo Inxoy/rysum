@@ -1188,6 +1188,13 @@ RysumProcessor::RysumProcessor()
         mmToggle[(size_t)i] = false;
         mmPending[(size_t)i] = std::numeric_limits<float>::quiet_NaN();
     }
+    for (int i = 0; i < kNumButtonMaps; ++i)
+    {
+        bmCode[(size_t)i] = -1;
+        bmChan[(size_t)i] = 0;
+        bmOn[(size_t)i] = false;
+    }
+    noteScratch.ensureSize(8192);
 
     // ---- parameter table (modulation works on indices into it)
     for (auto *prm : getParameters())
@@ -1847,6 +1854,30 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
             std::atomic_exchange(&pendingLibrary, std::shared_ptr<const SampleLibrary>()))
         engine.setLibrary(std::move(pending)); // the old one is still referenced by retiredLibrary
 
+    // notes that are MIDI buttons (pads mapped to a switch or to a button on screen) do not play
+    if (noteMaps.load() || bmLearn.load() >= 0 || mmLearn.load() >= 0)
+    {
+        noteScratch.clear();
+        bool any = false;
+        for (const auto meta : midi)
+        {
+            const auto m = meta.getMessage();
+            if (m.isNoteOnOrOff() &&
+                handleTrigger(kNoteCode + m.getNoteNumber(), m.getChannel(),
+                              m.isNoteOn() ? juce::jmax(1, (int)m.getVelocity()) : 0))
+            {
+                any = true;
+                continue;
+            }
+            noteScratch.addEvent(meta.data, meta.numBytes, meta.samplePosition);
+        }
+        if (any)
+        {
+            midi.swapWith(noteScratch);
+            triggerAsyncUpdate();
+        }
+    }
+
     keyboardState.processNextMidiBuffer(midi, 0, buffer.getNumSamples(), true);
     applyLatch(midi, buffer.getNumSamples());
 
@@ -2323,15 +2354,60 @@ bool RysumProcessor::handleLearnedCc(int cc, int channel, int value)
     if (cc >= 120)
         return false; // channel mode messages
     lastCc = cc | (channel << 8) | (value << 16);
+    return handleTrigger(cc, channel, value);
+}
+
+bool RysumProcessor::handleTrigger(int cc, int channel, int value)
+{
+    // (cc: a controller number, or kNoteCode + note with the velocity as value, 0 = released)
+    const bool note = cc >= kNoteCode;
+    const bool isDown = note ? value > 0 : value >= 64;
+    bool mapped = false;
     int learning = mmLearn.load();
-    if (learning >= 0 && learning < kNumMidiMaps && mmLearn.compare_exchange_strong(learning, -1))
+    // (a note is only taken for a button-like assignment, and by its press: playing the organ
+    // while a fader waits for its controller must not assign a key to it)
+    if (learning >= 0 && learning < kNumMidiMaps &&
+        (!note || (isDown && mmToggle[(size_t)learning].load())) &&
+        mmLearn.compare_exchange_strong(learning, -1))
     {
         mmCc[(size_t)learning] = cc;
         mmChan[(size_t)learning] = channel;
-        mmPressed[(size_t)learning] = value >= 64;
+        mmPressed[(size_t)learning] = isDown;
+        if (note)
+            noteMaps = mapped = true;
         ++midiMapVersion;
     }
-    bool mapped = false;
+    // a button on screen waits for its MIDI button
+    int bl = bmLearn.load();
+    if (bl >= 0 && bl < kNumButtonMaps && isDown && bmLearn.compare_exchange_strong(bl, -1))
+    {
+        bmCode[(size_t)bl] = cc;
+        bmChan[(size_t)bl] = channel;
+        bmPressed[(size_t)bl] = true; // (this press only assigns)
+        if (note)
+            noteMaps = true;
+        mapped = true;
+        ++midiMapVersion;
+    }
+    for (int i = 0; i < kNumButtonMaps; ++i)
+    {
+        if (!bmOn[(size_t)i].load() || bmCode[(size_t)i].load() != cc)
+            continue;
+        const int ch = bmChan[(size_t)i].load();
+        if (ch != 0 && ch != channel)
+            continue;
+        mapped = true;
+        if (isDown == bmPressed[(size_t)i])
+            continue;
+        bmPressed[(size_t)i] = isDown;
+        int s1, n1, s2, n2;
+        bmFifo.prepareToWrite(1, s1, n1, s2, n2);
+        if (n1 > 0)
+        {
+            bmEvents[(size_t)s1] = i | (isDown ? 256 : 0);
+            bmFifo.finishedWrite(1);
+        }
+    }
     for (int i = 0; i < kNumMidiMaps; ++i)
     {
         const int pi = mmParam[(size_t)i].load();
@@ -2346,7 +2422,7 @@ bool RysumProcessor::handleLearnedCc(int cc, int channel, int value)
         {
             // a button: each press switches to the other end of the range (from where the parameter
             // is now)
-            const bool down = value >= 64, wasDown = mmPressed[(size_t)i];
+            const bool down = isDown, wasDown = mmPressed[(size_t)i];
             mmPressed[(size_t)i] = down;
             if (!down || wasDown)
                 continue;
@@ -3147,7 +3223,7 @@ void RysumProcessor::timerCallback()
     }
     // MIDI controller assignments changed (edited, learned, or a project brought its own): the next
     // new instance starts with them
-    if (midiMapVersion.load() != savedMapVersion && mmLearn.load() < 0)
+    if (midiMapVersion.load() != savedMapVersion && mmLearn.load() < 0 && bmLearn.load() < 0)
     {
         savedMapVersion = midiMapVersion.load();
         saveMidiMapDefault();
@@ -4006,12 +4082,13 @@ void RysumProcessor::setMidiMap(int i, const MidiMap &m)
     if (i < 0 || i >= kNumMidiMaps)
         return;
     mmParam[(size_t)i] = -1; // the audio thread skips the slot while it changes
-    mmCc[(size_t)i] = juce::jlimit(-1, 119, m.cc);
+    mmCc[(size_t)i] = juce::jlimit(-1, kNoteCode + 127, m.cc);
     mmChan[(size_t)i] = juce::jlimit(0, 16, m.channel);
     mmLo[(size_t)i] = juce::jlimit(0.0f, 1.0f, m.lo);
     mmHi[(size_t)i] = juce::jlimit(0.0f, 1.0f, m.hi);
     mmToggle[(size_t)i] = m.toggle;
     mmParam[(size_t)i] = m.param >= 0 && m.param < getNumParams() ? m.param : -1;
+    updateNoteMaps();
     ++midiMapVersion;
 }
 
@@ -4026,6 +4103,8 @@ void RysumProcessor::clearMidiMap(int i)
 
 void RysumProcessor::learnMidi(int slot)
 {
+    if (slot >= 0)
+        stopButtonLearn();
     mmLearn = slot >= 0 && slot < kNumMidiMaps ? slot : -1;
     ++midiMapVersion;
 }
@@ -4057,6 +4136,112 @@ juce::Array<int> RysumProcessor::midiMapsFor(int prmIdx) const
     return r;
 }
 
+// ---- MIDI buttons -> buttons on screen
+RysumProcessor::ButtonMap RysumProcessor::getButtonMap(int i) const
+{
+    ButtonMap m;
+    if (i < 0 || i >= kNumButtonMaps)
+        return m;
+    m.code = bmCode[(size_t)i].load();
+    m.channel = bmChan[(size_t)i].load();
+    m.target = bmTarget[(size_t)i];
+    return m;
+}
+
+void RysumProcessor::setButtonMap(int i, const ButtonMap &m)
+{
+    if (i < 0 || i >= kNumButtonMaps)
+        return;
+    bmOn[(size_t)i] = false; // the audio thread skips the slot while it changes
+    bmCode[(size_t)i] = juce::jlimit(-1, kNoteCode + 127, m.code);
+    bmChan[(size_t)i] = juce::jlimit(0, 16, m.channel);
+    bmTarget[(size_t)i] = m.target;
+    bmOn[(size_t)i] = m.target.isNotEmpty();
+    updateNoteMaps();
+    ++midiMapVersion;
+}
+
+void RysumProcessor::clearButtonMap(int i)
+{
+    if (i < 0 || i >= kNumButtonMaps)
+        return;
+    int l = i;
+    bmLearn.compare_exchange_strong(l, -1);
+    setButtonMap(i, ButtonMap{});
+}
+
+void RysumProcessor::stopButtonLearn()
+{
+    const int l = bmLearn.exchange(-1);
+    if (l < 0)
+        return;
+    if (bmCode[(size_t)l].load() < 0)
+        setButtonMap(l, ButtonMap{}); // nothing was pressed: no empty assignment stays behind
+    ++midiMapVersion;
+}
+
+int RysumProcessor::learnButton(const juce::String &target)
+{
+    if (target.isEmpty())
+        return -1;
+    stopButtonLearn();
+    mmLearn = -1;
+    for (int i = 0; i < kNumButtonMaps; ++i)
+        if (!bmOn[(size_t)i].load())
+        {
+            ButtonMap m;
+            m.target = target;
+            setButtonMap(i, m);
+            bmLearn = i;
+            return i;
+        }
+    return -1;
+}
+
+juce::Array<int> RysumProcessor::buttonMapsFor(const juce::String &target) const
+{
+    juce::Array<int> r;
+    for (int i = 0; i < kNumButtonMaps; ++i)
+        if (bmOn[(size_t)i].load() && bmTarget[(size_t)i] == target)
+            r.add(i);
+    return r;
+}
+
+bool RysumProcessor::nextButtonEvent(int &slot, bool &down)
+{
+    int s1, n1, s2, n2;
+    bmFifo.prepareToRead(1, s1, n1, s2, n2);
+    if (n1 <= 0)
+        return false;
+    const int e = bmEvents[(size_t)s1];
+    bmFifo.finishedRead(1);
+    slot = e & 255;
+    down = (e & 256) != 0;
+    return true;
+}
+
+void RysumProcessor::updateNoteMaps()
+{
+    bool any = false;
+    for (int i = 0; i < kNumMidiMaps; ++i)
+        any = any || (mmParam[(size_t)i].load() >= 0 && mmCc[(size_t)i].load() >= kNoteCode);
+    for (int i = 0; i < kNumButtonMaps; ++i)
+        any = any || (bmOn[(size_t)i].load() && bmCode[(size_t)i].load() >= kNoteCode);
+    noteMaps = any;
+}
+
+juce::String RysumProcessor::triggerName(int code, int channel)
+{
+    if (code < 0)
+        return {};
+    auto s = code >= kNoteCode
+                 ? "Note " + juce::MidiMessage::getMidiNoteName(code - kNoteCode, true, true, 4)
+                 : "CC " + juce::String(code);
+    if (channel > 0)
+        s << juce::String::fromUTF8(" \xc2\xb7 K") << channel;
+    return s;
+}
+
 juce::ValueTree RysumProcessor::midiMapState() const
 {
     juce::ValueTree t("MIDIMAP");
@@ -4077,6 +4262,17 @@ juce::ValueTree RysumProcessor::midiMapState() const
         e.setProperty("toggle", m.toggle, nullptr);
         t.appendChild(e, nullptr);
     }
+    for (int i = 0; i < kNumButtonMaps; ++i)
+    {
+        const auto m = getButtonMap(i);
+        if (!m.used() || m.code < 0)
+            continue;
+        juce::ValueTree e("BUTTON");
+        e.setProperty("code", m.code, nullptr);
+        e.setProperty("channel", m.channel, nullptr);
+        e.setProperty("target", m.target, nullptr);
+        t.appendChild(e, nullptr);
+    }
     return t;
 }
 
@@ -4086,8 +4282,22 @@ void RysumProcessor::applyMidiMapState(const juce::ValueTree &t)
         return;
     for (int i = 0; i < kNumMidiMaps; ++i)
         setMidiMap(i, MidiMap{});
+    bmLearn = -1;
+    for (int i = 0; i < kNumButtonMaps; ++i)
+        setButtonMap(i, ButtonMap{});
+    int nextButton = 0;
     for (auto e : t)
     {
+        if (e.hasType("BUTTON"))
+        {
+            ButtonMap b;
+            b.code = (int)e.getProperty("code", -1);
+            b.channel = (int)e.getProperty("channel", 0);
+            b.target = e["target"].toString();
+            if (b.used() && b.code >= 0 && nextButton < kNumButtonMaps)
+                setButtonMap(nextButton++, b);
+            continue;
+        }
         const int slot = (int)e.getProperty("slot", -1);
         if (slot < 0 || slot >= kNumMidiMaps)
             continue;

@@ -142,7 +142,7 @@ public:
     static constexpr int kNumMidiMaps = 32;
     struct MidiMap
     {
-        int cc = -1;                // controller number, -1 = not assigned (yet)
+        int cc = -1;                // controller number (128 + n = note n), -1 = not assigned (yet)
         int channel = 0;            // 1..16, 0 = any channel
         int param = -1;             // index into the parameter table
         float lo = 0.0f, hi = 1.0f; // range (normalised): the controller's 0..127 sweeps lo..hi
@@ -172,6 +172,39 @@ public:
         return lastCc.load();
     }
     std::atomic<int> midiMapVersion{0};
+
+    // ---- MIDI buttons -> buttons of the interface: a pad, key or controller button presses a
+    // button on screen that has no parameter behind it (the window has to be open for these; the
+    // audio thread only notes the press, the editor does the click)
+    static constexpr int kNumButtonMaps = 48;
+    /** what a MIDI button sends: 0..119 = that controller, kNoteCode + n = note n */
+    static constexpr int kNoteCode = 128;
+    struct ButtonMap
+    {
+        int code = -1;       // -1 = not learned (yet)
+        int channel = 0;     // 1..16, 0 = any
+        juce::String target; // the button on screen (its path in the interface)
+        bool used() const noexcept
+        {
+            return target.isNotEmpty();
+        }
+    };
+    ButtonMap getButtonMap(int slot) const;
+    void setButtonMap(int slot, const ButtonMap &m);
+    void clearButtonMap(int slot);
+    /** a mapping for this button, waiting for the next MIDI button pressed; returns the slot
+        (-1 = all slots used) */
+    int learnButton(const juce::String &target);
+    void stopButtonLearn();
+    int getLearningButton() const
+    {
+        return bmLearn.load();
+    }
+    juce::Array<int> buttonMapsFor(const juce::String &target) const;
+    /** the next press / release that came in for a mapped button (one reader: the editor) */
+    bool nextButtonEvent(int &slot, bool &down);
+    /** "CC 20", "Note C3" (+ the channel if one is set) */
+    static juce::String triggerName(int code, int channel);
 
     // ---- free tuning: Scala files, MTS-ESP (message thread)
     static constexpr int kScalaTuning = 19, kMtsTuning = 20; // entries of the tuning list
@@ -822,6 +855,18 @@ private:
     std::array<std::atomic<bool>, kNumMidiMaps> mmToggle{};
     std::array<bool, kNumMidiMaps> mmPressed{}; // audio thread (toggle buttons)
     std::atomic<int> mmLearn{-1}, lastCc{-1};
+    // MIDI buttons -> buttons on screen
+    std::array<std::atomic<int>, kNumButtonMaps> bmCode{}, bmChan{};
+    std::array<std::atomic<bool>, kNumButtonMaps> bmOn{};
+    std::array<juce::String, kNumButtonMaps> bmTarget; // message thread
+    std::array<bool, kNumButtonMaps> bmPressed{};      // audio thread
+    std::atomic<int> bmLearn{-1};
+    std::atomic<bool> noteMaps{false}; // some mapping listens to a note: notes are looked at
+    juce::AbstractFifo bmFifo{256};
+    std::array<int, 256> bmEvents{};
+    juce::MidiBuffer noteScratch;
+    void updateNoteMaps();
+    bool handleTrigger(int code, int channel, int value); // audio thread; true = mapped
     int savedMapVersion = 0;
     juce::ValueTree midiMapState() const;
     void applyMidiMapState(const juce::ValueTree &);

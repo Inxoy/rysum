@@ -57,9 +57,74 @@ public:
 };
 
 /** fixed 1280 x 720 design, scaled as a whole when the window is resized */
+namespace rysum::ui
+{
+/** where a button sits in the interface, as text: what a MIDI button mapped to it is saved with.
+    Each step is the component's ID, else its name (the n-th of that name), else its place among
+    the unnamed ones. */
+juce::String buttonPath(juce::Component &root, juce::Button &b);
+juce::Button *findButton(juce::Component &root, const juce::String &path);
+
+/** "MIDI-Tasten zuordnen": lies over the whole interface. A click on any button waits for the next
+    MIDI button (a pad, a controller button, a key) and gives it that button; nothing on screen
+    is operated meanwhile. Switches go to their parameter (they then work with the window closed),
+    everything else is clicked by the editor. */
+class ButtonLearnOverlay : public juce::Component
+{
+public:
+    ButtonLearnOverlay(RysumProcessor &, juce::Component &root);
+    void paint(juce::Graphics &) override;
+    void mouseDown(const juce::MouseEvent &) override;
+    void mouseMove(const juce::MouseEvent &) override;
+    void mouseExit(const juce::MouseEvent &) override;
+    bool keyPressed(const juce::KeyPress &) override;
+    void visibilityChanged() override;
+    /** from the editor's timer: what is on screen and what is mapped may have changed */
+    void refresh();
+    /** this button waits for its MIDI button; false = no place left */
+    bool learn(juce::Button &);
+    void forget(juce::Button &);
+    /** what is mapped to a button ("CC 20", "Note C3"), empty = nothing */
+    juce::String mappingOf(juce::Button &) const;
+    std::function<void()> onClose;
+
+private:
+    struct Item
+    {
+        juce::Button *button = nullptr;
+        juce::Rectangle<int> area;
+        juce::String label;
+        bool waiting = false;
+        bool operator==(const Item &o) const
+        {
+            return button == o.button && area == o.area && label == o.label &&
+                   waiting == o.waiting;
+        }
+    };
+    void collect(juce::Component &parent, juce::Rectangle<int> clip, std::vector<Item> &out) const;
+    void describe(juce::Button &, juce::String &label, bool &waiting) const;
+    int paramOf(juce::Button &) const;
+    int itemAt(juce::Point<int>) const;
+    void stopWaiting();
+
+    RysumProcessor &proc;
+    juce::Component &root;
+    std::vector<Item> items;
+    int hover = -1, waitingParamSlot = -1;
+    juce::String note;
+};
+} // namespace rysum::ui
+
 class RysumContent : public juce::Component, public rysum::ui::ModUiAccess
 {
 public:
+    /** "MIDI-Tasten zuordnen" on / off (Ctrl+M) */
+    void startButtonLearn() override;
+    void stopButtonLearn();
+    rysum::ui::ButtonLearnOverlay &buttonLearn()
+    {
+        return learnOverlay;
+    }
     bool keyPressed(const juce::KeyPress &) override;
     bool keyStateChanged(bool isKeyDown) override;
     void releaseComputerKeys();
@@ -149,6 +214,9 @@ private:
     rysum::ui::OrganView organ;
     rysum::ui::SpeakerView speakers{proc}; // view 7: the loudspeaker layout
     rysum::ui::WalkView walk{proc};        // view 8: the Saal in 3D, walked with WASD and the mouse
+    rysum::ui::ButtonLearnOverlay learnOverlay{proc, *this};
+    bool immersive = false;     // the 3D view fills the whole window
+    bool immersiveFull = false; // ... and went to the full screen for it
     juce::TextButton outInfoButton;        // over the channel info in the top bar: opens it
     /** the "Rysum" in the top bar opens the page about the organ (and goes back) */
     struct LogoButton : juce::Button
@@ -196,6 +264,10 @@ private:
 
 public:
     void startStats();
+    /** RYSUM_IMMERSIVE_TEST=1: the immersive 3D view in the real window - does it stay on, does
+        the hidden pointer turn the view and stay in the middle, does the window come back; the
+        result goes to Documents/Rysum/immersive-test.txt, then the program ends */
+    void runImmersiveTest();
 
 private:
 };

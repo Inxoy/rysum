@@ -682,7 +682,20 @@ away (*stößt ab*), lets them circle (*Umlaufbahn*) or drags them along (*Sog*)
 *Reichweite*. It acts on stops whose motion takes place in the Saal (Flug, Fall, Schwarm,
 Strömung) – and on the new motion *Schweben*, where the pipes rest at their place until the
 player moves them (*Tiefe* = how free they are, *Geschwindigkeit* = an unrest of their own).
+*Immersiv* (button in the top row, or the key **I**): nothing but the picture. The 3D view fills
+the whole screen (the window goes to full screen for it and comes back afterwards), with no
+buttons, no writing and no map – only the small cross in the middle stays. The mouse looks around
+without a button held: the pointer is hidden and kept inside the view. A click knocks on the
+pipe under the cross. **Esc** or **I** goes back; so does switching to another program, which
+also frees the pointer at once.
+
+The hands are also buttons in a row at the bottom (*E Druckwelle*, *Q Greifen*, *F Anhalten*,
+*R Zurückrufen*, *C Klatschen*, *M Material*, *Springen*), so each can be put on a MIDI button
+(see *MIDI buttons for any button* in chapter 4) – also *Immersiv* itself. *Greifen*, *Anhalten*
+and *Springen* act for as long as the MIDI button is held.
+
 *The player's hands* (keys in the 3D view; with **Shift** stronger):
+
 **E** – a shockwave: a deep burst pushes every pipe away from you, the nearer the harder, and
 they knock on the walls. **Q** (held) – takes the pipe under the cross (it gets a ring when a
 pipe is within 9 m), carries it ahead of you, and throws it when you let go – with the speed
@@ -937,6 +950,28 @@ works the same way in Ableton, Reaper and the standalone app:
   used. Patches do not change them.
 - The parameter moves exactly as if you turned it with the mouse. When Ableton or Reaper record
   automation, the knob movement is recorded too.
+
+### MIDI buttons for any button
+
+Every button of the interface can be put on a MIDI button: a pad, a controller button or a key.
+
+- **Ctrl+M**, or *Modulation → Zuordnungen → MIDI-Regler → Knöpfe der Oberfläche zuordnen …*,
+  lays a veil over the interface in which every button is framed. **Click a button, then press
+  the MIDI button.** The button gets a red tag with what it listens to (`CC 30 · K1`,
+  `Note C2 · K10`).
+- **Right-click** removes the assignment. **Ctrl+click** operates the button as usual (to get to
+  another page). **Esc** ends it. While assigning, MIDI buttons operate nothing.
+- A MIDI button may send a controller (pressed = 64 or more) or a **note**. A note that is
+  assigned no longer plays a pipe. Pick pads or keys outside the range you play.
+- Switches that are parameters (the stops, *Saal an*, the on/off buttons of the effects …) get an
+  ordinary entry in the *MIDI-Regler* list: each press flips them, and they work while the
+  window is closed.
+- All other buttons (pages, patches, *Zufall*, *Vollbild*, the buttons of the 3D view …) are
+  clicked by the window, so **the plugin window has to be open** for them. The buttons that act
+  while held in the 3D view follow the MIDI button: down = held, up = let go.
+- Saved like the other assignments: in the project and in `Documents\Rysum\MIDI-Regler.xml`.
+  A button is remembered by its place in the interface, so an assignment may need to be made
+  again after an update that rearranges a page.
 
 ## 5. Files
 

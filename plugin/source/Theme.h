@@ -392,6 +392,30 @@ struct ModUiAccess
     {
         return -1;
     }
+    /** opens the mode in which a click on any button waits for a MIDI button to press it */
+    virtual void startButtonLearn() {}
+};
+
+/** a switch of the interface bound to its parameter; the button also says which parameter it is,
+    so a MIDI button learned for it drives the parameter (and works while the window is closed) */
+inline std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>
+attachButton(juce::AudioProcessorValueTreeState &state, const juce::String &paramId,
+             juce::Button &b)
+{
+    b.getProperties().set("midiParam", paramId);
+    return std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(state, paramId,
+                                                                                 b);
+}
+
+/** a button that acts for as long as it is held: by the mouse, or by a MIDI button mapped to it */
+struct HoldButton : juce::TextButton
+{
+    using juce::TextButton::TextButton;
+    bool midiHeld = false;
+    bool held() const
+    {
+        return isDown() || midiHeld;
+    }
 };
 
 /** parses what someone typed into a value field, in the units the parameter shows

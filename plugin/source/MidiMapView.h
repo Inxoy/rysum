@@ -107,6 +107,9 @@ private:
     std::array<Row, RysumProcessor::kNumMidiMaps> rows;
     MidiMapList list{*this};
     juce::Viewport view;
+    juce::TextButton buttonsLearn{juce::String::fromUTF8("Kn\xc3\xb6pfe der Oberfl\xc3\xa4"
+                                                         "che zuordnen \xe2\x80\xa6")};
+    juce::Rectangle<int> footNote;
     juce::Rectangle<int> header;
     int lastVersion = -1, lastCcShown = -2;
     bool updating = false;

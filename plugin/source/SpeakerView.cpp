@@ -367,7 +367,7 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
     distComp.setClickingTogglesState(true);
     distComp.setTooltip(U("N\xc3\xa4here Lautsprecher leiser und sp\xc3\xa4ter, als st\xc3\xbcnden "
                           "alle so weit weg wie der fernste (Spalte Abstand)"));
-    distAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    distAtt = rysum::ui::attachButton(
         proc.apvts, "spkDistComp", distComp);
     addAndMakeVisible(distComp);
 

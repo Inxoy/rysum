@@ -97,12 +97,26 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
 {
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::CrosshairCursor);
-    for (auto* b : { &back, &load, &clear, &fit, &zUp, &home, &hear })
+    for (juce::Button* b : std::initializer_list<juce::Button*> { &back, &load, &clear, &fit, &zUp, &home, &hear, &immerse, &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
     }
     back.onClick = [this] { if (onBack) onBack(); };
+    immerse.setTooltip (U ("Nur das Bild, \xc3\xbc" "ber das ganze Fenster: keine Kn\xc3\xb6pfe, keine Schrift, keine Karte. Die Maus schaut sich um, "
+                           "ohne dass eine Taste gehalten wird (der Zeiger ist versteckt). Esc oder I: zur\xc3\xbc" "ck."));
+    immerse.onClick = [this] { toggleImmersive(); };
+    actShock.setTooltip (U ("Eine Druckwelle st\xc3\xb6\xc3\x9ft alle Pfeifen von dir weg (Taste E, mit Shift st\xc3\xa4rker)"));
+    actShock.onClick = [this] { shock (juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown() ? 1.7f : 1.0f); };
+    actGrab.setTooltip (U ("Gedr\xc3\xbc" "ckt halten: die Pfeife unter dem Kreuz greifen und tragen; loslassen: werfen (Taste Q)"));
+    actFreeze.setTooltip (U ("Gedr\xc3\xbc" "ckt halten: alles, was sich bewegt, steht still (Taste F)"));
+    actHome.setTooltip (U ("Alle Pfeifen fliegen an ihren Platz in der Orgel zur\xc3\xbc" "ck (Taste R)"));
+    actHome.onClick = [this] { callHome(); };
+    actClap.setTooltip (U ("In die H\xc3\xa4nde klatschen, wo du stehst (Taste C)"));
+    actClap.onClick = [this] { clap(); };
+    actMat.setTooltip (U ("Das Material der Fl\xc3\xa4" "che unter dem Kreuz wechseln (Taste M)"));
+    actMat.onClick = [this] { cycleMaterial(); };
+    actJump.setTooltip (U ("Springen (Leertaste)"));
     back.setTooltip (U ("Zur\xc3\xbc" "ck zum Saal (Esc)"));
     load.onClick = [this] { chooseModel(); };
     load.setTooltip (U ("Ein 3D-Modell (OBJ, mit MTL-Farben) als Raum: zu sehen, zu begehen (seine W\xc3\xa4nde halten dich auf) und \xe2\x80\x93 mit \xe2\x80\x9eModell h\xc3\xb6rbar\xe2\x80\x9c \xe2\x80\x93 zu h\xc3\xb6ren. Der Quader des Saals liegt darunter."));
@@ -186,6 +200,21 @@ void WalkView::resized()
 {
     auto r = getLocalBounds().reduced (16, 10).removeFromTop (26);
     back.setBounds (r.removeFromLeft (70));
+    r.removeFromLeft (6);
+    immerse.setBounds (r.removeFromLeft (84));
+    {
+        // the hands: a row above the hints at the bottom
+        auto h = getLocalBounds().reduced (18, 0).withTrimmedBottom (26).removeFromBottom (22);
+        handsArea = h;
+        const int widths[] { 104, 88, 92, 104, 96, 92, 78 };
+        juce::Button* hands[] { &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump };
+        for (int i = 0; i < 7; ++i)
+        {
+            hands[i]->setBounds (h.removeFromLeft (widths[i]));
+            h.removeFromLeft (5);
+        }
+        handsArea = h;
+    }
     home.setBounds (r.removeFromRight (82));
     r.removeFromRight (6);
     fit.setBounds (r.removeFromRight (122));
@@ -222,6 +251,8 @@ void WalkView::visibilityChanged()
     {
         stopTimer();
         looking = false;
+        setImmersive (false);
+        actGrab.midiHeld = actFreeze.midiHeld = actJump.midiHeld = false;
         updateActions (false, false);          // (nothing stays in the hand, nothing stays frozen)
         proc.engine.viewWalkOn = false;
         proc.engine.viewZ = 0.0f;
@@ -404,6 +435,13 @@ void WalkView::timerCallback()
     const double t = juce::Time::getMillisecondCounterHiRes();
     const double dt = juce::jlimit (0.0, 0.1, (t - lastTime) * 0.001);
     lastTime = t;
+    const bool grabHeld = actGrab.held(), freezeHeld = actFreeze.held(), jumpHeld = actJump.held();
+    if (immersive && ! testMode)
+    {
+        // without the keyboard the mouse is let go at once, and the view is left a moment later
+        if (hasKeyboardFocus (false)) { unfocused = 0; pollLockedMouse(); }
+        else if (++unfocused > 3) setImmersive (false);
+    }
     if (hasKeyboardFocus (false))
     {
         auto down = [] (int code) { return juce::KeyPress::isKeyCurrentlyDown (code); };
@@ -415,21 +453,28 @@ void WalkView::timerCallback()
         if (down (juce::KeyPress::leftKey)) turn += 90.0f * (float) dt;
         if (down (juce::KeyPress::rightKey)) turn -= 90.0f * (float) dt;
         const bool fast = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
-        advance (dt, f, b, l, r, turn / (90.0f * (float) juce::jmax (1.0e-4, dt)), fast, down (juce::KeyPress::spaceKey));
-        updateActions (down ('Q') || down ('q'), down ('F') || down ('f'));
+        advance (dt, f, b, l, r, turn / (90.0f * (float) juce::jmax (1.0e-4, dt)), fast, down (juce::KeyPress::spaceKey) || jumpHeld);
+        updateActions (down ('Q') || down ('q') || grabHeld, down ('F') || down ('f') || freezeHeld);
+
     }
     else
     {
-        advance (dt, false, false, false, false, 0.0f, false, false);      // (keys let go by losing the focus: coming to rest, landing)
-        updateActions (false, false);
+        advance (dt, false, false, false, false, 0.0f, false, jumpHeld);      // (keys let go by losing the focus: coming to rest, landing)
+        updateActions (grabHeld, freezeHeld);
     }
     repaint();
 }
 
 bool WalkView::keyPressed (const juce::KeyPress& k)
 {
-    if (k == juce::KeyPress::escapeKey) { if (onBack) onBack(); return true; }
+    if (k == juce::KeyPress::escapeKey)
+    {
+        if (immersive) setImmersive (false);
+        else if (onBack) onBack();
+        return true;
+    }
     const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
+    if (c == 'i' && ! k.getModifiers().isCtrlDown() && ! k.getModifiers().isCommandDown()) { toggleImmersive(); return true; }
     if (c == 'm') { cycleMaterial(); return true; }
     const bool hard = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
     if (c == 'e') { shock (hard ? 1.7f : 1.0f); return true; }
@@ -446,9 +491,70 @@ bool WalkView::keyStateChanged (bool) { return true; }
 
 void WalkView::focusLost (FocusChangeType) { looking = false; }
 
+// ---------------------------------------------------------------------------
+// "Immersiv": only the picture, the mouse looks around by itself
+// ---------------------------------------------------------------------------
+void WalkView::toggleImmersive()
+{
+    if (immersive) { setImmersive (false); return; }
+    // (the window may go to the full screen first: the keyboard wanders while it does, so the view starts after it)
+    if (prepareImmersive && prepareImmersive())
+        juce::Timer::callAfterDelay (160, [safe = juce::Component::SafePointer<WalkView> (this)] { if (safe != nullptr && safe->isShowing()) safe->setImmersive (true); });
+    else
+        setImmersive (true);
+}
+
+void WalkView::setImmersive (bool on)
+{
+    if (on == immersive) return;
+    immersive = on;
+    looking = false;
+    for (auto* c : getChildren()) c->setVisible (! on);
+    setMouseCursor (on && ! testMode ? juce::MouseCursor::NoCursor : juce::MouseCursor::CrosshairCursor);
+    lockFresh = true;
+    unfocused = 0;
+    if (onImmersive) onImmersive (on);
+    if (on && isShowing()) grabKeyboardFocus();
+    repaint();
+}
+
+void WalkView::pollLockedMouse()
+{
+    if (! immersive || testMode || ! hasKeyboardFocus (false)) return;
+    // the pointer's way since the last look, on the screen (so the full screen's enlargement does not change the
+    // speed); it is hidden, and put back to the middle before it could leave the view
+    auto mouse = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = mouse.getScreenPosition();
+    if (! lockFresh)
+    {
+        const auto d = now - lockRef;
+        if (std::abs (d.x) + std::abs (d.y) > 0.01f)
+        {
+            yawT = wrapAz (yawT - d.x * 0.15f);
+            pitchT = juce::jlimit (-85.0f, 85.0f, pitchT - d.y * 0.15f);
+        }
+    }
+    lockFresh = false;
+    lockRef = now;
+    const auto centre = getScreenBounds().getCentre().toFloat();
+    if (now.getDistanceFrom (centre) > 60.0f)
+    {
+        mouse.setScreenPosition (centre);
+        lockRef = mouse.getScreenPosition();      // (where it really landed: no drift from rounding)
+    }
+}
+
+void WalkView::mouseMove (const juce::MouseEvent&) { pollLockedMouse(); }
+
 void WalkView::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
+    if (immersive)
+    {
+        // no pointer: a click knocks on the pipe under the cross
+        strikeAt (getLocalBounds().getCentre().toFloat(), e.mods.isShiftDown() ? 1.7f : 1.0f);
+        return;
+    }
     looking = true;
     lastMouse = downPos = e.position;
     dragged = 0.0f;
@@ -457,6 +563,7 @@ void WalkView::mouseDown (const juce::MouseEvent& e)
 
 void WalkView::mouseDrag (const juce::MouseEvent& e)
 {
+    if (immersive) { pollLockedMouse(); return; }
     if (! looking) return;
     const auto d = e.position - lastMouse;
     lastMouse = e.position;
@@ -468,6 +575,7 @@ void WalkView::mouseDrag (const juce::MouseEvent& e)
 
 void WalkView::mouseUp (const juce::MouseEvent& e)
 {
+    if (immersive || ! looking) { looking = false; return; }
     looking = false;
     e.source.enableUnboundedMouseMovement (false);
     // a click (not a look around): a knock on the pipe there
@@ -1167,9 +1275,11 @@ void WalkView::paint (juce::Graphics& g)
         }
     }
 
+    if (immersive) return;      // (only the picture and the cross)
+
     // heading, hints, status (on dark bands, so they stay readable over a bright model)
     {
-        const auto top = area.toFloat().removeFromTop (84.0f), bottom = area.toFloat().removeFromBottom (72.0f);
+        const auto top = area.toFloat().removeFromTop (84.0f), bottom = area.toFloat().removeFromBottom (84.0f);
         g.setGradientFill (juce::ColourGradient (col::bg.withAlpha (0.72f), 0.0f, top.getY(), col::bg.withAlpha (0.0f), 0.0f, top.getBottom(), false));
         g.fillRect (top);
         g.setGradientFill (juce::ColourGradient (col::bg.withAlpha (0.0f), 0.0f, bottom.getY(), col::bg.withAlpha (0.78f), 0.0f, bottom.getBottom(), false));
@@ -1187,8 +1297,7 @@ void WalkView::paint (juce::Graphics& g)
     g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
                   "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
                 area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
-    g.drawText (U ("E Druckwelle  \xc2\xb7  Q halten: Pfeife greifen und tragen, loslassen: werfen  \xc2\xb7  F halten: alles anhalten  \xc2\xb7  R Pfeifen zur\xc3\xbc" "ckrufen  \xc2\xb7  C klatschen  \xc2\xb7  Klick: Pfeife anschlagen  \xc2\xb7  mit Shift: st\xc3\xa4rker"),
-                area.reduced (18, 0).withTrimmedBottom (20).removeFromBottom (16), juce::Justification::centredLeft);
+    g.drawText (U ("Klick: Pfeife anschlagen  \xc2\xb7  mit Shift: st\xc3\xa4rker  \xc2\xb7  I: immersiv"), handsArea.withTrimmedLeft (8), juce::Justification::centredLeft);
     {
         // the player moves pipes, but no stop has pipes that can be moved: say how
         bool anyBodies = false;
@@ -1204,7 +1313,7 @@ void WalkView::paint (juce::Graphics& g)
     {
         g.setColour (col::rubric.brighter (0.2f));
         g.drawText (U ("Die Kopfdrehung ist nur bei Kopfh\xc3\xb6rer-Ausgabe (binaural) zu h\xc3\xb6ren; Gehen \xc3\xbc" "berall."),
-                    area.reduced (18, 0).withTrimmedBottom (38).removeFromBottom (16), juce::Justification::centredLeft);
+                    area.reduced (18, 0).withTrimmedBottom (52).removeFromBottom (16), juce::Justification::centredLeft);
     }
     if (juce::Time::getMillisecondCounterHiRes() < statusUntil && status.isNotEmpty())
     {

@@ -98,7 +98,7 @@ ModView::ModView(RysumProcessor &p) : proc(p)
         L.spreadModeAtt = std::make_unique<ComboAtt>(st, id + "SpreadMode", L.spreadMode);
         L.sync.setClickingTogglesState(true);
         L.sync.setTooltip("Im Projekttempo, an der Taktposition eingerastet");
-        L.syncAtt = std::make_unique<ButtonAtt>(st, id + "Sync", L.sync);
+        L.syncAtt = rysum::ui::attachButton(st, id + "Sync", L.sync);
         L.rate = std::make_unique<ParamRow>(st, id + "Rate", "Tempo");
         L.spread = std::make_unique<ParamRow>(st, id + "Spread", "Versatz je Pfeife");
         L.spread->slider.setTooltip(juce::String::fromUTF8(

@@ -491,7 +491,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     inputPull.setTooltip(juce::String::fromUTF8(
         "Eingang an / aus: das Audio, das in Rysum hineingeht, klingt im Raum"));
     addAndMakeVisible(inputPull);
-    inputPullAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    inputPullAttachment = rysum::ui::attachButton(
         proc.apvts, "inpOn", inputPull);
     for (auto *b : {&inMono, &inStereo})
     {
@@ -528,7 +528,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     inGate.setTooltip(juce::String::fromUTF8(
         "Der Eingang klingt nur, solange Tasten gehalten werden (\xe2\x80\x9e"
         "Ausklang\xe2\x80\x9c: wie schnell er sich schlie\xc3\x9ft)"));
-    inGateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    inGateAttachment = rysum::ui::attachButton(
         proc.apvts, "inpGate", inGate);
     addChildComponent(inGate);
     if (auto *f = dynamic_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("inpFollow")))
@@ -569,7 +569,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         pullButtons.push_back(std::make_unique<PullToggle>());
         addAndMakeVisible(*pullButtons.back());
         pullAttachments.push_back(
-            std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            rysum::ui::attachButton(
                 proc.apvts, RysumProcessor::stopParamId(s), *pullButtons.back()));
     }
     const auto lnames = layoutNames();
@@ -796,7 +796,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     };
     irClear.onClick = [this] { proc.clearIr(); };
     irClear.setTooltip("Impulsantwort entfernen");
-    irFumaAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    irFumaAttachment = rysum::ui::attachButton(
         proc.apvts, "irFuma", irFuma);
     irFuma.setClickingTogglesState(true);
     irFuma.setTooltip(juce::String::fromUTF8(
@@ -832,9 +832,9 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         "Impulsantwort: die im Raum gemessenen (Klatschen) oder eine Datei laden "
         "(WAV/AIFF/FLAC, Mono, Stereo oder AmbiX 1.\xe2\x80\x93"
         "5. Ordnung)"));
-    irN3DAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    irN3DAttachment = rysum::ui::attachButton(
         proc.apvts, "irN3D", irN3D);
-    irFollowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    irFollowAttachment = rysum::ui::attachButton(
         proc.apvts, "irFollow", irFollow);
     irN3D.setTooltip(juce::String::fromUTF8("Ambisonics-IR in N3D-Normierung (statt SN3D)"));
     irFollow.setTooltip(juce::String::fromUTF8(
@@ -1023,7 +1023,7 @@ void SpaceView::selectStop(int s)
             addAndMakeVisible(*pipeRows[(size_t)k]);
         }
     }
-    jumpHardAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+    jumpHardAttachment = rysum::ui::attachButton(
         proc.apvts, RysumProcessor::jumpHardParamId(s), jumpHard);
     if (auto *f = proc.apvts.getParameter(RysumProcessor::ellFormParamId(s)))
     {

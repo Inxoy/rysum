@@ -185,6 +185,18 @@ MidiMapPanel::MidiMapPanel(RysumProcessor &p) : proc(p)
     view.setScrollBarThickness(6);
     view.setSingleStepSizes(kRowH, kRowH);
     addAndMakeVisible(view);
+    buttonsLearn.setTooltip(juce::String::fromUTF8(
+        "Jeden Knopf der Oberfl\xc3\xa4"
+        "che auf eine MIDI-Taste legen (Pad, Taster, Klaviertaste): Knopf anklicken, MIDI-Taste "
+        "dr\xc3\xbc"
+        "cken. Auch mit Strg+M. Schalter mit Parameter stehen danach in dieser Liste; alle "
+        "anderen Kn\xc3\xb6pfe reagieren, solange das Fenster offen ist."));
+    buttonsLearn.onClick = [this]
+    {
+        if (auto *a = findParentComponentOfClass<ModUiAccess>())
+            a->startButtonLearn();
+    };
+    addAndMakeVisible(buttonsLearn);
     sync();
 }
 
@@ -192,6 +204,11 @@ void MidiMapPanel::resized()
 {
     auto r = getLocalBounds();
     header = r.removeFromTop(16);
+    {
+        auto foot = r.removeFromBottom(30).withTrimmedTop(6);
+        buttonsLearn.setBounds(foot.removeFromLeft(250));
+        footNote = foot.withTrimmedLeft(10);
+    }
     view.setBounds(r);
     list.setSize(r.getWidth() - 10, kRowH * RysumProcessor::kNumMidiMaps);
     for (int i = 0; i < RysumProcessor::kNumMidiMaps; ++i)
@@ -238,9 +255,7 @@ void MidiMapPanel::sync()
         if (learning == i)
             l = juce::String::fromUTF8("bewegen \xe2\x80\xa6");
         else if (m.cc >= 0)
-            l = "CC " + juce::String(m.cc) +
-                (m.channel > 0 ? juce::String::fromUTF8(" \xc2\xb7 K") + juce::String(m.channel)
-                               : juce::String());
+            l = RysumProcessor::triggerName(m.cc, m.channel);
         else
             l = "lernen";
         R.learn.setButtonText(l);
@@ -299,6 +314,10 @@ void MidiMapPanel::paint(juce::Graphics &g)
             juce::String::fromUTF8(" \xc2\xb7 Wert ") + juce::String((last >> 16) & 0xff);
     g.setColour(last < 0 ? col::faint : col::dim);
     g.drawText(t, header.withTrimmedRight(14), juce::Justification::centredRight);
+    g.setColour(col::faint);
+    g.drawText(juce::String::fromUTF8("Strg+M  \xc2\xb7  Pads und Tasten, die zugeordnet sind, "
+                                      "spielen keine Pfeife mehr"),
+               footNote, juce::Justification::centredLeft);
 }
 
 void MidiMapList::paint(juce::Graphics &g)
