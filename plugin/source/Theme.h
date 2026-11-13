@@ -701,7 +701,7 @@ public:
             if (midiCc >= 0)
             {
                 // a small tag: this one follows a controller
-                const auto tag = "CC " + juce::String(midiCc);
+                const auto tag = midiCc >= 128 ? "Note " + juce::MidiMessage::getMidiNoteName(midiCc - 128, true, true, 4) : "CC " + juce::String(midiCc); // (128 + n: note n)
                 g.setFont(Assets::get().monoFont(compact ? 8.5f : 9.5f));
                 g.setColour(col::faint);
                 const int tw = juce::roundToInt(juce::GlyphArrangement::getStringWidth(

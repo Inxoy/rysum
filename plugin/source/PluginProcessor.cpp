@@ -1873,7 +1873,9 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         }
         if (any)
         {
-            midi.swapWith(noteScratch);
+            // (copied back, not swapped: both buffers keep the memory they have)
+            midi.clear();
+            midi.addEvents(noteScratch, 0, -1, 0);
             triggerAsyncUpdate();
         }
     }

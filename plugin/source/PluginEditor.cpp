@@ -786,14 +786,14 @@ void RysumContent::tickBody()
         bool down = false;
         while (proc.nextButtonEvent(slot, down))
         {
-            if (learnOverlay.isVisible())
-                continue; // (while assigning nothing is operated)
+            // (while assigning nothing is operated - but what is held is still let go)
+            const bool assigning = learnOverlay.isVisible();
             auto *b = rysum::ui::findButton(*this, proc.getButtonMap(slot).target);
             if (b == nullptr)
                 continue;
             if (auto *h = dynamic_cast<rysum::ui::HoldButton *>(b))
-                h->midiHeld = down; // (held for as long as the MIDI button is)
-            else if (down && b->isEnabled())
+                h->midiHeld = down && !assigning; // (held for as long as the MIDI button is)
+            else if (down && !assigning && b->isEnabled())
                 b->triggerClick();
         }
         if (learnOverlay.isVisible())

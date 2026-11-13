@@ -497,9 +497,14 @@ void WalkView::focusLost (FocusChangeType) { looking = false; }
 void WalkView::toggleImmersive()
 {
     if (immersive) { setImmersive (false); return; }
+    if (! isShowing() && ! testMode) return;      // (a MIDI button pressed while another page is shown: nothing)
     // (the window may go to the full screen first: the keyboard wanders while it does, so the view starts after it)
     if (prepareImmersive && prepareImmersive())
-        juce::Timer::callAfterDelay (160, [safe = juce::Component::SafePointer<WalkView> (this)] { if (safe != nullptr && safe->isShowing()) safe->setImmersive (true); });
+        juce::Timer::callAfterDelay (160, [safe = juce::Component::SafePointer<WalkView> (this)] {
+            if (safe == nullptr) return;
+            if (safe->isShowing()) safe->setImmersive (true);
+            else if (safe->onImmersive) safe->onImmersive (false);      // (the page was left meanwhile: the window goes back)
+        });
     else
         setImmersive (true);
 }
@@ -507,6 +512,7 @@ void WalkView::toggleImmersive()
 void WalkView::setImmersive (bool on)
 {
     if (on == immersive) return;
+    if (on && ! isShowing() && ! testMode) return;      // (never on a page that is not shown: its controls would stay hidden)
     immersive = on;
     looking = false;
     for (auto* c : getChildren()) c->setVisible (! on);
