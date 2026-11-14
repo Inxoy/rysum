@@ -7,6 +7,7 @@
 #include "PluginProcessor.h"
 #include "SpaceView.h"
 #include "WalkView.h"
+#include "RoomModels.h"
 
 class SnapshotApp : public juce::JUCEApplication, private juce::Timer
 {
@@ -239,6 +240,55 @@ public:
                     proc->getSurfaceMaterial(0, kSurfWall0 + 1) == 3 &&
                     proc->getSurfaceMaterial(0, kSurfWall0 + 2) == 5);
             proc->setSurfaceMaterial(0, -1, -1);
+        }
+        // ---- the rooms that come with the plugin: each loads, the Saal takes its size, the
+        // listener stands free (not inside a wall or column); in the stair tower one climbs
+        {
+            const auto &rooms = builtInRooms();
+            for (int i = 0; i < (int)rooms.size(); ++i)
+            {
+                wv.loadBuiltInRoomForTest(i);
+                run(20, {});
+                auto m = proc->getWalkMesh();
+                const RoomParams r = roomOf();
+                const int n = m != nullptr ? (int)m->tris.size() : 0;
+                // standing at home, a few steps forwards: it moves (nothing holds the listener)
+                wv.setPoseForTest(0, 0, 0);
+                for (int k = 0; k < 30; ++k)
+                    wv.advanceForTest(1.0 / 60.0, true, false, false, false, false);
+                const float moved = proc->walkPose[1].load();
+                say(juce::String("built-in room ") + rooms[(size_t)i].name + ": " + juce::String(n) +
+                        " triangles, " + juce::String(m ? m->size.x : 0.0f, 1) + " x " +
+                        juce::String(m ? m->size.y : 0.0f, 1) + " x " + juce::String(m ? m->size.z : 0.0f, 1) +
+                        " m, Saal " + juce::String(r.W(), 1) + " x " + juce::String(r.L(), 1) + " x " +
+                        juce::String(r.H(), 1) + ", walked " + juce::String(moved, 2) + " m",
+                    m != nullptr && n > 100 && n < 20000 && std::abs(r.W() - m->size.x) < 0.2f &&
+                        std::abs(r.L() - juce::jmin(100.0f, m->size.y)) < 0.2f && moved > 0.3f);
+                wv.setPoseForTest(0, 0, 0);
+                run(4, {});
+                shot(juce::String("walk_room_") + juce::String(i) + "_a.png");
+                wv.setPoseForTest(0, 0, 180);
+                run(4, {});
+                shot(juce::String("walk_room_") + juce::String(i) + "_b.png");
+                if (juce::String(rooms[(size_t)i].name) == "Treppenturm" && m != nullptr)
+                {
+                    // the foot of the first flight (inner corner 1.5 / 1.5 m, the wall 0.8 m):
+                    // walking up it for six seconds
+                    const auto home = listenerPos(r);
+                    wv.setPoseForTest(0.8f + 0.75f - home.x, 0.8f + 1.0f - home.y, 0);
+                    for (int k = 0; k < 360; ++k)
+                        wv.advanceForTest(1.0 / 60.0, true, false, false, false, false);
+                    const float up = wv.heightForTest();
+                    shot("walk_room_stairs.png");
+                    say("built-in room Treppenturm: up the first flight to " + juce::String(up, 2) +
+                            " m (its top 4 m)",
+                        up > 3.0f);
+                }
+            }
+            proc->clearWalkModel();
+            setReal(RysumProcessor::roomParamId(0, "Lx"), 0.5f);
+            setReal(RysumProcessor::roomParamId(0, "Ly"), 0.4f);
+            run(10, {});
         }
         // ---- a model: the chapel. Its walls stop the walker, its altar carries, its pillars hide pipes
         {

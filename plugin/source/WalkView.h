@@ -57,6 +57,7 @@ public:
     int aimForTest() const noexcept { return aimSurf; }
     void cycleMaterialForTest() { cycleMaterial(); }
     void loadModelForTest (const juce::File& f) { loadModel (f); }
+    void loadBuiltInRoomForTest (int index) { loadBuiltInRoom (index); }
     // ---- the player's actions (the keys; also for the tests)
     /** E: a burst that pushes every pipe away from you (strength 1 = the usual one) */
     void shock (float strength = 1.0f);
@@ -127,6 +128,7 @@ private:
     void buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const;
     void loadModel (const juce::File& f);
     void chooseModel();
+    void loadBuiltInRoom (int index);
     void updateButtons();
     void drawMap (juce::Graphics& g, juce::Rectangle<float> area, const RoomParams& r, const EngineParams& params, V3 home);
 

@@ -670,6 +670,15 @@ beyond the model, so a model without a floor or a roof never shows a black void.
 *Maße übernehmen* gives the Saal the model's width, length and height (as a rectangle).
 *Zum Platz* goes back to the listener's place. The model's file and where you stand are saved
 with the project (not with patches); a missing file is kept by name.
+Six rooms come with the plugin, in the menu of *Raummodell laden …*: *Kapelle* (12 × 24 × 9 m,
+columns, pews, altar steps), *Hallenkirche* (21 × 40 × 15 m, three aisles, a west gallery
+reached by a stair), *Krypta* (13 × 17 × 4 m, sixteen short columns under ribs), *Rotunde*
+(18 m round, a ring of eight columns under a dome), *Kreuzgang* (a covered walk around an open
+court with a well) and *Treppenturm* (9 × 9 × 23 m, five flights of twenty steps up to a landing
+20 m above the floor). Choosing one writes it as an ordinary OBJ (with `rysum_modelle.mtl`) into
+`Documents/Rysum/Modelle`, loads it z up in metres, gives the Saal its size and puts the listener
+at a free place in it. They are closed (except the court), their walls have a thickness, and
+their steps are 18–20 cm, so everything meant to be climbed can be.
 The room is drawn in greys like an old print, with moving film grain, and its surfaces follow
 the Saal's acoustics: the wall absorption and high damping pick the nearest of the Saal page's
 materials (*Stein*: ashlar blocks, *Putz*: plaster, *Holz*: panelling, *Glas*: leaded panes,

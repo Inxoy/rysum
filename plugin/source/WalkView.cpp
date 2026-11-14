@@ -1,6 +1,7 @@
 #include "WalkView.h"
 #include "MeshAcoustics.h"
 #include "RoomSim.h"
+#include "RoomModels.h"
 #include <algorithm>
 
 namespace rysum::ui
@@ -118,7 +119,25 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     actMat.onClick = [this] { cycleMaterial(); };
     actJump.setTooltip (U ("Springen (Leertaste)"));
     back.setTooltip (U ("Zur\xc3\xbc" "ck zum Saal (Esc)"));
-    load.onClick = [this] { chooseModel(); };
+    load.onClick = [this]
+    {
+        // the rooms that come with the plugin, or a file of one's own
+        juce::PopupMenu m;
+        m.addSectionHeader (U ("R\xc3\xa4ume, die dabei sind"));
+        const auto& rooms = builtInRooms();
+        for (int i = 0; i < (int) rooms.size(); ++i)
+            m.addItem (i + 1, juce::String::fromUTF8 (rooms[(size_t) i].name) + U ("  \xe2\x80\x93  ") + juce::String::fromUTF8 (rooms[(size_t) i].about),
+                       true, builtInRoomIndex (proc.walkModelFile.getFileName()) == i && proc.getWalkMesh() != nullptr);
+        m.addSeparator();
+        m.addItem (100, U ("Eigene Datei (OBJ) \xe2\x80\xa6"));
+        juce::Component::SafePointer<WalkView> safe (static_cast<WalkView*> (this));
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&load), [safe] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            if (r == 100) safe->chooseModel();
+            else safe->loadBuiltInRoom (r - 1);
+        });
+    };
     load.setTooltip (U ("Ein 3D-Modell (OBJ, mit MTL-Farben) als Raum: zu sehen, zu begehen (seine W\xc3\xa4nde halten dich auf) und \xe2\x80\x93 mit \xe2\x80\x9eModell h\xc3\xb6rbar\xe2\x80\x9c \xe2\x80\x93 zu h\xc3\xb6ren. Der Quader des Saals liegt darunter."));
     clear.onClick = [this] { proc.clearWalkModel(); status = U ("Modell entfernt"); statusUntil = juce::Time::getMillisecondCounterHiRes() + 2500; updateButtons(); repaint(); };
     fit.setTooltip (U ("Der Saal bekommt die Ma\xc3\x9f" "e des Modells (rechteckig, Breite \xc3\x97 L\xc3\xa4nge \xc3\x97 H\xc3\xb6he)"));
@@ -908,6 +927,38 @@ void WalkView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDe
     if (heldStop >= 0) { holdDist = juce::jlimit (0.2f, 4.0f, holdDist * std::exp (w.deltaY * 1.2f)); return; }
     fov = juce::jlimit (40.0f, 110.0f, fov - w.deltaY * 30.0f);
     repaint();
+}
+
+void WalkView::loadBuiltInRoom (int index)
+{
+    const auto& rooms = builtInRooms();
+    if (index < 0 || index >= (int) rooms.size()) return;
+    const auto f = writeBuiltInRoom (index, RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("Modelle"));
+    if (! f.existsAsFile())
+    {
+        status = U ("Konnte das Modell nicht schreiben: ") + f.getFullPathName();
+        statusUntil = juce::Time::getMillisecondCounterHiRes() + 5000;
+        repaint();
+        return;
+    }
+    // they are made z up, in metres; the Saal takes their size, the listener their good place
+    proc.walkZUp = true;
+    zUp.setToggleState (true, juce::dontSendNotification);
+    proc.walkScale = 1.0f;
+    units.setSelectedItemIndex (0, juce::dontSendNotification);
+    loadModel (f);
+    if (proc.getWalkMesh() == nullptr) return;
+    const auto keep = status;
+    if (fit.onClick) fit.onClick();
+    auto set = [this] (const char* key, float v)
+    {
+        if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (0, key))) prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+    };
+    set ("Lx", rooms[(size_t) index].listenX);
+    set ("Ly", rooms[(size_t) index].listenY);
+    status = keep.upToFirstOccurrenceOf (U ("  \xc2\xb7  "), false, false);
+    statusUntil = juce::Time::getMillisecondCounterHiRes() + 5000;
+    if (home.onClick) home.onClick();
 }
 
 void WalkView::chooseModel()
