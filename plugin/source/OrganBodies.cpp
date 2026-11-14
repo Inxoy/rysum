@@ -624,6 +624,7 @@ void OrganEngine::stepGrowth (const EngineParams& p, double blockSeconds) noexce
     {
         for (auto& st : pipeLen) for (auto& l : st) l = 1.0f;
         lenOff = false;
+        breakCount = 0;
     }
     const float g = juce::jmin (1.0f, p.live.grow);
     if (g <= 0.0001f)

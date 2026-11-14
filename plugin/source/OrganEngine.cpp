@@ -842,12 +842,21 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
         v.near.q0 = v.near.q1;
         Voice::NearQ q;
         const float w = p.live.whisper;
-        if (w > 0.0001f)
+        if (w > 0.0001f && nearHeard.load())
         {
             const float a = juce::degreesToRadians(homePos.az), e = juce::degreesToRadians(homePos.el);
-            const float x = -std::sin(a) * std::cos(e) * homePos.dist - walkX,
-                        y = std::cos(a) * std::cos(e) * homePos.dist - walkY,
-                        z = std::sin(e) * homePos.dist - walkZ;
+            float x = -std::sin(a) * std::cos(e) * homePos.dist - walkX,
+                  y = std::cos(a) * std::cos(e) * homePos.dist - walkY,
+                  z = std::sin(e) * homePos.dist - walkZ;
+            if (v.hasBody)
+            {
+                // a pipe that flies or is carried is where it is in the Saal (directions never
+                // come nearer than half a metre; this one may be at the ear)
+                const Vec3f L = listenerPos(roomsEr[(size_t)juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)v.stop])]);
+                x = v.bodyPos.x - L.x;
+                y = v.bodyPos.y - L.y;
+                z = v.bodyPos.z - L.z;
+            }
             const float d = std::sqrt(x * x + y * y + z * z);
             constexpr float kReach = 1.4f, kEar = 0.0875f;
             if (d < kReach)
@@ -859,7 +868,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
                             front = -x * std::sin(yaw) + y * std::cos(yaw);
                 const float dR = std::sqrt((side - kEar) * (side - kEar) + front * front + z * z),
                             dL = std::sqrt((side + kEar) * (side + kEar) + front * front + z * z);
-                const float base = 0.5f * w * t * sg * lvl * (hidDb > 0.0f ? dbToGain(-hidDb) : 1.0f);
+                const float base = 0.9f * w * t * sg * lvl * (hidDb > 0.0f ? dbToGain(-hidDb) : 1.0f);
                 const float nearest = juce::jmin(dL, dR), perM = (float)sr / kSpeedOfSoundRoom;
                 // (the far ear loses more than its distance alone would take: so close, the head
                 // shadows the low notes too)
@@ -880,6 +889,9 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
                 q.aL = dL > nearest ? shadow(dL) : 1.0f;
                 q.aR = dR > nearest ? shadow(dR) : 1.0f;
                 q.bass = t;
+                // (it leaves the room's own picture as it comes into the ears: both at once would
+                // colour each other)
+                g *= 1.0f - 0.85f * w * t;
             }
         }
         if (q.gL + q.gR <= 0.0f)

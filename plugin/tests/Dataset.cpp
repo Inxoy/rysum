@@ -149,12 +149,14 @@ private:
     /** everything as it is when the plugin is opened ("01 Init"), all notes let go, rung out */
     void resetAll()
     {
+        // (every parameter first: the ones a patch does not carry, like the output or the freeze)
+        for (auto *q : proc->getParameters())
+            q->setValueNotifyingHost(q->getDefaultValue());
         if (initPatch.existsAsFile())
             proc->loadPatch(initPatch);
-        else
-            for (auto *q : proc->getParameters())
-                q->setValueNotifyingHost(q->getDefaultValue());
         proc->engine.pipeLenReset = true;
+        proc->resetWear();
+        proc->latchOn = false;
         setReal("output", 0.0f); // stereo
         setReal("inpOn", 0.0f);
     }
@@ -188,7 +190,7 @@ private:
     std::vector<Note> singleNote(juce::Random &r) const
     {
         Note n;
-        n.midi = kPhysKeys[(size_t)r.nextInt(kNumKeys)];
+        n.midi = keys[(size_t)r.nextInt((int)keys.size())];
         n.velocity = 30 + r.nextInt(98);
         n.on = 0.05 + 0.4 * r.nextDouble();
         const double longest = clipSeconds - 1.8 - n.on;
@@ -202,7 +204,8 @@ private:
         std::vector<Note> notes;
         const double end = clipSeconds - 1.8;
         const int style = r.nextInt(4); // 0 a line, 1 chords, 2 a line over a held chord, 3 clusters / free
-        auto key = [&](int index) { return kPhysKeys[(size_t)juce::jlimit(0, kNumKeys - 1, index)]; };
+        const int kNumKeys = (int)keys.size(); // (the keys that play: see begin())
+        auto key = [&](int index) { return keys[(size_t)juce::jlimit(0, kNumKeys - 1, index)]; };
         const int scales[4][7]{{0, 2, 4, 5, 7, 9, 11}, {0, 2, 3, 5, 7, 8, 10}, {0, 2, 3, 5, 7, 9, 10}, {0, 1, 4, 5, 7, 8, 11}};
         const int *scale = scales[r.nextInt(4)];
         const int root = r.nextInt(12);
@@ -358,8 +361,24 @@ private:
 
             // what a patch loads in the background (reverb, responses) arrives while the last clip
             // rings out and a moment is waited
-            pump(k == 2 ? 250 : 5);
+            pump(k == 2 ? 100 : 5);
             ringOut();
+            // (the Saal's late reverb is calculated in the background: wait until the reverb time
+            // it reports stands still - at most three seconds)
+            if (getReal("simOn") > 0.5f)
+            {
+                float last = -1.0f;
+                int still = 0;
+                for (int i = 0; i < 60 && still < 6; ++i)
+                {
+                    pump(50);
+                    juce::MidiBuffer none;
+                    renderBlock(none);
+                    const float rt = proc->engine.heard[0].rtLow.load();
+                    still = std::abs(rt - last) < 1.0e-4f ? still + 1 : 0;
+                    last = rt;
+                }
+            }
             pump(1);
 
             // the notes, block by block
@@ -525,12 +544,37 @@ private:
         proc->prepareToPlay(rate, block);
         work.setSize(juce::jmax(2, proc->getTotalNumInputChannels(), proc->getTotalNumOutputChannels()), block);
         pump(400); // (factory patches written, responses loaded)
+        // the factory patches (their names start with a number; your own patches stay out, so the
+        // dataset is the same on every machine)
         for (auto &f : RysumProcessor::getPatchFiles())
         {
-            if (f.getFileNameWithoutExtension().containsIgnoreCase("Init"))
+            const auto n = f.getFileNameWithoutExtension();
+            if (!juce::CharacterFunctions::isDigit(n[0]))
+                continue;
+            if (n.containsIgnoreCase("Init"))
                 initPatch = f;
             else
                 patches.add(f);
+        }
+        // the keys that play: a key you have put on a button of the interface (MIDI-Tasten) would
+        // press that button instead of sounding, so it is left out
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const int code = RysumProcessor::kNoteCode + kPhysKeys[(size_t)k];
+            bool mapped = false;
+            for (int i = 0; i < RysumProcessor::kNumMidiMaps; ++i)
+                mapped = mapped || (proc->getMidiMap(i).cc == code && proc->getMidiMap(i).param >= 0);
+            for (int i = 0; i < RysumProcessor::kNumButtonMaps; ++i)
+                mapped = mapped || (proc->getButtonMap(i).code == code && proc->getButtonMap(i).used());
+            if (!mapped)
+                keys.push_back(kPhysKeys[(size_t)k]);
+        }
+        if ((int)keys.size() < kNumKeys)
+            std::cout << kNumKeys - (int)keys.size() << " keys are MIDI buttons in your setup: they are not played" << std::endl;
+        if (keys.size() < 12)
+        {
+            std::cout << "too few keys left to play" << std::endl;
+            return false;
         }
         resetAll();
         pump(200);
@@ -671,6 +715,7 @@ private:
 
     juce::File samples, outDir, audioDir, midiDir, initPatch;
     juce::Array<juce::File> patches;
+    std::vector<int> keys; // MIDI notes that play
     std::unique_ptr<RysumProcessor> proc;
     juce::AudioBuffer<float> work;
     std::map<juce::String, float> defaults;

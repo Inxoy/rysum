@@ -6632,6 +6632,54 @@ int main(int argc, char **argv)
                     check(std::abs(std::get<0>(faced) - std::get<1>(faced)) < 1.0,
                           "Fluestern: a pipe looked at is in both ears alike");
                     check(std::get<2>(left) && !std::get<2>(none), "Fluestern: off = nothing added");
+                    {
+                        // a pipe carried in the Saal, held 20 cm to the left of the head
+                        OrganEngine e;
+                        RoomParams rp;
+                        rp.width = 14;
+                        rp.length = 28;
+                        rp.height = 11;
+                        const Vec3f L = listenerPos(rp);
+                        int key = 0;
+                        for (int k = 0; k < kNumKeys; ++k)
+                            if (kPhysKeys[(size_t)k] == 60)
+                                key = k;
+                        auto hold = [&]
+                        {
+                            e.grabStop = 0;
+                            e.grabKey = key;
+                            e.grabX = L.x - 0.2f;
+                            e.grabY = L.y;
+                            e.grabZ = L.z;
+                        };
+                        double l = 0, r = 0;
+                        Vec3f at{};
+                        play(
+                            e,
+                            [&](EngineParams &p)
+                            {
+                                hall(p);
+                                p.motionMode[0] = (int)Motion::Hover;
+                                p.live.whisper = 1.0f;
+                            },
+                            {60}, 2.5, 3, 100, -1.0,
+                            [&](int pos)
+                            {
+                                hold();
+                                e.bodyAt(0, key, at);
+                                if (pos < (int)fsr || e.nearBus(0) == nullptr)
+                                    return;
+                                for (int i = 0; i < B; ++i)
+                                {
+                                    l += (double)e.nearBus(0)[i] * e.nearBus(0)[i];
+                                    r += (double)e.nearBus(1)[i] * e.nearBus(1)[i];
+                                }
+                            });
+                        const double diff = 10.0 * std::log10(juce::jmax(1e-30, l)) - 10.0 * std::log10(juce::jmax(1e-30, r));
+                        std::cout << "Fluestern: a carried pipe, " << std::sqrt((at.x - L.x) * (at.x - L.x) + (at.y - L.y) * (at.y - L.y) + (at.z - L.z) * (at.z - L.z))
+                                  << " m from the head, to the left: left - right " << diff << " dB" << std::endl;
+                        check(diff > 10.0, "Fluestern: a carried pipe at the ear");
+                    }
                 }
                 {
                     // Unmoeglicher Raum: the late reverb of a four times larger room rings longer;

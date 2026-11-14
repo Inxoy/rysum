@@ -708,8 +708,8 @@ can be modulated, automated and put on MIDI knobs with a right-click):
   **R** mends them all at once. One pipe stays one pipe: the broken-off half is heard as the
   crack, it does not fly on as a second pipe.
 - **Flüstern** – a pipe within arm's reach of your head (1.4 m) is also heard at the two ears
-  themselves: the near ear much louder (16 dB at 15 cm), the far one later and duller, the tone
-  warmer. Take a pipe with **Q** and bring it nearer with the **mouse wheel** (down to 20 cm),
+  themselves, and leaves the room sound as it comes: the near ear much louder (more than 10 dB
+  at 15 cm), the far one later and duller, the tone warmer. Take a pipe with **Q** and bring it nearer with the **mouse wheel** (down to 20 cm),
   or let the pipes come to you (*Pfeifen: ich ziehe an*). Headphones (binaural, also over two
   loudspeakers) and stereo only; with Ambisonics or loudspeaker output it does nothing.
 - **Zeit als Entfernung** – the front of the room plays the past. At your usual place you hear

@@ -420,6 +420,8 @@ public:
     /** Fluestern: where the head looks (degrees, to the left), set before process(); and the two
         ear signals of this block, to be added after the binaural decoding (nullptr = nothing) */
     std::atomic<float> headYaw{0.0f};
+    /** Fluestern: the ear signals are used (binaural or stereo output); false = nothing is done */
+    std::atomic<bool> nearHeard{true};
     const float *nearBus(int ear) const noexcept
     {
         return nearUsed ? (ear == 0 ? nearL.data() : nearR.data()) : nullptr;

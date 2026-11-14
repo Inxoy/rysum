@@ -2486,6 +2486,136 @@ public:
         }
 
         {
+            // the 3D Saal's illusions through the whole plugin: Zeit als Entfernung (the memory is
+            // made by the timer, the output falls back in time), Hoerraum (the late reverb is
+            // built for the larger room), Fluestern (the ears' difference at the output)
+            auto setReal = [&](const char *id, float v)
+            {
+                if (auto *q = proc->apvts.getParameter(id))
+                    q->setValueNotifyingHost(q->convertTo0to1(v));
+            };
+            juce::AudioBuffer<float> st(16, 512);
+            auto run = [&](int blocks, std::initializer_list<int> on, double *l = nullptr, double *r = nullptr)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    juce::MidiBuffer mb;
+                    if (b == 0)
+                        for (int n : on)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                    st.clear(), proc->processBlock(st, mb);
+                    for (int i = 0; i < 512 && l != nullptr; ++i)
+                    {
+                        *l += (double)st.getSample(0, i) * st.getSample(0, i);
+                        *r += (double)st.getSample(1, i) * st.getSample(1, i);
+                    }
+                }
+            };
+            auto pumpRun = [&](int times)
+            {
+                for (int i = 0; i < times; ++i)
+                {
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+                    run(8, {});
+                }
+            };
+            auto off = [&]
+            {
+                juce::MidiBuffer mb;
+                for (int n : {48, 55, 60})
+                    mb.addEvent(juce::MidiMessage::noteOff(1, n), 0);
+                st.clear(), proc->processBlock(st, mb);
+            };
+            // Zeit als Entfernung
+            setReal("lvListenY", 8.0f);
+            setReal("lvTimeDepth", 10.0f);
+            run(8, {48, 55, 60});
+            pumpRun(40); // (~3.4 s of sound, the timer in between)
+            const float back = proc->timeBackNow.load();
+            double pastL = 0, pastR = 0;
+            run(20, {}, &pastL, &pastR); // (so far back nothing was played yet: silence)
+            setReal("lvTimeDepth", 0.0f);
+            pumpRun(40);
+            double nowL = 0, nowR = 0;
+            run(20, {}, &nowL, &nowR);
+            std::cout << "Zeit als Entfernung (plugin): hearing " << back << " s back; energy there " << pastL + pastR
+                      << ", back in the present " << nowL + nowR << ", then " << proc->timeBackNow.load() << " s back"
+                      << (back > 3.0f && pastL + pastR < 1.0e-6 * (nowL + nowR) && nowL + nowR > 1.0e-4 &&
+                                  proc->timeBackNow.load() == 0.0f
+                              ? "  ok"
+                              : "  FAIL")
+                      << std::endl;
+            setReal("lvListenY", 0.0f);
+            off();
+            // Hoerraum: the Saal's late reverb (ray-traced) for a room four times the size
+            setReal("simOn", 1.0f);
+            pumpRun(60);
+            const float rtSeen = proc->engine.heard[0].rtLow.load();
+            setReal("lvRoomHear", 4.0f);
+            pumpRun(120);
+            const float rtHeard = proc->engine.heard[0].rtLow.load();
+            setReal("lvRoomHear", 1.0f);
+            pumpRun(60);
+            std::cout << "Hoerraum (plugin): reverb time as seen " << rtSeen << " s, four times the size " << rtHeard
+                      << " s, back " << proc->engine.heard[0].rtLow.load() << " s"
+                      << (rtSeen > 0.2f && rtHeard > 2.0f * rtSeen &&
+                                  std::abs(proc->engine.heard[0].rtLow.load() - rtSeen) < 0.1f * rtSeen
+                              ? "  ok"
+                              : "  FAIL")
+                      << std::endl;
+            setReal("simOn", 0.0f);
+            // Fluestern: binaural, the stop's pipes half a metre to the left, the listener walks
+            // up to 15 cm - the left ear gains much more than the right
+            if (proc->binauralReady())
+            {
+                auto *out = proc->apvts.getParameter("output");
+                const float outBefore = out->getValue();
+                out->setValueNotifyingHost(out->convertTo0to1((float)RysumProcessor::kBinauralOutput));
+                std::array<float, rysum::kNumKeys> az{}, dist{};
+                for (int k = 0; k < rysum::kNumKeys; ++k)
+                {
+                    az[(size_t)k] = proc->engine.baseAz[0][(size_t)k].load();
+                    dist[(size_t)k] = proc->engine.baseDist[0][(size_t)k].load();
+                    proc->engine.baseAz[0][(size_t)k] = 90.0f;
+                    proc->engine.baseEl[0][(size_t)k] = 0.0f;
+                    proc->engine.baseDist[0][(size_t)k] = 0.5f;
+                }
+                setReal("lvListenX", -0.35f);
+                auto ears = [&](float whisper)
+                {
+                    setReal("lvWhisper", whisper);
+                    run(40, {60});
+                    double l = 0, r = 0;
+                    run(60, {}, &l, &r);
+                    juce::MidiBuffer mb;
+                    mb.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+                    st.clear(), proc->processBlock(st, mb);
+                    run(80, {});
+                    return std::make_pair(10.0 * std::log10(juce::jmax(1e-30, l)), 10.0 * std::log10(juce::jmax(1e-30, r)));
+                };
+                const auto without = ears(0.0f), with = ears(1.0f);
+                std::cout << "Fluestern (plugin, binaural): left - right without " << without.first - without.second
+                          << " dB, with " << with.first - with.second << " dB; the left ear changes by "
+                          << with.first - without.first << " dB"
+                          << (with.first - with.second > without.first - without.second + 6.0
+                                  ? "  ok"
+                                  : "  FAIL")
+                          << std::endl;
+                setReal("lvWhisper", 0.0f);
+                setReal("lvListenX", 0.0f);
+                for (int k = 0; k < rysum::kNumKeys; ++k)
+                {
+                    proc->engine.baseAz[0][(size_t)k] = az[(size_t)k];
+                    proc->engine.baseDist[0][(size_t)k] = dist[(size_t)k];
+                }
+                out->setValueNotifyingHost(outBefore);
+                pumpRun(10);
+            }
+            else
+                std::cout << "Fluestern (plugin): no binaural decoder  FAIL" << std::endl;
+        }
+
+        {
             // "Begehen": the Saal in 3D. A chord sounds; walking moves the listener in the engine;
             // a model loads and goes through the project state
             auto setReal = [&](const char *id, float v)

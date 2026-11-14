@@ -2140,6 +2140,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
                 yaw = rysum::wrapAz(yaw + engine.viewYaw.load());
         }
         engine.headYaw = yaw;
+        engine.nearHeard = buffer.getNumChannels() > 1 && (binaural || (params.outputMode == 0 && !speakers));
     }
     engine.process(work, midi, params);
     engine.setInput(nullptr, nullptr, 0);
