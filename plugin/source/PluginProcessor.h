@@ -8,6 +8,7 @@
 #include "OrganEngine.h"
 #include "Scala.h"
 #include "Speakers.h"
+#include "TimeDistance.h"
 #include "Transaural.h"
 #include "Walk3D.h"
 #include <map>
@@ -172,6 +173,8 @@ public:
         return lastCc.load();
     }
     std::atomic<int> midiMapVersion{0};
+    /** Zeit als Entfernung: how far back is heard right now (s), and how far it can go */
+    std::atomic<float> timeBackNow{0.0f}, timeBackMax{rysum::TimeDistance::kMaxSeconds};
 
     // ---- MIDI buttons -> buttons of the interface: a pad, key or controller button presses a
     // button on screen that has no parameter behind it (the window has to be open for these; the
@@ -565,6 +568,12 @@ public:
         lvPlayerMode,
         lvPlayerForce,
         lvPlayerRange,
+        lvSelfPlay,
+        lvGrow,
+        lvWhisper,
+        lvTimeDepth,
+        lvRoomHear,
+        lvWallPull,
         kNumLive
     };
     static constexpr const char *kLiveIds[kNumLive]{
@@ -572,7 +581,8 @@ public:
         "lvPallet",   "lvPalletSrc",   "lvListenX",  "lvListenY",   "lvWalkShape", "lvWalkRate",
         "lvWalkSize", "lvWear",        "lvWearTime", "lvSympLevel", "lvSympDecay", "lvPure",
         "lvPureTime", "lvNetOn",       "lvNetPath",  "lvNetDiv",    "lvNetRate",   "lvNetGate",
-        "lvImpLevel", "lvImpSrc",      "lvImpRing",  "lvPlayerMode", "lvPlayerForce", "lvPlayerRange"};
+        "lvImpLevel", "lvImpSrc",      "lvImpRing",  "lvPlayerMode", "lvPlayerForce", "lvPlayerRange",
+        "lvSelfPlay", "lvGrow",        "lvWhisper",  "lvTimeDepth",  "lvRoomHear",    "lvWallPull"};
     /** Verschleiss: all pipes new again (message thread) */
     void resetWear()
     {
@@ -758,6 +768,8 @@ private:
     std::array<std::shared_ptr<const rysum::TailIR>, rysum::kNumRooms>
         pendingTail; // handed to the audio thread
     rysum::RoomParams heardRoom(int room) const;
+    /** the room the late reverb is built for ("Unmoeglicher Raum": another size than the one seen) */
+    rysum::RoomParams tailRoom(int room) const;
     juce::String roomKey(int room) const;
     void buildTailNow(int room, const juce::String &key);
 
@@ -1011,6 +1023,11 @@ private:
     std::shared_ptr<rysum::BinauralDecoder> binActive;  // audio thread
     std::shared_ptr<rysum::BinauralDecoder> pendingBin; // handed over (atomic_store / exchange)
     std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin; // message thread keeps them alive
+    // Zeit als Entfernung: the memory (built by the timer once it is wanted, for the channels in use)
+    std::shared_ptr<rysum::TimeDistance> timeActive;  // audio thread
+    std::shared_ptr<rysum::TimeDistance> pendingTime; // handed over (atomic_store / exchange)
+    std::deque<std::shared_ptr<rysum::TimeDistance>> timeKeep; // message thread keeps them alive
+    std::atomic<int> timeChannels{0};                 // channels the audio thread needs
     rysum::DsfReferenceInstrument referenceTone;
     juce::AudioBuffer<float> inBuf;
     bool inputThisBlock = false;     // the audio input of the block (main input + side chain)

@@ -1101,6 +1101,41 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         NormalisableRange<float>(0.5f, 20.0f, 0.01f, 0.5f), 4.0f,
         AudioParameterFloatAttributes().withStringFromValueFunction(
             [](float v, int) { return String(v, 1) + " m"; })));
+    // the 3D Saal's illusions (appended: see above)
+    auto percent = [](float v, int)
+    { return v <= 0.0005f ? String("aus") : String(roundToInt(v * 100.0f)) + " %"; };
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvSelfPlay", 1}, "Selbstspiel", NormalisableRange<float>(0.0f, 1.0f, 0.001f),
+        0.0f, AudioParameterFloatAttributes().withStringFromValueFunction(percent)));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvGrow", 1}, "Wachsen und Brechen",
+        NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(percent)));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvWhisper", 1}, String::fromUTF8("Fl\xc3\xbcstern"),
+        NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(percent)));
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvTimeDepth", 1}, "Zeit als Entfernung",
+        NormalisableRange<float>(0.0f, rysum::TimeDistance::kMaxSeconds, 0.01f, 0.6f), 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return v <= 0.005f ? String("aus") : String(v, 1) + " s"; })));
+    {
+        NormalisableRange<float> size(0.25f, 8.0f, 0.001f);
+        size.setSkewForCentre(1.0f);
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"lvRoomHear", 1}, String::fromUTF8("H\xc3\xb6rraum"), size, 1.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int)
+                {
+                    return std::abs(v - 1.0f) < 0.005f ? String("wie gesehen")
+                                                       : String::fromUTF8("\xc3\x97 ") + String(v, 2);
+                })));
+    }
+    l.add(std::make_unique<AudioParameterFloat>(
+        ParameterID{"lvWallPull", 1}, String::fromUTF8("Wandn\xc3\xa4he"),
+        NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(percent)));
     return l;
 }
 
@@ -1586,6 +1621,12 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         lv.playerMode = juce::roundToInt(Lv(lvPlayerMode));
         lv.playerForce = Lv(lvPlayerForce);
         lv.playerRange = Lv(lvPlayerRange);
+        lv.selfPlay = Lv(lvSelfPlay);
+        lv.grow = Lv(lvGrow);
+        lv.whisper = Lv(lvWhisper);
+        lv.timeDepth = Lv(lvTimeDepth);
+        lv.roomHear = Lv(lvRoomHear);
+        lv.wallPull = Lv(lvWallPull);
     }
     p.windModel = juce::roundToInt(V(ix.windModel));
 
@@ -2089,6 +2130,17 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
             engine.setInput(inBuf.getReadPointer(0), inBuf.getReadPointer(1), n);
     }
 
+    {
+        // Fluestern: where the head looks (as the decoder below turns it)
+        float yaw = 0.0f;
+        if (binaural)
+        {
+            yaw = haveModVals ? modVals[(size_t)ix.binYaw] : binYawParam->load();
+            if (engine.viewWalkOn.load())
+                yaw = rysum::wrapAz(yaw + engine.viewYaw.load());
+        }
+        engine.headYaw = yaw;
+    }
     engine.process(work, midi, params);
     engine.setInput(nullptr, nullptr, 0);
 
@@ -2184,6 +2236,58 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     if (!stereo && used > 0)
         engine.applySpaceDegradation(work.getArrayOfWritePointers(), params.outputMode, n, params);
 
+    // ---- Fluestern (the two ear signals of pipes right at the head) and Zeit als Entfernung (the
+    // far end of the room plays the past: everything, the ear signals too, read from a memory)
+    bool nearAfterDecode = false;
+    {
+        if (auto pending = std::atomic_exchange(&pendingTime, std::shared_ptr<rysum::TimeDistance>()))
+            timeActive = std::move(pending); // the old one is still referenced by timeKeep
+        const bool twoOut = buffer.getNumChannels() > 1;
+        const float *nl = engine.nearBus(0), *nr = engine.nearBus(1);
+        if (nl != nullptr && stereo && !binaural && !speakers && used > 1)
+        {
+            // plain stereo: straight into left and right
+            juce::FloatVectorOperations::add(work.getWritePointer(0), nl, n);
+            juce::FloatVectorOperations::add(work.getWritePointer(1), nr, n);
+        }
+        const float depth = params.live.timeDepth;
+        const bool armed = depth > 0.005f;
+        float *chans[rysum::kMaxOutChannels + 2]{};
+        int nc = 0;
+        for (; nc < used; ++nc)
+            chans[nc] = work.getWritePointer(nc);
+        const bool timeRuns = timeActive != nullptr && timeActive->numChannels() >= used + 2 &&
+                              (armed || timeActive->secondsNow() > 0.0f);
+        if (binaural && twoOut && (nl != nullptr || timeRuns))
+        {
+            // (after the decoding - through the same memory, so they are of the same moment)
+            if (nl == nullptr)
+            {
+                std::fill_n(engine.nearBusWritable(0), n, 0.0f);
+                std::fill_n(engine.nearBusWritable(1), n, 0.0f);
+            }
+            chans[nc++] = engine.nearBusWritable(0);
+            chans[nc++] = engine.nearBusWritable(1);
+            nearAfterDecode = true;
+        }
+        timeChannels = armed ? used + 2 : 0;
+        if (timeRuns)
+        {
+            float back = 0.0f;
+            if (armed)
+            {
+                // from the usual place (the present) to the front wall (the full depth)
+                const auto &h = engine.heard[0];
+                const float ahead = juce::jmax(1.0f, (1.0f - h.Ly.load()) * h.L.load() - 0.5f);
+                back = depth * juce::jlimit(0.0f, 1.0f, engine.listenerYNow.load() / ahead);
+            }
+            timeActive->process(chans, nc, n, armed, back);
+            timeBackNow = timeActive->secondsNow();
+        }
+        else
+            timeBackNow = 0.0f;
+    }
+
     // Add the reference after organ effects, before output decoding. It uses its
     // own level; MIDI follows nominal global tuning, manual Hz is independent.
     DsfReferenceTuning referenceTuning;
@@ -2249,6 +2353,12 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         }
         for (int c = 2; c < buffer.getNumChannels(); ++c)
             buffer.clear(c, 0, n);
+        if (nearAfterDecode)
+        {
+            // Fluestern: the pipes right at the head, to the ears themselves
+            juce::FloatVectorOperations::add(buffer.getWritePointer(0), engine.nearBusWritable(0), n);
+            juce::FloatVectorOperations::add(buffer.getWritePointer(1), engine.nearBusWritable(1), n);
+        }
         // transaural: the ear signals become two loudspeaker feeds (each speaker's way to the far
         // ear cancelled)
         if (transaural)
@@ -2574,6 +2684,18 @@ rysum::RoomParams RysumProcessor::heardRoom(int room) const
     return r;
 }
 
+rysum::RoomParams RysumProcessor::tailRoom(int room) const
+{
+    auto r = heardRoom(room);
+    const float s = juce::jlimit(
+        0.2f, 40.0f,
+        engine.heard[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, room)].tailScale.load());
+    r.width *= s;
+    r.length *= s;
+    r.height *= s;
+    return r;
+}
+
 juce::StringArray RysumProcessor::roomShapeNames()
 {
     // (new shapes only at the end: the index is stored)
@@ -2690,7 +2812,7 @@ juce::String RysumProcessor::roomKey(int room) const
 {
     // rounded so that tiny modulation steps do not rebuild all the time (1.5 % in size, 0.004 in
     // absorption)
-    const auto r = heardRoom(room);
+    const auto r = tailRoom(room);
     auto q = [](float v, float step) { return juce::String(juce::roundToInt(v / step)); };
     auto ql = [](float v)
     { return juce::String(juce::roundToInt(std::log(juce::jmax(0.1f, v)) / 0.015f)); };
@@ -2711,7 +2833,7 @@ void RysumProcessor::buildTailNow(int room, const juce::String &key)
 {
     builtTailKey[(size_t)room] = key;
     tailBuilding[(size_t)room] = true;
-    const auto r = heardRoom(room);
+    const auto r = tailRoom(room);
     const float air = engine.roomAir.load();
     const int ord = engine.roomOutOrder.load();
     const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
@@ -3199,6 +3321,22 @@ void RysumProcessor::startAutoLoad()
 
 void RysumProcessor::timerCallback()
 {
+    {
+        // Zeit als Entfernung: its memory, once it is wanted (for the channels and the rate in use)
+        const int need = timeChannels.load();
+        const double rate = hostRate.load() > 0 ? hostRate.load() : 48000.0;
+        const auto *have = timeKeep.empty() ? nullptr : timeKeep.back().get();
+        if (need > 0 && (have == nullptr || have->numChannels() < need ||
+                         std::abs(have->sampleRate() - rate) > 0.5))
+        {
+            auto t = std::make_shared<rysum::TimeDistance>(need, rate);
+            timeBackMax = t->maxSeconds();
+            timeKeep.push_back(t);
+            std::atomic_store(&pendingTime, t);
+            while (timeKeep.size() > 3)
+                timeKeep.pop_front();
+        }
+    }
     if (!autoLoadDone)
     {
         autoLoadDone = true;

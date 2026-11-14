@@ -6,6 +6,7 @@
 #include "Lucier.h"
 #include "LucierPiece.h"
 #include "OrganEngine.h"
+#include "TimeDistance.h"
 #include "RoomSim.h"
 #include "RoomTail.h"
 #include "Scala.h"
@@ -6496,6 +6497,211 @@ int main(int argc, char **argv)
                               << std::endl;
                     check(rtf > 0.8 * rtf2,
                           "room motion: flocking costs little more than the old motion");
+                }
+            }
+            // ---- the 3D Saal's illusions: Selbstspiel, Wachsen & Brechen, Fluestern, Unmoeglicher
+            // Raum, Zeit als Entfernung
+            {
+                auto hall = [](EngineParams &p)
+                {
+                    p.room.on = true;
+                    p.room.width = 14;
+                    p.room.length = 28;
+                    p.room.height = 11;
+                    p.room.order = 1;
+                    p.room.tailGain = 0.0f;
+                    p.motionMode[0] = (int)Motion::Flight;
+                    p.motionRate[0] = 0.6f;
+                    p.motionDepth[0] = 60.0f;
+                };
+                {
+                    // Selbstspiel: nobody plays, the pipes fly - with it they sound by themselves
+                    OrganEngine eOff, eOn;
+                    int maxVoices = 0;
+                    const auto off = play(eOff, [&](EngineParams &p) { hall(p); }, {}, 6.0, 1);
+                    const auto on = play(
+                        eOn,
+                        [&](EngineParams &p)
+                        {
+                            hall(p);
+                            p.live.selfPlay = 0.7f;
+                        },
+                        {}, 6.0, 1, 100, -1.0,
+                        [&](int) { maxVoices = juce::jmax(maxVoices, eOn.activeVoices.load()); });
+                    std::cout << "Selbstspiel: off " << rmsDb(off, 0.5, 6.0) << " dB, on "
+                              << rmsDb(on, 0.5, 6.0) << " dB, at most " << maxVoices << " voices"
+                              << std::endl;
+                    check(rmsDb(off, 0.5, 6.0) < -100.0 && rmsDb(on, 0.5, 6.0) > -60.0 &&
+                              maxVoices > 0 && maxVoices <= 48 && finiteB(on),
+                          "Selbstspiel: knocks become notes (and stay few)");
+                }
+                {
+                    // Wachsen & Brechen: half the length sounds an octave higher; pipes left alone
+                    // grow; a hard knock breaks them; switched off they find back
+                    auto crossings = [&](const juce::AudioBuffer<float> &b)
+                    {
+                        int n = 0;
+                        for (int i = (int)(0.6 * fsr); i < (int)(1.6 * fsr); ++i)
+                            n += (b.getSample(0, i - 1) < 0.0f) != (b.getSample(0, i) < 0.0f) ? 1 : 0;
+                        return n;
+                    };
+                    OrganEngine eWhole, eHalf;
+                    for (int k = 0; k < kNumKeys; ++k)
+                        eHalf.pipeLen[0][(size_t)k] = 0.5f;
+                    auto still = [](EngineParams &p) { p.live.grow = 0.01f; };
+                    const int zw = crossings(play(eWhole, still, {60}, 2.0, 0)),
+                              zh = crossings(play(eHalf, still, {60}, 2.0, 0));
+                    std::cout << "Wachsen & Brechen: zero crossings whole " << zw << ", half as long "
+                              << zh << std::endl;
+                    check(zw > 50 && std::abs((double)zh / zw - 2.0) < 0.2,
+                          "Wachsen & Brechen: half the length sounds an octave higher");
+                    OrganEngine e;
+                    play(e, [&](EngineParams &p) { p.live.grow = 1.0f; }, {}, 4.0, 0);
+                    const float grown = e.pipeLen[0][20].load();
+                    play(
+                        e,
+                        [&](EngineParams &p)
+                        {
+                            hall(p);
+                            p.motionRate[0] = 1.0f;
+                            p.motionDepth[0] = 90.0f;
+                            p.live.grow = 1.0f;
+                        },
+                        {}, 8.0, 1);
+                    float shortest = 9.0f;
+                    for (int k = 0; k < kNumKeys; ++k)
+                        shortest = juce::jmin(shortest, e.pipeLen[0][(size_t)k].load());
+                    const auto broken = e.breakCount.load();
+                    play(e, [&](EngineParams &) {}, {}, 12.0, 0);
+                    float worst = 0.0f;
+                    for (int k = 0; k < kNumKeys; ++k)
+                        worst = juce::jmax(worst, std::abs(e.pipeLen[0][(size_t)k].load() - 1.0f));
+                    std::cout << "Wachsen & Brechen: after 4 s alone " << grown << " times as long; "
+                              << broken << " breaks, shortest " << shortest
+                              << "; switched off, furthest from 1: " << worst << std::endl;
+                    check(grown > 1.05f && grown < 1.2f, "Wachsen & Brechen: pipes left alone grow");
+                    check(broken > 0 && shortest >= 0.25f && shortest < 1.0f,
+                          "Wachsen & Brechen: a hard knock breaks a pipe");
+                    check(worst == 0.0f, "Wachsen & Brechen: switched off, every pipe finds back");
+                }
+                {
+                    // Fluestern: a pipe half a metre to the left is much louder in the left ear,
+                    // to the right in the right; looked at, in both alike; off: nothing
+                    auto ears = [&](float az, float yaw, float whisper, float walk = 0.0f)
+                    {
+                        OrganEngine e;
+                        for (int k = 0; k < kNumKeys; ++k)
+                        {
+                            e.baseAz[0][(size_t)k] = az;
+                            e.baseEl[0][(size_t)k] = 0.0f;
+                            e.baseDist[0][(size_t)k] = 0.5f;
+                        }
+                        e.headYaw = yaw;
+                        double l = 0, r = 0;
+                        bool any = false;
+                        play(
+                            e, [&](EngineParams &p) { p.live.whisper = whisper; p.live.listenX = walk; }, {60}, 1.5, 3,
+                            100, -1.0,
+                            [&](int)
+                            {
+                                if (e.nearBus(0) == nullptr)
+                                    return;
+                                any = true;
+                                for (int i = 0; i < B; ++i)
+                                {
+                                    l += (double)e.nearBus(0)[i] * e.nearBus(0)[i];
+                                    r += (double)e.nearBus(1)[i] * e.nearBus(1)[i];
+                                }
+                            });
+                        return std::make_tuple(10.0 * std::log10(juce::jmax(1e-30, l)),
+                                               10.0 * std::log10(juce::jmax(1e-30, r)), any);
+                    };
+                    const auto left = ears(90.0f, 0.0f, 1.0f), right = ears(-90.0f, 0.0f, 1.0f),
+                               faced = ears(90.0f, 90.0f, 1.0f), none = ears(90.0f, 0.0f, 0.0f),
+                               atEar = ears(90.0f, 0.0f, 1.0f, -0.35f);
+                    std::cout << "Fluestern: pipe on the left: left - right "
+                              << std::get<0>(left) - std::get<1>(left) << " dB; on the right "
+                              << std::get<0>(right) - std::get<1>(right) << " dB; looked at "
+                              << std::get<0>(faced) - std::get<1>(faced) << " dB; 15 cm from the left ear "
+                              << std::get<0>(atEar) - std::get<1>(atEar) << " dB" << std::endl;
+
+                    check(std::get<0>(left) - std::get<1>(left) > 4.0 &&
+                              std::get<1>(right) - std::get<0>(right) > 4.0 &&
+                              std::get<0>(atEar) - std::get<1>(atEar) > 12.0,
+                          "Fluestern: the near ear is much louder");
+                    check(std::abs(std::get<0>(faced) - std::get<1>(faced)) < 1.0,
+                          "Fluestern: a pipe looked at is in both ears alike");
+                    check(std::get<2>(left) && !std::get<2>(none), "Fluestern: off = nothing added");
+                }
+                {
+                    // Unmoeglicher Raum: the late reverb of a four times larger room rings longer;
+                    // near a wall it grows
+                    auto ring = [&](float hear, float pull, float listenX, float &scale)
+                    {
+                        OrganEngine e;
+                        const auto b = play(
+                            e,
+                            [&](EngineParams &p)
+                            {
+                                hall(p);
+                                p.motionMode[0] = 0;
+                                p.room.tailGain = 1.0f;
+                                p.room.tailModel = 1;
+                                p.live.roomHear = hear;
+                                p.live.wallPull = pull;
+                                p.live.listenX = listenX;
+                            },
+                            {60}, 5.0, 1, 100, 2.0);
+                        scale = e.heard[0].tailScale.load();
+                        return rmsDb(b, 3.5, 5.0);
+                    };
+                    float s1 = 0, s4 = 0, sWall = 0;
+                    const double small = ring(1.0f, 0.0f, 0.0f, s1), large = ring(4.0f, 0.0f, 0.0f, s4);
+                    ring(1.0f, 1.0f, 6.5f, sWall);
+                    std::cout << "Unmoeglicher Raum: 1.5 - 3 s after the note: as seen " << small
+                              << " dB, four times the size " << large << " dB (scale " << s1 << " / "
+                              << s4 << "); half a metre from a wall: scale " << sWall << std::endl;
+                    check(s1 == 1.0f && std::abs(s4 - 4.0f) < 0.01f && large > small + 6.0,
+                          "Unmoeglicher Raum: a larger room is heard than the one seen");
+                    check(sWall > 2.5f, "Unmoeglicher Raum: the reverb grows near a wall");
+                }
+                {
+                    // Zeit als Entfernung: the memory. In the present nothing changes; a second
+                    // back is a second back; getting there does not click
+                    TimeDistance td(2, fsr);
+                    const int total = (int)(6.0 * fsr), blk = 256;
+                    std::vector<float> a((size_t)total), b((size_t)total), in((size_t)total);
+                    for (int i = 0; i < total; ++i)
+                        in[(size_t)i] = a[(size_t)i] = b[(size_t)i] =
+                            (float)std::sin(juce::MathConstants<double>::twoPi * 220.0 * i / fsr);
+                    bool same = true;
+                    double worst = 0.0, err = 0.0;
+                    for (int pos = 0; pos + blk <= total; pos += blk)
+                    {
+                        float *io[2]{a.data() + pos, b.data() + pos};
+                        const double t = pos / fsr;
+                        td.process(io, 2, blk, true, t < 1.0 ? 0.0f : (t < 4.0 ? 1.0f : 0.0f));
+                        if (t < 0.9)
+                            for (int i = 0; i < blk; ++i)
+                                same = same && a[(size_t)(pos + i)] == in[(size_t)(pos + i)];
+                        if (t > 3.0 && t < 3.9)
+                            for (int i = 0; i < blk; ++i)
+                                err = juce::jmax(err, (double)std::abs(a[(size_t)(pos + i)] -
+                                                                       in[(size_t)(pos + i) - (size_t)fsr]));
+                    }
+                    for (int i = 2; i < total; ++i)
+                        worst = juce::jmax(worst, (double)std::abs(a[(size_t)i] - 2.0f * a[(size_t)i - 1] +
+                                                                   a[(size_t)i - 2]));
+                    bool back = true;
+                    for (int i = total - 2000; i < total - 300; ++i)
+                        back = back && a[(size_t)i] == in[(size_t)i];
+                    std::cout << "Zeit als Entfernung: a second back, error " << err
+                              << "; sharpest second difference on the way " << worst
+                              << " (a 220 Hz sine has 0.0008)" << std::endl;
+                    check(same, "Zeit als Entfernung: in the present nothing changes");
+                    check(err < 0.01, "Zeit als Entfernung: a second back is a second back");
+                    check(worst < 0.06, "Zeit als Entfernung: walking through time does not click");
+                    check(back, "Zeit als Entfernung: back in the present, exactly");
                 }
             }
             // Verschleiss: a pipe held for half its life is half worn, and sounds different; reset

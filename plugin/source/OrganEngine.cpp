@@ -126,6 +126,7 @@ OrganEngine::OrganEngine()
             muted[(size_t)s][(size_t)k] = false;
             beatTurn[(size_t)s][(size_t)k] = 0.0f;
             wear[(size_t)s][(size_t)k] = 0.0f;
+            pipeLen[(size_t)s][(size_t)k] = 1.0f;
         }
     }
     uint32_t seed = 1;
@@ -158,6 +159,9 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
         b = false;
     scratchRamp.assign((size_t)maxBlock, 0.0f);
     hidBuf.assign(2 * (size_t)maxBlock, 0.0f);
+    nearL.assign((size_t)maxBlock, 0.0f);
+    nearR.assign((size_t)maxBlock, 0.0f);
+    nearUsed = false;
     for (auto &r : roomSend)
         r.assign((size_t)maxBlock, 0.0f);
     gust.assign((size_t)(maxBlock / 16 + 4), 0.0f);
@@ -723,6 +727,14 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     }
     const Pos homePos = pos;
     pos = heardFrom(pos); // the listener walks: the pipe as heard from there
+    {
+        // Wachsen & Brechen: the pitch follows the pipe's length (a glide of a few hundredths of
+        // a second, so a pipe that breaks while it sounds jumps without a click)
+        const float lc = -1200.0f * std::log2(juce::jlimit(0.2f, 4.0f, pipeLen[(size_t)v.stop][(size_t)v.key].load()));
+        v.lenCents = v.fresh ? lc : v.lenCents + (lc - v.lenCents) * (1.0f - (float)std::exp(-blockSeconds / 0.03));
+        if (std::abs(v.lenCents - lc) < 0.01f)
+            v.lenCents = lc;
+    }
     // out of sight (a corner of the plan in between): the direct sound comes around the corner,
     // quieter and duller. 'dpos' is only the direct sound; the reflections and the room send keep
     // the pipe where it is.
@@ -783,7 +795,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
                     meantoneHz(kPhysKeys[(size_t)juce::jlimit(0, kNumKeys - 1, pp.substituteFrom)]);
         const double rec = (pp.measuredHz > 0.0 ? pp.measuredHz : pp.nominalHz) * ratio,
                      ideal = (pp.nominalHz > 0.0 ? pp.nominalHz : pp.measuredHz) * ratio;
-        const float cents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t)v.key]) +
+        const float cents = v.lenCents + (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t)v.key]) +
                             p.pitchCents + p.detune * v.detuneRnd + v.modCents1 +
                             (mpeNow ? v.bendSm : 0.0f) + v.pureC;
         v.hzNow = (float)((p.beatIdeal ? ideal : rec) * std::exp2(cents / 1200.0) * (double)v.dop);
@@ -823,6 +835,66 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     v.gainLin = sg * lvl;
     float g =
         sg * lvl * distanceGain(dpos.dist, p.distAmount) * (hidDb > 0.0f ? dbToGain(-hidDb) : 1.0f);
+    {
+        // Fluestern: a pipe within arm's reach of the head is also heard at the two ears
+        // themselves - each ear by its own distance (a strong difference, as nothing far away
+        // has), the far one later and in the head's shadow, and warmer the nearer it is
+        v.near.q0 = v.near.q1;
+        Voice::NearQ q;
+        const float w = p.live.whisper;
+        if (w > 0.0001f)
+        {
+            const float a = juce::degreesToRadians(homePos.az), e = juce::degreesToRadians(homePos.el);
+            const float x = -std::sin(a) * std::cos(e) * homePos.dist - walkX,
+                        y = std::cos(a) * std::cos(e) * homePos.dist - walkY,
+                        z = std::sin(e) * homePos.dist - walkZ;
+            const float d = std::sqrt(x * x + y * y + z * z);
+            constexpr float kReach = 1.4f, kEar = 0.0875f;
+            if (d < kReach)
+            {
+                float t = juce::jlimit(0.0f, 1.0f, (kReach - d) / (kReach - 0.2f));
+                t = t * t * (3.0f - 2.0f * t);
+                const float yaw = juce::degreesToRadians(headYaw.load());
+                const float side = x * std::cos(yaw) + y * std::sin(yaw),
+                            front = -x * std::sin(yaw) + y * std::cos(yaw);
+                const float dR = std::sqrt((side - kEar) * (side - kEar) + front * front + z * z),
+                            dL = std::sqrt((side + kEar) * (side + kEar) + front * front + z * z);
+                const float base = 0.5f * w * t * sg * lvl * (hidDb > 0.0f ? dbToGain(-hidDb) : 1.0f);
+                const float nearest = juce::jmin(dL, dR), perM = (float)sr / kSpeedOfSoundRoom;
+                // (the far ear loses more than its distance alone would take: so close, the head
+                // shadows the low notes too)
+                auto ear = [&](float de)
+                {
+                    return base * juce::jmin(12.0f, 1.0f / juce::jmax(0.05f, de)) *
+                           std::pow(juce::jmax(0.03f, nearest) / juce::jmax(0.03f, de), 0.7f);
+                };
+                q.gL = ear(dL);
+                q.gR = ear(dR);
+                q.dL = juce::jmin(100.0f, (dL - nearest) * perM);
+                q.dR = juce::jmin(100.0f, (dR - nearest) * perM);
+                auto shadow = [&](float de)
+                {
+                    const float fc = juce::jlimit(1500.0f, 18000.0f, 18000.0f / (1.0f + 4.0f * (de / juce::jmax(0.03f, nearest) - 1.0f)));
+                    return 1.0f - std::exp(-juce::MathConstants<float>::twoPi * juce::jmin(0.45f * (float)sr, fc) / (float)sr);
+                };
+                q.aL = dL > nearest ? shadow(dL) : 1.0f;
+                q.aR = dR > nearest ? shadow(dR) : 1.0f;
+                q.bass = t;
+            }
+        }
+        if (q.gL + q.gR <= 0.0f)
+        {
+            // (fading out: the delays and filters stay as they were)
+            q.dL = v.near.q0.dL;
+            q.dR = v.near.q0.dR;
+            q.aL = v.near.q0.aL;
+            q.aR = v.near.q0.aR;
+            q.bass = v.near.q0.bass;
+        }
+        v.near.q1 = q;
+        if (v.fresh)
+            v.near.q0 = q;
+    }
     // grain cloud: where the pipe is (the grains scatter around it); the pipe itself fades as it
     // dissolves (equal power)
     v.spPos = dpos;
@@ -1036,6 +1108,8 @@ void OrganEngine::startVoice(int stop, int key, int previewSamples, int noteId)
     v->killGain = 1.0f;
     v->killStep = (float)(1.0 / (0.005 * sr));
     v->previewRemain = previewSamples;
+    v->near = {};
+    v->lenCents = -1200.0f * std::log2(juce::jlimit(0.2f, 4.0f, pipeLen[(size_t)stop][(size_t)key].load()));
     v->age = ++ageCounter;
     v->cloudRing = -1;
     v->cloudAcc = 0.0;
@@ -1661,7 +1735,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
         const float wobCents = 30.0f * wobAmt + 320.0f * wobAmt * wobAmt * wobAmt * wobAmt;
         const float wobLevel = 0.3f * wobAmt + 0.6f * wobAmt * wobAmt * wobAmt * wobAmt;
         const float wobSpeed = 1.0f + 5.0f * wobAmt * wobAmt * wobAmt;
-        double tuneCents = (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t)v.key]) +
+        double tuneCents = v.lenCents + (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t)v.key]) +
                            p.pitchCents + p.detune * v.detuneRnd + v.pureC +
                            38.0f * wr * wr * v.wearSign * (0.4f + 0.6f * std::abs(v.detuneRnd));
         if (v.noteId < 0)
@@ -2151,6 +2225,34 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                 dg[c] = (b - a) * inv;
             }
             mixInto(outs, start, usedChannels, dirBuf, dirRamp, ga, dg, n);
+            if (v.near.q0.gL + v.near.q0.gR + v.near.q1.gL + v.near.q1.gR > 1.0e-7f &&
+                (int)nearL.size() >= start + n)
+            {
+                // Fluestern: the same signal straight to the two ears
+                auto &N = v.near;
+                const auto &a = N.q0, &b = N.q1;
+                float *nl = nearL.data() + start, *nr = nearR.data() + start;
+                const float aLow = 1.0f - std::exp(-twoPiOverSr * 180.0f);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float t = (float)(start + i + 1) * inv;
+                    N.lp += aLow * (dirBuf[i] - N.lp);
+                    N.hist[(size_t)N.w] = dirBuf[i] + 0.9f * (a.bass + (b.bass - a.bass) * t) * N.lp;
+                    auto tap = [&](float d)
+                    {
+                        const int di = (int)d;
+                        const float fr = d - (float)di;
+                        return N.hist[(size_t)((N.w - di) & 127)] * (1.0f - fr) +
+                               N.hist[(size_t)((N.w - di - 1) & 127)] * fr;
+                    };
+                    N.sL += (a.aL + (b.aL - a.aL) * t) * (tap(a.dL + (b.dL - a.dL) * t) - N.sL);
+                    N.sR += (a.aR + (b.aR - a.aR) * t) * (tap(a.dR + (b.dR - a.dR) * t) - N.sR);
+                    nl[i] += (a.gL + (b.gL - a.gL) * t) * N.sL;
+                    nr[i] += (a.gR + (b.gR - a.gR) * t) * N.sR;
+                    N.w = (N.w + 1) & 127;
+                }
+                nearUsed = true;
+            }
             if (split)
             {
                 // upper partials with their own direction; afterwards both parts go to the room
@@ -3105,6 +3207,31 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         h.H = rr.H();
         h.Lx = rr.listenerX;
         h.Ly = rr.listenerY;
+        {
+            // Unmoeglicher Raum: the late reverb of a room of another size; nearer than three
+            // metres to a wall it grows (and gets louder) the closer the listener comes
+            const auto &lv = p.live;
+            float scale = juce::jlimit(0.25f, 8.0f, lv.roomHear), wallGain = 1.0f;
+            if (lv.wallPull > 0.0001f)
+            {
+                const Vec3f lp = listenerPos(rr);
+                const float x = lp.x + walkX, y = lp.y + walkY;
+                const float d = juce::jmax(0.0f, juce::jmin(juce::jmin(x, rr.W() - x), juce::jmin(y, rr.L() - y)));
+                float nearWall = juce::jlimit(0.0f, 1.0f, 1.0f - d / 3.0f);
+                nearWall *= nearWall;
+                scale *= 1.0f + 3.0f * lv.wallPull * nearWall;
+                wallGain = 1.0f + 1.5f * lv.wallPull * nearWall;
+            }
+            auto &sm = tailScaleSm[(size_t)ri];
+            const float k = 1.0f - std::exp(-(float)n / (0.3f * (float)sr));
+            sm += k * (scale - sm);
+            if (std::abs(sm - scale) < 1.0e-4f)
+                sm = scale;
+            wallGainNow[(size_t)ri] += k * (wallGain - wallGainNow[(size_t)ri]);
+            if (std::abs(wallGainNow[(size_t)ri] - wallGain) < 1.0e-4f)
+                wallGainNow[(size_t)ri] = wallGain;
+            h.tailScale = sm;
+        }
         // the reflections are heard from where the listener has walked to (the late reverb stays
         // that of the usual place)
         roomsEr[(size_t)ri] = rr;
@@ -3414,7 +3541,17 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         auto &R = rt[(size_t)ri];
-        const auto &rm = roomsNow[(size_t)ri];
+        auto rm = roomsNow[(size_t)ri];
+        {
+            // (the late reverb's room: "Unmoeglicher Raum")
+            const float ts = tailScaleSm[(size_t)ri];
+            if (ts != 1.0f)
+            {
+                rm.width *= ts;
+                rm.length *= ts;
+                rm.height *= ts;
+            }
+        }
         if (!((used >> ri) & 1))
         {
             // not used (any more): rings out with a silent input, then rests
@@ -3443,7 +3580,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         // reverberant level from the critical distance, softly capped at +4 dB so very long, hard
         // rooms do not drown everything
         const float level = (used >> ri) & 1
-                                ? juce::jmin(1.6f, distanceGain(rc, distAmountNow)) * rm.tailGain
+                                ? juce::jmin(1.6f, distanceGain(rc, distAmountNow)) * rm.tailGain * wallGainNow[(size_t)ri]
                                 : 0.0f;
         const bool useFdn = rm.tailModel == 1;
         if (useFdn != (R.lastTailModel == 1))
@@ -4578,6 +4715,8 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         scratch.assign((size_t)numSamples, 0.0f);
         scratchRamp.assign((size_t)numSamples, 0.0f);
         hidBuf.assign(2 * (size_t)numSamples, 0.0f);
+        nearL.assign((size_t)numSamples, 0.0f);
+        nearR.assign((size_t)numSamples, 0.0f);
     }
     roomSends = 2 * juce::jlimit(0, kMaxOrder, p.roomHarmonics) + 1;
     for (int k = 0; k < roomSends; ++k)
@@ -4804,6 +4943,18 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
     stepBodies(
         p,
         blockSeconds); // the room motion modes: the pipes as bodies in the Saal (and their impacts)
+    stepGrowth(p, blockSeconds);      // Wachsen & Brechen: the pipes' lengths
+    startSelfVoices(p, blockSeconds); // Selbstspiel: knocks become notes
+    {
+        // Fluestern: the two ear signals of this block
+        const bool had = nearUsed;
+        nearUsed = false;
+        if ((had || p.live.whisper > 0.0001f) && (int)nearL.size() >= numSamples)
+        {
+            std::fill_n(nearL.data(), numSamples, 0.0f);
+            std::fill_n(nearR.data(), numSamples, 0.0f);
+        }
+    }
     updateLive(p, blockSeconds);
     stepWalker(p, numSamples);
     // ---- spatial data for this block (end-of-block targets, ramped from the previous ones)
@@ -4915,6 +5066,16 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
                 gk += step;
                 roomSend[(size_t)k][(size_t)(roomOffset + i)] *= gk;
             }
+        }
+    }
+    if (nearUsed)
+    {
+        float g = masterSmoothed;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            g += step;
+            nearL[(size_t)i] *= g;
+            nearR[(size_t)i] *= g;
         }
     }
     masterSmoothed = p.masterGain;

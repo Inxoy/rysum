@@ -165,6 +165,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> playerModeAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> playerForceAtt;
     std::unique_ptr<juce::FileChooser> chooser;
+    // the illusions: the room plays itself, pipes grow and break, a pipe at the ear, the far end plays the past,
+    // a room heard larger than it is seen
+    std::array<std::unique_ptr<ParamRow>, 6> illusions;
     juce::Image glowSprite;
     juce::String status;
     double statusUntil = 0.0;

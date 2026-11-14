@@ -174,6 +174,29 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     playerForce.setTooltip (U ("Kraft, mit der du die Pfeifen bewegst"));
     playerForceAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "lvPlayerForce", playerForce);
     addAndMakeVisible (playerForce);
+    {
+        const char* ids[] { "lvSelfPlay", "lvGrow", "lvWhisper", "lvTimeDepth", "lvRoomHear", "lvWallPull" };
+        const juce::String names[] { "Selbstspiel", "Wachsen & Brechen", U ("Fl\xc3\xbcstern"), "Zeit als Entfernung", U ("H\xc3\xb6rraum"), U ("Wandn\xc3\xa4he") };
+        const juce::String tips[] {
+            U ("Der Raum spielt sich selbst: jede Pfeife, die gegen eine Wand, den Boden oder die Decke st\xc3\xb6\xc3\x9ft, klingt mit ihrem eigenen Ton \xe2\x80\x93 "
+               "je h\xc3\xa4rter der Sto\xc3\x9f, desto l\xc3\xa4nger. Braucht Register, deren Bewegung im Saal stattfindet (Flug, Fall, Schwarm, Str\xc3\xb6mung)."),
+            U ("Pfeifen, die nicht klingen, wachsen langsam und werden tiefer (bis zur doppelten L\xc3\xa4nge, eine Oktave). Ein harter Sto\xc3\x9f bricht eine Pfeife "
+               "entzwei: halb so lang, eine Oktave h\xc3\xb6her. Mehr = schnelleres Wachsen, leichteres Brechen. Aus: jede Pfeife findet zur\xc3\xbc" "ck; R heilt alle sofort."),
+            U ("Eine Pfeife ganz nah am Kopf (unter 1,4 m) ist auch direkt im Ohr zu h\xc3\xb6ren: das nahe Ohr viel lauter, das ferne sp\xc3\xa4ter und dumpfer, der Klang w\xc3\xa4rmer. "
+               "Pfeife greifen (Q) und mit dem Mausrad heranholen. Nur \xc3\xbc" "ber Kopfh\xc3\xb6rer (binaural) und Stereo."),
+            U ("Das vordere Ende des Saals spielt die Vergangenheit: am gewohnten Platz h\xc3\xb6rst du die Gegenwart, an der Stirnwand das, was vor so vielen Sekunden "
+               "erklang. Schnell nach vorn gehen: die Zeit l\xc3\xa4uft r\xc3\xbc" "ckw\xc3\xa4rts; zur\xc3\xbc" "ckgehen: sie holt auf."),
+            U ("Der Nachhall geh\xc3\xb6rt zu einem Raum anderer Gr\xc3\xb6\xc3\x9f" "e als der, den du siehst und begehst: eine Kapelle sehen, eine Kathedrale h\xc3\xb6ren (oder umgekehrt). "
+               "Braucht \xe2\x80\x9eSaal an\xe2\x80\x9c."),
+            U ("Je n\xc3\xa4her du einer Wand kommst (ab 3 m), desto gr\xc3\xb6\xc3\x9f" "er und lauter wird der Nachhall \xe2\x80\x93 als \xc3\xb6" "ffne sich hinter der Wand ein weiterer Raum. Braucht \xe2\x80\x9eSaal an\xe2\x80\x9c.") };
+        for (int i = 0; i < 6; ++i)
+        {
+            illusions[(size_t) i] = std::make_unique<ParamRow> (proc.apvts, ids[i], names[i], true);
+            illusions[(size_t) i]->setTooltip (tips[i]);
+            illusions[(size_t) i]->setWantsKeyboardFocus (false);
+            addAndMakeVisible (*illusions[(size_t) i]);
+        }
+    }
     updateButtons();
 }
 
@@ -214,6 +237,16 @@ void WalkView::resized()
             h.removeFromLeft (5);
         }
         handsArea = h;
+    }
+    {
+        // the illusions: a row of sliders under the buttons
+        auto row = getLocalBounds().reduced (18, 0).withTrimmedTop (42).removeFromTop (36);
+        const int w = (row.getWidth() - 5 * 16) / 6;
+        for (auto& il : illusions)
+        {
+            if (il != nullptr) il->setBounds (row.removeFromLeft (w));
+            row.removeFromLeft (16);
+        }
     }
     home.setBounds (r.removeFromRight (82));
     r.removeFromRight (6);
@@ -698,6 +731,7 @@ void WalkView::shock (float strength)
 void WalkView::callHome()
 {
     proc.engine.playerAct (OrganEngine::Act::Home);
+    proc.engine.pipeLenReset = true;      // (and every broken or grown pipe is whole again)
     say (U ("Alle Pfeifen fliegen an ihren Platz zur\xc3\xbc" "ck"));
 }
 
@@ -780,6 +814,8 @@ void WalkView::updateActions (bool qDown, bool fDown)
 
 void WalkView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
 {
+    // a pipe in the hand: the wheel brings it nearer (right up to the ear: "Fluestern") or holds it further away
+    if (heldStop >= 0) { holdDist = juce::jlimit (0.2f, 4.0f, holdDist * std::exp (w.deltaY * 1.2f)); return; }
     fov = juce::jlimit (40.0f, 110.0f, fov - w.deltaY * 30.0f);
     repaint();
 }
@@ -1163,6 +1199,7 @@ void WalkView::paint (juce::Graphics& g)
             const V3 c = pipeAt (r, homeP, pos, s, k);
             float len, rad;
             pipeSizeOf (s, k, len, rad);
+            len *= juce::jlimit (0.2f, 4.0f, proc.engine.pipeLen[(size_t) s][(size_t) k].load());      // (Wachsen & Brechen)
             // floating: a slow breath up and down, each pipe its own (not the ones flying as bodies: they move as they move)
             Vec3f bodyNow;
             const float bob = proc.engine.bodyAt (s, k, bodyNow) ? 0.0f : 0.06f * (float) std::sin (now * 0.7 + (double) (s * 41 + k) * 1.37);
@@ -1285,7 +1322,7 @@ void WalkView::paint (juce::Graphics& g)
 
     // heading, hints, status (on dark bands, so they stay readable over a bright model)
     {
-        const auto top = area.toFloat().removeFromTop (84.0f), bottom = area.toFloat().removeFromBottom (84.0f);
+        const auto top = area.toFloat().removeFromTop (124.0f), bottom = area.toFloat().removeFromBottom (84.0f);
         g.setGradientFill (juce::ColourGradient (col::bg.withAlpha (0.72f), 0.0f, top.getY(), col::bg.withAlpha (0.0f), 0.0f, top.getBottom(), false));
         g.fillRect (top);
         g.setGradientFill (juce::ColourGradient (col::bg.withAlpha (0.0f), 0.0f, bottom.getY(), col::bg.withAlpha (0.78f), 0.0f, bottom.getBottom(), false));
@@ -1298,7 +1335,9 @@ void WalkView::paint (juce::Graphics& g)
                     + U ("   \xc2\xb7   W\xc3\xa4nde: ") + materialName (wallLook)
                     + (proc.engine.hiddenNow.load() > 0 ? U ("   \xc2\xb7   ") + juce::String (proc.engine.hiddenNow.load()) + U (" Pfeifen um die Ecke geh\xc3\xb6rt") : juce::String())
                     + (aimSurf >= 0 ? U ("   \xc2\xb7   ") + surfaceName (r, aimSurf) + U ("  [M: Material]") : juce::String());
-    g.drawText (info, area.reduced (18, 0).withTrimmedTop (44).removeFromTop (16), juce::Justification::centredLeft);
+    g.drawText (info + (proc.timeBackNow.load() > 0.05f ? U ("   \xc2\xb7   du h\xc3\xb6rst, was vor ") + juce::String (proc.timeBackNow.load(), 1) + U (" s erklang") : juce::String())
+                     + (proc.engine.breakCount.load() > 0 ? U ("   \xc2\xb7   ") + juce::String ((int) proc.engine.breakCount.load()) + U (" Pfeifen gebrochen") : juce::String()),
+                area.reduced (18, 0).withTrimmedTop (84).removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (col::faint);
     g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
                   "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
@@ -1312,7 +1351,7 @@ void WalkView::paint (juce::Graphics& g)
         {
             g.setColour (col::rubric.brighter (0.2f));
             g.drawText (U ("Die Pfeifen reagieren auf dich, wenn die Bewegung eines Registers (Raum-Seite) im Saal stattfindet: Schweben, Flug, Fall, Schwarm oder Str\xc3\xb6mung."),
-                        area.reduced (18, 0).withTrimmedTop (62).removeFromTop (16), juce::Justification::centredLeft);
+                        area.reduced (18, 0).withTrimmedTop (102).removeFromTop (16), juce::Justification::centredLeft);
         }
     }
     if (! proc.isBinaural())
@@ -1324,7 +1363,7 @@ void WalkView::paint (juce::Graphics& g)
     if (juce::Time::getMillisecondCounterHiRes() < statusUntil && status.isNotEmpty())
     {
         g.setColour (col::ink);
-        g.drawText (status, area.reduced (18, 0).withTrimmedTop (62).removeFromTop (16), juce::Justification::centredLeft);
+        g.drawText (status, area.reduced (18, 0).withTrimmedTop (102).removeFromTop (16), juce::Justification::centredLeft);
     }
 
     drawMap (g, juce::Rectangle<float> (190.0f, 150.0f).withPosition ((float) area.getRight() - 206.0f, (float) area.getBottom() - 186.0f), r, params, homeP);

@@ -151,6 +151,20 @@ struct LiveParams
                         // 4 = drags them along in its wake
     float playerForce = 0.5f; // 0..1
     float playerRange = 4.0f; // m: within this the force is strong
+    // Selbstspiel: a pipe that knocks against a wall sounds its own note - the room plays itself
+    float selfPlay = 0.0f; // 0 = off .. 1 = long notes
+    // Wachsen & Brechen: pipes left alone grow longer and sink in pitch; a hard knock breaks one
+    // in two (an octave up)
+    float grow = 0.0f; // 0 = off (every pipe finds back to its length) .. 1 = fast, brittle
+    // Fluestern: a pipe right at the head is heard in the ear itself (headphones / stereo)
+    float whisper = 0.0f; // 0..1
+    // Unmoeglicher Raum: the late reverb is that of a room of another size than the one seen and
+    // walked; near a wall it grows further
+    float roomHear = 1.0f; // times the size
+    float wallPull = 0.0f; // 0..1
+    // Zeit als Entfernung: the far end of the room plays the past (done by the plugin, after the
+    // room): seconds heard back at the front wall
+    float timeDepth = 0.0f;
 };
 
 struct EngineParams
@@ -359,6 +373,8 @@ public:
         std::atomic<float> W{14}, L{28}, H{11}, Lx{0.5f}, Ly{0.4f}, absW{0}, absF{0}, highD{0},
             scat{0}, rtLow{0}, rtHigh{0}, shapeAmt{0.5f};
         std::atomic<int> shape{0};
+        // "Unmoeglicher Raum": the late reverb is built for the room this many times as large
+        std::atomic<float> tailScale{1.0f};
     };
     /** the drawn floor plan of a room (message thread writes, the audio thread reads; double
      * buffered) */
@@ -396,6 +412,22 @@ public:
     std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops>
         wear;                                   // 0 = new .. 1 = worn out (saved with the project)
     std::atomic<bool> wearReset{false};         // UI: all pipes new again
+    /** Wachsen & Brechen: the length of every pipe, 1 = as built (0.25 .. 2; the pitch follows:
+        half the length sounds an octave higher) */
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> pipeLen;
+    std::atomic<bool> pipeLenReset{false}; // UI: every pipe whole again
+    std::atomic<uint32_t> breakCount{0};   // pipes broken so far
+    /** Fluestern: where the head looks (degrees, to the left), set before process(); and the two
+        ear signals of this block, to be added after the binaural decoding (nullptr = nothing) */
+    std::atomic<float> headYaw{0.0f};
+    const float *nearBus(int ear) const noexcept
+    {
+        return nearUsed ? (ear == 0 ? nearL.data() : nearR.data()) : nullptr;
+    }
+    float *nearBusWritable(int ear) noexcept
+    {
+        return ear == 0 ? nearL.data() : nearR.data();
+    }
     std::atomic<int> sympNow{0}, netKeyNow{-1}; // pipes ringing along; the key the walker sounds
     std::atomic<float> pureNow{0.0f};           // largest correction right now (cents)
     // ---- "Begehen" (the 3D view): while it is open the camera is the listener. Offset from the
@@ -570,6 +602,20 @@ private:
               hidAc = 1.0f; // out of sight: the direct sound comes around a corner, duller (1 =
                             // open; target, now)
         bool hasBody = false;
+        // Fluestern: this pipe at the two ears (gains, delays in samples, the far ear's shadow),
+        // start and end of the block; a short history for the delays
+        struct NearQ
+        {
+            float gL = 0.0f, gR = 0.0f, dL = 0.0f, dR = 0.0f, aL = 1.0f, aR = 1.0f, bass = 0.0f;
+        };
+        struct Near
+        {
+            NearQ q0, q1;
+            std::array<float, 128> hist{};
+            int w = 0;
+            float sL = 0.0f, sR = 0.0f, lp = 0.0f;
+        } near;
+        float lenCents = 0.0f; // Wachsen & Brechen: the pitch of the pipe's length now
         // a loaded model: what was found the last time (searched again when listener or pipe moved)
         struct MeshOcc
         {
@@ -997,6 +1043,26 @@ private:
                              // (the same paths at every block size)
     uint32_t bodyStepCount = 0;
     void stepBodies(const EngineParams &p, double blockSeconds) noexcept;
+    // Selbstspiel: knocks that become notes
+    struct SelfNote
+    {
+        int stop = 0, key = 0;
+        float speed = 0.0f;
+    };
+    static constexpr int kMaxSelf = 24;
+    std::array<SelfNote, kMaxSelf> selfQueue{};
+    int numSelf = 0;
+    std::array<std::array<float, kNumKeys>, kNumStops> selfWait{}; // s until a pipe may play again
+    bool selfWaiting = false;
+    void startSelfVoices(const EngineParams &p, double blockSeconds) noexcept;
+    // Wachsen & Brechen
+    bool lenOff = false; // some pipe is not of its own length
+    void stepGrowth(const EngineParams &p, double blockSeconds) noexcept;
+    // Fluestern
+    std::vector<float> nearL, nearR;
+    bool nearUsed = false;
+    // Unmoeglicher Raum
+    std::array<float, kNumRooms> tailScaleSm = {1.0f, 1.0f, 1.0f, 1.0f}, wallGainNow = {1.0f, 1.0f, 1.0f, 1.0f};
     // impacts: queued by the bodies, played by a few voices (a knock, the struck pipe ringing)
     struct ImpactEvent
     {

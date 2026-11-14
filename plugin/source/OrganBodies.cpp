@@ -406,6 +406,28 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     e.speed = hitSpeed; e.absorb = hitAbs; e.high = br.r.highDamp; e.stop = s; e.key = k; e.room = ri; e.floor = floorHit;
                     queueImpact (e);
                 }
+                if (hitSpeed > kMinImpact && p.stopOn[(size_t) s] && ! goHome && ! muted[(size_t) s][(size_t) k].load())
+                {
+                    // Selbstspiel: the knock becomes the pipe's own note
+                    if (lv.selfPlay > 0.0001f && hitSpeed > 0.5f && numSelf < kMaxSelf && selfWait[(size_t) s][(size_t) k] <= 0.0f)
+                        selfQueue[(size_t) numSelf++] = { s, k, hitSpeed };
+                    // Wachsen & Brechen: hit hard enough it breaks in two - half as long, an octave higher
+                    if (lv.grow > 0.0001f && hitSpeed > 7.0f - 5.0f * juce::jmin (1.0f, lv.grow))
+                    {
+                        const float len = pipeLen[(size_t) s][(size_t) k].load();
+                        if (len > 0.26f)
+                        {
+                            pipeLen[(size_t) s][(size_t) k] = juce::jmax (0.25f, 0.5f * len);
+                            lenOff = true;
+                            breakCount = breakCount.load() + 1;
+                            ImpactEvent e;      // the crack (heard whatever "Aufprall" is set to)
+                            e.level = juce::jmax (lv.impLevel, 0.8f);
+                            e.x = b.x; e.y = b.y; e.z = floorHit ? (b.z < 0.5f * br.H ? 0.0f : br.H) : b.z;
+                            e.speed = 1.6f * hitSpeed; e.absorb = 0.0f; e.high = br.r.highDamp; e.stop = s; e.key = k; e.room = ri; e.floor = floorHit;
+                            queueImpact (e);
+                        }
+                    }
+                }
             }
         }
         for (int k = 0; k < kNumKeys; ++k)
@@ -567,6 +589,80 @@ void OrganEngine::renderBursts (float* const* outs, int n) noexcept
 }
 
 // ---------------------------------------------------------------------------
+// Selbstspiel: the room plays itself; Wachsen & Brechen: the pipes' lengths
+// ---------------------------------------------------------------------------
+void OrganEngine::startSelfVoices (const EngineParams& p, double blockSeconds) noexcept
+{
+    if (selfWaiting)
+    {
+        bool any = false;
+        for (auto& st : selfWait) for (auto& w : st) if (w > 0.0f) { w -= (float) blockSeconds; any = any || w > 0.0f; }
+        selfWaiting = any;
+    }
+    if (numSelf == 0) return;
+    // (never at the cost of what is played: only free voices, and not more than a few dozen of these at once)
+    int freeVoices = 0, own = 0;
+    for (const auto& v : voices) { if (! v.active) ++freeVoices; else if (v.previewRemain > 0) ++own; }
+    for (int i = 0; i < numSelf; ++i)
+    {
+        const auto& e = selfQueue[(size_t) i];
+        if (freeVoices < 8 || own >= 40) break;
+        if (! p.stopOn[(size_t) e.stop] || ((soundingMask[(size_t) e.stop].load() >> e.key) & 1)) continue;
+        // a harder knock, a longer note
+        const float dur = juce::jmin (5.0f, 0.12f + p.live.selfPlay * (0.25f + 0.4f * e.speed));
+        startVoice (e.stop, e.key, juce::jmax (64, (int) (dur * (float) sr)));
+        selfWait[(size_t) e.stop][(size_t) e.key] = dur + 0.2f;
+        selfWaiting = true;
+        --freeVoices; ++own;
+    }
+    numSelf = 0;
+}
+
+void OrganEngine::stepGrowth (const EngineParams& p, double blockSeconds) noexcept
+{
+    if (pipeLenReset.exchange (false))
+    {
+        for (auto& st : pipeLen) for (auto& l : st) l = 1.0f;
+        lenOff = false;
+    }
+    const float g = juce::jmin (1.0f, p.live.grow);
+    if (g <= 0.0001f)
+    {
+        if (! lenOff) return;
+        // switched off: every pipe finds back to its own length within a few seconds
+        const float k = 1.0f - (float) std::exp (-blockSeconds / 1.5);
+        bool any = false;
+        for (auto& st : pipeLen)
+            for (auto& l : st)
+            {
+                float v = l.load();
+                if (v == 1.0f) continue;
+                v += k * (1.0f - v);
+                if (std::abs (v - 1.0f) < 0.002f) v = 1.0f; else any = true;
+                l = v;
+            }
+        lenOff = any;
+        return;
+    }
+    // a pipe that is not sounding grows: an octave down (twice the length) within half a minute at full strength,
+    // a quarter of an hour at a tenth
+    const float octaveSeconds = 600.0f / (0.5f + 20.0f * g * g);
+    const float f = (float) std::exp2 (blockSeconds / (double) octaveSeconds);
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        if (! p.stopOn[(size_t) s]) continue;
+        const uint64_t sounding = soundingMask[(size_t) s].load();
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            if ((sounding >> k) & 1) continue;
+            auto& l = pipeLen[(size_t) s][(size_t) k];
+            const float v = l.load();
+            if (v < 2.0f) { l = juce::jmin (2.0f, v * f); lenOff = true; }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // the knock
 // ---------------------------------------------------------------------------
 void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noexcept
@@ -609,6 +705,8 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
     // the struck pipe: the bending modes of a tube (free bar ratios), from its length; and its own note, faintly
     float len, rad;
     pipeSizeOf (e.stop, e.key, len, rad);
+    const float lenNow = juce::jlimit (0.2f, 4.0f, pipeLen[(size_t) e.stop][(size_t) e.key].load());      // (Wachsen & Brechen)
+    len *= lenNow;
     const bool stopped = e.stop == 1, brass = e.stop == 6;
     const float f1 = juce::jlimit (35.0f, 2500.0f, 300.0f / std::pow (juce::jmax (0.12f, len), 1.5f));
     const float ratios[kImpactModes - 1] { 1.0f, 2.756f, 5.404f, 8.933f };
@@ -628,7 +726,7 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
         longest = juce::jmax (longest, t60);
     };
     for (int m = 0; m < kImpactModes - 1; ++m) setMode (m, f1 * ratios[m], mGain[m] * (stopped ? 0.6f : 1.0f), ring * mT[m]);
-    const float note = pipeHzIdeal (e.stop, e.key, p);
+    const float note = pipeHzIdeal (e.stop, e.key, p) / lenNow;
     setMode (kImpactModes - 1, note > 0.0f ? note : f1 * 3.1f, 0.25f, 0.2f + 0.3f * ring);
 
     v.level = gain;
