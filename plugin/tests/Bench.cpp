@@ -8,6 +8,10 @@
 #define RYSUM_BENCH_KERNELS 1
 #endif
 #include <chrono>
+#if __has_include("WindChaosOld.h")
+#include "WindChaosOld.h" // (a copy of an earlier WindChaos, renamed, for comparing by ear: not in the repository)
+#define RYSUM_BENCH_WIND_OLD 1
+#endif
 #if JUCE_WINDOWS
 extern "C" __declspec(dllimport) void *__stdcall GetCurrentThread();
 extern "C" __declspec(dllimport) int __stdcall SetThreadPriority(void *, int);
@@ -374,6 +378,69 @@ public:
             run("ambi3_saal_shape", 36);
             set("simIce", 0.6f);
             run("ambi3_saal_shape_eis", 36);
+        }
+        if (want("wind") && juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_WAV", {}).isNotEmpty())
+        {
+            // what the unstable wind model adds, alone (no pipe): for four pipes first a steady
+            // wind of 25 %, then the wind sinking from 50 % to 5 % - mono, 48 kHz
+            const juce::File dir(juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_WAV", {}));
+            auto render = [&](auto &chaos, const juce::String &name)
+            {
+                const float sr = 48000.0f;
+                juce::AudioBuffer<float> out(1, (int)(4 * 7.5f * sr));
+                out.clear();
+                int at = 0;
+                int pipeNo = 0;
+                for (float f0 : {131.0f, 262.0f, 523.0f, 1046.0f})
+                {
+                    chaos.reset(77u + (uint32_t)pipeNo, (uint32_t)(3 * 64 + 12 * pipeNo + 5), f0, sr);
+                    const int len = (int)(7.0f * sr);
+                    for (int i = 0; i < len; ++i)
+                    {
+                        const float t = (float)i / sr;
+                        const float w = t < 3.0f ? 0.25f : 0.5f - 0.45f * (t - 3.0f) / 4.0f;
+                        if ((i & 15) == 0)
+                            chaos.control(w, f0 * (1.0f - 0.03f * (1.0f - w)), false, false, true, sr);
+                        out.setSample(0, at + i, chaos.idle ? 0.0f : 0.25f * chaos.sample());
+                    }
+                    at += len + (int)(0.5f * sr);
+                    ++pipeNo;
+                }
+                auto f = dir.getChildFile(name);
+                f.deleteFile();
+                juce::WavAudioFormat wav;
+                std::unique_ptr<juce::OutputStream> os(f.createOutputStream());
+                if (auto wr = wav.createWriterFor(os, juce::AudioFormatWriterOptions()
+                                                          .withSampleRate(48000.0)
+                                                          .withNumChannels(1)
+                                                          .withBitsPerSample(16)))
+                    wr->writeFromAudioSampleBuffer(out, 0, out.getNumSamples());
+            };
+            rysum::WindChaos now;
+            render(now, "mundton_neu.wav");
+#if RYSUM_BENCH_WIND_OLD
+            rysum::WindChaosOld old;
+            render(old, "mundton_alt.wav");
+#endif
+        }
+        if (want("wind"))
+        {
+            // half-drawn stops, dry, in both wind models (for listening and comparing: RYSUM_BENCH_WAV)
+            for (int model = 0; model < 2; ++model)
+                for (float w : {0.45f, 0.25f, 0.12f})
+                {
+                    resetParams();
+                    set("output", 0);
+                    set("windModel", (float)model);
+                    for (int s : {0, 1, 3})
+                    {
+                        P(RysumProcessor::stopParamId(s).toRawUTF8())->setValueNotifyingHost(1.0f);
+                        set(RysumProcessor::windParamId(s).toRawUTF8(), w);
+                    }
+                    run(juce::String(model == 0 ? "wind_klassisch_" : "wind_instabil_") +
+                            juce::String(juce::roundToInt(100.0f * w)),
+                        2);
+                }
         }
         if (want("walk3d_big"))
         {

@@ -2622,7 +2622,7 @@ int main(int argc, char **argv)
                       << " dB; at 12 % wind classic " << low0 << " dB, new " << low1
                       << " dB; above 2.5 kHz classic " << hf0 << " dB, new " << hf1 << " dB; "
                       << rt1 << "x realtime" << std::endl;
-            check(hf1 > hf0 + 6.0, "wind model 2 adds high resonances at low wind (" + id + ")");
+            check(hf1 > hf0 + 2.0, "wind model 2 adds breath above the pipe at low wind (" + id + ")");
             check(low1 < full - 6.0,
                   "a starving pipe stays quieter than at full wind (" + id + ")");
         }
@@ -2649,89 +2649,129 @@ int main(int argc, char **argv)
             return {kf * wsr / 4096.0, 20.0 * std::log10(bv + 1e-12)};
         };
         {
-            // steady wind: the edge tone stays where it is (pitch and level)
+            // (to listen to: one pipe at a steady low wind, and with the wind sinking)
             auto [b, rt] =
                 renderWind(0, 1, {60}, [](double t) { return t < 1.0 ? 1.0f : 0.22f; }, 8.0);
             writeWav(outDir.getChildFile("46_wind2_steady_c1.wav"), b, wsr);
-            std::vector<double> fs, ls;
-            const double f0 = edgePeak(b.getReadPointer(0) + (int)(3.0 * wsr))
-                                  .first; // follow that one (a pipe may have two)
-            for (double t = 3.0; t < 7.8; t += 0.1)
-            {
-                auto [f, l] = edgePeak(b.getReadPointer(0) + (int)(t * wsr), f0 / 1.06, f0 * 1.06);
-                fs.push_back(f);
-                ls.push_back(l);
-            }
-            auto spread = [](const std::vector<double> &v)
-            {
-                double m = 0;
-                for (double x : v)
-                    m += x;
-                m /= (double)v.size();
-                double d = 0;
-                for (double x : v)
-                    d += (x - m) * (x - m);
-                return std::make_pair(m, std::sqrt(d / (double)v.size()));
-            };
-            const auto [fm, fsd] = spread(fs);
-            const auto [lm, lsd] = spread(ls);
-            std::cout << "wind model 2, c' at a steady 22 % wind: edge tone " << fm
-                      << " Hz (spread " << 1200.0 * std::log2((fm + fsd) / fm)
-                      << " ct), level spread " << lsd << " dB" << std::endl;
-            check(1200.0 * std::log2((fm + fsd) / fm) < 15.0 && lsd < 2.0,
-                  "wind model 2: steady wind -> steady edge tone");
-
-            // the same pipe struck again: the same edge tone
-            OrganEngine e;
-            e.prepare(wsr, 256);
-            e.setLibrary(lib);
-            EngineParams p;
-            p.stopOn = {};
-            p.stopOn[0] = true;
-            p.clickLevel = 0;
-            p.releaseClick = 0;
-            p.wind = 0;
-            p.stopPull = 0;
-            p.windModel = 1;
-            p.stopWind[0] = 0.22f;
-            juce::AudioBuffer<float> blk(2, 256), all(2, (int)(wsr * 7.0));
-            for (int pos = 0; pos < all.getNumSamples(); pos += 256)
-            {
-                juce::MidiBuffer mb;
-                if (pos == 0 || pos == (int)(3.5 * wsr) / 256 * 256)
-                    mb.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
-                if (pos == (int)(2.5 * wsr) / 256 * 256)
-                    mb.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
-                e.process(blk, mb, p);
-                all.copyFrom(0, pos, blk, 0, 0, juce::jmin(256, all.getNumSamples() - pos));
-            }
-            const double f1 = edgePeak(all.getReadPointer(0) + (int)(1.8 * wsr)).first,
-                         f2 = edgePeak(all.getReadPointer(0) + (int)(5.3 * wsr)).first;
-            std::cout << "wind model 2, c' struck twice: " << f1 << " / " << f2 << " Hz"
-                      << std::endl;
-            check(std::abs(1200.0 * std::log2(f2 / f1)) < 15.0,
-                  "wind model 2: the same pipe has the same edge tone every time");
-
-            // falling wind: the edge tone glides down and gets quieter
             auto [c, rt2] = renderWind(
                 0, 1, {60}, [](double t)
                 { return (float)juce::jlimit(0.06, 1.0, 0.5 - 0.06 * (t - 1.0)); }, 8.0);
             writeWav(outDir.getChildFile("46_wind2_falling_c1.wav"), c, wsr);
-            const auto early = edgePeak(c.getReadPointer(0) + (int)(2.5 * wsr)),
-                       late = edgePeak(c.getReadPointer(0) + (int)(6.6 * wsr));
-            std::cout << "wind model 2, c' with falling wind: " << early.first << " Hz "
-                      << early.second << " dB -> " << late.first << " Hz " << late.second << " dB"
+            juce::ignoreUnused(rt, rt2, edgePeak);
+        }
+        {
+            // The mouth tone itself (the model alone, without the pipe - through the engine the
+            // pipe's own partials lie where it is). What is measured of a stretch of it: where its
+            // weight lies (the middle of the band around its strongest line), how
+            // loud it is, and how far its strongest line stands above its neighbourhood - a clean
+            // whistle would stand 30 dB and more above it, breath stays far below.
+            struct Mouth
+            {
+                double hz = 0, db = 0, lineDb = 0;
+            };
+            auto mouth = [&](uint32_t noiseSeed, uint32_t pipeSeed, float f0, float w0, float w1,
+                             double seconds, double from, double to)
+            {
+                WindChaos ch;
+                ch.reset(noiseSeed, pipeSeed, f0, (float)wsr);
+                const int n = (int)(seconds * wsr);
+                std::vector<float> x((size_t)n + 8192, 0.0f);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float w = w0 + (w1 - w0) * (float)i / (float)n;
+                    if ((i & 15) == 0)
+                        ch.control(w, f0, false, false, true, (float)wsr);
+                    x[(size_t)i] = ch.idle ? 0.0f : ch.sample();
+                }
+                juce::dsp::FFT fft(12);
+                std::vector<double> pw(2048, 0.0);
+                double e = 0;
+                int cnt = 0;
+                for (int at = (int)(from * wsr); at + 4096 <= (int)(to * wsr); at += 2048)
+                {
+                    std::vector<float> b(8192, 0.0f);
+                    for (int i = 0; i < 4096; ++i)
+                    {
+                        b[(size_t)i] = x[(size_t)(at + i)] *
+                                       (0.5f - 0.5f * std::cos(juce::MathConstants<float>::twoPi *
+                                                               (float)i / 4096.0f));
+                        e += (double)x[(size_t)(at + i)] * x[(size_t)(at + i)];
+                        ++cnt;
+                    }
+                    fft.performFrequencyOnlyForwardTransform(b.data(), true);
+                    for (int k = 0; k < 2048; ++k)
+                        pw[(size_t)k] += (double)b[(size_t)k] * b[(size_t)k];
+                }
+                Mouth m;
+                double sw = 0, sl = 0;
+                int best = 0;
+                const int k0 = (int)(150.0 * 4096 / wsr), k1 = (int)(9000.0 * 4096 / wsr);
+                for (int k = k0; k < k1; ++k)
+                {
+                    sw += pw[(size_t)k];
+                    sl += pw[(size_t)k] * std::log2((double)k * wsr / 4096.0);
+                    if (pw[(size_t)k] > pw[(size_t)best])
+                        best = k;
+                }
+                {
+                    // (the mouth tone's own band: the weight around the strongest line - the pipe's
+                    // general breath lies beside it and grows as the wind sinks)
+                    sw = sl = 0;
+                    for (int k = juce::jmax(k0, (int)(best / 1.12)); k <= juce::jmin(k1 - 1, (int)(best * 1.12)); ++k)
+                    {
+                        sw += pw[(size_t)k];
+                        sl += pw[(size_t)k] * std::log2((double)k * wsr / 4096.0);
+                    }
+                }
+                m.hz = std::exp2(sl / juce::jmax(1e-30, sw));
+                m.db = 10.0 * std::log10(e / juce::jmax(1, cnt) + 1e-30);
+                double around = 0;
+                int na = 0;
+                for (int k = juce::jmax(k0, best - 60); k < juce::jmin(k1, best + 60); ++k)
+                    if (std::abs(k - best) > 3)
+                    {
+                        around += pw[(size_t)k];
+                        ++na;
+                    }
+                m.lineDb = 10.0 * std::log10(pw[(size_t)best] / juce::jmax(1e-30, around / juce::jmax(1, na)));
+                return m;
+            };
+            auto cents = [](double a, double b) { return 1200.0 * std::log2(a / b); };
+            const float c1 = 262.0f;
+            const uint32_t pipeC = 12345u, pipeE = 12349u;
+            // a steady wind: it stays where it is and as loud as it is (first half against second)
+            const auto s1 = mouth(1, pipeC, c1, 0.22f, 0.22f, 9.0, 1.0, 5.0),
+                       s2 = mouth(1, pipeC, c1, 0.22f, 0.22f, 9.0, 5.0, 9.0);
+            std::cout << "wind model 2, the mouth tone of c' at a steady 22 % wind: around " << s1.hz
+                      << " Hz, later " << s2.hz << " Hz (" << cents(s2.hz, s1.hz) << " ct), level "
+                      << s1.db << " / " << s2.db << " dB; its strongest line " << s1.lineDb
+                      << " dB above its surroundings" << std::endl;
+            check(std::abs(cents(s2.hz, s1.hz)) < 60.0 && std::abs(s2.db - s1.db) < 1.5,
+                  "wind model 2: steady wind -> the mouth tone stays where it is");
+            check(s1.hz > 1.5 * c1 && s1.hz < 9.0 * c1,
+                  "wind model 2: the mouth tone lies a few partials above the pipe's note");
+            check(s1.lineDb > 6.0 && s1.lineDb < 24.0,
+                  "wind model 2: the mouth tone is breath with a core of tone, not a clean whistle");
+            // the same pipe again (another note, other noise): the same mouth tone
+            const auto again = mouth(977, pipeC, c1, 0.22f, 0.22f, 9.0, 1.0, 9.0),
+                       whole = mouth(1, pipeC, c1, 0.22f, 0.22f, 9.0, 1.0, 9.0);
+            std::cout << "wind model 2, c' struck twice: " << whole.hz << " / " << again.hz << " Hz"
                       << std::endl;
-            check(late.first < early.first * 0.85 && late.second < early.second - 3.0,
-                  "wind model 2: falling wind -> edge tone glides down and fades");
-            // different pipes: different edge tones
-            auto [d, rt3] =
-                renderWind(0, 1, {64}, [](double t) { return t < 1.0 ? 1.0f : 0.22f; }, 4.0);
-            const double fe = edgePeak(d.getReadPointer(0) + (int)(3.0 * wsr)).first;
-            std::cout << "wind model 2, e' at 22 % wind: " << fe << " Hz (c' " << fm << " Hz)"
-                      << std::endl;
-            check(std::abs(1200.0 * std::log2(fe / fm)) > 50.0,
-                  "wind model 2: neighbouring pipes have their own edge tones");
+            check(std::abs(cents(again.hz, whole.hz)) < 60.0,
+                  "wind model 2: the same pipe has the same mouth tone every time");
+            // the wind sinks: it comes down and gets quieter
+            const auto early = mouth(1, pipeC, c1, 0.28f, 0.05f, 8.0, 0.5, 2.5),
+                       late = mouth(1, pipeC, c1, 0.28f, 0.05f, 8.0, 5.0, 7.0);
+            std::cout << "wind model 2, c' with falling wind: " << early.hz << " Hz " << early.db
+                      << " dB -> " << late.hz << " Hz " << late.db << " dB" << std::endl;
+            check(late.hz < early.hz * 0.85 && late.db < early.db - 3.0,
+                  "wind model 2: falling wind -> the mouth tone comes down and fades");
+            // another pipe: another mouth tone
+            const auto other = mouth(1, pipeE, 330.0f, 0.22f, 0.22f, 9.0, 1.0, 9.0);
+            std::cout << "wind model 2, e' at 22 % wind: " << other.hz << " Hz (c' " << whole.hz
+                      << " Hz)" << std::endl;
+            check(std::abs(cents(other.hz / 330.0, whole.hz / (double)c1)) > 50.0,
+                  "wind model 2: neighbouring pipes have their own mouth tones");
         }
         {
             // 18 pipes starving at once

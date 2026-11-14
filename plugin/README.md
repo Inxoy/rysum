@@ -497,8 +497,11 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
 - *Registerwind* – the wind model of the stops, i.e. what the *Wind* slider of each stop
   (Spieltisch) does when it is turned down:
   - *klassisch* (default, as before): a half-drawn stop gets quieter, flatter, duller and unsteady.
-  - *instabil*: the same, and below roughly half wind each pipe also gets an edge tone. That is
-    the slow jet oscillating at the upper lip: a thin whistle (roughly 1.5–8 kHz) next to the pipe tone.
+  - *instabil*: the same, and below roughly half wind each pipe also gets a mouth tone. That is
+    the slow jet oscillating at the upper lip. It belongs to the pipe: it starts a few partials
+    above the pipe's note and comes down towards it as the wind falls. It is no clean whistle - a
+    slow jet is turbulent, so most of it is breath (noise in a band around its pitch) with only a
+    core of tone, and both waver in pitch and loudness all the time, the more the weaker the wind.
     Like on a real organ it is
     - steady as long as the wind is steady;
     - lower and quieter as the wind falls (its pitch follows the jet speed, about the square root of
@@ -507,7 +510,8 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
       gliding (a stopped Gedackt only has the odd ones);
     - different from pipe to pipe (where it appears, how high, some pipes have a second, weaker
       one), but always the same for the same pipe.
-    The mouth also hisses, and at very low wind (below ~15 %) the speech sputters. The Trompete
+    The pipe also breathes (noise coloured by the pipe, a few partials above its note, swelling
+    and sinking a little), and at very low wind (below ~15 %) the speech sputters. The Trompete
     chatters instead. At full wind nothing changes, so patches sound the same in both models.
     Try a slow LFO or an envelope on a stop's wind, or a MIDI fader (see section 4). Patches 56–58 show it.
 - *Freeze*: while on, released notes do not stop but turn into a grain cloud from the
@@ -599,8 +603,9 @@ thing instead of a set of independent samples:
   The two bars show the supply and the pressure. The modulation source *Balg (Winddruck)*
   (0 = empty … 1 = full) lets the pressure drive anything else.
 - **Ventil** (pallet) – the pallet under the pipe no longer opens instantly. *Anschlag*: a slowly
-  pressed key (low velocity) lets the wind in hesitantly – the pipe speaks flat, breathy, with
-  its edge tone, and only then finds its tone (up to 1.6 s); a fast key speaks at once.
+  pressed key (low velocity) lets the wind in hesitantly - the pipe speaks flat and dull (with the
+  wind model *instabil* also breathy, with its mouth tone), and only then finds its tone (up to
+  1.6 s); a fast key speaks at once.
   *Druck* / *Gleiten*: the finger holds the pallet itself (MPE pressure, aftertouch or CC 74) –
   at 100 % no pressure means no tone. The slider sets how far the pallet can stay closed.
 - **Hörer** (listener) – you leave the usual listening place. *links / rechts* and

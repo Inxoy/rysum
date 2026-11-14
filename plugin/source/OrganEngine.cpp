@@ -1829,9 +1829,9 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
             std::exp(-1.0f / juce::jmax(1.0f, p.fx.crackLen * 0.001f * (float)sr));
         const float crkMean = (float)sr / juce::jmax(0.05f, p.fx.crackRate);
         const float crkGain = 0.25f * crkLevel * v.crkEnv;
-        const bool chaosModel =
-            p.windModel == 1 ||
-            p.live.pallet > 0.0001f; // (a half-open pallet: the edge tone belongs to it)
+        // (only where it is asked for: "Ventil" alone no longer brings the mouth tones of the
+        // unstable model with it - in "klassisch" a half-open pallet is quieter, flatter, duller)
+        const bool chaosModel = p.windModel == 1;
         // ---- the sound of this pipe: Ansprache, Abriss, upper partials; glitches
         const PipeSoundParams ps = pipeSndFor(p.pipeSnd[(size_t)v.stop], v);
         const bool attOn = ps.attOn();

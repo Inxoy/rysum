@@ -2015,6 +2015,9 @@ public:
                                   << std::endl;
                     }
                     juce::AudioBuffer<float> lb(36, 512);
+                    // (the lowest pressure while the chord sounds: at one instant it may just have been
+                    // lifted by a tread)
+                    float lowest = 1.0f;
                     for (int b2 = 0; b2 < 300; ++b2)
                     {
                         juce::MidiBuffer mb2;
@@ -2022,6 +2025,7 @@ public:
                             for (int m : {48, 55, 60, 64, 67})
                                 mb2.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)90), 0);
                         lb.clear(), proc->processBlock(lb, mb2);
+                        lowest = juce::jmin(lowest, proc->engine.bellowsNow.load());
                     }
                     if (auto *b = fb(content, "Lebendige Orgel"))
                         b->triggerClick();
@@ -2029,11 +2033,11 @@ public:
                         std::cout << "Lebendige Orgel tab button not found  FAIL" << std::endl;
                     juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
                     shoot(4, "ui_effekte_lebendige_orgel.png");
-                    std::cout << "living organ in the plugin: bellows pressure "
-                              << proc->engine.bellowsNow.load() << ", listener at "
+                    std::cout << "living organ in the plugin: bellows pressure down to "
+                              << lowest << ", listener at "
                               << proc->engine.listenerXNow.load() << " / "
                               << proc->engine.listenerYNow.load() << " m"
-                              << (proc->engine.bellowsNow.load() < 0.999f ? "  ok" : "  FAIL")
+                              << (lowest < 0.999f ? "  ok" : "  FAIL")
                               << std::endl;
                     juce::MidiBuffer offs;
                     for (int m : {48, 55, 60, 64, 67})
