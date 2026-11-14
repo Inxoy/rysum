@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "Theme.h"
 #include "Walk3D.h"
+#include "WalkGpu.h"
 
 namespace rysum::ui
 {
@@ -80,6 +81,20 @@ public:
     float geometryMs() const noexcept { return geoMs; }
     juce::String renderSize() const { return juce::String (rast.width()) + " x " + juce::String (rast.height()) + " (Stufe " + juce::String (resLevel) + ")"; }
     int renderWidth() const noexcept { return rast.width(); }
+    // ---- who draws the picture: the graphics card (OpenGL) or the processor
+    /** the choice of this machine (Documents/Rysum/Grafik.xml; the environment variable RYSUM_GPU = 0 / 1
+        overrides it). G in the view switches. */
+    static bool gpuWanted();
+    static void setGpuWanted (bool);
+    /** the card is drawing right now */
+    bool gpuOn() const noexcept { return gpu != nullptr && gpu->isReady() && ! gpu->hasFailed(); }
+    /** while something of the window lies over the view (the card's picture is a window of its own and would
+        cover it): the processor draws */
+    void setGpuBlocked (bool b) { gpuBlocked = b; }
+    /** "Grafikkarte (name), 0.4 ms" / "Prozessor ..." */
+    juce::String pictureInfo() const;
+    /** writing the window wants shown over the view while the card draws (the readout) */
+    juce::String overText;
     juce::String renderStats() const { return "raster + shade " + juce::String (rast.rasterMs, 1) + " ms, " + juce::String (rast.workerCount()) + " workers, " + juce::String (rast.trianglesDrawn) + " triangles"; }
 
 private:
@@ -138,6 +153,26 @@ private:
     float shockAmt = 1.0f, dragged = 0.0f;
     juce::Point<float> downPos;
     bool pickPipe (juce::Point<float> at, float maxDist, int& stop, int& key) const;
+    // a frame in two parts: the picture (the room and the pipes as triangles), and what is drawn over it
+    struct Glow { V3 at; float amount, size; };
+    struct Scene
+    {
+        EngineParams params;
+        RoomParams r;
+        V3 homeP, eye;
+        std::shared_ptr<const RoomMesh> mesh;
+        std::vector<Glow> glows;
+    } scene;
+    void buildScene (float physicalScale);
+    std::unique_ptr<GpuPicture> gpu;
+    GpuFrame gpuFrame;
+    bool gpuBlocked = false, gpuGaveUp = false;
+    int gpuWaiting = 0, gpuFrames = 0;
+    int overTick = 0, overCross = 0;     // what is painted over the card's picture: when it was last painted
+    bool overWasCard = false, overShock = false, overTextWasEmpty = true;
+    juce::String gpuNote;                // why the card does not draw (shown once)
+    void updateGpu();
+    void drawOver (juce::Graphics&);
     bool makeHover (int stop, bool tell);
     void updateActions (bool qDown, bool fDown);
     void say (const juce::String& text, double ms = 2500.0);

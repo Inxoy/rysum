@@ -639,6 +639,7 @@ bool RysumContent::keyPressed(const juce::KeyPress &k)
             {
                 stats.on = false;
                 proc.engine.profOn = false;
+                walk.overText = {};
             }
             else
                 startStats();
@@ -744,7 +745,7 @@ void RysumContent::runImmersiveTest()
              << "   view fills the window: " << (int)(safe->walk.getBounds() == safe->getLocalBounds())
              << "\n";
         mouse.setScreenPosition(mouse.getScreenPosition() + juce::Point<float>(120.0f, 0.0f));
-        juce::Timer::callAfterDelay(400, [safe, log, mouse, yaw0]() mutable
+        juce::Timer::callAfterDelay(1200, [safe, log, mouse, yaw0]() mutable
         {
             if (safe == nullptr)
                 return;
@@ -753,9 +754,9 @@ void RysumContent::runImmersiveTest()
                  << juce::String(safe->walk.lookYawForTest() - yaw0, 2)
                  << " degrees (expected -18), pointer now "
                  << juce::String(mouse.getScreenPosition().getDistanceFrom(centre), 1)
-                 << " px from the middle of the view\n";
+                 << " px from the middle of the view, picture: " << safe->walk.pictureInfo() << "\n";
             safe->walk.setImmersive(false);
-            juce::Timer::callAfterDelay(600, [safe, log]
+            juce::Timer::callAfterDelay(1500, [safe, log]
             {
                 if (safe == nullptr)
                     return;
@@ -763,7 +764,7 @@ void RysumContent::runImmersiveTest()
                      << "   full screen: " << (int)safe->fullButton.active
                      << "   controls back: " << (int)(safe->walk.getNumChildComponents() > 0 &&
                                                        safe->walk.getChildComponent(0)->isVisible())
-                     << "\n";
+                     << "   picture: " << safe->walk.pictureInfo() << "\n";
                 juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
                     .getChildFile("Rysum")
                     .getChildFile("immersive-test.txt")
@@ -781,6 +782,7 @@ void RysumContent::startButtonLearn()
     if (walk.isImmersive())
         walk.setImmersive(false);
     releaseComputerKeys();
+    walk.setGpuBlocked(true); // (the card's picture is a window of its own: it would cover the overlay)
     learnOverlay.setVisible(true);
     learnOverlay.toFront(true);
     learnOverlay.refresh();
@@ -789,6 +791,7 @@ void RysumContent::startButtonLearn()
 void RysumContent::stopButtonLearn()
 {
     learnOverlay.setVisible(false);
+    walk.setGpuBlocked(false);
     if (walk.isShowing())
         walk.grabKeyboardFocus();
     else
@@ -1221,7 +1224,8 @@ void RysumContent::updateStats()
     if (current == 8) // the 3D view: what its picture costs
         stats.shown << "\n3D: " << juce::String(walk.frameMs(), 1) << " ms (Geometrie "
                     << juce::String(walk.geometryMs(), 1) << "), " << walk.renderStats() << ", "
-                    << walk.renderSize();
+                    << walk.renderSize() << "   Bild: " << walk.pictureInfo();
+    walk.overText = stats.shown; // (shown by the view itself while the graphics card draws)
     paintStatsFile().appendText(juce::Time::getCurrentTime().toString(false, true, true, true) +
                                 "  " + stats.shown.replace("\n", "  |  ") + "\n");
     stats.secondStart = now;

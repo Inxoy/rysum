@@ -175,6 +175,7 @@ set(RYSUM_PLUGIN_SOURCES
     source/OrganView.cpp
     source/SpeakerView.cpp
     source/Walk3D.cpp
+    source/WalkGpu.cpp
     source/WalkView.cpp
     source/ModView.cpp)
 
@@ -192,7 +193,7 @@ function(rysum_setup_plugin target)
             rysum_mysofa
             rysum_mtsesp
             rysum_pffft
-            juce::juce_audio_utils
+            juce::juce_audio_utils juce::juce_opengl
             juce::juce_audio_processors
             juce::juce_audio_formats
             juce::juce_dsp
@@ -293,13 +294,13 @@ if(RYSUM_BUILD_TESTS)
         tests/UiSnapshot.cpp
         ${RYSUM_KERNEL_SOURCES}
         source/SampleLibrary.cpp source/OrganEngine.cpp source/OrganLive.cpp source/OrganBodies.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/ProcessorScenes.cpp source/PluginEditor.cpp
-        source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp source/Walk3D.cpp source/WalkView.cpp)
+        source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp source/Walk3D.cpp source/WalkGpu.cpp source/WalkView.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
     target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
-        juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
+        juce::juce_audio_utils juce::juce_opengl juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 endif()
 
@@ -317,7 +318,7 @@ if(RYSUM_BUILD_BENCH)
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
     target_link_libraries(RysumBench PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
-        juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
+        juce::juce_audio_utils juce::juce_opengl juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
     if(MSVC)
         target_compile_options(RysumBench PRIVATE /MP /utf-8)
@@ -339,7 +340,7 @@ if(RYSUM_BUILD_DATASET)
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
     target_link_libraries(RysumDataset PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
-        juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
+        juce::juce_audio_utils juce::juce_opengl juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
     if(MSVC)
         target_compile_options(RysumDataset PRIVATE /MP /utf-8)

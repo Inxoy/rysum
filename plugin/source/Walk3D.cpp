@@ -618,6 +618,7 @@ void Raster::rasterBand (int band)
                     if (iz > zbuf[k])
                     {
                         zbuf[k] = iz;
+                        if (depthOnly) { e0 += s0; e1 += s1; e2 += s2; continue; }
                         const float rz = 1.0f / iz;
                         gu[k] = (e0 * s.uz[0] + e1 * s.uz[i1] + e2 * s.uz[i2]) * rz;
                         gv[k] = (e0 * s.vz[0] + e1 * s.vz[i1] + e2 * s.vz[i2]) * rz;
@@ -670,6 +671,38 @@ void Raster::shadeBand (int band)
             const int b = (int) (12.0f + 214.0f * g2 - 5.0f * l * (1.0f - l));
             pix[k] = 0xff000000u | ((uint32_t) juce::jlimit (0, 255, r) << 16) | ((uint32_t) juce::jlimit (0, 255, g) << 8) | (uint32_t) juce::jlimit (0, 255, b);
         }
+    }
+}
+
+void Raster::finishDepth()
+{
+    const int bands = (int) bins.size();
+    const std::function<void (int)> depth = [this] (int b) { rasterBand (b); };
+    const double tA = juce::Time::getMillisecondCounterHiRes();
+    // (on this thread alone: it is little work, and waking the helpers for it costs more than it saves)
+    depthOnly = true;
+    for (int b = 0; b < bands; ++b) depth (b);
+    depthOnly = false;
+    rasterMs = (float) (juce::Time::getMillisecondCounterHiRes() - tA); shadeMs = 0.0f;
+}
+
+void Raster::exportGpu (std::vector<float>& verts, std::array<float, 32 * 4>& materials) const
+{
+    verts.resize (tris.size() * 27);
+    const float sx = 2.0f / (float) w, sy = 2.0f / (float) h;
+    float* o = verts.data();
+    for (const auto& s : tris)
+        for (int k = 0; k < 3; ++k)
+        {
+            const float rz = 1.0f / s.iz[k];
+            *o++ = s.x[k] * sx - 1.0f; *o++ = 1.0f - s.y[k] * sy; *o++ = s.iz[k];
+            *o++ = s.b[k]; *o++ = s.uz[k] * rz; *o++ = s.vz[k] * rz; *o++ = s.e[k];
+            *o++ = s.tone; *o++ = (float) s.slot;
+        }
+    for (size_t i = 0; i < 32; ++i)
+    {
+        materials[4 * i] = (float) mats[i].kind; materials[4 * i + 1] = mats[i].tone;
+        materials[4 * i + 2] = mats[i].rough; materials[4 * i + 3] = 0.0f;
     }
 }
 

@@ -88,6 +88,13 @@ public:
 
     /** rasterises and shades everything, writes the image */
     void finish();
+    /** only the depths (for depthAt): when the graphics card draws the picture */
+    void finishDepth();
+    /** the frame's triangles for the graphics card - per vertex 9 numbers: x, y (-1 .. 1, y up), 1 / depth,
+        brightness, u, v, emission, tone, material slot - and per slot 4: kind, tone, roughness, 0 */
+    void exportGpu (std::vector<float>& verts, std::array<float, 32 * 4>& materials) const;
+    float fogToneNow() const noexcept { return fogTone; }
+    float fogInvNow() const noexcept { return fogInv; }
 
     /** screen point of a room point (false if behind the near plane) */
     bool project (V3 p, float& sx, float& sy, float& depth) const noexcept;
@@ -132,6 +139,7 @@ private:
     V3 eye, right, up, fwd;
     float focal = 1.0f, fogTone = 0.1f, fogInv = 0.02f, grain = 0.1f;
     uint32_t frameNo = 0;
+    bool depthOnly = false;
     V3 lightDir;
 
     // a few worker threads (the message thread works too)

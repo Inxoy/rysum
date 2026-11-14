@@ -202,6 +202,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
 
 WalkView::~WalkView()
 {
+    gpu.reset();
     proc.engine.viewWalkOn = false; proc.engine.viewZ = 0.0f;
     proc.engine.grabStop = -1; proc.engine.actFreeze = false;
 }
@@ -283,6 +284,7 @@ void WalkView::visibilityChanged()
     else
     {
         stopTimer();
+        gpu.reset();                           // (the card's window goes with the page)
         looking = false;
         setImmersive (false);
         actGrab.midiHeld = actFreeze.midiHeld = actJump.midiHeld = false;
@@ -495,7 +497,87 @@ void WalkView::timerCallback()
         advance (dt, false, false, false, false, 0.0f, false, jumpHeld);      // (keys let go by losing the focus: coming to rest, landing)
         updateActions (grabHeld, freezeHeld);
     }
-    repaint();
+    updateGpu();
+    if (! gpuOn()) { overWasCard = false; repaint(); return; }
+    buildScene ((float) gpu->renderingScale());
+    // The card draws the picture every frame; what JUCE paints over it (writing, controls, the map) is kept as
+    // a picture of its own and only painted again where it changes - painting all of it 60 times a second would
+    // keep one core busy.
+    ++overTick;
+    const bool shockNow = shockFx > 0.0 && t - shockFx < 600.0;
+    const int cross = (aimStop >= 0 || heldStop >= 0) ? 1 : 0;
+    if (! overWasCard || shockNow || overShock || overTick % 120 == 0 || overText.isEmpty() != overTextWasEmpty)
+        repaint();
+    else
+    {
+        const auto area = getLocalBounds();
+        if (cross != overCross) repaint (juce::Rectangle<int> (48, 48).withCentre (area.getCentre()));
+        if (overTick % 6 == 0 && ! immersive)
+        {
+            repaint (area.withTrimmedTop (80).removeFromTop (24));                                     // the line that says where you are
+            repaint (juce::Rectangle<int> (198, 158).withPosition (area.getRight() - 210, area.getBottom() - 190));   // the map
+        }
+        if (overTick % 30 == 0 && overText.isNotEmpty()) repaint (area.withTrimmedLeft (area.getWidth() - 560).withTrimmedTop (150).removeFromTop (136));
+    }
+    overWasCard = true; overShock = shockNow; overCross = cross; overTextWasEmpty = overText.isEmpty();
+}
+
+// ---------------------------------------------------------------------------
+// the picture from the graphics card
+// ---------------------------------------------------------------------------
+namespace
+{
+juce::File gpuChoiceFile() { return RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("Grafik.xml"); }
+int gpuChoice = -1;          // -1 = not read yet
+}
+
+bool WalkView::gpuWanted()
+{
+    const auto forced = juce::SystemStats::getEnvironmentVariable ("RYSUM_GPU", {});
+    if (forced.isNotEmpty()) return forced.getIntValue() != 0;
+    if (gpuChoice < 0)
+    {
+        gpuChoice = 1;
+        if (auto xml = juce::parseXML (gpuChoiceFile())) gpuChoice = xml->getBoolAttribute ("grafikkarte", true) ? 1 : 0;
+    }
+    return gpuChoice != 0;
+}
+
+void WalkView::setGpuWanted (bool on)
+{
+    gpuChoice = on ? 1 : 0;
+    juce::XmlElement xml ("GRAFIK");
+    xml.setAttribute ("grafikkarte", on);
+    xml.writeTo (gpuChoiceFile());
+}
+
+void WalkView::updateGpu()
+{
+    if (gpu != nullptr && gpu->hasFailed())
+    {
+        // the card or its driver cannot do it: the processor draws from now on
+        gpuNote = gpu->failure();
+        gpuGaveUp = true;
+        gpu.reset();
+        return;
+    }
+    const bool want = gpuWanted() && ! testMode && ! gpuBlocked && ! gpuGaveUp && isShowing() && getPeer() != nullptr;
+    if (! want) { gpu.reset(); gpuWaiting = 0; return; }
+    if (gpu == nullptr) { gpu = std::make_unique<GpuPicture>(); gpuWaiting = 0; gpuFrames = 0; }
+    gpu->attachTo (*this);
+    if (! gpu->isReady() && ++gpuWaiting > 240)
+    {
+        // no context after four seconds (no OpenGL 3.2 here)
+        gpuNote = "kein OpenGL 3.2";
+        gpuGaveUp = true;
+        gpu.reset();
+    }
+}
+
+juce::String WalkView::pictureInfo() const
+{
+    if (gpuOn()) return "Grafikkarte (" + gpu->cardName() + "), " + juce::String (gpu->drawMs(), 1) + " ms";
+    return "Prozessor" + (gpuNote.isNotEmpty() ? " (Grafikkarte: " + gpuNote + ")" : juce::String());
 }
 
 bool WalkView::keyPressed (const juce::KeyPress& k)
@@ -509,6 +591,13 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
     const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
     if (c == 'i' && ! k.getModifiers().isCtrlDown() && ! k.getModifiers().isCommandDown()) { toggleImmersive(); return true; }
     if (c == 'm') { cycleMaterial(); return true; }
+    if (c == 'g' && ! k.getModifiers().isCtrlDown() && ! k.getModifiers().isCommandDown())
+    {
+        // the picture from the graphics card or from the processor
+        setGpuWanted (! gpuWanted());
+        gpuGaveUp = false; gpuNote = {};
+        return true;
+    }
     const bool hard = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
     if (c == 'e') { shock (hard ? 1.7f : 1.0f); return true; }
     if (c == 'r') { callHome(); return true; }
@@ -1071,9 +1160,17 @@ V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) 
 
 void WalkView::paint (juce::Graphics& g)
 {
-    auto& A = Assets::get();
-    const auto params = proc.readParams();
-    const auto r = roomNow();
+    if (! gpuOn()) buildScene (juce::jlimit (1.0f, 2.5f, g.getInternalContext().getPhysicalPixelScaleFactor()));
+    drawOver (g);
+}
+
+/** the frame's picture: the room and the pipes as triangles, drawn into the renderer's image */
+void WalkView::buildScene (float phys)
+{
+    scene.params = proc.readParams();
+    scene.r = roomNow();
+    const auto& params = scene.params;
+    const auto& r = scene.r;
     // (walking in a shaped Saal, or with a model that is heard: the pipes are where the room simulation has them)
     pipesInRoom = params.room.on && ((! r.box() && r.plan.n >= 3 && (proc.engine.listenerXNow.load() != 0.0f || proc.engine.listenerYNow.load() != 0.0f))
                                      || proc.engine.meshActive.load());
@@ -1084,14 +1181,18 @@ void WalkView::paint (juce::Graphics& g)
     const auto area = getLocalBounds();
 
     // as sharp as the screen allows (in full screen the window is scaled up), less when a frame takes too long
-    const float phys = juce::jlimit (1.0f, 2.5f, g.getInternalContext().getPhysicalPixelScaleFactor());
-    const float sc = juce::jlimit (0.4f, 2.5f, phys * resScale);
+    // (the graphics card draws at the screen's full sharpness whatever this is: the processor then only keeps
+    //  the depths, for the cross and the glows, at half the view's size)
+    const bool card = gpuOn();
+    const bool compareNow = card && ++gpuFrames == 90 && juce::SystemStats::getEnvironmentVariable ("RYSUM_GPU_TEST", {}).isNotEmpty();
+    const float sc = compareNow ? phys : (card ? 0.5f : juce::jlimit (0.4f, 2.5f, phys * resScale));
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     rast.setSize (juce::roundToInt ((float) area.getWidth() * sc), juce::roundToInt ((float) area.getHeight() * sc));
     rast.setCamera (eye, yaw, pitch, fov);
     viewScale = (float) area.getWidth() / (float) juce::jmax (1, rast.width());
     const float fogDist = juce::jmax (12.0f, 1.5f * juce::jmax (r.W(), r.L()));      // (floor and ceiling stay readable to the far end)
-    rast.begin (0.07f, fogDist, 0.12f, ++frame);
+    const float grainAmt = compareNow ? 0.0f : 0.12f;        // (a comparison: without the film grain)
+    rast.begin (0.07f, fogDist, grainAmt, ++frame);
 
     // the surfaces from the Saal's absorption, scatter and high damping
     const auto wm = wallMaterial (r.absWalls, r.highDamp, r.scatter);
@@ -1126,7 +1227,10 @@ void WalkView::paint (juce::Graphics& g)
     { Material m; m.kind = Material::dark; m.tone = 1.0f; m.gloss = 0.0f; rast.setMaterial (kSlotDark, m); }
     wallLook = wm.kind;
 
-    const auto mesh = proc.getWalkMesh();
+    scene.mesh = proc.getWalkMesh();
+    scene.homeP = homeP;
+    scene.eye = eye;
+    const auto& mesh = scene.mesh;
     if (mesh != nullptr)
     {
         // a model in greys (its colours' brightness): level faces low down get the floor's material, level faces
@@ -1181,8 +1285,8 @@ void WalkView::paint (juce::Graphics& g)
 
     // the pipes, where Ambisonics puts them (as heard from the listener's place; you walk among them)
     const double now = proc.engine.timeSeconds.load();
-    struct Glow { V3 at; float amount, size; };
-    std::vector<Glow> glows;
+    auto& glows = scene.glows;
+    glows.clear();
     for (int s = 0; s < kNumStops; ++s)
     {
         for (auto& sh : shown[(size_t) s]) sh.on = false;
@@ -1230,12 +1334,57 @@ void WalkView::paint (juce::Graphics& g)
             }
     }
     geoMs = (float) (juce::Time::getMillisecondCounterHiRes() - t0);
-    rast.finish();
+    if (card)
+    {
+        rast.exportGpu (gpuFrame.verts, gpuFrame.mats);
+        gpuFrame.fogTone = rast.fogToneNow(); gpuFrame.fogInv = rast.fogInvNow();
+        gpuFrame.grain = grainAmt; gpuFrame.frameNo = frame;
+        if (compareNow)
+        {
+            // (test) the same frame from the processor, to be compared with what the card draws
+            rast.finish();
+            gpuFrame.compareWith = rast.image().createCopy();
+            gpuFrame.compareDir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("gpu-test");
+        }
+        else
+            rast.finishDepth();
+        // the glow of the sounding pipes (where no wall hides them) and, with a model, the outline of the room
+        // the sound is computed in: drawn by the card as well
+        gpuFrame.glows.clear();
+        gpuFrame.lines.clear();
+        const float rw = (float) rast.width(), rh = (float) rast.height();
+        if (! compareNow)
+            for (const auto& gw : glows)
+            {
+                float sx, sy, d;
+                if (! rast.project (gw.at, sx, sy, d)) continue;
+                const float zd = rast.depthAt ((int) sx, (int) sy);
+                if (zd > 0.0f && zd < d * 0.95f - 0.4f) continue;
+                const float rad = juce::jlimit (6.0f, 260.0f, (0.6f + 0.35f * gw.size) / d * 0.5f * (float) area.getWidth());
+                gpuFrame.addGlow (sx / rw * 2.0f - 1.0f, 1.0f - sy / rh * 2.0f, 2.0f * rad / (float) area.getWidth(), 2.0f * rad / (float) area.getHeight(),
+                                  juce::jlimit (0.0f, 1.0f, gw.amount));
+            }
+        if (mesh != nullptr && ! compareNow)
+        {
+            const float W = r.W(), L = r.L(), H = r.H();
+            const V3 cn[8] { { 0, 0, 0 }, { W, 0, 0 }, { W, L, 0 }, { 0, L, 0 }, { 0, 0, H }, { W, 0, H }, { W, L, H }, { 0, L, H } };
+            const int ed[12][2] { { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 }, { 4, 5 }, { 5, 6 }, { 6, 7 }, { 7, 4 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } };
+            for (auto& e : ed)
+            {
+                juce::Point<float> a, b;
+                if (rast.projectLine (cn[e[0]], cn[e[1]], a, b))
+                    gpuFrame.lines.insert (gpuFrame.lines.end(), { a.x / rw * 2.0f - 1.0f, 1.0f - a.y / rh * 2.0f, b.x / rw * 2.0f - 1.0f, 1.0f - b.y / rh * 2.0f });
+            }
+        }
+        gpu->submit (gpuFrame);
+    }
+    else
+        rast.finish();
     // the pipe under the cross (Q takes it)
     if (! pickPipe (area.getCentre().toFloat(), 9.0f, aimStop, aimKey)) aimStop = aimKey = -1;
     const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
     lastFrameMs = (float) ms;
-    if (! testMode)
+    if (! testMode && ! card)
     {
         // the resolution in fixed steps, decided by the part that depends on it (drawing the pixels, not the
         // geometry): down after a few slow frames, up when the next step would still be quick, a while later
@@ -1252,7 +1401,21 @@ void WalkView::paint (juce::Graphics& g)
         if (quickFrames >= 90 && resLevel > 0) { --resLevel; quickFrames = 0; }
         resScale = kSteps[resLevel];
     }
+}
 
+/** what lies over the picture: the glow of the sounding pipes, the cross, the writing, the map */
+void WalkView::drawOver (juce::Graphics& g)
+{
+    auto& A = Assets::get();
+    const auto& params = scene.params;
+    const auto& r = scene.r;
+    const auto& mesh = scene.mesh;
+    const auto& glows = scene.glows;
+    const V3 homeP = scene.homeP, eye = scene.eye;
+    const auto area = getLocalBounds();
+    juce::ignoreUnused (A, params, homeP, eye);
+
+    if (! gpuOn())          // (the card's picture lies under this component already)
     {
         juce::Graphics::ScopedSaveState ss (g);
         g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
@@ -1263,6 +1426,7 @@ void WalkView::paint (juce::Graphics& g)
     // the sounding pipes shine (where they are not hidden behind a wall)
     for (const auto& gw : glows)
     {
+        if (gpuOn()) break;          // (the card draws them)
         float sx, sy, d;
         if (! rast.project (gw.at, sx, sy, d)) continue;
         const float zd = rast.depthAt ((int) sx, (int) sy);
@@ -1287,7 +1451,7 @@ void WalkView::paint (juce::Graphics& g)
     }
 
     // with a model: the room the sound is computed in, as a faint outline
-    if (mesh != nullptr)
+    if (mesh != nullptr && ! gpuOn())
     {
         g.setColour (col::rubric.withAlpha (0.55f));
         const float W = r.W(), L = r.L(), H = r.H();
@@ -1318,6 +1482,17 @@ void WalkView::paint (juce::Graphics& g)
         }
     }
 
+    if (gpuOn() && overText.isNotEmpty())
+    {
+        // (the window's readout: it lies under the card's picture, so it is written here)
+        auto corner = area;
+        const auto box = corner.removeFromRight (560).withTrimmedTop (150).removeFromTop (136).reduced (8);
+        g.setColour (col::bg.withAlpha (0.88f));
+        g.fillRect (box);
+        g.setColour (col::ink);
+        g.setFont (A.monoFont (10.0f));
+        g.drawFittedText (overText, box.reduced (6, 3), juce::Justification::topLeft, 9);
+    }
     if (immersive) return;      // (only the picture and the cross)
 
     // heading, hints, status (on dark bands, so they stay readable over a bright model)
@@ -1342,7 +1517,7 @@ void WalkView::paint (juce::Graphics& g)
     g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
                   "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
                 area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
-    g.drawText (U ("Klick: Pfeife anschlagen  \xc2\xb7  mit Shift: st\xc3\xa4rker  \xc2\xb7  I: immersiv"), handsArea.withTrimmedLeft (8), juce::Justification::centredLeft);
+    g.drawText (U ("Klick: anschlagen  \xc2\xb7  Shift: st\xc3\xa4rker  \xc2\xb7  I: immersiv  \xc2\xb7  G: Bild ") + (gpuOn() ? juce::String ("Grafikkarte") : (gpuWanted() && gpuNote.isNotEmpty() ? "Prozessor (" + gpuNote + ")" : juce::String ("Prozessor"))), handsArea.withTrimmedLeft (8), juce::Justification::centredLeft);
     {
         // the player moves pipes, but no stop has pipes that can be moved: say how
         bool anyBodies = false;

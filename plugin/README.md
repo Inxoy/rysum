@@ -682,6 +682,8 @@ away (*stößt ab*), lets them circle (*Umlaufbahn*) or drags them along (*Sog*)
 *Reichweite*. It acts on stops whose motion takes place in the Saal (Flug, Fall, Schwarm,
 Strömung) – and on the new motion *Schweben*, where the pipes rest at their place until the
 player moves them (*Tiefe* = how free they are, *Geschwindigkeit* = an unrest of their own).
+**G** lets the graphics card or the processor draw the picture (see chapter 6; the card is the default).
+
 *Immersiv* (button in the top row, or the key **I**): nothing but the picture. The 3D view fills
 the whole screen (the window goes to full screen for it and comes back afterwards), with no
 buttons, no writing and no map – only the small cross in the middle stays. The mouse looks around
@@ -1111,13 +1113,23 @@ the same, bit for bit, whichever thread did what. *Kerne für den Ton* is a para
 tracks, 1 can be the better choice. The helpers sleep while there are fewer than eight reflected
 sounds.
 
-**The picture** of the 3D view is drawn by the processor, on up to six threads at the usual
-priority; the audio thread and its helpers are more urgent and are served first.
+**The graphics card draws the 3D view** (OpenGL 3.2; the built-in graphics of a laptop is enough).
+The processor still places the room and the pipes; the card fills the pixels - the patterns of the
+surfaces, fog, grain and the grey of the print are the same formulas, as a shader - and draws the
+glow of the sounding pipes. The picture is as sharp as the screen at any window size (the
+processor's picture steps its resolution down to keep up), and the whole program needs about a
+quarter of the processor time: with a full scene 0.7 instead of 2.6 to 3.1 cores on a Ryzen 5 2600X
+with a Radeon RX 6700 XT, the sound included.
+**G** in the 3D view switches between the card and the processor (remembered for this computer in
+`Documents/Rysum/Grafik.xml`); the line of hints at the bottom says who is drawing. If the card or
+its driver cannot do it, the processor draws, as before, and while buttons are being assigned to
+MIDI (Ctrl+M) too. `RYSUM_GPU=0` (an environment variable) forces the processor's picture,
+`RYSUM_GPU_TEST=1` writes one frame drawn both ways and their difference to
+`Documents/Rysum/gpu-test`.
 
-**The graphics card** is not used. For the sound it would not help: the work is thousands of small
-jobs that must each be done within about a millisecond, and the way to the card and back takes
-longer than the job. The 3D picture is what a graphics card would do well (the built-in one of a
-laptop too); it would free the cores the picture takes now.
+**For the sound the graphics card is not used**, and it would not help: the work is thousands of
+small jobs that must each be done within about a millisecond, and the way to the card and back takes
+longer than the job.
 
 What costs the most, roughly in this order: the simulated room (*Saal*, every sounding pipe has its
 own early reflections - up to 48 sounds × 24 or 62 mirror images), a long impulse response at a high
