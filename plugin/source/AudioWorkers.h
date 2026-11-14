@@ -57,12 +57,19 @@ public:
     /** How many threads the audio may use when nothing else is said: half the processor's cores,
      *  at most four (the host, other plugins and the picture need the rest). The environment
      *  variable RYSUM_AUDIO_THREADS overrides it (1 = everything on the audio thread). */
-    static int wantedThreads()
+    static int wantedThreads() noexcept
     {
-        const auto forced = juce::SystemStats::getEnvironmentVariable("RYSUM_AUDIO_THREADS", {});
-        if (forced.isNotEmpty())
-            return juce::jlimit(1, kMaxHelpers + 1, forced.getIntValue());
-        return juce::jlimit(1, 4, juce::SystemStats::getNumPhysicalCpus() / 2);
+        // (worked out once, when the first engine is made: asking the environment allocates, and
+        // the audio thread asks for this number in every slice)
+        static const int wanted = []
+        {
+            const auto forced =
+                juce::SystemStats::getEnvironmentVariable("RYSUM_AUDIO_THREADS", {});
+            if (forced.isNotEmpty())
+                return juce::jlimit(1, kMaxHelpers + 1, forced.getIntValue());
+            return juce::jlimit(1, 4, juce::SystemStats::getNumPhysicalCpus() / 2);
+        }();
+        return wanted;
     }
 
     /** Calls fn (context, 0 ... jobs - 1), every job once, and returns when all are done.

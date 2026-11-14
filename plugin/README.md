@@ -1111,8 +1111,8 @@ the same, bit for bit, whichever thread did what. *Kerne für den Ton* is a para
 tracks, 1 can be the better choice. The helpers sleep while there are fewer than eight reflected
 sounds.
 
-**The picture gives way to the sound.** The 3D view is drawn by the processor, on up to six threads;
-they run below the usual priority, so the audio thread and its helpers are served first.
+**The picture** of the 3D view is drawn by the processor, on up to six threads at the usual
+priority; the audio thread and its helpers are more urgent and are served first.
 
 **The graphics card** is not used. For the sound it would not help: the work is thousands of small
 jobs that must each be done within about a millisecond, and the way to the card and back takes

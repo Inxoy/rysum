@@ -1203,15 +1203,15 @@ void RysumContent::updateStats()
         const int choice = juce::roundToInt(proc.apvts.getRawParameterValue("audioThreads")->load());
         const int cores = juce::jmin(proc.engine.audioThreadsAvailable(),
                                      choice > 0 ? choice : rysum::AudioWorkers::wantedThreads());
-        stats.shown << "\nTon " << juce::String(100.0 * proc.cpuLoad.load(), 0) << " % (max "
-                    << juce::String(100.0 * proc.cpuPeak.exchange(0.0f), 0) << " %)   Kerne "
+        stats.shown << "\nTon " << juce::String(juce::roundToInt(100.0f * proc.cpuLoad.load())) << " % (max "
+                    << juce::String(juce::roundToInt(100.0f * proc.cpuPeak.exchange(0.0f))) << " %)   Kerne "
                     << (choice > 0 ? juce::String(cores) : "automatisch (" + juce::String(cores) + ")")
                     << "   Strg+Umschalt+K: Kerne wechseln";
         // where the engine's time goes, in % of real time (measured only while this readout is on)
         const auto pf = proc.engine.prof;
         proc.engine.prof.fill(0.0);
         proc.engine.profOn = true;
-        auto pc = [secs](double ms) { return juce::String(ms * 0.1 / secs, 0); };
+        auto pc = [secs](double ms) { return juce::String(ms * 0.1 / secs, 1); };
         stats.shown << "\nVor den Pfeifen " << pc(pf[0]) << " % (Bewegung " << pc(pf[6]) << ", Orte " << pc(pf[7]) << ")   Pfeifen " << pc(pf[1])
                     << " %   Weiteres " << pc(pf[2]) << " %   Reflexionen " << pc(pf[3])
                     << " % (ihre Geometrie, alle Kerne zusammen: " << pc(pf[5]) << ")   Nachhall " << pc(pf[4]) << " %   Stimmen "

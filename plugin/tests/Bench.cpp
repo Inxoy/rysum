@@ -356,6 +356,21 @@ public:
             loadIr(irFoa);
             run("ambi5_fx_deg", 36);
         }
+        if (want("saal_shape"))
+        {
+            // a shaped room (the reflections' paths are searched for), the pipes flying in it
+            resetParams();
+            allStops(false);
+            for (int s = 0; s < rysum::kNumStops; ++s)
+                set(RysumProcessor::motionParamId(s).toRawUTF8(), (float)(8 + s % 4));
+            set("output", 3);
+            set("simOn", 1);
+            set("simShape", (float)rysum::shapeL);
+            set("simShapeAmt", 0.9f);
+            run("ambi3_saal_shape", 36);
+            set("simIce", 0.6f);
+            run("ambi3_saal_shape_eis", 36);
+        }
         if (want("walk3d"))
         {
             // the 3D view with everything on: the pipes as bodies in the Saal, knocking on its

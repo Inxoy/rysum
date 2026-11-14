@@ -1,9 +1,4 @@
 #include "Walk3D.h"
-#if JUCE_WINDOWS
- #define WIN32_LEAN_AND_MEAN
- #define NOMINMAX
- #include <windows.h>
-#endif
 #include <cmath>
 #include <cstdlib>
 #include <map>
@@ -362,11 +357,6 @@ Raster::Raster()
     const auto forced = juce::SystemStats::getEnvironmentVariable ("RYSUM_RENDER_THREADS", {});
     if (forced.isNotEmpty()) n = juce::jlimit (0, 16, forced.getIntValue());
     for (int i = 0; i < n; ++i) workers.emplace_back ([this] { workerLoop(); });
-   #if JUCE_WINDOWS
-    // the picture gives way to the sound: its threads run below the usual priority (the audio thread and its
-    // helpers, the host and the interface come first)
-    for (auto& t : workers) SetThreadPriority ((HANDLE) t.native_handle(), THREAD_PRIORITY_BELOW_NORMAL);
-   #endif
 }
 
 Raster::~Raster()
