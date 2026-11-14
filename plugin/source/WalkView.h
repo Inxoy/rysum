@@ -58,6 +58,7 @@ public:
     void cycleMaterialForTest() { cycleMaterial(); }
     void loadModelForTest (const juce::File& f) { loadModel (f); }
     void loadBuiltInRoomForTest (int index) { loadBuiltInRoom (index); }
+    void setDarkForTest (bool on) { setDark (on); }
     // ---- the player's actions (the keys; also for the tests)
     /** E: a burst that pushes every pipe away from you (strength 1 = the usual one) */
     void shock (float strength = 1.0f);
@@ -99,9 +100,11 @@ public:
     juce::String renderStats() const { return "raster + shade " + juce::String (rast.rasterMs, 1) + " ms, " + juce::String (rast.workerCount()) + " workers, " + juce::String (rast.trianglesDrawn) + " triangles"; }
 
 private:
-    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWall0 = 8 };   // (kSlotWall0 + i: wall i, each with its own material)
+    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWood, kSlotWall0 = 8 };   // (kSlotWall0 + i: wall i, each with its own material)
     struct RTri { Raster::Vert a, b, c; int slot; float tone; };
-    void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt);
+    void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt, int stop);
+    void addWoodPipe (V3 bottom, float len, float rad, float faceAngle, float glowAmt);
+    void addReedPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt, float px);
     V3 pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const;
     uint32_t flashSeen = 0;                                  // impacts already flashed
     struct Flash { V3 at; float life = 0.0f, strength = 0.0f; };
@@ -191,6 +194,9 @@ private:
     juce::TextButton immerse { "Immersiv" }, actShock { "E Druckwelle" }, actHome { juce::String::fromUTF8 ("R Zur\xc3\xbc" "ckrufen") },
                      actClap { "C Klatschen" }, actMat { "M Material" };
     HoldButton actGrab { "Q Greifen" }, actFreeze { "F Anhalten" }, actJump { "Springen" };
+    juce::TextButton actLight { "L Licht aus" };
+    std::vector<Raster::Lamp> lamps;
+    void setDark (bool on);
     juce::Rectangle<int> handsArea;
     bool immersive = false, lockFresh = false;
     int unfocused = 0;

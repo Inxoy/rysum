@@ -2790,6 +2790,7 @@ void RysumProcessor::applyWalkAcoustics()
     walkAcKeep[(size_t)(walkAcKeepPos++ & 3u)] = ac;
     std::atomic_store(&walkAc, ac);
     engine.setMesh(walkHear ? ac : nullptr);
+    engine.setBodyMesh(ac); // (the flying pipes bounce off it, heard or not)
     ++changeCounter;
 }
 
@@ -3567,6 +3568,7 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         wk.setProperty("zUp", walkZUp, nullptr);
         wk.setProperty("scale", walkScale, nullptr);
         wk.setProperty("hear", walkHear, nullptr);
+        wk.setProperty("dark", walkDark, nullptr);
         wk.setProperty("x", walkPose[0].load(), nullptr);
         wk.setProperty("y", walkPose[1].load(), nullptr);
         wk.setProperty("yaw", walkPose[2].load(), nullptr);
@@ -3905,6 +3907,7 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                 walkZUp = zUp;
                 walkScale = scale;
                 walkHear = (bool)wk.getProperty("hear", true);
+                walkDark = (bool)wk.getProperty("dark", false);
                 if (same)
                     setWalkHear(walkHear);
                 if (mf == juce::File())

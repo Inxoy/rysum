@@ -16,6 +16,8 @@ constexpr double kBodyStep = 1.0 / 480.0;
 constexpr float kWallMargin = 0.25f;          // a pipe keeps its radius (and a little) from a wall
 constexpr float kMaxSpeed = 40.0f;            // m/s (Geschwindigkeit: 1 Hz = 10 m/s)
 constexpr float kMinImpact = 0.25f;           // m/s into a surface: below that it touches, it does not knock
+constexpr float kMeshMargin = 0.12f;          // a pipe keeps this much from the model's surfaces (sideways)
+constexpr float kMeshFloor = 0.05f;           // the model's triangles below this lie on the Saal's floor: the Saal has them
 
 /** a room as the bodies see it (the Saal of the stop: its plan, its height, the usual listening place) */
 struct BodyRoom
@@ -74,6 +76,13 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         playerOk.fill (false);
         return;
     }
+
+    // a loaded model (Saal 1): the pipes bounce off its walls, columns and floors as well
+    bodyMeshNow = std::atomic_load (&bodyMeshShared);
+    const MeshAcoustics* bm = bodyMeshNow.get();
+    const bool newMesh = (bm != nullptr ? bm->serial : 0u) != bodyMeshSerial;
+    bodyMeshSerial = bm != nullptr ? bm->serial : 0u;
+    auto insideSolid = [bm] (float x, float y, float z) { return bm->insideSolid ({ x, y, z }); };
 
     // the rooms (only those a moving stop is in): as the parameters say, not as the last block left them
     std::array<BodyRoom, kNumRooms> rooms;
@@ -151,9 +160,19 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 b.ox = b.x; b.oy = b.y; b.oz = b.z;
                 b.pushed = 0.0f; b.loose = false;
                 b.rest = 0.0f;
+                b.meshClear = 0.0f; b.meshGround = false;
+                b.meshInside = bm != nullptr && ri == 0 && insideSolid (b.x, b.y, b.z);
             }
         }
         bodyMode[(size_t) s] = mode;
+        const MeshAcoustics* mesh = ri == 0 ? bm : nullptr;
+        if (mesh != nullptr)
+            for (auto& b : bs)
+            {
+                // (another model: measured anew; one that started inside a solid: is it out yet?)
+                if (newMesh) { b.meshClear = 0.0f; b.meshGround = false; b.meshInside = insideSolid (b.x, b.y, b.z); }
+                else if (b.meshInside) b.meshInside = insideSolid (b.x, b.y, b.z);
+            }
 
         const uint64_t sounding = soundingMask[(size_t) s].load();
         const bool knocks = lv.impLevel > 0.0f && p.stopOn[(size_t) s];
@@ -182,11 +201,12 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         if (mode == (int) Motion::Swarm) flock();
 
         // a pipe stands between floor and ceiling with its whole length (a very long one floats in the middle)
-        std::array<float, kNumKeys> zLo {}, zHi {};
+        std::array<float, kNumKeys> zLo {}, zHi {}, halfLen {};
         for (int k = 0; k < kNumKeys; ++k)
         {
             float len, rad;
             pipeSizeOf (s, k, len, rad);
+            halfLen[(size_t) k] = 0.5f * len;
             zLo[(size_t) k] = juce::jmax (0.15f, 0.5f * len); zHi[(size_t) k] = br.H - juce::jmax (0.15f, 0.5f * len);
             if (zHi[(size_t) k] < zLo[(size_t) k]) zLo[(size_t) k] = zHi[(size_t) k] = 0.5f * br.H;
         }
@@ -266,7 +286,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     {
                         b.vz -= 9.81f * h;
                         b.vx *= 1.0f - 0.05f * h; b.vy *= 1.0f - 0.05f * h;             // a little air
-                        const bool onFloor = b.z <= zMin + 0.01f;
+                        const bool onFloor = b.z <= zMin + 0.01f || b.meshGround;
                         if (onFloor)
                         {
                             b.vx *= 1.0f - 4.0f * h; b.vy *= 1.0f - 4.0f * h;           // sliding on the floor
@@ -366,12 +386,13 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 const float v = len3 (b.vx, b.vy, b.vz);
                 if (v > vMax) { b.vx *= vMax / v; b.vy *= vMax / v; b.vz *= vMax / v; }
                 b.z = juce::jlimit (zMin, zMax, b.z);
-                const float px = b.x, py = b.y;
+                const float px = b.x, py = b.y, pz = b.z;
                 b.x += b.vx * h; b.y += b.vy * h; b.z += b.vz * h;
                 // (the way gone, rounded up - and a little more than any rounding of the place itself)
                 b.clear -= std::abs (b.vx * h) + std::abs (b.vy * h) + 4.0e-5f;
 
                 float hitSpeed = 0.0f; bool floorHit = false; float hitAbs = br.r.absWalls;
+                float hitZ = -1.0f;          // (a knock on the model: where, if not on the Saal's floor or ceiling)
                 // floor and ceiling
                 if (b.z < zMin)
                 {
@@ -430,6 +451,72 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     if (! br.free (b.x, b.y, kWallMargin * 0.9f)) br.nudge (b.x, b.y);
                 }
 
+                // the model: its walls, columns, steps and floors. Only asked when the pipe may have come near
+                // them (the box around it, widened, holds no triangle: it may go that far without asking);
+                // near them, the step's way is followed from points along the pipe's axis, and the first
+                // surface met throws it back (a level one from above: it lands, and may come to rest on it)
+                b.meshGround = false;
+                if (mesh != nullptr && ! goHome && ! b.meshInside)
+                {
+                    const float dx = b.x - px, dy = b.y - py, dz = b.z - pz;
+                    const float dl = len3 (dx, dy, dz);
+                    b.meshClear -= dl + 4.0e-5f;
+                    const float half = halfLen[(size_t) k];
+                    if (b.meshClear <= 0.0f)
+                    {
+                        auto near = [&] (float r)
+                        {
+                            const float m = kMeshMargin + r;
+                            return mesh->anyIn ({ b.x - m, b.y - m, b.z - half - 0.03f - r }, { b.x + m, b.y + m, b.z + half + 0.03f + r }, kMeshFloor);
+                        };
+                        b.meshClear = ! near (1.2f) ? 1.2f : (! near (0.3f) ? 0.3f : 0.0f);
+                    }
+                    if (b.meshClear <= 0.0f && dl > 1.0e-7f)
+                    {
+                        // the margin along the way: a pipe's width sideways, a hair up and down
+                        const float side = std::sqrt (dx * dx + dy * dy) / dl;
+                        const float margin = 0.03f + (kMeshMargin - 0.03f) * side;
+                        const float tMax = 1.0f + margin / dl;
+                        const int pts = juce::jlimit (2, 6, (int) std::ceil (2.0f * half / 0.5f) + 1);
+                        int hit = -1;
+                        float best = tMax;
+                        for (int i = 0; i < pts; ++i)
+                        {
+                            const float oz = (-half + 0.01f) + (2.0f * half - 0.02f) * (float) i / (float) (pts - 1);
+                            float t;
+                            const int tri = mesh->castAbove ({ px, py, pz + oz }, { dx, dy, dz }, best, t, kMeshFloor);
+                            if (tri >= 0 && t < best) { best = t; hit = tri; }
+                        }
+                        if (hit >= 0)
+                        {
+                            Vec3f n = mesh->tris[(size_t) hit].n;
+                            if (n.x * dx + n.y * dy + n.z * dz > 0.0f) n = { -n.x, -n.y, -n.z };
+                            const bool level = std::abs (n.z) > 0.8f, below = level && n.z > 0.0f;
+                            const float e = below ? eFloor : eWall;
+                            const float vn = b.vx * n.x + b.vy * n.y + b.vz * n.z;
+                            if (vn < 0.0f)
+                            {
+                                if (-vn > hitSpeed)
+                                {
+                                    hitSpeed = -vn; floorHit = level;
+                                    hitAbs = level ? br.abs.low[below ? kSurfFloor : kSurfCeiling] : br.r.absWalls;
+                                    hitZ = below ? b.z - half : (level ? b.z + half : b.z);
+                                }
+                                b.vx -= (1.0f + e) * vn * n.x; b.vy -= (1.0f + e) * vn * n.y; b.vz -= (1.0f + e) * vn * n.z;
+                            }
+                            // (back to where the step began: never into the model - on a floor or under a ceiling
+                            //  only in height, so it slides on along it)
+                            if (! level) { b.x = px; b.y = py; }
+                            b.z = pz;
+                            if (below)
+                            {
+                                b.meshGround = true;
+                                if (std::abs (b.vz) < 0.3f) b.vz = 0.0f;
+                            }
+                        }
+                    }
+                }
+
                 // (a pipe the player has just pushed, thrown or carried knocks whatever "Aufprall" is set to)
                 const bool own = b.pushed > 0.0f && p.stopOn[(size_t) s] && ! goHome;
                 if (hitSpeed > kMinImpact && ! muted[(size_t) s][(size_t) k].load()
@@ -437,7 +524,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 {
                     ImpactEvent e;
                     if (own) e.level = juce::jmax (lv.impLevel, 0.7f);
-                    e.x = b.x; e.y = b.y; e.z = floorHit ? (b.z < 0.5f * br.H ? 0.0f : br.H) : b.z;
+                    e.x = b.x; e.y = b.y; e.z = hitZ >= 0.0f ? hitZ : (floorHit ? (b.z < 0.5f * br.H ? 0.0f : br.H) : b.z);
                     e.speed = hitSpeed; e.absorb = hitAbs; e.high = br.r.highDamp; e.stop = s; e.key = k; e.room = ri; e.floor = floorHit;
                     queueImpact (e);
                 }
@@ -457,7 +544,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                             breakCount = breakCount.load() + 1;
                             ImpactEvent e;      // the crack (heard whatever "Aufprall" is set to)
                             e.level = juce::jmax (lv.impLevel, 0.8f);
-                            e.x = b.x; e.y = b.y; e.z = floorHit ? (b.z < 0.5f * br.H ? 0.0f : br.H) : b.z;
+                            e.x = b.x; e.y = b.y; e.z = hitZ >= 0.0f ? hitZ : (floorHit ? (b.z < 0.5f * br.H ? 0.0f : br.H) : b.z);
                             e.speed = 1.6f * hitSpeed; e.absorb = 0.0f; e.high = br.r.highDamp; e.stop = s; e.key = k; e.room = ri; e.floor = floorHit;
                             queueImpact (e);
                         }
@@ -726,12 +813,16 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
     v = ImpactVoice {};
     v.on = true;
 
+    // the Gedackt is of wood: a softer contact, less clatter and none of the metal's bright edge, its tube
+    // ringing short and low, and the hollow box answering with a dry "tock"
+    const bool wood = e.stop == 1, brass = e.stop == 6;
     // the contact: shorter (brighter) the faster it hits, longer on a soft wall
-    const float contact = (0.0003f + 0.003f / (1.0f + e.speed)) * (1.0f + 3.0f * a);
+    const float contact = (0.0003f + 0.003f / (1.0f + e.speed)) * (1.0f + 3.0f * a) * (wood ? 3.0f : 1.0f);
     v.exN = juce::jmax (8, (int) (contact * fsr));
     v.exGain = gain * 2.0f / (float) v.exN;                      // the pulse's area = gain (a unit knock at low pitches)
-    v.noiseGain = 0.5f * gain * juce::jmin (1.0f, e.speed / 4.0f) * (1.0f - 0.5f * a);   // the clatter: only a fast hit has much
-    const float fc = juce::jlimit (300.0f, 0.45f * fsr, (700.0f + 11000.0f * juce::jmin (1.0f, e.speed / 6.0f)) * (1.0f - 0.7f * a) * (1.0f - 0.35f * e.high));
+    v.noiseGain = 0.5f * gain * juce::jmin (1.0f, e.speed / 4.0f) * (1.0f - 0.5f * a) * (wood ? 0.35f : 1.0f);   // the clatter: only a fast hit has much
+    const float fc = juce::jlimit (300.0f, 0.45f * fsr, (700.0f + 11000.0f * juce::jmin (1.0f, e.speed / 6.0f)) * (1.0f - 0.7f * a) * (1.0f - 0.35f * e.high)
+                                                        * (wood ? 0.3f : 1.0f));
     v.noiseA = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / fsr);
     // the wall (or floor) itself: a dull thump, more of it when the floor is hit
     v.thud = e.struck ? 0.0f : (e.floor ? 0.9f : 0.5f) * gain * (1.0f - 0.4f * a);
@@ -743,11 +834,12 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
     pipeSizeOf (e.stop, e.key, len, rad);
     const float lenNow = juce::jlimit (0.2f, 4.0f, pipeLen[(size_t) e.stop][(size_t) e.key].load());      // (Wachsen & Brechen)
     len *= lenNow;
-    const bool stopped = e.stop == 1, brass = e.stop == 6;
-    const float f1 = juce::jlimit (35.0f, 2500.0f, 300.0f / std::pow (juce::jmax (0.12f, len), 1.5f));
+    // (wood is less stiff for its weight than tin: the same tube bends at lower frequencies, and its
+    //  inner friction stops it soon)
+    const float f1 = juce::jlimit (35.0f, 2500.0f, 300.0f / std::pow (juce::jmax (0.12f, len), 1.5f) * (wood ? 0.7f : 1.0f));
     const float ratios[kImpactModes - 1] { 1.0f, 2.756f, 5.404f, 8.933f };
     const float mGain[kImpactModes - 1] { 1.0f, 0.85f, 0.75f, 0.65f }, mT[kImpactModes - 1] { 1.0f, 0.7f, 0.5f, 0.35f };
-    const float ring = juce::jlimit (0.05f, 6.0f, lv.impRing) * (stopped ? 0.35f : (brass ? 1.2f : 1.0f));
+    const float ring = juce::jlimit (0.05f, 6.0f, lv.impRing) * (wood ? 0.12f : (brass ? 1.2f : 1.0f));
     float longest = 0.05f;
     auto setMode = [&] (int m, float f, float g, float t60)
     {
@@ -761,7 +853,13 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
         v.gm[(size_t) m] = g * std::sin (w) * pulse;
         longest = juce::jmax (longest, t60);
     };
-    for (int m = 0; m < kImpactModes - 1; ++m) setMode (m, f1 * ratios[m], mGain[m] * (stopped ? 0.6f : 1.0f), ring * mT[m]);
+    for (int m = 0; m < kImpactModes - 1; ++m) setMode (m, f1 * ratios[m], mGain[m] * (wood ? (m >= 2 ? 0.3f : 0.7f) : 1.0f), ring * mT[m]);
+    if (wood)
+    {
+        // the hollow box: one dry, woody resonance (higher the narrower the pipe), gone in a few hundredths
+        const float tock = juce::jlimit (350.0f, 1600.0f, 700.0f * std::sqrt (0.05f / juce::jmax (0.01f, rad)));
+        setMode (kImpactModes - 2, tock, 1.4f, 0.07f);
+    }
     const float note = pipeHzIdeal (e.stop, e.key, p) / lenNow;
     setMode (kImpactModes - 1, note > 0.0f ? note : f1 * 3.1f, 0.25f, 0.2f + 0.3f * ring);
 

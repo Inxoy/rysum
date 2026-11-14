@@ -85,6 +85,106 @@ public:
         return traverse(o, d, tMin, tMax, tHit, false);
     }
 
+    /** cast() that passes through every triangle lying wholly below 'ignoreBelow' (the floor the
+        Saal has anyway: the flying pipes meet it there) */
+    int castAbove(Vec3f o, Vec3f d, float tMax, float &tHit, float ignoreBelow) const noexcept
+    {
+        return traverse(o, d, 1.0e-4f, tMax, tHit, false, ignoreBelow);
+    }
+
+    /** Is p inside a closed solid of the model (a wall, a column)? A line straight up (a little
+        tilted, to miss edges) counts every surface it passes - also two that touch, where one box
+        sits on another - and an odd count means inside. */
+    bool insideSolid(Vec3f p) const noexcept
+    {
+        if (nodes.empty())
+            return false;
+        const Vec3f d{0.0013f, 0.0007f, size.z + 5.0f - p.z};
+        auto safeInv = [](float v)
+        { return 1.0f / (std::abs(v) > 1.0e-12f ? v : (v < 0.0f ? -1.0e-12f : 1.0e-12f)); };
+        const Vec3f inv{safeInv(d.x), safeInv(d.y), safeInv(d.z)};
+        int stack[64];
+        int sp = 0, count = 0;
+        stack[sp++] = 0;
+        while (sp > 0)
+        {
+            const Node &n = nodes[(size_t)stack[--sp]];
+            if (!hitsBox(n, p, inv, 0.0f, 1.0f))
+                continue;
+            if (n.count > 0)
+            {
+                for (int i = n.first; i < n.first + n.count; ++i)
+                {
+                    const Tri &t = tris[(size_t)i];
+                    const Vec3f q{d.y * t.e2.z - d.z * t.e2.y, d.z * t.e2.x - d.x * t.e2.z,
+                                  d.x * t.e2.y - d.y * t.e2.x};
+                    const float det = t.e1.x * q.x + t.e1.y * q.y + t.e1.z * q.z;
+                    if (std::abs(det) < 1.0e-12f)
+                        continue;
+                    const float id = 1.0f / det;
+                    const Vec3f s{p.x - t.a.x, p.y - t.a.y, p.z - t.a.z};
+                    const float u = (s.x * q.x + s.y * q.y + s.z * q.z) * id;
+                    if (u < 0.0f || u > 1.0f)
+                        continue;
+                    const Vec3f r{s.y * t.e1.z - s.z * t.e1.y, s.z * t.e1.x - s.x * t.e1.z,
+                                  s.x * t.e1.y - s.y * t.e1.x};
+                    const float v = (d.x * r.x + d.y * r.y + d.z * r.z) * id;
+                    if (v < 0.0f || u + v > 1.0f)
+                        continue;
+                    const float tt = (t.e2.x * r.x + t.e2.y * r.y + t.e2.z * r.z) * id;
+                    if (tt > 0.0f && tt < 1.0f)
+                        ++count;
+                }
+            }
+            else if (sp < 62)
+            {
+                stack[sp++] = n.left;
+                stack[sp++] = n.right;
+            }
+        }
+        return (count & 1) != 0;
+    }
+
+    /** does any triangle (one reaching above 'ignoreBelow') come into the box lo .. hi? (its own
+        bounding box overlapping it: a little more than the truth, never less) */
+    bool anyIn(Vec3f lo, Vec3f hi, float ignoreBelow) const noexcept
+    {
+        if (nodes.empty())
+            return false;
+        int stack[64];
+        int sp = 0;
+        stack[sp++] = 0;
+        while (sp > 0)
+        {
+            const Node &n = nodes[(size_t)stack[--sp]];
+            if (n.hi.x < lo.x || n.lo.x > hi.x || n.hi.y < lo.y || n.lo.y > hi.y || n.hi.z < lo.z ||
+                n.lo.z > hi.z || n.hi.z < ignoreBelow)
+                continue;
+            if (n.count > 0)
+            {
+                for (int i = n.first; i < n.first + n.count; ++i)
+                {
+                    const Tri &t = tris[(size_t)i];
+                    const float x0 = t.a.x + juce::jmin(0.0f, t.e1.x, t.e2.x),
+                                x1 = t.a.x + juce::jmax(0.0f, t.e1.x, t.e2.x),
+                                y0 = t.a.y + juce::jmin(0.0f, t.e1.y, t.e2.y),
+                                y1 = t.a.y + juce::jmax(0.0f, t.e1.y, t.e2.y),
+                                z0 = t.a.z + juce::jmin(0.0f, t.e1.z, t.e2.z),
+                                z1 = t.a.z + juce::jmax(0.0f, t.e1.z, t.e2.z);
+                    if (z1 >= ignoreBelow && x1 >= lo.x && x0 <= hi.x && y1 >= lo.y && y0 <= hi.y &&
+                        z1 >= lo.z && z0 <= hi.z)
+                        return true;
+                }
+            }
+            else if (sp < 62)
+            {
+                stack[sp++] = n.left;
+                stack[sp++] = n.right;
+            }
+        }
+        return false;
+    }
+
     /** is anything between a and b? (the ends themselves do not count) */
     bool blocked(Vec3f a, Vec3f b) const noexcept
     {
@@ -180,7 +280,8 @@ private:
         return t0 <= t1;
     }
 
-    int traverse(Vec3f o, Vec3f d, float tMin, float tMax, float &tHit, bool any) const noexcept
+    int traverse(Vec3f o, Vec3f d, float tMin, float tMax, float &tHit, bool any,
+                 float ignoreBelow = -1.0e30f) const noexcept
     {
         if (nodes.empty())
             return -1;
@@ -195,7 +296,7 @@ private:
         while (sp > 0)
         {
             const Node &n = nodes[(size_t)stack[--sp]];
-            if (!hitsBox(n, o, inv, tMin, bestT))
+            if (n.hi.z < ignoreBelow || !hitsBox(n, o, inv, tMin, bestT))
                 continue;
             if (n.count > 0)
             {
@@ -203,6 +304,8 @@ private:
                 {
                     // Moeller-Trumbore
                     const Tri &t = tris[(size_t)i];
+                    if (t.a.z + juce::jmax(0.0f, t.e1.z, t.e2.z) < ignoreBelow)
+                        continue;
                     const Vec3f p{d.y * t.e2.z - d.z * t.e2.y, d.z * t.e2.x - d.x * t.e2.z,
                                   d.x * t.e2.y - d.y * t.e2.x};
                     const float det = t.e1.x * p.x + t.e1.y * p.y + t.e1.z * p.z;

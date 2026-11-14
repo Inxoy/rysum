@@ -76,6 +76,19 @@ public:
     /** starts a frame: fog tone (0..1) and how far until it is half fog (m); grain amount (0..1), frame number */
     void begin (float fogTone, float fogDistance, float grain, uint32_t frame);
 
+    /** "Licht aus": the room lit only by these lamps (the sounding pipes, the flashes of knocks) and a faint
+        'ambient' rest of the usual light. Per pixel, by the surface's facing and the lamp's distance (no
+        shadows). Call after setCamera; no lamps and ambient 1 = the usual light. */
+    struct Lamp { V3 at; float power = 1.0f, reach = 3.0f; };
+    static constexpr int kMaxLamps = 24;
+    void setLamps (const std::vector<Lamp>& lamps, float ambient);
+    bool darkNow() const noexcept { return dark; }
+    float ambientNow() const noexcept { return ambient; }
+    /** the lamps in view space, kMaxLamps at most: x, y, z, power, 1 / reach^2 each */
+    const std::vector<float>& lampsInView() const noexcept { return lampsV; }
+    /** the focal length in pixels, per pixel of width (the graphics card works out its own pixels from it) */
+    float focalPerWidth() const noexcept { return focal / (float) juce::jmax (1, w); }
+
     /** a material slot (0..31) used by the triangles below */
     void setMaterial (int slot, const Material& m);
 
@@ -90,8 +103,8 @@ public:
     void finish();
     /** only the depths (for depthAt): when the graphics card draws the picture */
     void finishDepth();
-    /** the frame's triangles for the graphics card - per vertex 9 numbers: x, y (-1 .. 1, y up), 1 / depth,
-        brightness, u, v, emission, tone, material slot - and per slot 4: kind, tone, roughness, 0 */
+    /** the frame's triangles for the graphics card - per vertex 12 numbers: x, y (-1 .. 1, y up), 1 / depth,
+        brightness, u, v, emission, tone, material slot, the face normal (view space) - and per slot 4: kind, tone, roughness, 0 */
     void exportGpu (std::vector<float>& verts, std::array<float, 32 * 4>& materials) const;
     float fogToneNow() const noexcept { return fogTone; }
     float fogInvNow() const noexcept { return fogInv; }
@@ -116,13 +129,14 @@ private:
     struct ST                                              // a screen triangle, ready to rasterise
     {
         float x[3], y[3], iz[3], b[3], uz[3], vz[3], e[3];
+        float n[3];                                        // the face's normal in view space (towards the eye)
         int minY, maxY;
         uint8_t slot;
         float tone;
     };
     VV toView (V3 p) const noexcept;
     float light (V3 p, V3 n, const Material& m) const noexcept;
-    void emitClipped (const VV* v, int n, int slot, float tone);
+    void emitClipped (const VV* v, int n, int slot, float tone, const float* nrm);
     void rasterBand (int band);
     void shadeBand (int band);
     void runParallel (int jobs, const std::function<void (int)>& fn);
@@ -132,6 +146,10 @@ private:
     std::vector<uint32_t> pix;
     std::vector<float> zbuf, gu, gv, gb, ge, gt;           // per pixel: 1/depth, texture u/v, brightness, emission, tone
     std::vector<uint8_t> gm;                               // material slot
+    std::vector<int> gi;                                   // the triangle (its normal, for the lamps)
+    bool dark = false;
+    float ambient = 1.0f;
+    std::vector<float> lampsV;
     std::vector<ST> tris;
     static constexpr int kBandRows = 8;             // (a band and its buffers stay in the cache while it is drawn and shaded)
     std::vector<std::vector<int>> bins;

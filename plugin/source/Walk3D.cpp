@@ -413,6 +413,7 @@ void Raster::setSize (int nw, int nh)
     pix.resize (n, 0u);
     for (auto* b : { &zbuf, &gu, &gv, &gb, &ge, &gt }) b->resize (n, 0.0f);
     gm.resize (n, 0);
+    gi.resize (n, 0);
     bins.resize ((size_t) ((h + kBandRows - 1) / kBandRows));
 }
 
@@ -439,6 +440,24 @@ void Raster::begin (float fog, float fogDistance, float grainAmt, uint32_t frame
 }
 
 void Raster::setMaterial (int slot, const Material& m) { mats[(size_t) juce::jlimit (0, 31, slot)] = m; }
+
+void Raster::setLamps (const std::vector<Lamp>& lamps, float amb)
+{
+    ambient = amb;
+    lampsV.clear();
+    dark = amb < 0.999f || ! lamps.empty();
+    if (! dark) return;
+    // the strongest ones (a lamp far behind the eye still lights what is seen: all count, by their power)
+    std::vector<const Lamp*> order;
+    for (const auto& l : lamps) if (l.power > 1.0e-4f) order.push_back (&l);
+    std::sort (order.begin(), order.end(), [] (const Lamp* a, const Lamp* b) { return a->power > b->power; });
+    if ((int) order.size() > kMaxLamps) order.resize ((size_t) kMaxLamps);
+    for (const auto* l : order)
+    {
+        const auto v = toView (l->at);
+        lampsV.insert (lampsV.end(), { v.x, v.y, v.z, l->power, 1.0f / juce::jmax (0.01f, l->reach * l->reach) });
+    }
+}
 
 Raster::VV Raster::toView (V3 p) const noexcept
 {
@@ -516,7 +535,12 @@ void Raster::triangle (const Vert& a, const Vert& b, const Vert& c, int slot, fl
         v[i].b = light (vs[i]->p, vs[i]->n, m);
         v[i].u = vs[i]->u; v[i].v = vs[i]->v; v[i].e = emissive;
     }
-    emitClipped (v, 3, slot, tone);
+    // the face's normal in view space, turned towards the eye (the lamps light the side that is seen)
+    const V3 p0 { v[0].x, v[0].y, v[0].z };
+    V3 fn = normalised (cross (V3 { v[1].x, v[1].y, v[1].z } - p0, V3 { v[2].x, v[2].y, v[2].z } - p0));
+    if (dot (fn, p0) > 0.0f) fn = fn * -1.0f;
+    const float nrm[3] { fn.x, fn.y, fn.z };
+    emitClipped (v, 3, slot, tone, nrm);
 }
 
 void Raster::flatTriangle (V3 a, V3 b, V3 c, int slot, float tone, float emissive)
@@ -534,7 +558,7 @@ void Raster::flatTriangle (V3 a, V3 b, V3 c, int slot, float tone, float emissiv
     triangle (va, vb, vc, slot, tone, emissive);
 }
 
-void Raster::emitClipped (const VV* v, int n, int slot, float tone)
+void Raster::emitClipped (const VV* v, int n, int slot, float tone, const float* nrm)
 {
     // clip at the near plane (Sutherland-Hodgman against one plane): the camera stands inside the geometry
     VV out[8];
@@ -574,6 +598,7 @@ void Raster::emitClipped (const VV* v, int n, int slot, float tone)
         if (s.minY > s.maxY) continue;
         s.slot = (uint8_t) slot;
         s.tone = tone;
+        s.n[0] = nrm[0]; s.n[1] = nrm[1]; s.n[2] = nrm[2];
         const int idx = (int) tris.size();
         tris.push_back (s);
         for (int b = s.minY / kBandRows; b <= s.maxY / kBandRows; ++b) bins[(size_t) b].push_back (idx);
@@ -626,6 +651,7 @@ void Raster::rasterBand (int band)
                         ge[k] = e0 * s.e[0] + e1 * s.e[i1] + e2 * s.e[i2];
                         gt[k] = s.tone;
                         gm[k] = s.slot;
+                        gi[k] = idx;
                     }
                 }
                 e0 += s0; e1 += s1; e2 += s2;
@@ -653,8 +679,24 @@ void Raster::shadeBand (int band)
             else
             {
                 const auto& m = mats[gm[k]];
-                l = m.tone * gt[k] * gb[k] * texture (m, gu[k], gv[k]) + ge[k];
                 const float d = 1.0f / iz;
+                float lit = gb[k];
+                if (dark)
+                {
+                    // light off: a faint rest of the usual light, and the lamps (the surface's facing, the lamp's
+                    // distance: softened within its reach)
+                    lit *= ambient;
+                    const float* nf = tris[(size_t) gi[k]].n;
+                    const float vx = ((float) x + 0.5f - cx) / focal * d, vy = (cy - ((float) y + 0.5f)) / focal * d;
+                    for (size_t li = 0; li + 4 < lampsV.size(); li += 5)
+                    {
+                        const float lx = lampsV[li] - vx, ly = lampsV[li + 1] - vy, lz = lampsV[li + 2] - d;
+                        const float d2 = lx * lx + ly * ly + lz * lz;
+                        const float ndl = (nf[0] * lx + nf[1] * ly + nf[2] * lz) / std::sqrt (d2 + 1.0e-6f);
+                        if (ndl > 0.0f) lit += lampsV[li + 3] * ndl / (1.0f + d2 * lampsV[li + 4]);
+                    }
+                }
+                l = m.tone * gt[k] * lit * texture (m, gu[k], gv[k]) + ge[k];
                 const float f = d * fogInv / (1.0f + d * fogInv);
                 l += (fogTone - l) * f;
             }
@@ -688,7 +730,7 @@ void Raster::finishDepth()
 
 void Raster::exportGpu (std::vector<float>& verts, std::array<float, 32 * 4>& materials) const
 {
-    verts.resize (tris.size() * 27);
+    verts.resize (tris.size() * 36);
     const float sx = 2.0f / (float) w, sy = 2.0f / (float) h;
     float* o = verts.data();
     for (const auto& s : tris)
@@ -698,6 +740,7 @@ void Raster::exportGpu (std::vector<float>& verts, std::array<float, 32 * 4>& ma
             *o++ = s.x[k] * sx - 1.0f; *o++ = 1.0f - s.y[k] * sy; *o++ = s.iz[k];
             *o++ = s.b[k]; *o++ = s.uz[k] * rz; *o++ = s.vz[k] * rz; *o++ = s.e[k];
             *o++ = s.tone; *o++ = (float) s.slot;
+            *o++ = s.n[0]; *o++ = s.n[1]; *o++ = s.n[2];
         }
     for (size_t i = 0; i < 32; ++i)
     {

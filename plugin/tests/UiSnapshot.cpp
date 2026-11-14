@@ -285,6 +285,115 @@ public:
                         up > 3.0f);
                 }
             }
+            // ---- pipes flying in the crypt bounce off its columns and walls: none goes into a solid
+            // (a pipe that started inside one may still be in it: only new ones count)
+            {
+                wv.loadBuiltInRoomForTest(2);
+                setReal(RysumProcessor::stopParamId(1), 1.0f);
+                setReal(RysumProcessor::motionParamId(0), (float)Motion::Flight);
+                setReal(RysumProcessor::motionParamId(1), (float)Motion::Fall);
+                setReal(RysumProcessor::rateParamId(0), 0.5f);
+                setReal(RysumProcessor::rateParamId(1), 0.6f);
+                run(20, {48, 55, 60, 64, 67});
+                const auto ac = proc->getWalkAcoustics();
+                auto inside = [&](int s, int k)
+                {
+                    Vec3f q;
+                    if (ac == nullptr || !proc->engine.bodyAt(s, k, q))
+                        return false;
+                    return ac->insideSolid(q);
+                };
+                std::array<std::array<bool, kNumKeys>, 2> was{};
+                for (int s = 0; s < 2; ++s)
+                    for (int k = 0; k < kNumKeys; ++k)
+                        was[(size_t)s][(size_t)k] = inside(s, k);
+                int went = 0, startedIn = 0;
+                for (auto &st : was)
+                    for (bool b : st)
+                        startedIn += b ? 1 : 0;
+                const uint32_t knocks0 = proc->engine.impactCount.load();
+                for (int round = 0; round < 60; ++round)
+                {
+                    run(10, {});
+                    for (int s = 0; s < 2; ++s)
+                        for (int k = 0; k < kNumKeys; ++k)
+                        {
+                            const bool now = inside(s, k);
+                            if (now && !was[(size_t)s][(size_t)k])
+                                ++went;
+                            was[(size_t)s][(size_t)k] = now;
+                        }
+                }
+                say("model: pipes flying and falling in the crypt for 6.4 s - " + juce::String(went) +
+                        " went into a column or wall (" + juce::String(startedIn) + " started inside one), " +
+                        juce::String((int)(proc->engine.impactCount.load() - knocks0)) + " knocks",
+                    went == 0);
+                shot("walk_room_krypta_flug.png");
+                // ---- light off: the room dark, lit by the sounding pipes
+                auto meanOf = [&]
+                {
+                    auto img = wv.createComponentSnapshot(wv.getLocalBounds().reduced(0, 120), true, 1.0f);
+                    double sum = 0;
+                    int n = 0;
+                    for (int y = 0; y < img.getHeight(); y += 4)
+                        for (int x = 0; x < img.getWidth(); x += 4)
+                        {
+                            sum += img.getPixelAt(x, y).getBrightness();
+                            ++n;
+                        }
+                    return sum / juce::jmax(1, n);
+                };
+                setReal(RysumProcessor::motionParamId(0), 0.0f);
+                setReal(RysumProcessor::motionParamId(1), 0.0f);
+                setReal(RysumProcessor::stopParamId(6), 1.0f); // (the Trompete too: its funnels)
+                wv.setPoseForTest(0, 0, 0);
+                run(20, {48, 55, 60, 64, 67});
+                shot("walk_pipes_kinds.png");
+                const double lightOn = meanOf();
+                wv.setDarkForTest(true);
+                run(20, {48, 55, 60, 64, 67});
+                const double lit = meanOf();
+                shot("walk_dark_lit.png");
+                run(1, {});
+                {
+                    juce::MidiBuffer offs;
+                    for (int n2 : {48, 55, 60, 64, 67})
+                        offs.addEvent(juce::MidiMessage::noteOff(1, n2), 0);
+                    juce::AudioBuffer<float> sb(16, 512);
+                    proc->processBlock(sb, offs);
+                }
+                run(150, {});
+                for (int f = 0; f < 40; ++f) // (the glow of a pipe fades frame by frame)
+                    meanOf();
+                const double unlit = meanOf();
+                shot("walk_dark_silent.png");
+                say("light off: the picture " + juce::String(lightOn, 3) + " with the light on, " +
+                        juce::String(lit, 3) + " dark with a chord, " + juce::String(unlit, 3) +
+                        " dark and silent",
+                    lit < lightOn && unlit < lit * 0.85);
+                wv.setDarkForTest(false);
+                {
+                    // (close up: only the wooden Gedackt and the Trompete with its funnels, in the bare Saal)
+                    proc->clearWalkModel();
+                    auto *p0 = proc->apvts.getRawParameterValue(RysumProcessor::stopParamId(0));
+                    const float was0 = p0 != nullptr ? p0->load() : 1.0f;
+                    setReal(RysumProcessor::stopParamId(0), 0.0f);
+                    setReal(RysumProcessor::roomParamId(0, "W"), 20.0f);
+                    setReal(RysumProcessor::roomParamId(0, "L"), 30.0f);
+                    setReal(RysumProcessor::roomParamId(0, "H"), 12.0f);
+                    run(10, {});
+                    wv.setPoseForTest(0.0f, -1.5f, 0.0f);
+                    wv.setPitchForTest(8.0f);
+                    run(4, {});
+                    shot("walk_pipes_close.png");
+                    setReal(RysumProcessor::stopParamId(1), 0.0f); run(4, {}); wv.setPoseForTest(-1.0f, 1.0f, 20.0f); wv.setPitchForTest(48.0f);
+                    run(4, {});
+                    shot("walk_pipes_close2.png");
+                    setReal(RysumProcessor::stopParamId(0), was0);
+                }
+                setReal(RysumProcessor::stopParamId(1), 0.0f);
+                setReal(RysumProcessor::stopParamId(6), 0.0f);
+            }
             proc->clearWalkModel();
             setReal(RysumProcessor::roomParamId(0, "Lx"), 0.5f);
             setReal(RysumProcessor::roomParamId(0, "Ly"), 0.4f);

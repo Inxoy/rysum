@@ -13,19 +13,21 @@ const char* const kVertex = R"(#version 150
 in vec3 aPos;
 in vec4 aAttr;
 in vec2 aMat;
+in vec3 aNrm;
 noperspective out float vB;
 noperspective out float vE;
 noperspective out float vIz;
 smooth out vec2 vUV;
 flat out float vTone;
 flat out float vSlot;
+flat out vec3 vN;
 void main()
 {
     float zv = 1.0 / aPos.z;
     float zn = 1.0 - 2.0 * aPos.z * 0.06;      // (0.06: the near plane; nearer = smaller)
     gl_Position = vec4 (aPos.x * zv, aPos.y * zv, zn * zv, zv);
     vB = aAttr.x; vUV = aAttr.yz; vE = aAttr.w; vIz = aPos.z;
-    vTone = aMat.x; vSlot = aMat.y;
+    vTone = aMat.x; vSlot = aMat.y; vN = aNrm;
 }
 )";
 
@@ -37,7 +39,12 @@ noperspective in float vIz;
 smooth in vec2 vUV;
 flat in float vTone;
 flat in float vSlot;
+flat in vec3 vN;
 uniform vec4 uMat[32];      // kind, tone, roughness
+uniform vec3 uDark;         // light off (0 / 1), what is left of the usual light, focal length per pixel of width
+uniform vec4 uLamp[24];     // view space x, y, z, power
+uniform float uLampR[24];   // 1 / reach^2
+uniform int uLampN;
 uniform vec4 uFog;          // fog tone, 1 / fog distance, grain
 uniform vec2 uView;         // the picture's size in pixels
 uniform ivec2 uFrame;       // the grain's offset of this frame
@@ -136,8 +143,22 @@ void main()
     else
     {
         vec4 m = uMat[int (vSlot + 0.5)];
-        l = m.y * vTone * vB * pattern (int (m.x + 0.5), m.z, vUV.x, vUV.y) + vE;
         float d = 1.0 / vIz;
+        float lit = vB;
+        if (uDark.x > 0.5)
+        {
+            lit *= uDark.y;
+            float focal = uDark.z * uView.x;
+            vec3 p = vec3 ((gl_FragCoord.x - 0.5 * uView.x) / focal * d, (gl_FragCoord.y - 0.5 * uView.y) / focal * d, d);
+            for (int i = 0; i < uLampN; ++i)
+            {
+                vec3 L = uLamp[i].xyz - p;
+                float d2 = dot (L, L);
+                float ndl = dot (vN, L) / sqrt (d2 + 1.0e-6);
+                if (ndl > 0.0) lit += uLamp[i].w * ndl / (1.0 + d2 * uLampR[i]);
+            }
+        }
+        l = m.y * vTone * lit * pattern (int (m.x + 0.5), m.z, vUV.x, vUV.y) + vE;
         float f = d * uFog.y / (1.0 + d * uFog.y);
         l += (uFog.x - l) * f;
     }
@@ -240,6 +261,7 @@ void GpuPicture::newOpenGLContextCreated()
     glBindAttribLocation (id, 0, "aPos");
     glBindAttribLocation (id, 1, "aAttr");
     glBindAttribLocation (id, 2, "aMat");
+    glBindAttribLocation (id, 3, "aNrm");
     if (! program->link())
     {
         fail ("Shader: " + program->getLastError());
@@ -250,6 +272,10 @@ void GpuPicture::newOpenGLContextCreated()
     uFog = glGetUniformLocation (id, "uFog");
     uView = glGetUniformLocation (id, "uView");
     uFrame = glGetUniformLocation (id, "uFrame");
+    uDark = glGetUniformLocation (id, "uDark");
+    uLamp = glGetUniformLocation (id, "uLamp");
+    uLampR = glGetUniformLocation (id, "uLampR");
+    uLampN = glGetUniformLocation (id, "uLampN");
     glGenVertexArrays (1, &vao);
     glGenBuffers (1, &vbo);
     // (the glows and lines: without them the picture is still whole, so a failure here is no reason to give up)
@@ -318,21 +344,37 @@ void GpuPicture::renderOpenGL()
     glUniform4f (uFog, drawing.fogTone, drawing.fogInv, drawing.grain, 0.0f);
     glUniform2f (uView, (float) w, (float) h);
     glUniform2i (uFrame, (GLint) (drawing.frameNo * 7919u), (GLint) (drawing.frameNo * 104729u));
+    {
+        // the lamps (light off)
+        const int nl = juce::jmin (24, (int) drawing.lamps.size() / 5);
+        float lp[24 * 4] {}, lr[24] {};
+        for (int i = 0; i < nl; ++i)
+        {
+            for (int c = 0; c < 4; ++c) lp[4 * i + c] = drawing.lamps[(size_t) (5 * i + c)];
+            lr[i] = drawing.lamps[(size_t) (5 * i + 4)];
+        }
+        glUniform3f (uDark, drawing.dark ? 1.0f : 0.0f, drawing.ambient, drawing.focalPerWidth);
+        glUniform4fv (uLamp, 24, lp);
+        glUniform1fv (uLampR, 24, lr);
+        glUniform1i (uLampN, nl);
+    }
 
     glBindVertexArray (vao);
     glBindBuffer (GL_ARRAY_BUFFER, vbo);
     // the vault behind everything (two triangles, slot -1), then the scene
-    static const float sky[] { -1, -1, 1, 0, 0, 0, 0, 1, -1,   1, -1, 1, 0, 0, 0, 0, 1, -1,   1, 1, 1, 0, 0, 0, 0, 1, -1,
-                               -1, -1, 1, 0, 0, 0, 0, 1, -1,   1, 1, 1, 0, 0, 0, 0, 1, -1,   -1, 1, 1, 0, 0, 0, 0, 1, -1 };
+    static const float sky[] { -1, -1, 1, 0, 0, 0, 0, 1, -1, 0, 0, 1,   1, -1, 1, 0, 0, 0, 0, 1, -1, 0, 0, 1,   1, 1, 1, 0, 0, 0, 0, 1, -1, 0, 0, 1,
+                               -1, -1, 1, 0, 0, 0, 0, 1, -1, 0, 0, 1,   1, 1, 1, 0, 0, 0, 0, 1, -1, 0, 0, 1,   -1, 1, 1, 0, 0, 0, 0, 1, -1, 0, 0, 1 };
     const GLsizei stride = (GLsizei) (kFloats * sizeof (float));
     auto layout = [stride]
     {
         glEnableVertexAttribArray (0);
         glEnableVertexAttribArray (1);
         glEnableVertexAttribArray (2);
+        glEnableVertexAttribArray (3);
         glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, stride, (const void*) 0);
         glVertexAttribPointer (1, 4, GL_FLOAT, GL_FALSE, stride, (const void*) (3 * sizeof (float)));
         glVertexAttribPointer (2, 2, GL_FLOAT, GL_FALSE, stride, (const void*) (7 * sizeof (float)));
+        glVertexAttribPointer (3, 3, GL_FLOAT, GL_FALSE, stride, (const void*) (9 * sizeof (float)));
     };
     const size_t skyFloats = sizeof (sky) / sizeof (float);
     juce::ignoreUnused (fresh);
@@ -357,6 +399,7 @@ void GpuPicture::renderOpenGL()
         drawing.compareWith = {};
     }
     glDisableVertexAttribArray (2);
+    glDisableVertexAttribArray (3);
     drawOver();
 
     // (as JUCE's own drawing expects it)
@@ -364,6 +407,7 @@ void GpuPicture::renderOpenGL()
     glDisableVertexAttribArray (0);
     glDisableVertexAttribArray (1);
     glDisableVertexAttribArray (2);
+    glDisableVertexAttribArray (3);
     glBindBuffer (GL_ARRAY_BUFFER, 0);
     glBindVertexArray (0);
     glUseProgram (0);

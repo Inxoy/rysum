@@ -6349,7 +6349,7 @@ int main(int argc, char **argv)
                 }
                 // an impact: faster = louder and brighter; a soft wall = quieter and duller
                 {
-                    auto knock = [&](float speed, float absorb)
+                    auto knock = [&](float speed, float absorb, int stop = 0)
                     {
                         OrganEngine e;
                         bool sent = false;
@@ -6365,7 +6365,7 @@ int main(int argc, char **argv)
                             {
                                 if (!sent)
                                 {
-                                    e.testImpact(7.0f, 15.2f, 1.6f, speed, absorb, 0, 12);
+                                    e.testImpact(7.0f, 15.2f, 1.6f, speed, absorb, stop, 12);
                                     sent = true;
                                 } // 4 m in front of the listener
                             });
@@ -6418,6 +6418,31 @@ int main(int argc, char **argv)
                         << peakDb(knock(3.0f, 0.05f)) << " dB, pipe peak " << pipePeak << " dB"
                         << std::endl;
                     writeWav(outDir.getChildFile("90_aufprall_schnell.wav"), fast, fsr);
+                    {
+                        // the Gedackt is of wood: its knock duller and over sooner than the tin Praestant's
+                        // (duller: less energy in the highs - the first difference of the signal - at the same
+                        //  speed; its own woody "tock" lies in the middle)
+                        auto highs = [&](const juce::AudioBuffer<float> &b)
+                        {
+                            double d = 0;
+                            for (int i = 1; i < (int)(0.05 * fsr); ++i)
+                            {
+                                const double x = b.getSample(0, i) - b.getSample(0, i - 1);
+                                d += x * x;
+                            }
+                            return 10.0 * std::log10(juce::jmax(1e-30, d));
+                        };
+                        const auto tin = knock(4.0f, 0.05f, 0), wood = knock(4.0f, 0.05f, 1);
+                        const double tinTail = rmsDb(tin, 0.25, 0.6) - rmsDb(tin, 0.0, 0.05),
+                                     woodTail = rmsDb(wood, 0.25, 0.6) - rmsDb(wood, 0.0, 0.05);
+                        std::cout << "impact: tin highs " << highs(tin) << " dB, tail " << tinTail
+                                  << " dB; wood highs " << highs(wood) << " dB, tail " << woodTail << " dB"
+                                  << std::endl;
+                        check(finiteB(wood) && highs(wood) < highs(tin) - 3.0 && woodTail < tinTail - 6.0,
+                              "impact: a wooden pipe knocks dull and short");
+                        writeWav(outDir.getChildFile("90_aufprall_holz.wav"), wood, fsr);
+                        writeWav(outDir.getChildFile("90_aufprall_zinn.wav"), tin, fsr);
+                    }
                 }
                 // the same paths at any block size (a fixed inner step)
                 {

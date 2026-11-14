@@ -13,6 +13,11 @@ struct GpuFrame
     std::array<float, 32 * 4> mats {};           // per slot: kind, tone, roughness, 0
     float fogTone = 0.07f, fogInv = 0.02f, grain = 0.12f;
     uint32_t frameNo = 0;
+    // "Licht aus": the lamps (Raster::lampsInView: 5 numbers each), what is left of the usual light, and the
+    // focal length per pixel of width (to find each pixel's place in the room)
+    bool dark = false;
+    float ambient = 1.0f, focalPerWidth = 1.0f;
+    std::vector<float> lamps;
     // over the picture: the glow of the sounding pipes (per vertex x, y, u, v, strength: six vertices a glow),
     // and lines (the outline of the room behind a model; per vertex x, y)
     std::vector<float> glows, lines;
@@ -28,7 +33,7 @@ struct GpuFrame
 class GpuPicture : private juce::OpenGLRenderer
 {
 public:
-    static constexpr int kFloats = 9;            // x, y (-1 .. 1), 1 / depth, brightness, u, v, emission, tone, slot
+    static constexpr int kFloats = 12;           // x, y (-1 .. 1), 1 / depth, brightness, u, v, emission, tone, slot, normal (3)
 
     GpuPicture();
     ~GpuPicture() override;
@@ -62,7 +67,7 @@ private:
     juce::OpenGLContext context;
     std::unique_ptr<juce::OpenGLShaderProgram> program, overProgram;
     unsigned int vao = 0, vbo = 0, overVao = 0, overVbo = 0;
-    int uMat = -1, uFog = -1, uView = -1, uFrame = -1, uOverMode = -1;
+    int uMat = -1, uFog = -1, uView = -1, uFrame = -1, uOverMode = -1, uDark = -1, uLamp = -1, uLampR = -1, uLampN = -1;
     void drawOver();
     juce::CriticalSection lock;
     GpuFrame pending, drawing;                   // (pending: under the lock)

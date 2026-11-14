@@ -641,6 +641,7 @@ public:
     }
     juce::File walkModelFile;
     bool walkZUp = false;
+    bool walkDark = false; // the 3D view with the light off: the sounding pipes light the room
     float walkScale = 1.0f;
     /** camera: offset from the listener's place (m), yaw (degrees, + = left), pitch (degrees, + =
      * up) */

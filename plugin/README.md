@@ -274,8 +274,13 @@ outside the circle = below the horizon). Select a stop on the right, then
     excites the higher modes of the tube); an absorbing wall, floor or curtain makes it quieter
     and duller (the Saal's absorption and high damping). The struck pipe rings with the bending
     modes of its tube (long pipes deep, short ones high) and faintly its own note; the wall adds a
-    thump. Each knock comes from where it happened and goes into the room. In the 3D view a
-    knock flashes.
+    thump. The Gedackt is of wood: its knock is softer and duller, its tube rings short and low,
+    and its hollow box answers with a dry "tock". Each knock comes from where it happened and goes
+    into the room. In the 3D view a knock flashes.
+  - With a room model loaded (3D view) the flying pipes also bounce off the model: its walls,
+    columns, steps and floors throw them back, falling ones land on its floors and steps, and the
+    knock comes from where they hit. A pipe that starts inside a solid of the model (a thick wall)
+    passes through until it is out.
 - *Gezeichnet* – draw your own trajectory: press *✎ Bahn zeichnen*, then draw a line in the top
   view with the mouse held down (centre = overhead, edge = horizon, outside = below). When you
   let go, the stop switches to *Gezeichnet* and its pipes travel along the line like a train
@@ -664,7 +669,7 @@ room you see; *Meter / Zentimeter / …* and *Z oben* (Z instead of Y as the up 
 import. The model is seen, walked (its walls stop you, steps up to 45 cm are climbed) and –
 with *Modell hörbar* – heard: a pipe behind a wall or pillar of the model comes around its edge,
 quieter and duller the longer the detour, and the late reverb is ray-traced through the model's
-triangles. The Saal's shoebox stays underneath (drawn as a red outline): it gives the early
+triangles. The Saal's shoebox stays underneath (not drawn): it gives the early
 reflections, closes a model that is open somewhere, and its floor and ceiling are drawn far
 beyond the model, so a model without a floor or a roof never shows a black void.
 *Maße übernehmen* gives the Saal the model's width, length and height (as a rectangle).
@@ -697,6 +702,13 @@ away (*stößt ab*), lets them circle (*Umlaufbahn*) or drags them along (*Sog*)
 Strömung) – and on the new motion *Schweben*, where the pipes rest at their place until the
 player moves them (*Tiefe* = how free they are, *Geschwindigkeit* = an unrest of their own).
 **G** lets the graphics card or the processor draw the picture (see chapter 6; the card is the default).
+**L** (or *L Licht aus* in the row at the bottom) turns the light off: the room goes dark, only a
+faint trace of it is left, and the sounding pipes light it - each a small lamp, brighter the
+louder it sounds, lighting what faces it and fading with distance (no shadows); a knock flashes
+as a spark. A full chord is brighter than one pipe, but not without end. Saved with the project.
+The pipes look like what they are: the Gedackt as square wooden pipes with a mouth cut into the
+front and a stopper on top, the Trompete as reed pipes - a round boot below and a long funnel
+widening up to its open top; the others as tin flue pipes.
 
 *Immersiv* (button in the top row, or the key **I**): nothing but the picture. The 3D view fills
 the whole screen (the window goes to full screen for it and comes back afterwards), with no
@@ -706,7 +718,7 @@ pipe under the cross. **Esc** or **I** goes back; so does switching to another p
 also frees the pointer at once.
 
 The hands are also buttons in a row at the bottom (*E Druckwelle*, *Q Greifen*, *F Anhalten*,
-*R Zurückrufen*, *C Klatschen*, *M Material*, *Springen*), so each can be put on a MIDI button
+*R Zurückrufen*, *C Klatschen*, *M Material*, *Springen*, *L Licht aus*), so each can be put on a MIDI button
 (see *MIDI buttons for any button* in chapter 4) – also *Immersiv* itself. *Greifen*, *Anhalten*
 and *Springen* act for as long as the MIDI button is held.
 

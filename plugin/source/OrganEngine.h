@@ -461,6 +461,12 @@ public:
         std::atomic_store(&meshShared, std::move(m));
     }
     std::atomic<bool> meshActive{false}; // the model hides pipes right now (for the display)
+    /** the model as the flying pipes see it (Saal 1): they bounce off it whether it is heard or
+        not. Message thread; the caller keeps it alive as for setMesh. */
+    void setBodyMesh(std::shared_ptr<const MeshAcoustics> m) noexcept
+    {
+        std::atomic_store(&bodyMeshShared, std::move(m));
+    }
 
     // ---- the player's actions (the keys of the 3D view). Message thread -> audio thread.
     enum class Act
@@ -1076,6 +1082,11 @@ private:
         // shaped rooms: how far the nearest wall is at least (measured when it was last looked for,
         // less the way gone since): while that is more than the margin, no wall needs to be asked
         float clear = 0;
+        // a loaded model: how far it may go before the model's triangles must be asked (the same
+        // idea), whether it stands on one of the model's floors, whether it started inside a solid
+        // (then it passes through until it is out)
+        float meshClear = 0;
+        bool meshGround = false, meshInside = false;
         bool loose = false;           // thrown ("Schweben"): it stays where it comes to rest
         XorShift rng{1};
     };
@@ -1171,6 +1182,8 @@ private:
     float walkZ = 0.0f; // the listener's height above standing (3D view)
     // the room model of Saal 1 (line of sight), and how many searches a block may still do
     std::shared_ptr<const MeshAcoustics> meshShared, meshNow;
+    std::shared_ptr<const MeshAcoustics> bodyMeshShared, bodyMeshNow;
+    uint32_t bodyMeshSerial = 0; // the model the bodies' meshClear / meshInside were found in
     bool meshOn = false;
     mutable int meshBudget = 0;
     // the player (the walked listener) as the flying pipes feel it: place and speed per room
