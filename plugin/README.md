@@ -1113,6 +1113,11 @@ the same, bit for bit, whichever thread did what. *Kerne für den Ton* is a para
 tracks, 1 can be the better choice. The helpers sleep while there are fewer than eight reflected
 sounds.
 
+**Pipes flying in a shaped Saal.** A pipe remembers how far the nearest wall was and only asks the
+walls again when it may have come near one; the walls and the listener's place are worked out once
+per slice, not for every pipe. The result is the same to the last bit; in a drawn room with all
+pipes flying the audio thread's load fell from 36 - 42 % to 29 - 35 %.
+
 **The graphics card draws the 3D view** (OpenGL 3.2, which the built-in graphics of laptops of the
 last ten years offer too - measured only on a desktop card so far).
 The processor still places the room and the pipes; the card fills the pixels - the patterns of the

@@ -179,6 +179,11 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
     fxScratch.assign((size_t)maxBlock * 12, 0.0f);
     // simulated room (all memory here, nothing is allocated while playing)
     erSlots.assign((size_t)kErSlots, ErSlot{});
+    for (int ri = 0; ri < kNumRooms; ++ri)
+    {
+        erListener[(size_t)ri] = listenerPos(roomsEr[(size_t)ri]);
+        erGeo[(size_t)ri] = planGeo(roomsEr[(size_t)ri]);
+    }
     for (auto &w : erWork)
     {
         const size_t slice = (size_t)juce::jmax(maxBlock, kSubBlock);
@@ -703,10 +708,38 @@ CloudParams OrganEngine::cloudFor(const CloudParams &b, const Voice &v) noexcept
     return c;
 }
 
+namespace
+{
+/** adds the time a scope took to a stage's sum (only while measuring) */
+struct ProfScope
+{
+    ProfScope(bool on, double &sum) : acc(on ? &sum : nullptr),
+                                      t0(on ? juce::Time::getMillisecondCounterHiRes() : 0.0)
+    {
+    }
+    ~ProfScope()
+    {
+        if (acc != nullptr)
+            *acc += juce::Time::getMillisecondCounterHiRes() - t0;
+    }
+    double *acc;
+    double t0;
+};
+} // namespace
+
 /** direction gains, distance level, air absorption, room send and Doppler of one voice for this
  * block */
 void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blockSeconds) noexcept
 {
+    double profT = profOn ? juce::Time::getMillisecondCounterHiRes() : 0.0;
+    auto profMark = [&](int stage)
+    {
+        if (!profOn)
+            return;
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        prof[(size_t)stage] += now - profT;
+        profT = now;
+    };
     // per-pipe envelopes
     for (int j = 0; j < kNumEnvs; ++j)
     {
@@ -735,11 +768,18 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     }
     const Pos homePos = pos;
     pos = heardFrom(pos); // the listener walks: the pipe as heard from there
+    profMark(8);
     {
         // Wachsen & Brechen: the pitch follows the pipe's length (a glide of a few hundredths of
         // a second, so a pipe that breaks while it sounds jumps without a click)
         const float lc = -1200.0f * std::log2(juce::jlimit(0.2f, 4.0f, pipeLen[(size_t)v.stop][(size_t)v.key].load()));
-        v.lenCents = v.fresh ? lc : v.lenCents + (lc - v.lenCents) * (1.0f - (float)std::exp(-blockSeconds / 0.03));
+        if (blockSeconds != spatialDt)
+        {
+            spatialDt = blockSeconds;
+            spatialLenK = 1.0f - (float)std::exp(-blockSeconds / 0.03);
+            spatialCrk = (float)std::exp(-blockSeconds / 0.15);
+        }
+        v.lenCents = v.fresh ? lc : v.lenCents + (lc - v.lenCents) * spatialLenK;
         if (std::abs(v.lenCents - lc) < 0.01f)
             v.lenCents = lc;
     }
@@ -756,6 +796,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     if (aroundCorner(p.stopRoom[(size_t)v.stop], homePos, dpos, hidDb, hidFc,
                      v.hasBody ? &v.bodyPos : nullptr, &v.mocc) == 2)
         ++occCount;
+    profMark(9);
     {
         // Ventil: how far this pipe's pallet is open (a slow key opens it slowly; or the finger's
         // pressure / slide)
@@ -833,6 +874,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
             v.pos = (double)rng.uni() * gl.zero * (v.pipe->onset + 0.03 * kSampleFileRate);
     }
 
+    profMark(10);
     gainsFor(dpos, v.g1.data());
     const float sg = p.stopGain[(size_t)v.stop];
     const float lvl = anyMod ? dbToGain(juce::jlimit(-100.0f, 12.0f, 36.0f * pm[tgtLevel])) : 1.0f;
@@ -860,7 +902,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
             {
                 // a pipe that flies or is carried is where it is in the Saal (directions never
                 // come nearer than half a metre; this one may be at the ear)
-                const Vec3f L = listenerPos(roomsEr[(size_t)juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)v.stop])]);
+                const Vec3f L = erListener[(size_t)juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)v.stop])];
                 x = v.bodyPos.x - L.x;
                 y = v.bodyPos.y - L.y;
                 z = v.bodyPos.z - L.z;
@@ -939,7 +981,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     }
     else
         v.gh1 = v.g1;
-    v.crkEnv = v.held ? 1.0f : v.crkEnv * (float)std::exp(-blockSeconds / 0.15);
+    v.crkEnv = v.held ? 1.0f : v.crkEnv * spatialCrk;
     v.send1 =
         sg * lvl *
         distanceGain(pos.dist, p.distAmount * 0.35f); // the room fades much less with distance
@@ -981,6 +1023,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
         v.dopTarget = juce::jlimit(0.5f, 2.0f, kSpeedOfSound / (kSpeedOfSound + p.doppler * vr));
     }
     v.prevDist = pos.dist;
+    profMark(11);
 }
 
 // ---------------------------------------------------------------------------
@@ -2823,25 +2866,6 @@ void OrganEngine::releaseSlot(int &slot) noexcept
     slot = -1;
 }
 
-namespace
-{
-/** adds the time a scope took to a stage's sum (only while measuring) */
-struct ProfScope
-{
-    ProfScope(bool on, double &sum) : acc(on ? &sum : nullptr),
-                                      t0(on ? juce::Time::getMillisecondCounterHiRes() : 0.0)
-    {
-    }
-    ~ProfScope()
-    {
-        if (acc != nullptr)
-            *acc += juce::Time::getMillisecondCounterHiRes() - t0;
-    }
-    double *acc;
-    double t0;
-};
-} // namespace
-
 void OrganEngine::updateSlotTaps(ErSlot &s, ErWork &w, Pos srcPos, float base,
                                  const EngineParams &p,
                                  const RoomParams &r, const RoomParams *placeFrom,
@@ -2993,11 +3017,17 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, ErWork &w, Pos srcPos, float bas
     s.key = key;
     s.keyValid = true;
 
-    const auto g = planGeo(r);
+    // (one of the rooms of this slice: its walls and the listener's place are known already)
+    const ptrdiff_t known = &r - roomsEr.data();
+    const bool isKnown = known >= 0 && known < (ptrdiff_t)kNumRooms;
+    PlanGeo gOwn;
+    if (!isKnown)
+        gOwn = planGeo(r);
+    const PlanGeo &g = isKnown ? erGeo[(size_t)known] : gOwn;
     // the pipe placed from the usual place (a ray from where the listener walked to would end on
     // other walls behind every corner: the pipe and all its reflections would jump), heard from
     // where the listener stands
-    const Vec3f L = listenerPos(r),
+    const Vec3f L = isKnown ? erListener[(size_t)known] : listenerPos(r),
                 S = fixedSrc != nullptr ? *fixedSrc
                                         : roomPoint(placeFrom != nullptr ? *placeFrom : r, srcPos);
     const float rd = seenFrom(L, S).dist;
@@ -3514,6 +3544,9 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         }
         else
             walkSlidOk[(size_t)ri] = false;
+        erListener[(size_t)ri] = listenerPos(roomsEr[(size_t)ri]);
+        if (!roomsEr[(size_t)ri].box())
+            erGeo[(size_t)ri] = planGeo(roomsEr[(size_t)ri]);
         h.absW = rr.absWalls;
         h.absF = rr.absFloor;
         h.highD = rr.highDamp;

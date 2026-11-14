@@ -213,12 +213,16 @@ public:
             for (int i = 0; i < 5; ++i)
                 eng += pf[(size_t)i];
             auto pc = [&](double ms) { return juce::String(ms * toPct, 1).paddedLeft(' ', 5); };
-            std::cout << "      before " << pc(pf[0]) << "  pipes " << pc(pf[1]) << "  extras "
+            std::cout << "      before " << pc(pf[0]) << " (motion " << pc(pf[6]) << ", places "
+                      << pc(pf[7]) << ")  pipes " << pc(pf[1]) << "  extras "
                       << pc(pf[2]) << "  reflections " << pc(pf[3]) << " (geometry " << pc(pf[5])
                       << ")  tail " << pc(pf[4]) << "  after the engine "
                       << juce::String(r.avg - eng * toPct, 1).paddedLeft(' ', 5) << "   voices "
                       << proc->engine.activeVoices.load() << ", reflected " << proc->engine.erActive.load()
                       << std::endl;
+            if (juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_PLACES", {}).isNotEmpty())
+                std::cout << "      places: where " << pc(pf[8]) << "  around the corner " << pc(pf[9])
+                          << "  pitch " << pc(pf[10]) << "  gains " << pc(pf[11]) << std::endl;
         }
         return r;
     }
@@ -370,6 +374,36 @@ public:
             run("ambi3_saal_shape", 36);
             set("simIce", 0.6f);
             run("ambi3_saal_shape_eis", 36);
+        }
+        if (want("walk3d_big"))
+        {
+            // a scene as it is played: a large shaped room, every pipe a body in it (some very fast),
+            // knocks from all pipes, wear, 1st-order reflections, binaural
+            resetParams();
+            allStops(false);
+            const float rates[]{0.2f, 1.3f, 38.0f, 19.0f, 2.8f, 5.9f, 0.5f, 0.2f};
+            for (int s = 0; s < rysum::kNumStops; ++s)
+            {
+                set(RysumProcessor::motionParamId(s).toRawUTF8(), (float)(8 + s % 4));
+                set(RysumProcessor::rateParamId(s).toRawUTF8(), rates[s % 8]);
+            }
+            set("output", 6);
+            set("simOn", 1);
+            set("simOrder", 0);
+            set("simW", 40.0f);
+            set("simL", 100.0f);
+            set("simH", 40.0f);
+            set("simShape", (float)rysum::shapeL);
+            set("simShapeAmt", 0.7f);
+            set("doppler", 3.2f);
+            set("lvImpLevel", 0.7f);
+            set("lvImpSrc", 1);
+            set("lvSelfPlay", 0.7f);
+            set("lvWhisper", 1.0f);
+            set("lvWear", 1.0f);
+            run("walk3d_big_shape", 2);
+            set("simShape", 0);
+            run("walk3d_big_box", 2);
         }
         if (want("walk3d"))
         {

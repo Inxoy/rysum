@@ -32,6 +32,18 @@ struct BodyRoom
         if (box) return x >= m && x <= W - m && y >= m && y <= L - m;
         return planFree (geo, x, y, m);
     }
+    /** free() for a body that remembers how far the nearest wall was: the same answer, but the walls are only
+        asked when the body may have come near one */
+    template <typename Body>
+    bool freeOf (Body& b, float m) const noexcept
+    {
+        if (box) return b.x >= m && b.x <= W - m && b.y >= m && b.y <= L - m;
+        if (b.clear > kWallMargin) return true;          // (m is never more than the margin)
+        const bool in = insidePlan (geo, b.x, b.y);
+        const float d = planEdgeDist (geo, b.x, b.y);
+        b.clear = in ? d : 0.0f;
+        return in && d >= m;
+    }
     void nudge (float& x, float& y) const noexcept
     {
         if (box) { x = juce::jlimit (kWallMargin, W - kWallMargin, x); y = juce::jlimit (kWallMargin, L - kWallMargin, y); }
@@ -81,7 +93,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         br.abs = SurfAbs::from (br.r);
         // the player: where the listener stands now (walked there, or jumping), and how fast it moves
         {
-            const Vec3f P = listenerPos (roomsEr[(size_t) ri]);
+            const Vec3f P = erListener[(size_t) ri];
             auto& pp = playerPos[(size_t) ri];
             auto& pv = playerVel[(size_t) ri];
             if (! playerOk[(size_t) ri] || blockSeconds <= 0.0) { pp = P; pv = {}; playerOk[(size_t) ri] = true; }
@@ -129,6 +141,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 const Vec3f q = roomPoint (usual, now);
                 b.x = q.x; b.y = q.y; b.z = q.z;
                 br.nudge (b.x, b.y);
+                b.clear = 0.0f;
                 float dx = b.rng.bi(), dy = b.rng.bi(), dz = 0.4f * b.rng.bi();
                 const float l = juce::jmax (1.0e-3f, len3 (dx, dy, dz));
                 const float v0 = mode == (int) Motion::Fall ? 0.0f : speed;
@@ -177,8 +190,27 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
             zLo[(size_t) k] = juce::jmax (0.15f, 0.5f * len); zHi[(size_t) k] = br.H - juce::jmax (0.15f, 0.5f * len);
             if (zHi[(size_t) k] < zLo[(size_t) k]) zLo[(size_t) k] = zHi[(size_t) k] = 0.5f * br.H;
         }
+        // (other walls than the bodies' distances were measured in - the plan modulated, another room: measured anew)
+        if (! br.box)
+        {
+            auto& was = bodyGeoWas[(size_t) s];
+            bool same = bodyRoomWas[(size_t) s] == ri && was.n == br.geo.n;
+            for (int i = 0; same && i < br.geo.n; ++i)
+            {
+                const auto& a = was.w[(size_t) i];
+                const auto& c = br.geo.w[(size_t) i];
+                same = a.ax == c.ax && a.ay == c.ay && a.bx == c.bx && a.by == c.by;
+            }
+            if (! same)
+            {
+                was = br.geo; bodyRoomWas[(size_t) s] = ri;
+                for (auto& b : bs) b.clear = 0.0f;
+            }
+        }
+        else
+            bodyRoomWas[(size_t) s] = -1;
         // (the room may have changed under them - its size or plan modulated: back inside, quietly, no knock)
-        for (auto& b : bs) if (! br.free (b.x, b.y, kWallMargin * 0.9f)) br.nudge (b.x, b.y);
+        for (auto& b : bs) if (! br.freeOf (b, kWallMargin * 0.9f)) { br.nudge (b.x, b.y); b.clear = 0.0f; }
         for (int st = 0; st < steps; ++st)
         {
             const uint32_t stepNo = bodyStepCount + (uint32_t) st;
@@ -336,6 +368,8 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 b.z = juce::jlimit (zMin, zMax, b.z);
                 const float px = b.x, py = b.y;
                 b.x += b.vx * h; b.y += b.vy * h; b.z += b.vz * h;
+                // (the way gone, rounded up - and a little more than any rounding of the place itself)
+                b.clear -= std::abs (b.vx * h) + std::abs (b.vy * h) + 4.0e-5f;
 
                 float hitSpeed = 0.0f; bool floorHit = false; float hitAbs = br.r.absWalls;
                 // floor and ceiling
@@ -353,8 +387,9 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     b.vz = -b.vz * eWall;
                 }
                 // the walls
-                if (! br.free (b.x, b.y, kWallMargin))
+                if (! br.freeOf (b, kWallMargin))
                 {
+                    b.clear = 0.0f;          // (at a wall: it is moved below)
                     float nx = 0.0f, ny = 0.0f, inside = 0.0f;
                     int wallSurf = kSurfWall0;
                     if (br.box)
@@ -488,7 +523,7 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                 {
                     if (! isBody (s)) continue;
                     const int ri = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) s]);
-                    const Vec3f P = listenerPos (roomsEr[(size_t) ri]);
+                    const Vec3f P = erListener[(size_t) ri];
                     for (auto& b : bodies[(size_t) s])
                     {
                         float dx = b.x - P.x, dy = b.y - P.y, dz = b.z - P.z;
@@ -530,7 +565,7 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                     {
                         // (and it gives way a little, away from the hand)
                         auto& b = bodies[(size_t) c.stop][(size_t) c.key];
-                        const Vec3f P = listenerPos (roomsEr[(size_t) ri]);
+                        const Vec3f P = erListener[(size_t) ri];
                         const float dx = b.x - P.x, dy = b.y - P.y, l = juce::jmax (1.0e-3f, std::sqrt (dx * dx + dy * dy));
                         b.vx += 1.2f * dx / l; b.vy += 1.2f * dy / l;
                     }
@@ -735,7 +770,7 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
     v.life = (int) ((longest * 1.2f + 0.1f) * fsr);
 
     // where: seen from where the listener stands now
-    const Vec3f L = listenerPos (roomsEr[(size_t) juce::jlimit (0, kNumRooms - 1, e.room)]);
+    const Vec3f L = erListener[(size_t) juce::jlimit (0, kNumRooms - 1, e.room)];
     const Pos at = seenFrom (L, { e.x, e.y, e.z });
     float g[kMaxAmbiChannels];
     gainsFor (at, g);

@@ -365,7 +365,7 @@ public:
     {
         return audioWorkers->threads();
     }
-    std::array<double, 8> prof{};
+    std::array<double, 16> prof{}; // (8 .. 11: the parts of 7 - where, around the corner, pitch, gains)
     // simulated room as heard right now (with modulation), for the Saal page
     std::atomic<float> roomW{14.0f}, roomL{28.0f}, roomH{11.0f}, roomLx{0.5f}, roomLy{0.4f},
         roomRtLow{0.0f}, roomRtHigh{0.0f}, roomCritDist{0.0f};
@@ -1073,11 +1073,16 @@ private:
         float hx = 0, hy = 0, hz = 0; // where it rests ("Schweben" comes back to it)
         float ox = 0, oy = 0, oz = 0; // its place in the organ (where it started: "call home")
         float pushed = 0;             // s: the player has just moved it - it knocks whatever "Aufprall" says
+        // shaped rooms: how far the nearest wall is at least (measured when it was last looked for,
+        // less the way gone since): while that is more than the margin, no wall needs to be asked
+        float clear = 0;
         bool loose = false;           // thrown ("Schweben"): it stays where it comes to rest
         XorShift rng{1};
     };
     std::array<std::array<Body, kNumKeys>, kNumStops> bodies{};
     std::array<int, kNumStops> bodyMode{}; // the mode the bodies move in (-1 = none yet)
+    std::array<PlanGeo, kNumStops> bodyGeoWas{}; // the walls the bodies' 'clear' was measured in
+    std::array<int, kNumStops> bodyRoomWas{};
     int64_t bodySamples = 0; // samples since the room modes started: the steps are counted from it
                              // (the same paths at every block size)
     uint32_t bodyStepCount = 0;
@@ -1174,6 +1179,13 @@ private:
     double walkPhase = 0.0;
     bool liveWalk = false;
     std::array<RoomParams, kNumRooms> roomsEr{}; // the rooms as the walking listener stands in them
+    // ... and what every pipe needs of them, worked out once when they are set (not again for every
+    // pipe in every slice): where the listener is, and the walls of a shaped room
+    std::array<Vec3f, kNumRooms> erListener{};
+    // (the same for every pipe of a slice: worked out when the slice's length changes)
+    double spatialDt = -1.0;
+    float spatialLenK = 0.0f, spatialCrk = 1.0f;
+    std::array<PlanGeo, kNumRooms> erGeo{};
     std::array<Vec3f, kNumRooms>
         walkSlid{}; // where the listener stands in a shaped room (slid along its walls)
     std::array<bool, kNumRooms> walkSlidOk{};
