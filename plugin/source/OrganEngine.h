@@ -11,6 +11,7 @@
 #include "Spatial.h"
 #include "SpatialDegrade.h"
 #include "WindChaos.h"
+#include "AudioWorkers.h"
 #include <atomic>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <memory>
@@ -169,6 +170,9 @@ struct LiveParams
 
 struct EngineParams
 {
+    /** threads the audio may use for the Saal's reflections: 0 = as many as suit the processor
+     *  (AudioWorkers::wantedThreads), 1 = only the audio thread, 2 ... = so many */
+    int audioThreads = 0;
     std::array<bool, kNumStops> stopOn{};
     std::array<float, kNumStops> stopGain = ones(); // linear
     std::array<float, kNumStops> stopWind = ones(); // 0 = stop closed (silent) .. 1 = fully pulled
@@ -351,6 +355,17 @@ public:
     std::atomic<uint64_t> heldMask{0}; // bit k = physical key k held
     std::atomic<int> activeVoices{0}, frozenVoices{0};
     std::atomic<float> meterL{0.0f}, meterR{0.0f};
+    /** where the time goes (the benchmark switches it on): milliseconds per stage since it was
+     *  cleared - 0 before the pipes, 1 the pipes, 2 live / impacts / leaks / input / echoes,
+     *  3 early reflections (all of it), 4 late reverb, 5 the reflections' geometry (part of 3),
+     *  6 the pipes as bodies in the Saal (part of 0), 7 the pipes' places and gains (part of 0) */
+    bool profOn = false;
+    /** how many threads the audio can use at most on this machine */
+    int audioThreadsAvailable() const noexcept
+    {
+        return audioWorkers->threads();
+    }
+    std::array<double, 8> prof{};
     // simulated room as heard right now (with modulation), for the Saal page
     std::atomic<float> roomW{14.0f}, roomL{28.0f}, roomH{11.0f}, roomLx{0.5f}, roomLy{0.4f},
         roomRtLow{0.0f}, roomRtHigh{0.0f}, roomCritDist{0.0f};
@@ -756,10 +771,32 @@ private:
     // polygon rooms: scratch for the path search (audio thread), and how many searches a block may
     // do
     static constexpr int kPlanPaths = 2048, kPlanCand = 1024;
-    std::vector<PlanPath> planPathScratch;
-    std::vector<PlanImage> planCandScratch;
+    // The reflections are rendered in groups of slots, every group into its own bus with its own
+    // scratch memory, and the buses added in a fixed order: the groups can be done on several
+    // threads (AudioWorkers), and the result is the same whoever did which.
+    static constexpr int kErGroups = 12, kErGroupSlots = kErSlots / kErGroups;
+    struct ErWork
+    {
+        std::vector<float> y;         // 8 x slice: four delayed signals, four filtered ones
+        std::vector<float> bus;       // 20 x slice: the group's reflections (16 + 4 for "Eis")
+        std::vector<PlanPath> paths;  // polygon rooms: the path search
+        std::vector<PlanImage> cands;
+        int slotIndex = 0, active = 0;
+        bool used = false;
+        double geoMs = 0.0; // (measuring)
+    };
+    std::array<ErWork, kErGroups> erWork;
+    struct ErJob
+    {
+        const EngineParams *p = nullptr;
+        int n = 0, K = 0;
+        float inv = 1.0f, shelfA = 0.0f;
+        bool ice = false;
+    } erJob;
+    void renderErGroup(int group) noexcept;
+    juce::SharedResourcePointer<AudioWorkers> audioWorkers;
     static constexpr int kPlanEvery = 6; // 48 slots / 6 = at most 8 path searches per block
-    int erSlotIndex = 0, erBlockN = 64;
+    int erBlockN = 64;
     uint32_t erBlockCount = 0;
     // the rooms of this block with their plans filled in
     std::array<RoomParams, kNumRooms> roomsNow{};
@@ -849,10 +886,10 @@ private:
     void releaseSlot(int &slot) noexcept;
     /** placeFrom: the room as seen from the listener's usual place, where srcPos is measured from
      * (null = room itself) */
-    void updateSlotTaps(ErSlot &s, Pos srcPos, float base, const EngineParams &p,
+    void updateSlotTaps(ErSlot &s, ErWork &w, Pos srcPos, float base, const EngineParams &p,
                         const RoomParams &room, const RoomParams *placeFrom = nullptr,
                         const Vec3f *fixedSrc = nullptr) noexcept;
-    void updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const EngineParams &p,
+    void updateSlotTapsPlan(ErSlot &s, ErWork &w, Pos srcPos, float base, const EngineParams &p,
                             const RoomParams &room, const RoomParams *placeFrom,
                             const Vec3f *fixedSrc) noexcept;
     void renderEchoes(juce::AudioBuffer<float> &out, int n, const EngineParams &p);

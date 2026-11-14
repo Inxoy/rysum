@@ -1136,6 +1136,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         ParameterID{"lvWallPull", 1}, String::fromUTF8("Wandn\xc3\xa4he"),
         NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f,
         AudioParameterFloatAttributes().withStringFromValueFunction(percent)));
+    // how many processor cores the audio may use (the Saal's reflections are spread over them)
+    l.add(std::make_unique<AudioParameterChoice>(
+        ParameterID{"audioThreads", 1}, "Kerne f" + String::fromUTF8("\xc3\xbc") + "r den Ton",
+        StringArray{"automatisch", "1", "2", "3", "4"}, 0));
     return l;
 }
 
@@ -1193,6 +1197,7 @@ RysumProcessor::RysumProcessor()
         tunings.push_back(makeKeyTuning(t));
     binOrderParam = apvts.getRawParameterValue("binOrder");
     binYawParam = apvts.getRawParameterValue("binYaw");
+    audioThreadsParam = apvts.getRawParameterValue("audioThreads");
     binDfParam = apvts.getRawParameterValue("binDfEq");
     // the standalone app is mostly used with headphones: start in binaural mode
     if (juce::PluginHostType::getPluginLoadedAs() == wrapperType_Standalone)
@@ -1469,6 +1474,8 @@ EngineParams RysumProcessor::readParams(const float *vals) const
 {
     auto V = [this, vals](int i) { return vals != nullptr ? vals[i] : rawList[(size_t)i]->load(); };
     EngineParams p;
+    if (audioThreadsParam != nullptr)
+        p.audioThreads = juce::roundToInt(audioThreadsParam->load());
     for (int s = 0; s < kNumStops; ++s)
     {
         p.stopOn[(size_t)s] = V(ix.stop[(size_t)s]) > 0.5f;
@@ -1890,6 +1897,21 @@ void RysumProcessor::clearRoute(int r)
 void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    // how much of its time this block takes (the readout, the benchmark)
+    struct LoadScope
+    {
+        RysumProcessor &p;
+        double t0;
+        int n;
+        ~LoadScope()
+        {
+            const double sr = p.getSampleRate() > 0 ? p.getSampleRate() : 48000.0;
+            const float load = (float)((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001 *
+                                       sr / (double)juce::jmax(1, n));
+            p.cpuLoad = p.cpuLoad.load() + 0.05f * (load - p.cpuLoad.load());
+            p.cpuPeak = juce::jmax(p.cpuPeak.load(), load);
+        }
+    } loadScope{*this, juce::Time::getMillisecondCounterHiRes(), buffer.getNumSamples()};
 
     if (auto pending =
             std::atomic_exchange(&pendingLibrary, std::shared_ptr<const SampleLibrary>()))

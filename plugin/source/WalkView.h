@@ -78,6 +78,7 @@ public:
     void setTestMode (bool on) { testMode = on; if (on) { resScale = 1.0f; resLevel = 0; } }
     float frameMs() const noexcept { return lastFrameMs; }
     float geometryMs() const noexcept { return geoMs; }
+    juce::String renderSize() const { return juce::String (rast.width()) + " x " + juce::String (rast.height()) + " (Stufe " + juce::String (resLevel) + ")"; }
     int renderWidth() const noexcept { return rast.width(); }
     juce::String renderStats() const { return "raster + shade " + juce::String (rast.rasterMs, 1) + " ms, " + juce::String (rast.workerCount()) + " workers, " + juce::String (rast.trianglesDrawn) + " triangles"; }
 

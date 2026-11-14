@@ -8,6 +8,10 @@
 #define RYSUM_BENCH_KERNELS 1
 #endif
 #include <chrono>
+#if JUCE_WINDOWS
+extern "C" __declspec(dllimport) void *__stdcall GetCurrentThread();
+extern "C" __declspec(dllimport) int __stdcall SetThreadPriority(void *, int);
+#endif
 
 class BenchApp : public juce::JUCEApplication, private juce::Timer
 {
@@ -122,6 +126,11 @@ public:
                 pump(5);
         }
         const int blocks = (int)(seconds * 48000 / block);
+#if JUCE_WINDOWS
+        SetThreadPriority(GetCurrentThread(), 15); // (time critical, as a host's audio thread)
+#endif
+        proc->engine.prof.fill(0.0);
+        proc->engine.profOn = true;
         std::vector<double> t;
         t.reserve((size_t)blocks);
         // optional: the measured part as a WAV file (comparing two builds): environment variable
@@ -194,6 +203,23 @@ public:
                   << "   worst " << juce::String(r.worst, 1).paddedLeft(' ', 6) << " %"
                   << "   rms " << juce::String(juce::Decibels::gainToDecibels(r.rms), 2) << " dB"
                   << std::endl;
+        {
+            // where the time went, in % of real time: the engine's stages, and what follows it
+            // (impulse response, decoders, ...)
+            proc->engine.profOn = false;
+            const auto &pf = proc->engine.prof;
+            const double toPct = 100.0 / (1000.0 * blocks * budget);
+            double eng = 0;
+            for (int i = 0; i < 5; ++i)
+                eng += pf[(size_t)i];
+            auto pc = [&](double ms) { return juce::String(ms * toPct, 1).paddedLeft(' ', 5); };
+            std::cout << "      before " << pc(pf[0]) << "  pipes " << pc(pf[1]) << "  extras "
+                      << pc(pf[2]) << "  reflections " << pc(pf[3]) << " (geometry " << pc(pf[5])
+                      << ")  tail " << pc(pf[4]) << "  after the engine "
+                      << juce::String(r.avg - eng * toPct, 1).paddedLeft(' ', 5) << "   voices "
+                      << proc->engine.activeVoices.load() << ", reflected " << proc->engine.erActive.load()
+                      << std::endl;
+        }
         return r;
     }
 
@@ -329,6 +355,41 @@ public:
             set("tremOn", 1);
             loadIr(irFoa);
             run("ambi5_fx_deg", 36);
+        }
+        if (want("walk3d"))
+        {
+            // the 3D view with everything on: the pipes as bodies in the Saal, knocking on its
+            // walls, playing themselves, growing; the listener walking, whispering pipes, time
+            // as distance, the room growing at the walls; binaural
+            resetParams();
+            allStops(false);
+            for (int s = 0; s < rysum::kNumStops; ++s)
+                set(RysumProcessor::motionParamId(s).toRawUTF8(), (float)(8 + s % 4));
+            set("output", 6);
+            set("simOn", 1);
+            set("lvImpLevel", 0.7f);
+            set("lvSelfPlay", 0.7f);
+            set("lvGrow", 0.5f);
+            set("lvWhisper", 1.0f);
+            set("lvTimeDepth", 8.0f);
+            set("lvWallPull", 0.6f);
+            set("lvWalkShape", 1);
+            set("lvWalkSize", 0.8f);
+            run("walk3d_all", 2);
+        }
+        if (want("walk3d"))
+        {
+            // the same heard over loudspeakers / as Ambisonics, reflections of 1st order
+            resetParams();
+            allStops(false);
+            for (int s = 0; s < rysum::kNumStops; ++s)
+                set(RysumProcessor::motionParamId(s).toRawUTF8(), (float)(8 + s % 4));
+            set("output", 3);
+            set("simOn", 1);
+            set("simOrder", 0);
+            set("lvImpLevel", 0.7f);
+            set("lvSelfPlay", 0.7f);
+            run("walk3d_ambi3_er1", 36);
         }
         irFoa.deleteFile();
         irMono.deleteFile();

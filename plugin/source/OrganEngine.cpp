@@ -179,7 +179,16 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
     fxScratch.assign((size_t)maxBlock * 12, 0.0f);
     // simulated room (all memory here, nothing is allocated while playing)
     erSlots.assign((size_t)kErSlots, ErSlot{});
-    planPathScratch.assign((size_t)kPlanPaths, PlanPath{});
+    for (auto &w : erWork)
+    {
+        const size_t slice = (size_t)juce::jmax(maxBlock, kSubBlock);
+        w.y.assign(8 * slice, 0.0f);
+        w.bus.assign(20 * slice, 0.0f);
+        w.paths.assign((size_t)kPlanPaths, PlanPath{});
+        w.cands.assign((size_t)kPlanCand, PlanImage{});
+        w.active = 0;
+        w.used = false;
+    }
     // spatial degradation and the grain cloud (all memory here)
     eroder.prepare(sr);
     // photographic operations, ice walls, difference tones
@@ -204,7 +213,6 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
         for (auto &g : grains)
             g = CloudGrain{};
     }
-    planCandScratch.assign((size_t)kPlanCand, PlanImage{});
     erRing.assign((size_t)kErSlots * (size_t)kErRing, 0.0f);
     for (auto &v : voices)
         v.erSlot = -1;
@@ -2815,13 +2823,34 @@ void OrganEngine::releaseSlot(int &slot) noexcept
     slot = -1;
 }
 
-void OrganEngine::updateSlotTaps(ErSlot &s, Pos srcPos, float base, const EngineParams &p,
+namespace
+{
+/** adds the time a scope took to a stage's sum (only while measuring) */
+struct ProfScope
+{
+    ProfScope(bool on, double &sum) : acc(on ? &sum : nullptr),
+                                      t0(on ? juce::Time::getMillisecondCounterHiRes() : 0.0)
+    {
+    }
+    ~ProfScope()
+    {
+        if (acc != nullptr)
+            *acc += juce::Time::getMillisecondCounterHiRes() - t0;
+    }
+    double *acc;
+    double t0;
+};
+} // namespace
+
+void OrganEngine::updateSlotTaps(ErSlot &s, ErWork &w, Pos srcPos, float base,
+                                 const EngineParams &p,
                                  const RoomParams &r, const RoomParams *placeFrom,
                                  const Vec3f *fixedSrc) noexcept
 {
+    ProfScope profGeo(profOn, w.geoMs);
     if (!r.box())
     {
-        updateSlotTapsPlan(s, srcPos, base, p, r, placeFrom, fixedSrc);
+        updateSlotTapsPlan(s, w, srcPos, base, p, r, placeFrom, fixedSrc);
         return;
     }
     {
@@ -2946,7 +2975,8 @@ void OrganEngine::updateSlotTaps(ErSlot &s, Pos srcPos, float base, const Engine
    block (the rest wait for the next block). In between, every tap keeps its path and only the image
    position is recomputed (cheap and smooth). Paths that appear or disappear fade in / out over 25
    ms, like a reflection that slides past the end of a wall. */
-void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const EngineParams &p,
+void OrganEngine::updateSlotTapsPlan(ErSlot &s, ErWork &w, Pos srcPos, float base,
+                                     const EngineParams &p,
                                      const RoomParams &r, const RoomParams *placeFrom,
                                      const Vec3f *fixedSrc) noexcept
 {
@@ -2979,12 +3009,13 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
     const bool need = s.fresh || !s.visValid || topo || roomChanged || moved > 0.12f;
     // the searches are spread evenly: every slot may search in one block out of kPlanEvery (new
     // sounds and new plans at once)
-    const bool myTurn = ((static_cast<uint32_t>(erSlotIndex) + erBlockCount) %
+    const bool myTurn = ((static_cast<uint32_t>(w.slotIndex) + erBlockCount) %
                          static_cast<uint32_t>(kPlanEvery)) == 0;
     if (need && (s.fresh || topo || !s.visValid || myTurn))
     {
-        const int nc = planImageSources(r, g, S, L, r.order, planPathScratch.data(), kPlanPaths,
-                                        planCandScratch.data(), kPlanCand, kMaxTaps);
+        const int nc = planImageSources(r, g, S, L, r.order, w.paths.data(), kPlanPaths,
+                                        w.cands.data(), kPlanCand, kMaxTaps);
+
         if (topo && !s.fresh)
             for (int i = 0; i < s.numTaps; ++i)
             {
@@ -2999,7 +3030,7 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
         int fresh[kMaxTaps], nFresh = 0;
         for (int c = 0; c < nc; ++c)
         {
-            const auto &im = planCandScratch[(size_t)c];
+            const auto &im = w.cands[(size_t)c];
             int found = -1;
             for (int i = 0; i < s.numTaps && found < 0; ++i)
                 if (s.taps[(size_t)i].code == im.code)
@@ -3025,7 +3056,7 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
                 ++slot;
             if (slot >= kMaxTaps)
                 break; // full of fading taps: the rest come at the next search
-            const auto &im = planCandScratch[(size_t)fresh[f]];
+            const auto &im = w.cands[(size_t)fresh[f]];
             auto &t = s.taps[(size_t)slot];
             t.code = im.code;
             t.k = im.k;
@@ -3185,164 +3216,43 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, Pos srcPos, float base, const En
     s.fresh = false;
 }
 
-void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineParams &p)
+/** the early reflections of one group of slots, into the group's own bus */
+void OrganEngine::renderErGroup(int group) noexcept
 {
-    const auto &r = p.room;
-    roomW = r.W();
-    roomL = r.L();
-    roomH = r.H();
-    roomLx = r.listenerX;
-    roomLy = r.listenerY;
-    roomAbsW = r.absWalls;
-    roomAbsF = r.absFloor;
-    roomHighD = r.highDamp;
-    roomScat = r.scatter;
-    roomAir = p.air;
-    roomOutOrder = order;
-    roomOn = roomOnNow;
-    // which rooms have sources (room 0 always: clicks, effects ...)
-    int used = 1;
-    for (int st = 0; st < kNumStops; ++st)
-        used |= 1 << juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)st]);
-    if (p.input.on)
-        used |= 1 << juce::jlimit(0, kNumRooms - 1, p.inputRoom);
-    roomsUsed = used;
-    for (int ri = 0; ri < kNumRooms; ++ri)
-    {
-        auto &rr = roomsNow[(size_t)ri];
-        rr = p.roomAt(ri);
-        finishPlan(rr,
-                   getDrawnPlan(ri)); // (the shape amount may be modulated: the plan of this block)
-        auto &h = heard[(size_t)ri];
-        h.W = rr.W();
-        h.L = rr.L();
-        h.H = rr.H();
-        h.Lx = rr.listenerX;
-        h.Ly = rr.listenerY;
-        {
-            // Unmoeglicher Raum: the late reverb of a room of another size; nearer than three
-            // metres to a wall it grows (and gets louder) the closer the listener comes
-            const auto &lv = p.live;
-            float scale = juce::jlimit(0.25f, 8.0f, lv.roomHear), wallGain = 1.0f;
-            if (lv.wallPull > 0.0001f)
-            {
-                const Vec3f lp = listenerPos(rr);
-                const float x = lp.x + walkX, y = lp.y + walkY;
-                const float d = juce::jmax(0.0f, juce::jmin(juce::jmin(x, rr.W() - x), juce::jmin(y, rr.L() - y)));
-                float nearWall = juce::jlimit(0.0f, 1.0f, 1.0f - d / 3.0f);
-                nearWall *= nearWall;
-                scale *= 1.0f + 3.0f * lv.wallPull * nearWall;
-                wallGain = 1.0f + 1.5f * lv.wallPull * nearWall;
-            }
-            auto &sm = tailScaleSm[(size_t)ri];
-            const float k = 1.0f - std::exp(-(float)n / (0.3f * (float)sr));
-            sm += k * (scale - sm);
-            if (std::abs(sm - scale) < 1.0e-4f)
-                sm = scale;
-            wallGainNow[(size_t)ri] += k * (wallGain - wallGainNow[(size_t)ri]);
-            if (std::abs(wallGainNow[(size_t)ri] - wallGain) < 1.0e-4f)
-                wallGainNow[(size_t)ri] = wallGain;
-            h.tailScale = sm;
-        }
-        // the reflections are heard from where the listener has walked to (the late reverb stays
-        // that of the usual place)
-        roomsEr[(size_t)ri] = rr;
-        roomsEr[(size_t)ri].listenerZ = walkZ; // (the reflections are heard from the ears' height)
-        if (liveWalk && !rr.box() && rr.plan.n >= 3)
-        {
-            // a shaped room: the listener walks there and slides along the walls - pushed back onto
-            // the nearest wall instead, it would jump at the inner corners (and every reflection
-            // with it: a click)
-            const auto geo = planGeo(rr);
-            const Vec3f home = listenerPos(rr);
-            auto &sp = walkSlid[(size_t)ri];
-            if (!walkSlidOk[(size_t)ri])
-            {
-                sp = home;
-                walkSlidOk[(size_t)ri] = true;
-            } // starts walking: from the usual place
-            else if (!planFree(geo, sp.x, sp.y, 0.28f))
-                keepInsidePlan(
-                    geo, sp.x, sp.y,
-                    0.3f); // (the room changed under the listener: a nudge, not a restart)
-            planSlide(geo, sp.x, sp.y, home.x + walkX, home.y + walkY, 0.3f,
-                      juce::jmax(0.02f, 6.0f * (float)n / (float)sr)); // (at most 6 m/s)
-            roomsEr[(size_t)ri].listenerX = juce::jlimit(0.0f, 1.0f, sp.x / rr.W());
-            roomsEr[(size_t)ri].listenerY = juce::jlimit(0.0f, 1.0f, sp.y / rr.L());
-        }
-        else if (liveWalk)
-        {
-            walkSlidOk[(size_t)ri] = false;
-            roomsEr[(size_t)ri].listenerX =
-                juce::jlimit(0.02f, 0.98f, rr.listenerX + walkX / rr.W());
-            roomsEr[(size_t)ri].listenerY =
-                juce::jlimit(0.02f, 0.98f, rr.listenerY + walkY / rr.L());
-        }
-        else
-            walkSlidOk[(size_t)ri] = false;
-        h.absW = rr.absWalls;
-        h.absF = rr.absFloor;
-        h.highD = rr.highDamp;
-        h.scat = rr.scatter;
-        h.shape = rr.shape;
-        h.shapeAmt = rr.shapeAmt;
-    }
-    ++erBlockCount;
-    erBlockN = juce::jmax(1, n);
-    if (!roomOnNow || n <= 0)
-    {
-        erClock += (uint32_t)juce::jmax(0, n);
-        for (int ri = 0; ri < kNumRooms; ++ri)
-        {
-            auto &R = rt[(size_t)ri];
-            R.tailGain = 0.0f;
-            R.tailWasOn = false;
-            resetFdn(R);
-            R.convRingOut = R.fdnRingOut = 0;
-            R.running = false;
-            tailSerialInUseR[(size_t)ri] = R.tail.oldestSerialInUse();
-        }
-        erActive = 0;
-        tailSerialInUse = rt[0].tail.oldestSerialInUse();
+    auto &w = erWork[(size_t)group];
+    const EngineParams &p = *erJob.p;
+    const int n = erJob.n, K = erJob.K;
+    const float inv = erJob.inv, shelfA = erJob.shelfA;
+    const bool iceOn = erJob.ice;
+    w.active = 0;
+    w.used = false;
+    const size_t first = (size_t)group * (size_t)kErGroupSlots,
+                 last = juce::jmin(erSlots.size(), first + (size_t)kErGroupSlots);
+    bool any = false;
+    for (size_t si = first; si < last; ++si)
+        any = any || erSlots[si].active;
+    if (!any)
         return;
-    }
-    const int K = juce::jmin(
-        usedChannels, order == 0 ? 2 : (juce::jmin(order, 3) + 1) * (juce::jmin(order, 3) + 1));
-    const float inv = 1.0f / (float)n;
-    float *y = fxScratch.data();
-
-    // ---- early reflections
-    const float shelfA = 1.0f - std::exp(-juce::MathConstants<float>::twoPi * 2500.0f / (float)sr);
-    int activeCount = 0;
-    // "Eis": the reflections are collected (first ones up to 3rd order, later ones at 1st order),
-    // made dispersive, added
-    const bool iceOn = p.ice > 1.0e-4f && n <= maxBlock && (int)iceBus.size() >= 20 * n;
-    if (iceOn && !iceWasOn)
-    {
-        iceHi.reset();
-        iceLo.reset();
-    }
+    w.used = true;
+    float *y = w.y.data();
     std::array<float *, 20> busP{};
-    if (iceOn)
-    {
-        for (int c = 0; c < 20; ++c)
-            busP[(size_t)c] = iceBus.data() + (size_t)c * (size_t)n;
-        std::fill_n(iceBus.data(), (size_t)20 * (size_t)n, 0.0f);
-    }
-    for (size_t si = 0; si < erSlots.size(); ++si)
+    for (int c = 0; c < 20; ++c)
+        busP[(size_t)c] = w.bus.data() + (size_t)c * (size_t)n;
+    std::fill_n(w.bus.data(), (size_t)(iceOn ? 20 : K) * (size_t)n, 0.0f);
+    for (size_t si = first; si < last; ++si)
     {
         auto &s = erSlots[si];
         if (!s.active)
             continue;
-        ++activeCount;
-        erSlotIndex = (int)si;
+        ++w.active;
+        w.slotIndex = (int)si;
         if (s.voice >= 0)
         {
             const auto &v = voices[(size_t)s.voice];
             if (v.active && v.erSlot == (int)si)
             {
                 const int vr = juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)v.stop]);
-                updateSlotTaps(s, v.erPos, v.erBase, p, roomsEr[(size_t)vr], &roomsNow[(size_t)vr],
+                updateSlotTaps(s, w, v.erPos, v.erBase, p, roomsEr[(size_t)vr], &roomsNow[(size_t)vr],
                                v.hasBody ? &v.bodyPos : nullptr);
             }
             else
@@ -3355,7 +3265,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         {
             const auto &nv = noise[(size_t)s.noiseVoice];
             if (nv.active && nv.erSlot == (int)si)
-                updateSlotTaps(s, nv.where, 1.0f, p, roomsEr[0]);
+                updateSlotTaps(s, w, nv.where, 1.0f, p, roomsEr[0]);
             else
             {
                 s.noiseVoice = -1;
@@ -3366,7 +3276,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         {
             const auto &is = inSrc[(size_t)s.input];
             if (inRunning && is.erSlot == (int)si)
-                updateSlotTaps(s, is.pos, 1.0f, p,
+                updateSlotTaps(s, w, is.pos, 1.0f, p,
                                roomsEr[(size_t)juce::jlimit(0, kNumRooms - 1, p.inputRoom)]);
             else
             {
@@ -3497,7 +3407,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
                     mixGroup4(list == 0 ? busP.data() : busP.data() + 16,
                               list == 0 ? juce::jmin(kc, 16) : juce::jmin(kc, 4), ys, e, n);
                 else
-                    mixGroup4(out.getArrayOfWritePointers(), kc, ys, e, n);
+                    mixGroup4(busP.data(), kc, ys, e, n);
                 for (int j = 0; j < J; ++j)
                 {
                     auto &t = *tp[j];
@@ -3506,9 +3416,188 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
                     t.r0 = t.r1;
                 }
             }
+        }    }
+}
+
+void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineParams &p)
+{
+    const auto &r = p.room;
+    roomW = r.W();
+    roomL = r.L();
+    roomH = r.H();
+    roomLx = r.listenerX;
+    roomLy = r.listenerY;
+    roomAbsW = r.absWalls;
+    roomAbsF = r.absFloor;
+    roomHighD = r.highDamp;
+    roomScat = r.scatter;
+    roomAir = p.air;
+    roomOutOrder = order;
+    roomOn = roomOnNow;
+    // which rooms have sources (room 0 always: clicks, effects ...)
+    int used = 1;
+    for (int st = 0; st < kNumStops; ++st)
+        used |= 1 << juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)st]);
+    if (p.input.on)
+        used |= 1 << juce::jlimit(0, kNumRooms - 1, p.inputRoom);
+    roomsUsed = used;
+    for (int ri = 0; ri < kNumRooms; ++ri)
+    {
+        auto &rr = roomsNow[(size_t)ri];
+        rr = p.roomAt(ri);
+        finishPlan(rr,
+                   getDrawnPlan(ri)); // (the shape amount may be modulated: the plan of this block)
+        auto &h = heard[(size_t)ri];
+        h.W = rr.W();
+        h.L = rr.L();
+        h.H = rr.H();
+        h.Lx = rr.listenerX;
+        h.Ly = rr.listenerY;
+        {
+            // Unmoeglicher Raum: the late reverb of a room of another size; nearer than three
+            // metres to a wall it grows (and gets louder) the closer the listener comes
+            const auto &lv = p.live;
+            float scale = juce::jlimit(0.25f, 8.0f, lv.roomHear), wallGain = 1.0f;
+            if (lv.wallPull > 0.0001f)
+            {
+                const Vec3f lp = listenerPos(rr);
+                const float x = lp.x + walkX, y = lp.y + walkY;
+                const float d = juce::jmax(0.0f, juce::jmin(juce::jmin(x, rr.W() - x), juce::jmin(y, rr.L() - y)));
+                float nearWall = juce::jlimit(0.0f, 1.0f, 1.0f - d / 3.0f);
+                nearWall *= nearWall;
+                scale *= 1.0f + 3.0f * lv.wallPull * nearWall;
+                wallGain = 1.0f + 1.5f * lv.wallPull * nearWall;
+            }
+            auto &sm = tailScaleSm[(size_t)ri];
+            const float k = 1.0f - std::exp(-(float)n / (0.3f * (float)sr));
+            sm += k * (scale - sm);
+            if (std::abs(sm - scale) < 1.0e-4f)
+                sm = scale;
+            wallGainNow[(size_t)ri] += k * (wallGain - wallGainNow[(size_t)ri]);
+            if (std::abs(wallGainNow[(size_t)ri] - wallGain) < 1.0e-4f)
+                wallGainNow[(size_t)ri] = wallGain;
+            h.tailScale = sm;
+        }
+        // the reflections are heard from where the listener has walked to (the late reverb stays
+        // that of the usual place)
+        roomsEr[(size_t)ri] = rr;
+        roomsEr[(size_t)ri].listenerZ = walkZ; // (the reflections are heard from the ears' height)
+        if (liveWalk && !rr.box() && rr.plan.n >= 3)
+        {
+            // a shaped room: the listener walks there and slides along the walls - pushed back onto
+            // the nearest wall instead, it would jump at the inner corners (and every reflection
+            // with it: a click)
+            const auto geo = planGeo(rr);
+            const Vec3f home = listenerPos(rr);
+            auto &sp = walkSlid[(size_t)ri];
+            if (!walkSlidOk[(size_t)ri])
+            {
+                sp = home;
+                walkSlidOk[(size_t)ri] = true;
+            } // starts walking: from the usual place
+            else if (!planFree(geo, sp.x, sp.y, 0.28f))
+                keepInsidePlan(
+                    geo, sp.x, sp.y,
+                    0.3f); // (the room changed under the listener: a nudge, not a restart)
+            planSlide(geo, sp.x, sp.y, home.x + walkX, home.y + walkY, 0.3f,
+                      juce::jmax(0.02f, 6.0f * (float)n / (float)sr)); // (at most 6 m/s)
+            roomsEr[(size_t)ri].listenerX = juce::jlimit(0.0f, 1.0f, sp.x / rr.W());
+            roomsEr[(size_t)ri].listenerY = juce::jlimit(0.0f, 1.0f, sp.y / rr.L());
+        }
+        else if (liveWalk)
+        {
+            walkSlidOk[(size_t)ri] = false;
+            roomsEr[(size_t)ri].listenerX =
+                juce::jlimit(0.02f, 0.98f, rr.listenerX + walkX / rr.W());
+            roomsEr[(size_t)ri].listenerY =
+                juce::jlimit(0.02f, 0.98f, rr.listenerY + walkY / rr.L());
+        }
+        else
+            walkSlidOk[(size_t)ri] = false;
+        h.absW = rr.absWalls;
+        h.absF = rr.absFloor;
+        h.highD = rr.highDamp;
+        h.scat = rr.scatter;
+        h.shape = rr.shape;
+        h.shapeAmt = rr.shapeAmt;
+    }
+    ++erBlockCount;
+    erBlockN = juce::jmax(1, n);
+    if (!roomOnNow || n <= 0)
+    {
+        erClock += (uint32_t)juce::jmax(0, n);
+        for (int ri = 0; ri < kNumRooms; ++ri)
+        {
+            auto &R = rt[(size_t)ri];
+            R.tailGain = 0.0f;
+            R.tailWasOn = false;
+            resetFdn(R);
+            R.convRingOut = R.fdnRingOut = 0;
+            R.running = false;
+            tailSerialInUseR[(size_t)ri] = R.tail.oldestSerialInUse();
+        }
+        erActive = 0;
+        tailSerialInUse = rt[0].tail.oldestSerialInUse();
+        return;
+    }
+    const int K = juce::jmin(
+        usedChannels, order == 0 ? 2 : (juce::jmin(order, 3) + 1) * (juce::jmin(order, 3) + 1));
+    const float inv = 1.0f / (float)n;
+
+    // ---- early reflections
+    const double profT3 = profOn ? juce::Time::getMillisecondCounterHiRes() : 0.0;
+    const float shelfA
+ = 1.0f - std::exp(-juce::MathConstants<float>::twoPi * 2500.0f / (float)sr);
+    int activeCount = 0;
+    // "Eis": the reflections are collected (first ones up to 3rd order, later ones at 1st order),
+    // made dispersive, added
+    const bool iceOn = p.ice > 1.0e-4f && n <= maxBlock && (int)iceBus.size() >= 20 * n;
+    if (iceOn && !iceWasOn)
+    {
+        iceHi.reset();
+        iceLo.reset();
+    }
+    std::array<float *, 20> busP{};
+    if (iceOn)
+    {
+        for (int c = 0; c < 20; ++c)
+            busP[(size_t)c] = iceBus.data() + (size_t)c * (size_t)n;
+        std::fill_n(iceBus.data(), (size_t)20 * (size_t)n, 0.0f);
+    }
+    // (in groups of slots, each into its own bus: AudioWorkers spreads them over the threads)
+    {
+        int sounding = 0;
+        for (const auto &s : erSlots)
+            sounding += s.active ? 1 : 0;
+        erJob.p = &p;
+        erJob.n = n;
+        erJob.K = K;
+        erJob.inv = inv;
+        erJob.shelfA = shelfA;
+        erJob.ice = iceOn;
+        // (a few sounds are done sooner than the helpers are woken)
+        const int want = p.audioThreads > 0 ? p.audioThreads : AudioWorkers::wantedThreads();
+        audioWorkers->run(
+            kErGroups, [](void *self, int g) { static_cast<OrganEngine *>(self)->renderErGroup(g); },
+            this, sounding >= 8 ? want : 1);
+        const int busCh = iceOn ? 20 : K;
+        float *const *dst = iceOn ? busP.data() : out.getArrayOfWritePointers();
+        for (auto &w : erWork)
+        {
+            if (!w.used)
+                continue;
+            activeCount += w.active;
+            for (int c = 0; c < busCh; ++c)
+                juce::FloatVectorOperations::add(dst[c], w.bus.data() + (size_t)c * (size_t)n, n);
+            if (profOn)
+                prof[5] += w.geoMs;
+            w.geoMs = 0.0;
         }
     }
     erActive = activeCount;
+    if (profOn)
+        prof[3] += juce::Time::getMillisecondCounterHiRes() - profT3;
+    ProfScope profTail(profOn, prof[4]);
     if (iceOn)
     {
         // all-pass chains: the later reflections (longer ways) disperse more; 'iceLen' sets how
@@ -4717,6 +4806,15 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
                                const EngineParams &pIn)
 {
     EngineParams p = pIn; // local copy with derived values
+    double profT = profOn ? juce::Time::getMillisecondCounterHiRes() : 0.0;
+    auto profMark = [&](int stage)
+    {
+        if (!profOn)
+            return;
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        prof[(size_t)stage] += now - profT;
+        profT = now;
+    };
     p.deg.prepareBlock(sr);
     out.clear();
     const int numSamples = out.getNumSamples();
@@ -4952,9 +5050,10 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
     glitchNow = p.glitch;
     // ---- the living organ: bellows, the walking listener, wear, pure tuning, sympathetic pipes;
     // the Tonnetz walker
-    stepBodies(
-        p,
-        blockSeconds); // the room motion modes: the pipes as bodies in the Saal (and their impacts)
+    {
+        ProfScope profBodies(profOn, prof[6]);
+        stepBodies(p, blockSeconds); // the room motion modes: the pipes as bodies in the Saal (and their impacts)
+    }
     stepGrowth(p, blockSeconds);      // Wachsen & Brechen: the pipes' lengths
     startSelfVoices(p, blockSeconds); // Selbstspiel: knocks become notes
     {
@@ -4970,6 +5069,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
     updateLive(p, blockSeconds);
     stepWalker(p, numSamples);
     // ---- spatial data for this block (end-of-block targets, ramped from the previous ones)
+    const double profSpatial = profOn ? juce::Time::getMillisecondCounterHiRes() : 0.0;
     for (auto &v : voices)
     {
         if (!v.active)
@@ -4996,6 +5096,8 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
             v.fresh = false;
         }
     }
+    if (profOn)
+        prof[7] += juce::Time::getMillisecondCounterHiRes() - profSpatial;
     updateBeats(p, blockSeconds);
     auto initFresh = [&]()
     {
@@ -5013,6 +5115,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
             }
     };
 
+    profMark(0);
     // ---- render, split at MIDI events
     int pos = 0;
     for (const auto meta : midi)
@@ -5025,6 +5128,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
     }
     initFresh(); // voices started by stop changes / previews before any MIDI
     renderRange(out, pos, numSamples, numSamples, p);
+    profMark(1);
     renderLive(out.getArrayOfWritePointers(), numSamples, p);
     renderImpacts(out.getArrayOfWritePointers(), numSamples,
                   p); // pipes flying in the Saal knocking on its walls
@@ -5047,6 +5151,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
     }
 
     renderEchoes(out, numSamples, p);
+    profMark(2);
     renderRoom(out, numSamples, p);
 
     // ---- "Raumverfall" on the Ambisonics channels (the plugin does it after the impulse response

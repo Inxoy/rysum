@@ -1080,6 +1080,11 @@ then `cmake --build build-bench --config Release --target RysumBench`, and run
 eight stops with a ten-note chord and moving pipes through the whole plugin in several set-ups
 (stereo, AmbiX 3 / 5 with an impulse response, binaural, Saal) and prints for each the average load
 and the worst blocks in % of one core's real-time budget. The worst blocks are what cause dropouts.
+A second line says where the time went (before the pipes, the pipes, the reflections with their
+geometry, the late reverb, what follows the engine). `walk3d` are two scenes of the 3D view with
+everything on; `RYSUM_AUDIO_THREADS=1` (an environment variable) measures without the helper
+threads, and `RYSUM_BENCH_WAV=<folder>` writes what was measured as WAV files for comparing two
+builds.
 
 ## 6. CPU
 
@@ -1088,6 +1093,31 @@ frame gets slow). **Ctrl+Shift+P** shows a readout: pictures per second, millise
 much of the window is redrawn, whether the interface thread falls behind, the renderer (Direct2D or
 software) and the pixel scale; once a second it is also written to `Documents/Rysum/paint-stats.txt`.
 **Ctrl+Shift+R** switches the renderer (for comparing; Direct2D is the fast one).
+
+**The sound** is in the same readout: *Ton* is the share of its time an audio block takes, with the
+worst block since the last line (towards 100 % it crackles), and *Kerne* the processor cores the audio
+uses. The next line says where the engine's time goes, in % of real time: before the pipes (their
+motion in the Saal, their places), the pipes, the reflections, the late reverb. On the 3D page a last
+line gives the picture's cost: milliseconds per picture, how much of it is geometry, drawing the
+pixels, and the resolution it has stepped down to.
+
+**Several cores.** The Saal's early reflections - by far the largest part of a full scene - are
+rendered in twelve groups of sounds, each into its own bus, and spread over helper threads: by
+default half the processor's cores, at most four. With 48 reflected sounds and reflections up to 3rd
+order the load of the audio thread falls from 88 % to 45 % of its time and the worst block from 150 %
+to 68 % (Ryzen 5 2600X, blocks of 128); the 3D view with everything on from 62 % to 42 %. The sound is
+the same, bit for bit, whichever thread did what. *Kerne für den Ton* is a parameter (*automatisch*,
+1 ... 4); **Ctrl+Shift+K** steps through it. In a host that already fills every core with other
+tracks, 1 can be the better choice. The helpers sleep while there are fewer than eight reflected
+sounds.
+
+**The picture gives way to the sound.** The 3D view is drawn by the processor, on up to six threads;
+they run below the usual priority, so the audio thread and its helpers are served first.
+
+**The graphics card** is not used. For the sound it would not help: the work is thousands of small
+jobs that must each be done within about a millisecond, and the way to the card and back takes
+longer than the job. The 3D picture is what a graphics card would do well (the built-in one of a
+laptop too); it would free the cores the picture takes now.
 
 What costs the most, roughly in this order: the simulated room (*Saal*, every sounding pipe has its
 own early reflections - up to 48 sounds × 24 or 62 mirror images), a long impulse response at a high

@@ -614,14 +614,32 @@ bool RysumContent::keyPressed(const juce::KeyPress &k)
 {
     // performance readout / renderer switch (for finding what makes the picture slow)
     if (k.getModifiers().isCtrlDown() && k.getModifiers().isShiftDown() &&
-        (k.getKeyCode() == 'P' || k.getKeyCode() == 'R'))
+        (k.getKeyCode() == 'P' || k.getKeyCode() == 'R' || k.getKeyCode() == 'K'))
     {
         if (k.getKeyCode() == 'R')
             cycleRenderer();
+        else if (k.getKeyCode() == 'K')
+        {
+            // the cores for the audio: automatisch, 1, 2, 3, 4 (shown in the readout)
+            if (auto *prm = proc.apvts.getParameter("audioThreads"))
+            {
+                const int steps = prm->getNumSteps();
+                const int now = juce::roundToInt(prm->getValue() * (float)(steps - 1));
+                prm->beginChangeGesture();
+                prm->setValueNotifyingHost((float)((now + 1) % steps) / (float)(steps - 1));
+                prm->endChangeGesture();
+            }
+            if (!stats.on)
+                startStats();
+            repaint();
+        }
         else
         {
             if (stats.on)
+            {
                 stats.on = false;
+                proc.engine.profOn = false;
+            }
             else
                 startStats();
             repaint();
@@ -1179,6 +1197,31 @@ void RysumContent::updateStats()
                   juce::String(scale, 2) + "   " + (fullButton.active ? "Vollbild" : "Fenster") +
                   "\n" + "Seite " + views[juce::jlimit(0, 8, current)] +
                   "   Strg+Umschalt+R: Renderer wechseln";
+    {
+        // the audio: how much of its time a block takes (the worst one since the last line), on
+        // how many cores
+        const int choice = juce::roundToInt(proc.apvts.getRawParameterValue("audioThreads")->load());
+        const int cores = juce::jmin(proc.engine.audioThreadsAvailable(),
+                                     choice > 0 ? choice : rysum::AudioWorkers::wantedThreads());
+        stats.shown << "\nTon " << juce::String(100.0 * proc.cpuLoad.load(), 0) << " % (max "
+                    << juce::String(100.0 * proc.cpuPeak.exchange(0.0f), 0) << " %)   Kerne "
+                    << (choice > 0 ? juce::String(cores) : "automatisch (" + juce::String(cores) + ")")
+                    << "   Strg+Umschalt+K: Kerne wechseln";
+        // where the engine's time goes, in % of real time (measured only while this readout is on)
+        const auto pf = proc.engine.prof;
+        proc.engine.prof.fill(0.0);
+        proc.engine.profOn = true;
+        auto pc = [secs](double ms) { return juce::String(ms * 0.1 / secs, 0); };
+        stats.shown << "\nVor den Pfeifen " << pc(pf[0]) << " % (Bewegung " << pc(pf[6]) << ", Orte " << pc(pf[7]) << ")   Pfeifen " << pc(pf[1])
+                    << " %   Weiteres " << pc(pf[2]) << " %   Reflexionen " << pc(pf[3])
+                    << " % (ihre Geometrie, alle Kerne zusammen: " << pc(pf[5]) << ")   Nachhall " << pc(pf[4]) << " %   Stimmen "
+                    << proc.engine.activeVoices.load() << ", gespiegelt " << proc.engine.erActive.load()
+                    << "   Block " << proc.getBlockSize();
+    }
+    if (current == 8) // the 3D view: what its picture costs
+        stats.shown << "\n3D: " << juce::String(walk.frameMs(), 1) << " ms (Geometrie "
+                    << juce::String(walk.geometryMs(), 1) << "), " << walk.renderStats() << ", "
+                    << walk.renderSize();
     paintStatsFile().appendText(juce::Time::getCurrentTime().toString(false, true, true, true) +
                                 "  " + stats.shown.replace("\n", "  |  ") + "\n");
     stats.secondStart = now;
@@ -1291,7 +1334,38 @@ RysumEditor::RysumEditor(RysumProcessor &p) : AudioProcessorEditor(p), content(p
         const auto pv = juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_VIEW", {});
         if (pv.isNotEmpty())
             content.showView(pv.getIntValue());
-        if (juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_CHORD", {}).isNotEmpty())
+        if (juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_CHORD", {}) == "heavy")
+        {
+            // (measuring) a full scene: every stop flying in the Saal, knocking, playing itself
+            auto &pr = static_cast<RysumProcessor &>(processor);
+            auto setP = [&pr](const juce::String &id, float plain)
+            {
+                if (auto *p = pr.apvts.getParameter(id))
+                    p->setValueNotifyingHost(p->convertTo0to1(plain));
+            };
+            for (int s = 0; s < rysum::kNumStops; ++s)
+            {
+                setP(RysumProcessor::stopParamId(s), 1.0f);
+                setP(RysumProcessor::motionParamId(s), (float)(8 + s % 4));
+            }
+            setP("simOn", 1.0f);
+            setP("lvImpLevel", 0.7f);
+            setP("lvSelfPlay", 0.7f);
+            setP("lvWhisper", 1.0f);
+            setP("master", -60.0f); // (silent: only the load matters)
+            {
+                // (and what else is set in this scene: everything that is not at its default)
+                juce::String diff = "nicht Standard: ";
+                for (auto *prm : pr.getParameters())
+                    if (auto *rp = dynamic_cast<juce::RangedAudioParameter *>(prm))
+                        if (std::abs(rp->getValue() - rp->getDefaultValue()) > 1.0e-4f)
+                            diff << rp->getParameterID() << "=" << rp->getCurrentValueAsText() << "  ";
+                paintStatsFile().appendText(diff + "\n");
+            }
+            for (int n : {41, 53, 57, 65, 69, 72, 76})
+                pr.keyboardState.noteOn(1, n, 0.8f);
+        }
+        else if (juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_CHORD", {}).isNotEmpty())
             for (int n : {48, 55, 60, 64, 67})
                 static_cast<RysumProcessor &>(processor).keyboardState.noteOn(
                     1, n, 0.8f); // a held chord, as when playing

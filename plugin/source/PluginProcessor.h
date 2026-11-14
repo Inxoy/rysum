@@ -175,6 +175,10 @@ public:
     std::atomic<int> midiMapVersion{0};
     /** Zeit als Entfernung: how far back is heard right now (s), and how far it can go */
     std::atomic<float> timeBackNow{0.0f}, timeBackMax{rysum::TimeDistance::kMaxSeconds};
+    /** the audio thread's load: the share of its time a block takes (smoothed), and the worst block
+     *  since the readout last took it (it sets it back to 0) */
+    std::atomic<float> cpuLoad{0.0f}, cpuPeak{0.0f};
+    std::atomic<float> *audioThreadsParam = nullptr;
 
     // ---- MIDI buttons -> buttons of the interface: a pad, key or controller button presses a
     // button on screen that has no parameter behind it (the window has to be open for these; the
