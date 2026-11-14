@@ -1113,7 +1113,8 @@ the same, bit for bit, whichever thread did what. *Kerne für den Ton* is a para
 tracks, 1 can be the better choice. The helpers sleep while there are fewer than eight reflected
 sounds.
 
-**The graphics card draws the 3D view** (OpenGL 3.2; the built-in graphics of a laptop is enough).
+**The graphics card draws the 3D view** (OpenGL 3.2, which the built-in graphics of laptops of the
+last ten years offer too - measured only on a desktop card so far).
 The processor still places the room and the pipes; the card fills the pixels - the patterns of the
 surfaces, fog, grain and the grey of the print are the same formulas, as a shader - and draws the
 glow of the sounding pipes. The picture is as sharp as the screen at any window size (the
@@ -1123,9 +1124,10 @@ with a Radeon RX 6700 XT, the sound included.
 **G** in the 3D view switches between the card and the processor (remembered for this computer in
 `Documents/Rysum/Grafik.xml`); the line of hints at the bottom says who is drawing. If the card or
 its driver cannot do it, the processor draws, as before, and while buttons are being assigned to
-MIDI (Ctrl+M) too. `RYSUM_GPU=0` (an environment variable) forces the processor's picture,
-`RYSUM_GPU_TEST=1` writes one frame drawn both ways and their difference to
-`Documents/Rysum/gpu-test`.
+MIDI (Ctrl+M) too. Should a host misbehave with it: **G**, or `grafikkarte="0"` in that file, or
+`RYSUM_GPU=0` (an environment variable) - each gives the processor's picture back.
+`RYSUM_GPU_TEST=1` writes frames drawn both ways and their difference (the scene, every kind of
+surface, a model) to `Documents/Rysum/gpu-test`.
 
 **For the sound the graphics card is not used**, and it would not help: the work is thousands of
 small jobs that must each be done within about a millisecond, and the way to the card and back takes

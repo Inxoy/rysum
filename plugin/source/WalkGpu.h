@@ -48,6 +48,8 @@ public:
     /** the next frame to draw (message thread); its memory is swapped with the one drawn before */
     void submit (GpuFrame& frame);
     float drawMs() const noexcept { return lastMs.load(); }
+    /** pictures the card has drawn per second (measured over the last second) */
+    float framesPerSecond() const noexcept { return fps.load(); }
     /** frames whose comparison (GpuFrame::compareWith) has been written */
     int comparisonsDone() const noexcept { return compared.load(); }
 
@@ -66,7 +68,9 @@ private:
     GpuFrame pending, drawing;                   // (pending: under the lock)
     bool havePending = false;
     std::atomic<bool> ready { false }, failed { false };
-    std::atomic<float> lastMs { 0.0f };
+    std::atomic<float> lastMs { 0.0f }, fps { 0.0f };
+    int fpsCount = 0;
+    double fpsSince = 0.0;
     std::atomic<int> compared { 0 };
     juce::String failText, card;                 // (under the lock)
 };

@@ -228,7 +228,9 @@ void GpuPicture::newOpenGLContextCreated()
         failed = true;
     };
     program = std::make_unique<juce::OpenGLShaderProgram> (context);
-    if (! (program->addVertexShader (kVertex) && program->addFragmentShader (kFragment)))
+    // (test, RYSUM_GPU_BREAK: a shader that does not compile - the view must go back to the processor's picture)
+    const bool broken = juce::SystemStats::getEnvironmentVariable ("RYSUM_GPU_BREAK", {}).isNotEmpty();
+    if (! (program->addVertexShader (kVertex) && program->addFragmentShader (broken ? juce::String (kFragment) + "\nthis is not a shader\n" : juce::String (kFragment))))
     {
         fail ("Shader: " + program->getLastError());
         program.reset();
@@ -366,6 +368,12 @@ void GpuPicture::renderOpenGL()
     glBindVertexArray (0);
     glUseProgram (0);
     lastMs = (float) (juce::Time::getMillisecondCounterHiRes() - t0);
+    ++fpsCount;
+    if (t0 - fpsSince >= 1000.0)
+    {
+        fps = fpsSince > 0.0 ? (float) (1000.0 * fpsCount / (t0 - fpsSince)) : 0.0f;
+        fpsSince = t0; fpsCount = 0;
+    }
 }
 
 void GpuPicture::drawOver()

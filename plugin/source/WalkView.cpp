@@ -514,7 +514,8 @@ void WalkView::timerCallback()
         if (cross != overCross) repaint (juce::Rectangle<int> (48, 48).withCentre (area.getCentre()));
         if (overTick % 6 == 0 && ! immersive)
         {
-            repaint (area.withTrimmedTop (80).removeFromTop (24));                                     // the line that says where you are
+            repaint (area.withTrimmedTop (80).removeFromTop (48));                                     // the lines that say where you are and what happened
+            repaint (area.withTrimmedBottom (56).removeFromBottom (22));                               // the hint about what is heard
             repaint (juce::Rectangle<int> (198, 158).withPosition (area.getRight() - 210, area.getBottom() - 190));   // the map
         }
         if (overTick % 30 == 0 && overText.isNotEmpty()) repaint (area.withTrimmedLeft (area.getWidth() - 560).withTrimmedTop (150).removeFromTop (136));
@@ -556,7 +557,7 @@ void WalkView::updateGpu()
     if (gpu != nullptr && gpu->hasFailed())
     {
         // the card or its driver cannot do it: the processor draws from now on
-        gpuNote = gpu->failure();
+        gpuNote = gpu->failure().upToFirstOccurrenceOf (juce::String::charToString ((juce::juce_wchar) 10), false, false).substring (0, 70).trim();
         gpuGaveUp = true;
         gpu.reset();
         return;
@@ -576,7 +577,7 @@ void WalkView::updateGpu()
 
 juce::String WalkView::pictureInfo() const
 {
-    if (gpuOn()) return "Grafikkarte (" + gpu->cardName() + "), " + juce::String (gpu->drawMs(), 1) + " ms";
+    if (gpuOn()) return "Grafikkarte (" + gpu->cardName() + "), " + juce::String (gpu->framesPerSecond(), 1) + " Bilder/s";
     return "Prozessor" + (gpuNote.isNotEmpty() ? " (Grafikkarte: " + gpuNote + ")" : juce::String());
 }
 
@@ -1184,7 +1185,25 @@ void WalkView::buildScene (float phys)
     // (the graphics card draws at the screen's full sharpness whatever this is: the processor then only keeps
     //  the depths, for the cross and the glows, at half the view's size)
     const bool card = gpuOn();
-    const bool compareNow = card && ++gpuFrames == 90 && juce::SystemStats::getEnvironmentVariable ("RYSUM_GPU_TEST", {}).isNotEmpty();
+    // (test, RYSUM_GPU_TEST: every 60 frames one frame is drawn both ways and compared - first the scene as it
+    //  is, then every surface of the Saal as each kind of material in turn, at last with the test model loaded)
+    static const bool gpuTest = juce::SystemStats::getEnvironmentVariable ("RYSUM_GPU_TEST", {}).isNotEmpty();
+    int testStep = -1;
+    if (card && gpuTest)
+    {
+        ++gpuFrames;
+        if (gpuFrames >= 90 && gpuFrames <= 90 + 60 * 10)
+        {
+            testStep = (gpuFrames - 60) / 60;          // 0 = as it is, 1 .. 9 = the kinds, 10 = the model
+            if (gpuFrames == 60 + 60 * 10)
+            {
+                auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_gpu_test.obj");
+                f.replaceWithText (makeTestObj());
+                loadModel (f);
+            }
+        }
+    }
+    const bool compareNow = testStep >= 0 && (gpuFrames - 90) % 60 == 0;
     const float sc = compareNow ? phys : (card ? 0.5f : juce::jlimit (0.4f, 2.5f, phys * resScale));
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     rast.setSize (juce::roundToInt ((float) area.getWidth() * sc), juce::roundToInt ((float) area.getHeight() * sc));
@@ -1223,6 +1242,13 @@ void WalkView::buildScene (float phys)
         for (int i = 0; i < kMaxPlanVerts; ++i) rast.setMaterial (kSlotWall0 + i, look (kSurfWall0 + i));
     }
     rast.setMaterial (kSlotModel, wm);
+    if (testStep >= 1 && testStep <= 9)
+    {
+        Material m;
+        m.kind = (Material::Kind) testStep; m.tone = 0.8f; m.rough = 0.3f; m.gloss = 0.3f;
+        for (int slot : { (int) kSlotWall, (int) kSlotFloor, (int) kSlotCeiling, (int) kSlotModel }) rast.setMaterial (slot, m);
+        for (int i = 0; i < kMaxPlanVerts; ++i) rast.setMaterial (kSlotWall0 + i, m);
+    }
     { Material m; m.kind = Material::metal; m.tone = 1.0f; m.gloss = 1.0f; m.rough = 0.1f; rast.setMaterial (kSlotMetal, m); }
     { Material m; m.kind = Material::dark; m.tone = 1.0f; m.gloss = 0.0f; rast.setMaterial (kSlotDark, m); }
     wallLook = wm.kind;
@@ -1344,7 +1370,8 @@ void WalkView::buildScene (float phys)
             // (test) the same frame from the processor, to be compared with what the card draws
             rast.finish();
             gpuFrame.compareWith = rast.image().createCopy();
-            gpuFrame.compareDir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("gpu-test");
+            static const char* const stepNames[] { "0_scene", "1_stone", "2_plaster", "3_wood", "4_glass", "5_curtain", "6_mirror", "7_slabs", "8_boards", "9_carpet", "10_model" };
+            gpuFrame.compareDir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("gpu-test").getChildFile (stepNames[juce::jlimit (0, 10, testStep)]);
         }
         else
             rast.finishDepth();

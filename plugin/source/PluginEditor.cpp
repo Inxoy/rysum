@@ -782,7 +782,6 @@ void RysumContent::startButtonLearn()
     if (walk.isImmersive())
         walk.setImmersive(false);
     releaseComputerKeys();
-    walk.setGpuBlocked(true); // (the card's picture is a window of its own: it would cover the overlay)
     learnOverlay.setVisible(true);
     learnOverlay.toFront(true);
     learnOverlay.refresh();
@@ -791,7 +790,6 @@ void RysumContent::startButtonLearn()
 void RysumContent::stopButtonLearn()
 {
     learnOverlay.setVisible(false);
-    walk.setGpuBlocked(false);
     if (walk.isShowing())
         walk.grabKeyboardFocus();
     else
@@ -801,6 +799,9 @@ void RysumContent::stopButtonLearn()
 void RysumContent::tickBody()
 {
     updatePlayButtons();
+    // (the card's picture of the 3D view is a window of its own: while something of this window lies over
+    //  the view - the overlay for assigning MIDI buttons - the processor draws)
+    walk.setGpuBlocked(learnOverlay.isVisible());
     // MIDI buttons mapped to buttons on screen
     {
         int slot = 0;
@@ -1224,7 +1225,8 @@ void RysumContent::updateStats()
     if (current == 8) // the 3D view: what its picture costs
         stats.shown << "\n3D: " << juce::String(walk.frameMs(), 1) << " ms (Geometrie "
                     << juce::String(walk.geometryMs(), 1) << "), " << walk.renderStats() << ", "
-                    << walk.renderSize() << "   Bild: " << walk.pictureInfo();
+                    << walk.renderSize() << "   Blick " << juce::String(proc.walkPose[2].load(), 1)
+                    << "   Bild: " << walk.pictureInfo();
     walk.overText = stats.shown; // (shown by the view itself while the graphics card draws)
     paintStatsFile().appendText(juce::Time::getCurrentTime().toString(false, true, true, true) +
                                 "  " + stats.shown.replace("\n", "  |  ") + "\n");
