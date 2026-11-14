@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "RoomModels.h"
 #include "libMTSClient.h"
 
 using namespace rysum;
@@ -2864,10 +2865,12 @@ void RysumProcessor::buildTailNow(int room, const juce::String &key)
     const uint32_t serial = ++tailSerial;
     const auto mesh = room == 0 && walkHear ? getWalkAcoustics()
                                             : std::shared_ptr<const rysum::MeshAcoustics>();
+    const float meshScale = juce::jlimit(
+        0.2f, 40.0f, engine.heard[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, room)].tailScale.load());
     irPool.addJob(
-        [this, room, r, air, ord, rate, serial, mesh, alive = aliveFlag]
+        [this, room, r, air, ord, rate, serial, mesh, meshScale, alive = aliveFlag]
         {
-            auto ir = rysum::TailIR::build(r, air, ord, rate, serial, mesh.get());
+            auto ir = rysum::TailIR::build(r, air, ord, rate, serial, mesh.get(), meshScale);
             juce::MessageManager::callAsync(
                 [this, room, ir, alive]
                 {
@@ -3575,6 +3578,15 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         wk.setProperty("pitch", walkPose[3].load(), nullptr);
         extra.appendChild(wk, nullptr);
     }
+    else if (rysum::builtInRoomIndex(walkModelFile.getFileName()) >= 0 && getWalkMesh() != nullptr)
+    {
+        // a patch keeps a built-in room (any computer has it) and the light; a model of one's own
+        // stays with the project
+        juce::ValueTree s3("SAAL3D");
+        s3.setProperty("room", walkModelFile.getFileName(), nullptr);
+        s3.setProperty("dark", walkDark, nullptr);
+        extra.appendChild(s3, nullptr);
+    }
     extra.setProperty("irFile", irFile.getFullPathName(), nullptr);
     extra.setProperty("customFolder", customOverride.getFullPathName(), nullptr);
     if (!forPatch)
@@ -3956,6 +3968,13 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
             }
         }
         applyScenesState(extra.getChildWithName("SCENES"));
+        if (forPatch)
+        {
+            // (only patches that bring a room change it: the others keep the model and the light)
+            const auto s3 = extra.getChildWithName("SAAL3D");
+            if (s3.isValid())
+                applyPatchRoom(s3);
+        }
         if (!forPatch && extra.hasProperty("diceGroups"))
         {
             const auto dg = extra["diceGroups"].toString();
@@ -4552,13 +4571,63 @@ bool RysumProcessor::loadPatch(const juce::File &f)
     return true;
 }
 
+bool RysumProcessor::fitSaalToWalkModel()
+{
+    auto m = getWalkMesh();
+    if (m == nullptr)
+        return false;
+    auto set = [this](const char *key, float v)
+    {
+        if (auto *prm = apvts.getParameter(roomParamId(0, key)))
+            prm->setValueNotifyingHost(prm->convertTo0to1(v));
+    };
+    set("W", juce::jlimit(2.0f, 40.0f, m->size.x));
+    set("L", juce::jlimit(2.0f, 100.0f, m->size.y));
+    set("H", juce::jlimit(2.0f, 40.0f, m->size.z));
+    set("Size", 1.0f);
+    set("Shape", (float)rysum::shapeBox);
+    return true;
+}
+
+void RysumProcessor::applyPatchRoom(const juce::ValueTree &s3)
+{
+    if (s3.hasProperty("dark"))
+        walkDark = (bool)s3["dark"];
+    const int idx = rysum::builtInRoomIndex(s3["room"].toString());
+    if (idx >= 0)
+    {
+        const auto f = rysum::writeBuiltInRoom(
+            idx, getPatchFolder().getParentDirectory().getChildFile("Modelle"));
+        // (made z up, in metres - as the 3D view's menu loads them)
+        const bool same = f == walkModelFile && walkZUp && std::abs(walkScale - 1.0f) < 1.0e-6f &&
+                          getWalkMesh() != nullptr;
+        if (!same && f.existsAsFile())
+            loadWalkModel(f, true, 1.0f);
+        if (walkModelFile == f && getWalkMesh() != nullptr)
+        {
+            if (!walkHear)
+                setWalkHear(true);
+            fitSaalToWalkModel();
+            const auto &room = rysum::builtInRooms()[(size_t)idx];
+            for (auto [key, v] : {std::pair<const char *, float>{"Lx", room.listenX},
+                                  std::pair<const char *, float>{"Ly", room.listenY}})
+                if (auto *prm = apvts.getParameter(roomParamId(0, key)))
+                    prm->setValueNotifyingHost(prm->convertTo0to1(v));
+            // a new room: one starts at its listening place, looking ahead
+            for (auto &q : walkPose)
+                q = 0.0f;
+        }
+    }
+    ++walkSerial;
+}
+
 void RysumProcessor::writeFactoryPatches()
 {
     auto folder = getPatchFolder();
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 16;
+    constexpr int kFactoryVersion = 17;
     const auto marker = folder.getChildFile(".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion)
@@ -4580,8 +4649,13 @@ void RysumProcessor::writeFactoryPatches()
     // width etc.), its pipes placed when the patch loads
     auto makeFull = [&](const juce::String &name, Values values, std::vector<Route> routesIn,
                         std::vector<Values> scenesIn, bool input,
-                        std::vector<std::pair<int, int>> layoutsIn = {})
+                        std::vector<std::pair<int, int>> layoutsIn = {},
+                        const char *room = nullptr, int dark = -1)
     {
+        // room: a built-in model's file name for the 3D view (loaded, the Saal fitted to it);
+        // dark: 1 = the light off, 0 = on, -1 = as it is
+        if (room != nullptr && rysum::builtInRoomIndex(room) < 0)
+            factoryWarnings.add(name + ": unknown room " + room);
         for (auto &sc : scenesIn)
             for (auto &kv : sc)
                 if (paramIndex.count(kv.first) == 0)
@@ -4625,6 +4699,15 @@ void RysumProcessor::writeFactoryPatches()
         extra.appendChild(mod, nullptr);
         if (input)
             extra.setProperty("input", true, nullptr);
+        if (room != nullptr || dark >= 0)
+        {
+            juce::ValueTree s3("SAAL3D");
+            if (room != nullptr)
+                s3.setProperty("room", juce::String(room), nullptr);
+            if (dark >= 0)
+                s3.setProperty("dark", dark > 0, nullptr);
+            extra.appendChild(s3, nullptr);
+        }
         for (auto [ls, lt] : layoutsIn)
         {
             auto L = defaultLayout(ls);
@@ -7064,6 +7147,417 @@ void RysumProcessor::writeFactoryPatches()
               {"lvWalkRate", 0.02f},
               {"windModel", 1}},
              {});
+    }
+
+    // ---- set 17: the 3D Saal - pipes as bodies in the room (Flug, Fall, Schwarm, Strömung,
+    //      Schweben), knocks, the player and the illusions; some bring one of the built-in rooms
+    //      (loaded, the Saal fitted to it) and the light off. Every one is played with the hands:
+    //      mod wheel, velocity, pressure, pitch wheel (+-2 semitones)
+    currentSet = 17;
+    {
+        const float bend2 = 1.0f / 6.0f;
+        const int flight = (int)Motion::Flight, fall = (int)Motion::Fall, swarm = (int)Motion::Swarm,
+                  flow = (int)Motion::Flow, hover = (int)Motion::Hover;
+        // a route amount that moves a parameter from 'from' to 'to' (the ranges are skewed: worked
+        // out, not guessed)
+        auto span = [&](const char *id, float from, float to)
+        {
+            auto *prm = apvts.getParameter(id);
+            return prm == nullptr ? 0.0f : prm->convertTo0to1(to) - prm->convertTo0to1(from);
+        };
+        const char *kapelle = "rysum_kapelle.obj", *halle = "rysum_hallenkirche.obj",
+                   *krypta = "rysum_krypta.obj", *rotunde = "rysum_rotunde.obj",
+                   *kreuzgang = "rysum_kreuzgang.obj", *turm = "rysum_treppenturm.obj";
+        auto room = [&](const juce::String &name, Values values, std::vector<Route> routesIn,
+                        const char *model, int dark)
+        { makeFull(name, std::move(values), std::move(routesIn), {}, false, {}, model, dark); };
+
+        // the crypt, dark: the pipes hang free where they are; whoever walks pushes them away -
+        // into the columns, where they knock and flash (mod wheel: a harder push)
+        room(u8("160 Krypta \xe2\x80\x93 Pfeifen im Dunkeln"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"simOn", 1},
+              {"master", -23.0f},
+              {"motion0", hover},
+              {"motion1", hover},
+              {"depth0", 150.0f},
+              {"depth1", 150.0f},
+              {"rate0", 0.04f},
+              {"rate1", 0.04f},
+              {"lvPlayerMode", 2},
+              {"lvPlayerForce", 0.3f},
+              {"lvPlayerRange", 3.0f},
+              {"lvWalkShape", 4},
+              {"lvWalkSize", 2.5f},
+              {"lvWalkRate", 0.02f},
+              {"lvImpLevel", -8.0f},
+              {"lvImpRing", 0.9f}},
+             {{srcModWheel, "lvPlayerForce", 0.7f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             krypta, 1);
+        // the chapel, dark: the 4' and 2' fly as a flock of glow-worms and whisper close by
+        // (mod wheel: a swarm in a hurry; pressure: brighter)
+        room(u8("161 Kapelle \xe2\x80\x93 Gl\xc3\xbchw\xc3\xbcrmchen"),
+             {{"stop2", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -19.0f},
+              {"motion2", swarm},
+              {"motion3", swarm},
+              {"rate2", 0.12f},
+              {"rate3", 0.14f},
+              {"depth2", 90.0f},
+              {"depth3", 110.0f},
+              {"lvWhisper", 0.6f},
+              {"lvImpLevel", -14.0f}},
+             {{srcModWheel, "rate2", span("rate2", 0.12f, 0.6f)},
+              {srcModWheel, "rate3", span("rate3", 0.14f, 0.7f)},
+              {srcPressure, pipe(tgtBright), 0.4f},
+              {srcVelocity, pipe(tgtAttack), 0.6f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             kapelle, 1);
+        // the hall church: tin pipes rain from the vaults, bounce high and play themselves where
+        // they land (mod wheel: more of their own notes)
+        room(u8("162 Hallenkirche \xe2\x80\x93 Zinnhagel"),
+             {{"stop3", 1},
+              {"stop5", 1},
+              {"simOn", 1},
+              {"master", -24.0f},
+              {"motion3", fall},
+              {"motion5", fall},
+              {"rate3", 0.6f},
+              {"rate5", 0.7f},
+              {"depth3", 140.0f},
+              {"depth5", 150.0f},
+              {"lvImpLevel", -4.0f},
+              {"lvImpSrc", 1},
+              {"lvImpRing", 1.2f},
+              {"lvSelfPlay", 0.35f}},
+             {{srcModWheel, "lvSelfPlay", 0.6f},
+              {srcModWheel, "rate3", span("rate3", 0.6f, 1.2f)},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             halle, 0);
+        // the stair tower: the wooden Gedackt tumbles down a hundred steps, dull and dry
+        // (mod wheel / pressure: thrown up higher)
+        room(u8("163 Treppenturm \xe2\x80\x93 Holz f\xc3\xa4llt die Stufen hinab"),
+             {{"stop1", 1},
+              {"simOn", 1},
+              {"master", -23.0f},
+              {"motion1", fall},
+              {"rate1", 0.35f},
+              {"depth1", 60.0f},
+              {"lvImpLevel", 0.0f},
+              {"lvImpSrc", 1},
+              {"lvImpRing", 0.5f},
+              {"lvSelfPlay", 0.25f}},
+             {{srcModWheel, "rate1", span("rate1", 0.35f, 1.0f)},
+              {srcPressure, "rate1", span("rate1", 0.35f, 0.7f)},
+              {srcVelocity, pipe(tgtAttack), 0.6f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             turm, 0);
+        // the rotunda: Principal and Octave fly straight, off the ring of columns and the dome,
+        // every hard knock its own note (mod wheel: faster)
+        room(u8("164 Rotunde \xe2\x80\x93 Billard"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -25.0f},
+              {"motion0", flight},
+              {"motion2", flight},
+              {"rate0", 0.25f},
+              {"rate2", 0.3f},
+              {"lvImpLevel", -6.0f},
+              {"lvSelfPlay", 0.4f}},
+             {{srcModWheel, "rate0", span("rate0", 0.25f, 1.0f)},
+              {srcModWheel, "rate2", span("rate2", 0.3f, 1.2f)},
+              {srcVelocity, pipe(tgtAttSharp), 0.8f},
+              {srcVelocity, pipe(tgtLevel), 0.25f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             rotunde, 0);
+        // the cloister: a current carries the pipes round the courtyard; the listener walks the
+        // arcade and drags them along in a wake (mod wheel: a stronger wake)
+        room(u8("165 Kreuzgang \xe2\x80\x93 Str\xc3\xb6mung um den Hof"),
+             {{"stop1", 1},
+              {"stop2", 1},
+              {"stop6", 1},
+              {"simOn", 1},
+              {"master", -23.0f},
+              {"motion1", flow},
+              {"motion2", flow},
+              {"motion6", flow},
+              {"rate1", 0.15f},
+              {"rate2", 0.18f},
+              {"rate6", 0.1f},
+              {"depth1", 50.0f},
+              {"depth2", 70.0f},
+              {"depth6", 30.0f},
+              {"lvPlayerMode", 4},
+              {"lvPlayerForce", 0.4f},
+              {"lvPlayerRange", 4.0f},
+              {"lvWalkShape", 1},
+              {"lvWalkSize", 8.0f},
+              {"lvWalkRate", 0.015f},
+              {"lvImpLevel", -12.0f}},
+             {{srcModWheel, "lvPlayerForce", 0.6f},
+              {srcPressure, pipe(tgtBright), 0.35f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             kreuzgang, 0);
+        // the rotunda, dark: Trompete and 16' circle the listener like planets - lamps going
+        // round (mod wheel: a tighter, faster orbit)
+        room(u8("166 Rotunde im Dunkeln \xe2\x80\x93 Umlaufbahn"),
+             {{"stop6", 1},
+              {"stop7", 1},
+              {"simOn", 1},
+              {"master", -27.0f},
+              {"motion6", hover},
+              {"motion7", hover},
+              {"depth6", 180.0f},
+              {"depth7", 180.0f},
+              {"rate6", 0.03f},
+              {"rate7", 0.03f},
+              {"lvPlayerMode", 3},
+              {"lvPlayerForce", 0.35f},
+              {"lvPlayerRange", 6.0f},
+              {"lvImpLevel", -10.0f}},
+             {{srcModWheel, "lvPlayerForce", 0.6f},
+              {srcVelocity, pipe(tgtLevel), 0.35f},
+              {srcVelocity, pipe(tgtAttack), 0.4f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             rotunde, 1);
+        // no room of its own (any Saal): the listener walks to and fro, the trumpets flee and
+        // crash into the walls (mod wheel: more fear)
+        make(u8("167 Fliehende Trompeten"),
+             {{"stop6", 1},
+              {"simOn", 1},
+              {"master", -18.0f},
+              {"simW", 14.0f},
+              {"simL", 30.0f},
+              {"simH", 12.0f},
+              {"motion6", hover},
+              {"depth6", 160.0f},
+              {"rate6", 0.05f},
+              {"lvPlayerMode", 2},
+              {"lvPlayerForce", 0.5f},
+              {"lvPlayerRange", 5.0f},
+              {"lvWalkShape", 3},
+              {"lvWalkSize", 7.0f},
+              {"lvWalkRate", 0.04f},
+              {"lvImpLevel", -6.0f},
+              {"lvImpRing", 1.0f}},
+             {{srcModWheel, "lvPlayerForce", 0.5f},
+              {srcVelocity, pipe(tgtAttack), 0.7f},
+              {srcVelocity, pipe(tgtAttSharp), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // a small Saal full of flying pipes: the silent ones grow (deeper), a hard knock breaks
+        // one in two (an octave up) (mod wheel: faster growing, faster flying)
+        make(u8("168 Wachsen und Brechen"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"simOn", 1},
+              {"master", -23.0f},
+              {"simW", 9.0f},
+              {"simL", 14.0f},
+              {"simH", 7.0f},
+              {"motion0", flight},
+              {"motion1", flight},
+              {"rate0", 0.3f},
+              {"rate1", 0.25f},
+              {"lvGrow", 0.4f},
+              {"lvImpLevel", -10.0f}},
+             {{srcModWheel, "lvGrow", 0.6f},
+              {srcModWheel, "rate0", span("rate0", 0.3f, 0.9f)},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the pipes come to the listener and whisper into one ear (headphones / stereo)
+        // (mod wheel: drawn closer; pressure: louder)
+        make(u8("169 Fl\xc3\xbcstern am Ohr"),
+             {{"stop1", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -20.0f},
+              {"motion1", hover},
+              {"motion2", hover},
+              {"depth1", 170.0f},
+              {"depth2", 170.0f},
+              {"rate1", 0.06f},
+              {"rate2", 0.06f},
+              {"lvPlayerMode", 1},
+              {"lvPlayerForce", 0.15f},
+              {"lvPlayerRange", 3.0f},
+              {"lvWalkShape", 1},
+              {"lvWalkSize", 1.5f},
+              {"lvWalkRate", 0.03f},
+              {"lvWhisper", 1.0f},
+              {"lvImpLevel", -18.0f}},
+             {{srcModWheel, "lvPlayerForce", 0.5f},
+              {srcPressure, pipe(tgtLevel), 0.3f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the hall church: the far end plays the past - the mod wheel walks you there (forwards:
+        // time runs back; let go: it catches up)
+        room(u8("170 Hallenkirche \xe2\x80\x93 R\xc3\xbc"
+                "ckw\xc3\xa4rts durch die Zeit"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -16.0f},
+              {"motion0", flow},
+              {"motion2", flow},
+              {"rate0", 0.06f},
+              {"rate2", 0.08f},
+              {"depth0", 40.0f},
+              {"depth2", 40.0f},
+              {"lvTimeDepth", 8.0f}},
+             {{srcModWheel, "lvListenY", span("lvListenY", 0.0f, 16.0f)},
+              {srcVelocity, pipe(tgtAttack), 0.6f},
+              {srcPressure, pipe(tgtBright), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             halle, 0);
+        // the chapel seen, a cathedral heard: the mod wheel makes the heard room grow while the
+        // walls stay where they are
+        room(u8("171 Kapelle sehen, Kathedrale h\xc3\xb6ren"),
+             {{"stop7", 1},
+              {"stop0", 1},
+              {"stop1", 1},
+              {"simOn", 1},
+              {"master", -21.0f},
+              {"motion0", hover},
+              {"motion1", hover},
+              {"motion7", hover},
+              {"depth0", 120.0f},
+              {"depth1", 120.0f},
+              {"depth7", 120.0f},
+              {"lvPlayerMode", 4},
+              {"lvPlayerForce", 0.3f},
+              {"lvRoomHear", 1.5f}},
+             {{srcModWheel, "lvRoomHear", span("lvRoomHear", 1.5f, 6.0f)},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             kapelle, 0);
+        // the cloister: near a wall the reverb opens as if another room lay behind it - the mod
+        // wheel walks you to the side wall
+        room(u8("172 Kreuzgang \xe2\x80\x93 Die Wand \xc3\xb6"
+                "ffnet sich"),
+             {{"stop1", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -18.0f},
+              {"motion1", flow},
+              {"motion3", flow},
+              {"rate1", 0.1f},
+              {"rate3", 0.14f},
+              {"depth1", 60.0f},
+              {"depth3", 80.0f},
+              {"lvWallPull", 1.0f},
+              {"lvImpLevel", -14.0f}},
+             {{srcModWheel, "lvListenX", span("lvListenX", 0.0f, 10.0f)},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPressure, pipe(tgtBright), 0.4f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             kreuzgang, 0);
+        // the hall church, dark: the plenum swarms through the nave and is its only light - play
+        // harder and it shines brighter (mod wheel: a wilder swarm)
+        room(u8("173 Hallenkirche im Dunkeln \xe2\x80\x93 Lichtorgel"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop3", 1},
+              {"stop5", 1},
+              {"simOn", 1},
+              {"master", -23.0f},
+              {"motion0", swarm},
+              {"motion2", swarm},
+              {"motion3", swarm},
+              {"motion5", swarm},
+              {"rate0", 0.18f},
+              {"rate2", 0.2f},
+              {"rate3", 0.22f},
+              {"rate5", 0.25f},
+              {"depth0", 60.0f},
+              {"depth2", 70.0f},
+              {"depth3", 80.0f},
+              {"depth5", 90.0f},
+              {"lvImpLevel", -12.0f}},
+             {{srcVelocity, pipe(tgtLevel), 0.4f},
+              {srcVelocity, pipe(tgtAttack), 0.4f},
+              {srcPressure, pipe(tgtBright), 0.4f},
+              {srcModWheel, "rate0", span("rate0", 0.18f, 0.7f)},
+              {srcModWheel, "rate3", span("rate3", 0.22f, 0.9f)},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             halle, 1);
+        // the mod wheel goes through four ways of being a body in the room: hovering -> carried by
+        // a current -> flying -> falling
+        makeFull(u8("174 Modrad \xe2\x80\x93 Vom Schweben zum Sturz"),
+                 {{"stop0", 1},
+                  {"stop1", 1},
+                  {"stop2", 1},
+                  {"simOn", 1},
+              {"master", -20.0f},
+                  {"simW", 16.0f},
+                  {"simL", 28.0f},
+                  {"simH", 12.0f},
+                  {"motion0", hover},
+                  {"motion1", hover},
+                  {"motion2", hover},
+                  {"depth0", 120.0f},
+                  {"depth1", 120.0f},
+                  {"depth2", 120.0f},
+                  {"lvImpLevel", -8.0f}},
+                 {{srcModWheel, "sceneMorph", 1.0f},
+                  {srcVelocity, pipe(tgtAttack), 0.6f},
+                  {srcPitchWheel, pipe(tgtPitch), bend2}},
+                 {{},
+                  {{"motion0", flow},
+                   {"motion1", flow},
+                   {"motion2", flow},
+                   {"rate0", 0.15f},
+                   {"rate1", 0.12f},
+                   {"rate2", 0.18f},
+                   {"depth0", 60.0f},
+                   {"depth1", 60.0f},
+                   {"depth2", 60.0f}},
+                  {{"motion0", flight},
+                   {"motion1", flight},
+                   {"motion2", flight},
+                   {"rate0", 0.45f},
+                   {"rate1", 0.4f},
+                   {"rate2", 0.5f}},
+                  {{"motion0", fall},
+                   {"motion1", fall},
+                   {"motion2", fall},
+                   {"rate0", 0.6f},
+                   {"rate1", 0.5f},
+                   {"rate2", 0.7f},
+                   {"depth0", 150.0f},
+                   {"depth1", 150.0f},
+                   {"depth2", 150.0f},
+                   {"lvSelfPlay", 0.4f}}},
+                 false);
+        // the stair tower, dark: Mixtur and 2' fall and are thrown up again for ever, and every
+        // knock plays the pipe - the room plays itself and lights its own steps (just listen, or
+        // play along: the mod wheel throws them higher)
+        room(u8("175 Treppenturm im Dunkeln \xe2\x80\x93 Selbstspiel"),
+             {{"stop3", 1},
+              {"stop5", 1},
+              {"simOn", 1},
+              {"master", -28.0f},
+              {"motion3", fall},
+              {"motion5", fall},
+              {"rate3", 0.5f},
+              {"rate5", 0.55f},
+              {"depth3", 120.0f},
+              {"depth5", 130.0f},
+              {"lvSelfPlay", 0.8f},
+              {"lvImpLevel", -10.0f}},
+             {{srcModWheel, "rate3", span("rate3", 0.5f, 1.1f)},
+              {srcModWheel, "rate5", span("rate5", 0.55f, 1.2f)},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}},
+             turm, 1);
     }
 
     marker.replaceWithText(juce::String(kFactoryVersion));

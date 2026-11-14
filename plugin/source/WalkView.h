@@ -195,6 +195,7 @@ private:
                      actClap { "C Klatschen" }, actMat { "M Material" };
     HoldButton actGrab { "Q Greifen" }, actFreeze { "F Anhalten" }, actJump { "Springen" };
     juce::TextButton actLight { "L Licht aus" };
+    int seenWalkSerial = 0;          // (proc.walkSerial when the view last took over the room, light and pose)
     std::vector<Raster::Lamp> lamps;
     void setDark (bool on);
     juce::Rectangle<int> handsArea;

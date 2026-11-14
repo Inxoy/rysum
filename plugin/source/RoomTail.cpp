@@ -11,7 +11,8 @@ int TailIR::maxLength(double sr) noexcept
 }
 
 std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int outputOrder,
-                                            double sr, uint32_t serial, const MeshAcoustics *mesh)
+                                            double sr, uint32_t serial, const MeshAcoustics *mesh,
+                                            float meshScale)
 {
     auto ir = std::make_shared<TailIR>();
     ir->serial = serial;
@@ -26,8 +27,9 @@ std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int 
                          ? traceMesh(*mesh, r, air, 1500, 1234u)
                          : traceRoom(r, air, 4000,
                                      1234u); // same rays every time: no random jumps while modulating
-    ir->rtLow = juce::jlimit(0.05f, 30.0f, res.rtLow);
-    ir->rtHigh = juce::jlimit(0.05f, 30.0f, juce::jmin(res.rtHigh, res.rtLow));
+    const float stretch = mesh != nullptr ? juce::jlimit(0.2f, 40.0f, meshScale) : 1.0f;
+    ir->rtLow = juce::jlimit(0.05f, 30.0f, res.rtLow * stretch);
+    ir->rtHigh = juce::jlimit(0.05f, 30.0f, juce::jmin(res.rtHigh, res.rtLow) * stretch);
     ir->rays = res.rays;
     ir->volume = roomVolume(r);
 

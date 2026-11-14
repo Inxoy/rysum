@@ -148,16 +148,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     fit.onClick = [this]
     {
         auto m = proc.getWalkMesh();
-        if (m == nullptr) return;
-        auto set = [this] (const char* key, float v)
-        {
-            if (auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (0, key))) prm->setValueNotifyingHost (prm->convertTo0to1 (v));
-        };
-        set ("W", juce::jlimit (2.0f, 40.0f, m->size.x));
-        set ("L", juce::jlimit (2.0f, 100.0f, m->size.y));
-        set ("H", juce::jlimit (2.0f, 40.0f, m->size.z));
-        set ("Size", 1.0f);
-        set ("Shape", (float) shapeBox);
+        if (m == nullptr || ! proc.fitSaalToWalkModel()) return;
         status = U ("Saal: ") + juce::String (m->size.x, 1) + U (" \xc3\x97 ") + juce::String (m->size.y, 1) + U (" \xc3\x97 ") + juce::String (m->size.z, 1) + " m";
         statusUntil = juce::Time::getMillisecondCounterHiRes() + 3000;
     };
@@ -295,6 +286,8 @@ void WalkView::visibilityChanged()
 {
     if (isVisible())
     {
+        seenWalkSerial = proc.walkSerial.load();
+        actLight.setToggleState (proc.walkDark, juce::dontSendNotification);
         px = proc.walkPose[0].load(); py = proc.walkPose[1].load(); yaw = proc.walkPose[2].load(); pitch = proc.walkPose[3].load();
         yawT = yaw; pitchT = pitch; vx = vy = vz = turnV = 0.0f; fz = 0.0f; onGround = true;
         proc.engine.viewWalkOn = true;
@@ -493,6 +486,17 @@ void WalkView::timerCallback()
     const double t = juce::Time::getMillisecondCounterHiRes();
     const double dt = juce::jlimit (0.0, 0.1, (t - lastTime) * 0.001);
     lastTime = t;
+    if (proc.walkSerial.load() != seenWalkSerial)
+    {
+        // a patch brought a room (or the light): stand where it says, show what it set
+        seenWalkSerial = proc.walkSerial.load();
+        px = proc.walkPose[0].load(); py = proc.walkPose[1].load(); yaw = proc.walkPose[2].load(); pitch = proc.walkPose[3].load();
+        yawT = yaw; pitchT = pitch; vx = vy = vz = turnV = 0.0f; fz = 0.0f; onGround = true;
+        pushPose();
+        actLight.setToggleState (proc.walkDark, juce::dontSendNotification);
+        updateButtons();
+        if (auto m = proc.getWalkMesh()) { status = m->name; statusUntil = t + 3000; }
+    }
     const bool grabHeld = actGrab.held(), freezeHeld = actFreeze.held(), jumpHeld = actJump.held();
     if (immersive && ! testMode)
     {

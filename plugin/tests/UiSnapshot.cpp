@@ -997,10 +997,43 @@ public:
             bool allOk = true;
             // RYSUM_QUICK: skip playing every factory patch (for quick looks at the pages)
             const bool quick = std::getenv("RYSUM_QUICK") != nullptr;
+            // RYSUM_PATCHES_FROM=n: only the patches numbered n and up (a new set)
+            const int fromNum = std::getenv("RYSUM_PATCHES_FROM") != nullptr
+                                    ? juce::String(std::getenv("RYSUM_PATCHES_FROM")).getIntValue()
+                                    : 0;
+            bool roomsOk = true, knocksOk = true;
             for (auto &f : quick ? juce::Array<juce::File>() : RysumProcessor::getPatchFiles())
             {
+                const int num = f.getFileNameWithoutExtension().getIntValue();
+                if (num < fromNum)
+                    continue;
                 proc->loadPatch(f);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                // a patch that brings a room for the 3D view: that model loaded, the Saal its size,
+                // the light as it says
+                juce::String roomNote;
+                if (auto xml = juce::XmlDocument::parse(f))
+                    if (auto *ex = xml->getChildByName("EXTRA"))
+                        if (auto *s3 = ex->getChildByName("SAAL3D"))
+                        {
+                            const auto want = s3->getStringAttribute("room");
+                            auto m = proc->getWalkMesh();
+                            const bool okRoom =
+                                want.isEmpty() ||
+                                (m != nullptr && proc->walkModelFile.getFileName() == want &&
+                                 std::abs(proc->apvts.getRawParameterValue("simW")->load() -
+                                          juce::jlimit(2.0f, 40.0f, m->size.x)) < 0.05f &&
+                                 std::abs(proc->apvts.getRawParameterValue("simH")->load() -
+                                          juce::jlimit(2.0f, 40.0f, m->size.z)) < 0.05f);
+                            const bool okDark = !s3->hasAttribute("dark") ||
+                                                s3->getBoolAttribute("dark") == proc->walkDark;
+                            roomsOk = roomsOk && okRoom && okDark;
+                            roomNote = ", room " + want + (proc->walkDark ? " (dark)" : "") +
+                                       (okRoom && okDark ? "" : " NOT LOADED");
+                        }
+                const uint32_t impactsBefore = proc->engine.impactCount.load();
+                const bool wantKnocks =
+                    num >= 160 && proc->apvts.getRawParameterValue("lvImpLevel")->load() > -59.9f;
                 float peak = 0.0f;
                 double e = 0.0;
                 bool finite = true;
@@ -1101,6 +1134,9 @@ public:
                             proc->apvts.getRawParameterValue(proc->getModAmountId(r))->load()) <
                         1.0e-4f)
                         routesKept = false;
+                const uint32_t impacts = proc->engine.impactCount.load() - impactsBefore;
+                if (wantKnocks && impacts == 0)
+                    knocksOk = false;
                 const bool ok = finite && peak > 1.0e-4f && routesKept;
                 allOk = allOk && ok;
                 if (feedInput && std::getenv("RYSUM_DEBUG_INPUT") != nullptr)
@@ -1122,9 +1158,36 @@ public:
                           << (maxErode > 0.0f ? ", erosion up to " + juce::String(maxErode, 2)
                                               : juce::String())
                           << (routesKept ? "" : ", a route was switched off")
+                          << (impacts > 0 ? ", knocks " + juce::String((int)impacts) : juce::String())
+                          << (wantKnocks && impacts == 0 ? ", NO KNOCKS" : "") << roomNote
                           << (ok ? "" : "  FAIL") << std::endl;
             }
             std::cout << "all factory patches play: " << (allOk ? "ok" : "FAIL") << std::endl;
+            if (!quick)
+            {
+                std::cout << "patches with a room load it: " << (roomsOk ? "ok" : "FAIL")
+                          << std::endl;
+                std::cout << "the 3D Saal's patches knock: " << (knocksOk ? "ok" : "FAIL")
+                          << std::endl;
+                // one's own patch saved in a built-in room keeps the room and the light
+                if (rysum::builtInRoomIndex(proc->walkModelFile.getFileName()) >= 0 &&
+                    proc->getWalkMesh() != nullptr)
+                {
+                    const auto had = proc->walkModelFile.getFileName();
+                    const bool dark = proc->walkDark;
+                    proc->savePatch("Test Raum");
+                    const auto tf = RysumProcessor::getPatchFolder().getChildFile("Test Raum.rysum");
+                    bool kept = false;
+                    if (auto xml = juce::XmlDocument::parse(tf))
+                        if (auto *ex = xml->getChildByName("EXTRA"))
+                            if (auto *s3 = ex->getChildByName("SAAL3D"))
+                                kept = s3->getStringAttribute("room") == had &&
+                                       s3->getBoolAttribute("dark") == dark;
+                    tf.deleteFile();
+                    std::cout << "a saved patch keeps its built-in room: " << (kept ? "ok" : "FAIL")
+                              << std::endl;
+                }
+            }
 
             // set 14 (playing with the hands): how much one note a' changes with velocity, mod
             // wheel and pitch wheel (W channel, first 1.5 s: level difference, and the share of the

@@ -395,6 +395,17 @@ stops, all sliders, pipe layouts and positions, muted pipes, modulation routings
 loaded impulse response (by file path). It does **not** change the output format
 (stereo / AmbiX order belongs to the track) or the samples folder.
 
+The 3D view's room model belongs to the project, with one exception: when one of the six
+built-in rooms is loaded, a saved patch remembers that room and whether the light is off.
+Loading such a patch loads the room again, fits the Saal to it and puts you at its listening
+place. Patches without a room leave the model and the light as they are.
+
+Patches 160–175 are made for the 3D Saal. Their pipes are bodies in the room (Flug, Fall,
+Schwarm, Strömung, Schweben) that knock, play themselves, flee, orbit or whisper. Twelve of
+them bring a built-in room, five of those with the light off. Each one is played with the
+hands: the mod wheel drives the motion (speed, force, scenes, where you stand), velocity
+and pressure shape the pipes, and the pitch wheel bends ±2 semitones.
+
 Patches are plain files in `Documents\Rysum\Patches\*.rysum` – copy, rename, back up or
 share them. On first start six example patches are written there (Init, Plenum, Welle durch
 die Pfeifen, Atmende Wolke, Verfall, Gläserne Sprünge); deleted ones are not re-created.

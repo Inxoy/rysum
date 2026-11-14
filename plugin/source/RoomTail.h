@@ -52,7 +52,10 @@ struct TailIR
      * Background thread. */
     static std::shared_ptr<const TailIR> build(const RoomParams &r, float air, int outputOrder,
                                                double sr, uint32_t serial,
-                                              const class MeshAcoustics *mesh = nullptr);
+                                              const class MeshAcoustics *mesh = nullptr,
+                                              float meshScale = 1.0f);
+    // (meshScale: "Hoerraum" with a model - the rays go through the model as it is, and the
+    //  decay is stretched as for a room that many times the size: T60 grows with the size)
     /** any responses (one per output channel, at most maxLength samples), partitioned for the
        convolver. Background thread. (The convolver leaves out the first kStart[0] samples.) */
     static std::shared_ptr<TailIR> fromResponses(const std::vector<std::vector<float>> &h,

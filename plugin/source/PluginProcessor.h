@@ -643,6 +643,13 @@ public:
     bool walkZUp = false;
     bool walkDark = false; // the 3D view with the light off: the sounding pipes light the room
     float walkScale = 1.0f;
+    /** counts the times something other than the 3D view changed its room, light or pose (a patch
+     *  with a built-in room): the open view takes them over */
+    std::atomic<int> walkSerial{0};
+    /** the Saal (room 1) takes the loaded model's size, as a box; false = no model */
+    bool fitSaalToWalkModel();
+    /** a patch's room for the 3D view: one of the built-in models (by file name) and the light */
+    void applyPatchRoom(const juce::ValueTree &saal3d);
     /** camera: offset from the listener's place (m), yaw (degrees, + = left), pitch (degrees, + =
      * up) */
     std::array<std::atomic<float>, 4> walkPose{};
