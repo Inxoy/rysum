@@ -694,7 +694,39 @@ The hands are also buttons in a row at the bottom (*E Druckwelle*, *Q Greifen*, 
 (see *MIDI buttons for any button* in chapter 4) – also *Immersiv* itself. *Greifen*, *Anhalten*
 and *Springen* act for as long as the MIDI button is held.
 
+*Illusions* (the row of sliders under the buttons; all off at first, all of them parameters – they
+can be modulated, automated and put on MIDI knobs with a right-click):
+
+- **Selbstspiel** – the room plays itself. A pipe that knocks against a wall, the floor or the
+  ceiling sounds its own note, longer the harder it hits. Needs stops whose motion happens in
+  the Saal (*Flug*, *Fall*, *Schwarm*, *Strömung*); nobody has to play. At most 40 such notes
+  at once, and never at the cost of what you play.
+- **Wachsen & Brechen** – pipes that are not sounding slowly grow and sink in pitch (up to twice
+  their length, an octave down: half a minute at 100 %, a quarter of an hour at 10 %). A hard
+  knock breaks a pipe in two: it is half as long and an octave higher (down to a quarter), with
+  a crack. You see the lengths. Turned to *aus*, every pipe finds back within a few seconds;
+  **R** mends them all at once. One pipe stays one pipe: the broken-off half is heard as the
+  crack, it does not fly on as a second pipe.
+- **Flüstern** – a pipe within arm's reach of your head (1.4 m) is also heard at the two ears
+  themselves: the near ear much louder (16 dB at 15 cm), the far one later and duller, the tone
+  warmer. Take a pipe with **Q** and bring it nearer with the **mouse wheel** (down to 20 cm),
+  or let the pipes come to you (*Pfeifen: ich ziehe an*). Headphones (binaural, also over two
+  loudspeakers) and stereo only; with Ambisonics or loudspeaker output it does nothing.
+- **Zeit als Entfernung** – the front of the room plays the past. At your usual place you hear
+  the present; at the front wall what sounded so many seconds ago (up to 20 s; with many
+  Ambisonics channels the memory is shorter, e.g. about 14 s with third-order binaural at
+  48 kHz). Walk forwards quickly and time runs backwards; walk back and it catches up, at up to
+  four times the speed. The top line says how far back you are hearing. It also follows the
+  listener's automatic walk (*Effekte → Hörer*), without the 3D view.
+- **Hörraum** – the late reverb belongs to a room of another size than the one you see and walk
+  in (× 0.25 … × 8): see a chapel, hear a cathedral. The early reflections stay those of the
+  room you see – that contradiction is the illusion. Needs *Saal an*.
+- **Wandnähe** – the nearer you come to a wall (from 3 m), the larger and louder the late
+  reverb, as if another room opened behind it. Needs *Saal an*. The reverb is recalculated as
+  you walk (a few times a second, crossfaded).
+
 *The player's hands* (keys in the 3D view; with **Shift** stronger):
+
 
 **E** – a shockwave: a deep burst pushes every pipe away from you, the nearer the harder, and
 they knock on the walls. **Q** (held) – takes the pipe under the cross (it gets a ring when a
@@ -972,6 +1004,37 @@ Every button of the interface can be put on a MIDI button: a pad, a controller b
 - Saved like the other assignments: in the project and in `Documents\Rysum\MIDI-Regler.xml`.
   A button is remembered by its place in the interface, so an assignment may need to be made
   again after an update that rearranges a page.
+
+### A dataset for a neural network
+
+`scripts\make_dataset.ps1` samples the plugin into a dataset for training a neural synthesis
+network: the plugin plays by itself and every clip is written with its notes and settings.
+
+```powershell
+cd D:\RYSUM_plugin\rysum_plugin
+.\scripts\make_dataset.ps1
+```
+
+That makes ten hours (3600 clips of 10 s, stereo, 48 kHz, 16-bit WAV, about 7 GB, roughly twenty
+minutes) in `rysum-dataset` next to the repository:
+
+| file | what |
+|---|---|
+| `audio\000000.wav` … | the clips |
+| `midi\000000.mid` … | the notes of each clip |
+| `metadata.jsonl` | one line per clip: file, `train` / `valid`, kind, stops, notes (on / off in seconds, MIDI note, velocity), levels, and the parameters that differ from the opened plugin |
+| `dataset.json` | the format, and the table of all parameters with defaults and ranges |
+
+- **What is played:** 40 % single pipes (one stop, one held note), 40 % registrations of one to
+  five stops playing a phrase (lines, chords, a line over a held chord, free notes), 20 % factory
+  patches playing a phrase. `-Mix "100,0,0"` changes the shares.
+- **Options:** `-Hours`, `-Clip` (seconds, at least 4), `-Rate`, `-Mono`, `-Bits 24`, `-Flac`,
+  `-Seed`, `-Dry` (no room in any clip), `-Valid` (per cent validation clips), `-Out`.
+- Stopped with Ctrl+C and started again with the same options, it carries on where it was. The
+  same seed gives the same notes and settings; the sound has the organ's own chance in it, so
+  two runs are not identical sample for sample.
+- Clips that would clip are turned down (`gain_db` says by how much); a silent draw is repeated.
+- The 3D view's illusions are not part of it.
 
 ## 5. Files
 

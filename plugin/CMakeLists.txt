@@ -323,3 +323,25 @@ if(RYSUM_BUILD_BENCH)
         target_compile_options(RysumBench PRIVATE /MP /utf-8)
     endif()
 endif()
+
+# ---------------------------------------------------------------------------
+# Optional: the dataset sampler (many short clips of the plugin with their notes and settings, for
+# training a neural synthesis network). scripts/make_dataset.ps1 builds and runs it.
+#   cmake -B build-dataset -DRYSUM_BUILD_DATASET=ON  then  cmake --build build-dataset --config Release --target RysumDataset
+#   RysumDataset <samples folder> <out folder> [--hours 10] [--clip 10] [--rate 48000] ...  (see tests/Dataset.cpp)
+# ---------------------------------------------------------------------------
+option(RYSUM_BUILD_DATASET "Build the dataset sampler" OFF)
+if(RYSUM_BUILD_DATASET)
+    juce_add_console_app(RysumDataset PRODUCT_NAME "RysumDataset")
+    target_sources(RysumDataset PRIVATE tests/Dataset.cpp ${RYSUM_PLUGIN_SOURCES})
+    target_include_directories(RysumDataset PRIVATE source)
+    target_compile_definitions(RysumDataset PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
+        JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
+        JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
+    target_link_libraries(RysumDataset PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
+        juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
+        juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+    if(MSVC)
+        target_compile_options(RysumDataset PRIVATE /MP /utf-8)
+    endif()
+endif()
