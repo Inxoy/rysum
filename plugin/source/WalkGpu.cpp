@@ -516,3 +516,34 @@ void GpuPicture::compare (const GpuFrame& f, int w, int h)
     ++compared;
 }
 } // namespace rysum
+
+// ---------------------------------------------------------------------------
+// the card's window lets the mouse and the keyboard through (Windows; at the end of the file: windows.h's
+// macros stay away from the code above)
+// ---------------------------------------------------------------------------
+#if JUCE_WINDOWS
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <windows.h>
+
+void rysum::GpuPicture::letInputThrough (juce::Component& view)
+{
+    auto* peer = view.getPeer();
+    if (peer == nullptr) return;
+    const auto top = (HWND) peer->getNativeHandle();
+    // (the plugin's own controls are not windows of their own: every JUCE window below the plugin's is the card's)
+    EnumChildWindows (top, [] (HWND h, LPARAM) -> BOOL
+    {
+        char name[16] {};
+        GetClassNameA (h, name, (int) sizeof (name));
+        if (std::strncmp (name, "JUCE_", 5) == 0 && IsWindowEnabled (h)) EnableWindow (h, FALSE);
+        return TRUE;
+    }, 0);
+}
+#else
+void rysum::GpuPicture::letInputThrough (juce::Component&) {}
+#endif

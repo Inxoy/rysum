@@ -1088,6 +1088,30 @@ public:
                     loud > quiet + 20.0 && loud > -50.0 && after < loud - 40.0);
             }
             setReal(RysumProcessor::motionParamId(0), 0.0f);
+            // "Alles zuruecksetzen" (patch menu): a loaded church, lanterns, a pose and changed parameters are
+            // gone; a new instance's state
+            {
+                wv.loadBuiltInRoomForTest(1);
+                proc->walkLanterns.push_back({3.0f, 4.0f, 2.0f});
+                proc->walkPose[0] = 2.5f;
+                setReal("lvSelfPlay", 0.7f);
+                setReal(RysumProcessor::stopParamId(3), 1.0f);
+                const bool had = proc->getWalkMesh() != nullptr;
+                wv.resetView();
+                proc->resetEverything();
+                auto atDefault = [&](const juce::String &id)
+                {
+                    auto *q = proc->apvts.getParameter(id);
+                    return q != nullptr && std::abs(q->getValue() - q->getDefaultValue()) < 1.0e-4f;
+                };
+                const bool ok = had && proc->getWalkMesh() == nullptr && proc->walkModelFile == juce::File() &&
+                                proc->walkLanterns.empty() && proc->walkPose[0].load() == 0.0f &&
+                                atDefault("lvSelfPlay") && atDefault(RysumProcessor::stopParamId(3)) &&
+                                proc->getPatchName().isEmpty();
+                say(juce::String("reset everything: the model, lanterns, pose and parameters as in a new instance (model was ") +
+                        (had ? "loaded" : "NOT loaded") + ")",
+                    ok);
+            }
         }
     }
 

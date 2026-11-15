@@ -190,6 +190,7 @@ public:
     void showView(int v);
     void tick();
     void showPatchMenu();
+    void askResetEverything();
     void stepPatch(int delta);
     void askSavePatch();
     /** set by the editor: switches the full-screen view on / off */

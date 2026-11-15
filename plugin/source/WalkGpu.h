@@ -40,6 +40,12 @@ public:
 
     void attachTo (juce::Component&);
     void detach();
+    /** Windows: the card draws into a window of its own laid over the view. It is meant to let the mouse through
+        to the plugin's window, but on some computers it took every click (and with it the keyboard: only the
+        walking keys, read directly, still worked). Disabled, Windows hands its mouse input to the window below
+        and never gives it the keyboard. Called every frame (the window is made anew when the view moves to
+        another window, e.g. full screen). */
+    static void letInputThrough (juce::Component& view);
     bool isAttached() const { return context.isAttached(); }
     /** the context exists and the shader compiled: frames are being drawn */
     bool isReady() const noexcept { return ready.load(); }

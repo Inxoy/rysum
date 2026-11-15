@@ -868,6 +868,9 @@ void RysumContent::showPatchMenu()
     m.addItem(10000, "Speichern unter ...");
     m.addItem(10001, u8("Patch-Ordner \xc3\xb6"
                         "ffnen"));
+    m.addSeparator();
+    m.addItem(10002, u8("Alles zur\xc3\xbc"
+                        "cksetzen \xe2\x80\xa6"));
     juce::Component::SafePointer<RysumContent> safe(this);
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&patchName),
                     [safe, files](int r)
@@ -886,9 +889,38 @@ void RysumContent::showPatchMenu()
                             folder.startAsProcess();
                             return;
                         }
+                        if (r == 10002)
+                        {
+                            safe->askResetEverything();
+                            return;
+                        }
                         if (r >= 1 && r <= files.size())
                             safe->proc.loadPatch(files[r - 1]);
                     });
+}
+
+void RysumContent::askResetEverything()
+{
+    auto opts = juce::MessageBoxOptions()
+                    .withTitle(u8("Alles zur\xc3\xbc"
+                                  "cksetzen"))
+                    .withMessage(u8("Alles wie beim ersten Start: alle Regler, der Raum, das 3D-Modell "
+                                    "und wo du im Saal stehst, Laternen, Aufstellungen. Ungespeicherte "
+                                    "\xc3\x84nderungen gehen verloren (Patches bleiben, der Samples-Ordner "
+                                    "auch)."))
+                    .withButton(u8("Zur\xc3\xbc"
+                                   "cksetzen"))
+                    .withButton("Abbrechen")
+                    .withAssociatedComponent(this);
+    juce::Component::SafePointer<RysumContent> safe(this);
+    juce::AlertWindow::showAsync(opts,
+                                 [safe](int r)
+                                 {
+                                     if (safe == nullptr || r != 1)
+                                         return;
+                                     safe->walk.resetView();
+                                     safe->proc.resetEverything();
+                                 });
 }
 
 void RysumContent::stepPatch(int delta)

@@ -65,6 +65,8 @@ public:
     void shock (float strength = 1.0f);
     /** R: every pipe flies back to its place in the organ */
     void callHome();
+    /** "Alles zuruecksetzen": nothing chosen, pinned, paused or left behind; every pipe flies home, whole again */
+    void resetView();
     /** C: a hand clap where you stand */
     void clap();
     /** a click: the pipe at this point of the view is knocked and rings; false = no pipe there */

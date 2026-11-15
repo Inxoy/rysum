@@ -614,6 +614,7 @@ void WalkView::updateGpu()
     if (! want) { gpu.reset(); gpuWaiting = 0; return; }
     if (gpu == nullptr) { gpu = std::make_unique<GpuPicture>(); gpuWaiting = 0; gpuFrames = 0; }
     gpu->attachTo (*this);
+    GpuPicture::letInputThrough (*this);
     if (! gpu->isReady() && ++gpuWaiting > 240)
     {
         // no context after four seconds (no OpenGL 3.2 here)
@@ -1009,6 +1010,24 @@ void WalkView::callHome()
     proc.engine.playerAct (OrganEngine::Act::Home);
     proc.engine.pipeLenReset = true;      // (and every broken or grown pipe is whole again)
     say (U ("Alle Pfeifen fliegen an ihren Platz zur\xc3\xbc" "ck"));
+}
+
+void WalkView::resetView()
+{
+    setImmersive (false);
+    clearSelection();
+    setMagnet (0);
+    for (auto& m : proc.engine.pinMask) m = 0;
+    if (paused) setPause (false);
+    setSlow (false);
+    leaveEars (false);
+    bowStop();
+    fov = 80.0f;
+    proc.engine.playerAct (OrganEngine::Act::Home);
+    proc.engine.pipeLenReset = true;
+    updateButtons();
+    say (U ("Alles zur\xc3\xbc" "ckgesetzt"));
+    repaint();
 }
 
 void WalkView::clap()

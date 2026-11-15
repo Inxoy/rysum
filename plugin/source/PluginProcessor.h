@@ -615,6 +615,10 @@ public:
         applyWalkAcoustics();
         return {};
     }
+    /** "Alles zuruecksetzen": everything as in a new instance - every parameter, the room, the 3D view
+        (its model, where one stands, lanterns, layouts), the patch name. Kept: the samples folder (and what is
+        stored for this computer, not in the project: MIDI controllers, loudspeakers, window size). */
+    void resetEverything();
     void clearWalkModel()
     {
         walkModelFile = juce::File();
@@ -722,6 +726,7 @@ private:
     void modulate(rysum::EngineParams &p, const float *globalSources) override;
     juce::ValueTree makeState(bool forPatch);
     void applyState(juce::ValueTree state, bool forPatch);
+    juce::ValueTree startState; // the state of a new instance (made at the end of the constructor)
     void writeFactoryPatches();
     juce::String patchName;
 

@@ -1408,8 +1408,26 @@ RysumProcessor::RysumProcessor()
     mts = MTS_RegisterClient(); // microtuning from an MTS-ESP master (if the MTS-ESP library is
                                 // installed)
 
+    startState = makeState(false); // (what "Alles zuruecksetzen" goes back to)
     startTimer(250); // first tick: find + load the samples (after a possible setStateInformation)
     morphTimer.startTimerHz(40);
+}
+
+void RysumProcessor::resetEverything()
+{
+    auto s = startState.createCopy();
+    auto extra = s.getChildWithName("EXTRA");
+    // the samples stay where they are found (no new loading); the room goes back to the first built-in
+    // impulse response, as in a new instance
+    extra.setProperty("samplesFolder", samplesFolder.getFullPathName(), nullptr);
+    extra.removeProperty("irFile", nullptr);
+    applyState(s, false);
+    irChosen = false;
+    if (auto l = getLibrary(); l != nullptr && !l->irs.empty())
+        loadIr(l->irs.front().file);
+    ++walkSerial; // (the 3D view stands where the state says)
+    ++patchVersion; // (the header: "kein Patch")
+    ++changeCounter;
 }
 
 bool RysumProcessor::setAudience(bool on, bool loopbackOnly)
