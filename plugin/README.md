@@ -734,7 +734,10 @@ about ten times a second and send a shockwave every 1.5 s; all together, at most
 0.35 s. Up to 48 phones; a phone that leaves gives its pipe back after a few seconds. *Publikum* is
 never saved: opening a project does not open the page. The page is plain HTTP on port 8787 (8788 …
 for a second Rysum). Windows asks once whether Rysum may use the network – allow it for private
-networks. Guest and public Wi-Fi often keep phones from reaching other devices; then a phone hotspot
+networks. If that question was cancelled, Windows quietly blocks Rysum: the page then opens on the
+PC itself but not on a phone, and after 20 s without a phone a red line under the QR code says so.
+Then open *Windows-Firewall → Erweiterte Einstellungen → Eingehende Regeln*, open the two rules
+named *Rysum* (or the DAW's) and set them to *Verbindung zulassen*. Guest and public Wi-Fi often keep phones from reaching other devices; then a phone hotspot
 or a small router of one's own is the way. Tilting the phone is not used: phones only give their
 motion sensors to secure (HTTPS) pages.
 

@@ -1890,16 +1890,24 @@ void WalkView::drawAudience (juce::Graphics& g, juce::Rectangle<int> area)
     const int mod = juce::jlimit (3, 10, (immersive ? area.getHeight() / 3 : area.getHeight() / 4) / (q.size + 8));
     const int side = (q.size + 8) * mod;
     auto box = juce::Rectangle<int> (area.getRight() - side - 18, immersive ? area.getBottom() - side - 52 : area.getY() + 128, side, side);
+    const int phones = au->phoneCount();
+    if (phones > 0) audienceAlone = 0.0; else if (audienceAlone <= 0.0) audienceAlone = now;
+    // (nobody after a while: most often the firewall drops the phones, the PC itself still gets in)
+    const bool hint = phones == 0 && now - audienceAlone > 20000.0;
     g.setColour (juce::Colours::white);
-    g.fillRect (box.withHeight (side + 34));
+    g.fillRect (box.withHeight (side + (hint ? 62 : 34)));
     g.setColour (juce::Colours::black);
     for (int y = 0; y < q.size; ++y)
         for (int x = 0; x < q.size; ++x)
             if (q.at (x, y)) g.fillRect (box.getX() + (x + 4) * mod, box.getY() + (y + 4) * mod, mod, mod);
     g.setFont (A.monoFont (10.0f));
-    const int phones = au->phoneCount();
     g.drawText (au->url().fromFirstOccurrenceOf ("//", false, false).trimCharactersAtEnd ("/"), box.getX(), box.getBottom() - 4, side, 16, juce::Justification::centred);
     g.drawText (phones == 0 ? U ("Handy: QR-Code scannen") : juce::String (phones) + (phones == 1 ? U (" Handy spielt mit") : U (" Handys spielen mit")),
                 box.getX(), box.getBottom() + 12, side, 16, juce::Justification::centred);
+    if (hint)
+    {
+        g.setColour (juce::Colour (0xffa03010));
+        g.drawFittedText (U ("Handy l\xc3\xa4" "dt nicht? Windows-Firewall:\nRysum im privaten Netz zulassen"), box.getX() + 2, box.getBottom() + 28, side - 4, 28, juce::Justification::centred, 2, 0.7f);
+    }
 }
 } // namespace rysum::ui

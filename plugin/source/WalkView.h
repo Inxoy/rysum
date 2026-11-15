@@ -200,6 +200,7 @@ private:
     void setAudience (bool on);
     void drawAudience (juce::Graphics& g, juce::Rectangle<int> area);
     double audienceShockSeen = 0.0;
+    double audienceAlone = 0.0; // since when no phone has come (for the firewall hint)
     bool audienceLoopback = false;   // (tests: only this computer can reach it - no firewall question)
 public:
     /** tests: switch the audience on (only reachable from this computer) / off */
