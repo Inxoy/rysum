@@ -122,6 +122,10 @@ public:
     {
         return autoSet;
     }
+    const rysum::AutoSet &getAuto() const
+    {
+        return autoSet;
+    }
     /** after any change of getAuto(): hands a copy to the audio thread */
     void autoChanged();
     /** hands the lanes to the audio thread now (autoChanged does it at the next tick) */
@@ -1043,6 +1047,8 @@ private:
             rysum::AutoLane lane;
         };
         std::vector<Lane> lanes;
+        std::vector<rysum::AutoLane> spatial; // per-pipe and path lanes (the view points into it)
+        rysum::AutoEngineView view;
     };
     rysum::AutoSet autoSet;                                   // message thread
     std::shared_ptr<const AutoCompiled> autoPending, autoActive; // pending: swapped atomically

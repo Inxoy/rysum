@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
+#include <array>
 #include <limits>
 #include <vector>
 
@@ -55,6 +56,12 @@ struct AutoLane
     bool reverse = false;  // the region read backwards
     double offset = 0.0;   // beats: where the lane starts on the clock
     std::vector<AutoPoint> pts; // sorted by t
+    // a lane on a per-pipe target ("pipe:<t>"): the gesture spreads through the room from an
+    // origin - every pipe hears it when the front reaches it (distance / speed later)
+    bool spread = false;
+    float ox = 0.0f, oy = 4.0f, oz = 0.0f; // origin, metres: x = right, y = front, z = up
+    float waveSpeed = 4.0f;                // metres per beat
+    bool inward = false;                   // the front runs from far away towards the origin
 };
 
 /** the whole automation of a project (message thread) */
@@ -192,6 +199,95 @@ inline float autoValue(const AutoLane &l, double beats, int steps = 0) noexcept
 }
 
 // ---------------------------------------------------------------------------
+// lanes that are not parameters: per-pipe targets ("pipe:<t>", spreading through the room) and
+// timed paths ("path:<stop>", the position along a stop's drawn path, 0..1)
+// ---------------------------------------------------------------------------
+inline juce::String autoPathLaneId(int stop)
+{
+    return "path:" + juce::String(stop);
+}
+/** the per-pipe target of a lane, -1 = not a per-pipe lane */
+inline int autoPipeTarget(const juce::String &id)
+{
+    if (!id.startsWith("pipe:"))
+        return -1;
+    const int t = id.fromFirstOccurrenceOf(":", false, false).getIntValue();
+    return t >= 0 && t < kNumPipeTargets ? t : -1;
+}
+/** the stop of a timed path lane, -1 = not a path lane */
+inline int autoPathStop(const juce::String &id)
+{
+    if (!id.startsWith("path:"))
+        return -1;
+    const int s = id.fromFirstOccurrenceOf(":", false, false).getIntValue();
+    return s >= 0 && s < kNumStops ? s : -1;
+}
+/** a per-pipe lane's value 0..1 as the offset it gives its target (0.5 = none, at full range
+    like a routing at 100 %) */
+inline float autoPipeOffset(float v) noexcept
+{
+    return 2.0f * v - 1.0f;
+}
+
+/** where a direction + distance is in metres (x = right, y = front, z = up), as the engine
+    counts it */
+inline void autoPosToXyz(float azDeg, float elDeg, float dist, float &x, float &y, float &z) noexcept
+{
+    const float a = juce::degreesToRadians(azDeg), e = juce::degreesToRadians(elDeg);
+    x = -std::sin(a) * std::cos(e) * dist;
+    y = std::cos(a) * std::cos(e) * dist;
+    z = std::sin(e) * dist;
+}
+
+/** the radius an inward front starts from (metres) */
+constexpr float kAutoInwardRadius = 25.0f;
+
+/** the clock time (beats) a pipe at x, y, z hears of a spreading lane at clock time 'beats' */
+inline double autoPipeTime(const AutoLane &l, double beats, float x, float y, float z) noexcept
+{
+    if (!l.spread)
+        return beats;
+    const float dx = x - l.ox, dy = y - l.oy, dz = z - l.oz;
+    const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float run = l.inward ? juce::jmax(0.0f, kAutoInwardRadius - d) : d;
+    return beats - (double)(run / juce::jmax(0.05f, l.waveSpeed));
+}
+
+/** what the engine reads of the Verlauf (built on the message thread, immutable while the audio
+    thread holds it) */
+struct AutoEngineView
+{
+    struct PipeLane
+    {
+        const AutoLane *lane = nullptr;
+        int target = 0;
+    };
+    std::array<PipeLane, kMaxAutoLanes> pipe{};
+    int numPipe = 0;
+    std::array<const AutoLane *, kNumStops> path{}; // timed path per stop, nullptr = none
+
+    /** adds the per-pipe lanes to a pipe's modulation offsets; true if any acted */
+    bool addPipe(float *pm, double beats, float azDeg, float elDeg, float dist) const noexcept
+    {
+        if (numPipe <= 0)
+            return false;
+        float x = 0.0f, y = 0.0f, z = 0.0f;
+        autoPosToXyz(azDeg, elDeg, dist, x, y, z);
+        bool any = false;
+        for (int i = 0; i < numPipe; ++i)
+        {
+            const auto &pl = pipe[(size_t)i];
+            const float v = autoValue(*pl.lane, autoPipeTime(*pl.lane, beats, x, y, z));
+            if (std::isnan(v))
+                continue;
+            pm[pl.target] += autoPipeOffset(v);
+            any = true;
+        }
+        return any;
+    }
+};
+
+// ---------------------------------------------------------------------------
 // editing helpers (message thread)
 // ---------------------------------------------------------------------------
 inline void autoSort(AutoLane &l)
@@ -281,6 +377,12 @@ inline juce::ValueTree autoToTree(const AutoSet &s)
         lt.setProperty("speed", l.speed, nullptr);
         lt.setProperty("reverse", l.reverse, nullptr);
         lt.setProperty("offset", l.offset, nullptr);
+        lt.setProperty("spread", l.spread, nullptr);
+        lt.setProperty("ox", l.ox, nullptr);
+        lt.setProperty("oy", l.oy, nullptr);
+        lt.setProperty("oz", l.oz, nullptr);
+        lt.setProperty("waveSpeed", l.waveSpeed, nullptr);
+        lt.setProperty("inward", l.inward, nullptr);
         // points as text: t v bend shape rate depth; ...
         juce::String pts;
         for (auto &p : l.pts)
@@ -317,6 +419,12 @@ inline AutoSet autoFromTree(const juce::ValueTree &t)
         l.speed = juce::jlimit(0.0625f, 16.0f, (float)(double)lt.getProperty("speed", 1.0));
         l.reverse = (bool)lt.getProperty("reverse", false);
         l.offset = (double)lt.getProperty("offset", 0.0);
+        l.spread = (bool)lt.getProperty("spread", false);
+        l.ox = (float)(double)lt.getProperty("ox", 0.0);
+        l.oy = (float)(double)lt.getProperty("oy", 4.0);
+        l.oz = (float)(double)lt.getProperty("oz", 0.0);
+        l.waveSpeed = juce::jlimit(0.1f, 400.0f, (float)(double)lt.getProperty("waveSpeed", 4.0));
+        l.inward = (bool)lt.getProperty("inward", false);
         juce::StringArray items;
         items.addTokens(lt.getProperty("pts").toString(), ";", "");
         for (auto &it : items)

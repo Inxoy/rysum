@@ -22,8 +22,15 @@ public:
     /** drawing a trajectory instead of moving pipes; the finished stroke goes here */
     bool drawMode = false;
     std::function<void(std::vector<RysumProcessor::DrawnPath::Pt>)> onPathDrawn;
+    /** Verlauf: before a timetable mark is changed here (one undo step on the Verlauf page) */
+    std::function<void()> onTimetableEdit;
 
 private:
+    // Verlauf: the timetable of the selected stop's path - its lane (nullptr = none), where along
+    // the path a screen point is nearest (u 0..1, distance in pixels), the mark being dragged
+    rysum::AutoLane *timetable() const;
+    float nearestU(juce::Point<float> s, float &distPx) const;
+    int dragMark = -1;
     std::vector<RysumProcessor::DrawnPath::Pt> stroke;
     double strokeStart = 0.0;
     juce::Point<float> lastStrokePos;
@@ -193,6 +200,14 @@ public:
     void refresh();
     void selectStop(int s);
     void selectInput();
+    /** Verlauf: the stop's timetable lane is wanted (created by the Verlauf page; exists = it is
+        about to be switched on / off - an undo step) */
+    std::function<void(int stop, bool exists)> onTimetable;
+    /** before a timetable mark is changed on the plan */
+    void setTimetableEditHook(std::function<void()> f)
+    {
+        circle.onTimetableEdit = std::move(f);
+    }
 
 private:
     void updateVisibility();
@@ -228,6 +243,7 @@ private:
         motionButtons; // (8..12: the motions in the Saal, a row of their own)
     juce::Rectangle<int> motionSaalLabel;
     juce::TextButton drawButton{juce::String::fromUTF8("Bahn zeichnen")};
+    juce::TextButton timetableButton{"Fahrplan"};
     juce::TextButton pathLoop{"Schleife"},
         pathPing{juce::String::fromUTF8("Hin & zur\xc3\xbc"
                                         "ck")},

@@ -218,6 +218,8 @@ struct EngineParams
     bool playing = false;
     // the Verlauf (automation) clock: beats at the start of the block / slice, beats per second
     double autoBeats = 0.0, autoBeatRate = 0.0;
+    // ... and what it plays besides the parameters: per-pipe lanes, timed paths (nullptr = none)
+    const struct AutoEngineView *autoView = nullptr;
 
     // distance
     float doppler = 1.0f; // 0 = off, 1 = physical, up to 4 = exaggerated

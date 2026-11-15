@@ -193,6 +193,11 @@ public:
     void paintOverChildren(juce::Graphics &) override;
     void resized() override;
     void showView(int v);
+    /** (the snapshot tool) the stop the Raum page shows */
+    void selectRaumStop(int s)
+    {
+        space.selectStop(s);
+    }
     void tick();
     void showPatchMenu();
     void askResetEverything();

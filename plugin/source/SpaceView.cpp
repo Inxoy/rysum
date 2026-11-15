@@ -1,4 +1,5 @@
 #include "SpaceView.h"
+#include "VerlaufView.h"
 
 namespace rysum::ui
 {
@@ -126,6 +127,50 @@ void SpaceCircle::paint(juce::Graphics &g)
             g.strokePath(pth, juce::PathStrokeType(1.3f));
             const auto s0 = toScreen({dp.points.front().az, dp.points.front().el, 6.0f});
             g.fillEllipse(juce::Rectangle<float>(5.0f, 5.0f).withCentre(s0));
+            // Verlauf: the timetable - every point of the stop's path lane is a mark on the path
+            // (where the stop is, and when)
+            if (const auto *tl = timetable(); tl != nullptr && used && !drawMode)
+            {
+                const auto &mp = proc.engine.getPath(selected);
+                g.setFont(A.monoFont(9.5f));
+                for (int i = 0; i < (int)tl->pts.size(); ++i)
+                {
+                    float az = 0.0f, el = 0.0f;
+                    mp.at(tl->pts[(size_t)i].v, az, el);
+                    const auto q = toScreen({az, el, 6.0f});
+                    const bool hot = i == dragMark;
+                    g.setColour(hot ? col::white : col::ink);
+                    drawLozenge(g, q, hot ? 5.0f : 4.0f, hot ? 7.0f : 5.5f);
+                    // marks at the same place (the stop waits there): one label "from - to"
+                    auto same = [&](int a, int b)
+                    { return std::abs(tl->pts[(size_t)a].v - tl->pts[(size_t)b].v) < 0.002f; };
+                    if (i > 0 && same(i, i - 1) && !hot)
+                        continue;
+                    int last = i;
+                    while (last + 1 < (int)tl->pts.size() && same(last + 1, i))
+                        ++last;
+                    auto when = [&](int k)
+                    { return VerlaufView::clockText(proc, VerlaufView::beatOfLocal(*tl, tl->pts[(size_t)k].t)); };
+                    g.setColour(hot ? col::white : col::dim);
+                    g.drawText(last > i ? when(i) + juce::String::fromUTF8(" \xe2\x80\x93 ") + when(last) : when(i),
+                               juce::Rectangle<float>(q.x + 7.0f, q.y - 15.0f, 110.0f, 12.0f),
+                               juce::Justification::centredLeft);
+                }
+                // where the timetable has the stop now
+                const float un = autoValue(*tl, proc.getAutoNow());
+                if (!std::isnan(un))
+                {
+                    float az = 0.0f, el = 0.0f;
+                    mp.at(un, az, el);
+                    g.setColour(col::rubric.brighter(0.5f));
+                    g.drawEllipse(juce::Rectangle<float>(11.0f, 11.0f).withCentre(toScreen({az, el, 6.0f})), 1.5f);
+                }
+                g.setColour(col::faint);
+                g.drawText(juce::String::fromUTF8("Fahrplan: Marken entlang der Bahn ziehen \xc2\xb7 Alt + Klick: "
+                                                  "eine Marke zur jetzigen Zeit"),
+                           juce::Rectangle<float>(c.x - R, c.y + R + 22.0f, 2.0f * R, 14.0f),
+                           juce::Justification::centred);
+            }
         }
         if (stroke.size() >= 2)
         {
@@ -220,8 +265,89 @@ void SpaceCircle::paint(juce::Graphics &g)
     g.drawEllipse(juce::Rectangle<float>(16.0f, 16.0f).withCentre(c), 1.0f);
 }
 
+rysum::AutoLane *SpaceCircle::timetable() const
+{
+    auto &S = proc.getAuto();
+    const auto id = autoPathLaneId(selected);
+    for (auto &l : S.lanes)
+        if (l.paramId == id && l.on)
+            return &l;
+    return nullptr;
+}
+
+float SpaceCircle::nearestU(juce::Point<float> s, float &distPx) const
+{
+    const auto &mp = proc.engine.getPath(selected);
+    float best = 0.0f;
+    distPx = 1.0e9f;
+    for (int i = 0; i <= 600; ++i)
+    {
+        const float u = (float)i / 600.0f;
+        float az = 0.0f, el = 0.0f;
+        mp.at(u, az, el);
+        const float d = toScreen({az, el, 6.0f}).getDistanceFrom(s);
+        if (d < distPx)
+        {
+            distPx = d;
+            best = u;
+        }
+    }
+    return best;
+}
+
 void SpaceCircle::mouseDown(const juce::MouseEvent &e)
 {
+    dragMark = -1;
+    if (auto *tl = timetable(); tl != nullptr && !drawMode && !inputSel &&
+                                proc.readParams().motionMode[(size_t)selected] == (int)Motion::Drawn)
+    {
+        // a timetable mark: drag it along the path
+        const auto &mp = proc.engine.getPath(selected);
+        float best = 9.0f;
+        for (int i = 0; i < (int)tl->pts.size(); ++i)
+        {
+            float az = 0.0f, el = 0.0f;
+            mp.at(tl->pts[(size_t)i].v, az, el);
+            const float d = toScreen({az, el, 6.0f}).getDistanceFrom(e.position);
+            if (d < best)
+            {
+                best = d;
+                dragMark = i;
+            }
+        }
+        if (dragMark >= 0)
+        {
+            if (onTimetableEdit)
+                onTimetableEdit();
+            repaint();
+            return;
+        }
+        if (e.mods.isAltDown())
+        {
+            // a new mark: here on the path, at the clock's time now
+            float dist = 0.0f;
+            const float u = nearestU(e.position, dist);
+            if (dist < 14.0f)
+            {
+                if (onTimetableEdit)
+                    onTimetableEdit();
+                AutoPoint pt;
+                pt.t = juce::jmax(0.0, VerlaufView::localOf(*tl, proc.getAutoNow()));
+                pt.v = u;
+                tl->pts.erase(std::remove_if(tl->pts.begin(), tl->pts.end(),
+                                             [&](const AutoPoint &q) { return std::abs(q.t - pt.t) < 1.0e-6; }),
+                              tl->pts.end());
+                tl->pts.push_back(pt);
+                autoSort(*tl);
+                for (int i = 0; i < (int)tl->pts.size(); ++i)
+                    if (tl->pts[(size_t)i].t == pt.t)
+                        dragMark = i;
+                proc.autoChanged();
+                repaint();
+                return;
+            }
+        }
+    }
     if (drawMode)
     {
         stroke.clear();
@@ -289,6 +415,17 @@ void SpaceCircle::mouseDown(const juce::MouseEvent &e)
 
 void SpaceCircle::mouseDrag(const juce::MouseEvent &e)
 {
+    if (dragMark >= 0)
+    {
+        if (auto *tl = timetable(); tl != nullptr && dragMark < (int)tl->pts.size())
+        {
+            float dist = 0.0f;
+            tl->pts[(size_t)dragMark].v = nearestU(e.position, dist);
+            proc.autoChanged();
+            repaint();
+        }
+        return;
+    }
     if (drawMode)
     {
         if (e.position.getDistanceFrom(lastStrokePos) >= 2.0f && stroke.size() < 4000)
@@ -355,6 +492,12 @@ void SpaceCircle::mouseDrag(const juce::MouseEvent &e)
 
 void SpaceCircle::mouseUp(const juce::MouseEvent &)
 {
+    if (dragMark >= 0)
+    {
+        dragMark = -1;
+        repaint();
+        return;
+    }
     if (draggingInput)
     {
         for (auto *id : {"inpAz", "inpEl"})
@@ -642,7 +785,31 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
         circle.repaint();
     };
     addAndMakeVisible(drawButton);
-    circle.onPathDrawn = [this](std::vector<RysumProcessor::DrawnPath::Pt> pts)
+    timetableButton.setTooltip(u8(
+        "Fahrplan: wann das Register wo auf seiner Bahn ist, nach der Uhr des Verlaufs. Legt eine Spur "
+        "\xe2\x80\x9e" "Bahn\xe2\x80\x9c auf der Seite Verlauf an; ihre Punkte sind Marken auf der Bahn "
+        "(entlang ziehen, Alt + Klick: eine neue zur jetzigen Zeit). Nochmals: an / aus."));
+    timetableButton.onClick = [this]
+    {
+        const auto id = autoPathLaneId(selected);
+        for (auto &l : proc.getAuto().lanes)
+            if (l.paramId == id)
+            {
+                if (onTimetable)
+                    onTimetable(selected, true);
+                l.on = !l.on;
+                proc.autoChanged();
+                refresh();
+                circle.repaint();
+                return;
+            }
+        if (onTimetable)
+            onTimetable(selected, false);
+        refresh();
+        circle.repaint();
+    };
+    addAndMakeVisible(timetableButton);
+    circle.onPathDrawn =[this](std::vector<RysumProcessor::DrawnPath::Pt> pts)
     {
         proc.setDrawnPath(selected, std::move(pts));
         if (auto *pr = proc.apvts.getParameter(RysumProcessor::motionParamId(selected)))
@@ -1197,6 +1364,7 @@ void SpaceView::resized()
         for (int i = 8; i < 13; ++i)
             motionButtons[(size_t)i].setBounds(at3(i - 7));
         drawButton.setBounds(at(m2, 3));
+        timetableButton.setBounds(at(m2, 4));
         mb.removeFromTop(2);
         if (rateRow)
             rateRow->setBounds(mb.removeFromTop(34));
@@ -1265,6 +1433,11 @@ void SpaceView::refresh()
         pathPing.setToggleState(dp.pingPong, juce::dontSendNotification);
         pathEven.setToggleState(!dp.drawnTiming, juce::dontSendNotification);
         pathDrawnT.setToggleState(dp.drawnTiming, juce::dontSendNotification);
+        bool timed = false;
+        for (const auto &l : proc.getAuto().lanes)
+            timed = timed || (l.on && l.paramId == autoPathLaneId(selected));
+        timetableButton.setToggleState(timed, juce::dontSendNotification);
+        timetableButton.setAlpha(mode == (int)Motion::Drawn ? 1.0f : 0.45f);
         const float pathAlpha = mode == (int)Motion::Drawn ? 1.0f : 0.45f;
         for (auto *b : {&pathLoop, &pathPing, &pathEven, &pathDrawnT})
             b->setAlpha(pathAlpha);

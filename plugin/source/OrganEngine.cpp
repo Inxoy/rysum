@@ -1,4 +1,5 @@
 #include "OrganEngine.h"
+#include "Automation.h"
 #include "Kernels.h"
 #include "SamplePitch.h"
 
@@ -759,6 +760,9 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
         }
 
     Pos pos = currentPosition(v.stop, v.key, p);
+    // Verlauf: per-pipe lanes, each pipe at its own moment of a gesture spreading through the room
+    if (p.autoView != nullptr && p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist))
+        anyMod = true;
     if (anyMod)
     {
         pos.az = wrapAz(pos.az + 180.0f * pm[tgtAz]);
@@ -4206,6 +4210,9 @@ Pos OrganEngine::displayPosition(int stop, int key, const EngineParams &p) const
             pm[(size_t)r.target] += r.amount * shapeSource(r.src, v, r.uni);
             any = true;
         }
+        if (p.autoView != nullptr &&
+            p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist))
+            any = true;
         if (!any)
             return pos;
         az = 180.0f * pm[tgtAz];
@@ -5071,6 +5078,16 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
             const double scale = actFreeze.load() ? 0.0 : (p.sync ? p.bpm / 120.0 : 1.0);
             ph = motionPhase[(size_t)s].load() +
                  (double)p.motionRate[(size_t)s] * scale * blockSeconds;
+        }
+        // Verlauf: a timed path - where along its drawn path the stop is comes from its lane
+        // (a there-and-back path is walked forward in the first half of the phase)
+        if (p.autoView != nullptr && p.autoView->path[(size_t)s] != nullptr &&
+            (Motion)p.motionMode[(size_t)s] == Motion::Drawn)
+        {
+            const float u = autoValue(*p.autoView->path[(size_t)s],
+                                      p.autoBeats + blockSeconds * p.autoBeatRate);
+            if (!std::isnan(u))
+                ph = getPath(s).pingPong ? 0.5 * (double)u : (double)u;
         }
         if (std::abs(ph) > 1.0e7)
             ph = std::fmod(ph, 1000.0);

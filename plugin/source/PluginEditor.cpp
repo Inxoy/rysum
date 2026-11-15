@@ -15,6 +15,15 @@ RysumContent::RysumContent(RysumProcessor &p)
     addChildComponent(speakers);
     addChildComponent(walk);
     klang.onOpenSpeakers = [this] { showView(7); };
+    // the Raum page's timetables are lanes of the Verlauf page (and its undo)
+    space.onTimetable = [this](int stop, bool exists)
+    {
+        if (exists)
+            verlauf.noteExternalEdit();
+        else
+            verlauf.addLaneFor(rysum::autoPathLaneId(stop));
+    };
+    space.setTimetableEditHook([this] { verlauf.noteExternalEdit(); });
     saal.onOpenWalk = [this]
     {
         releaseComputerKeys();

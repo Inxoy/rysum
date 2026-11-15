@@ -1992,6 +1992,95 @@ public:
             std::cout << "verlauf hand: gives way " << gaveWay << ", recorded points at 0.9: " << recorded
                       << ", takes over again " << back << ((gaveWay && recorded >= 1 && back) ? "  ok" : "  FAIL")
                       << std::endl;
+            // spreading: a pipe 2 m from the origin hears a step at beat 2 two beats later, one 6 m
+            // away six beats later; through the engine, a silent pipe's shown direction follows
+            {
+                AutoLane w;
+                w.paramId = pipeTargetId(tgtAz);
+                w.spread = true;
+                w.ox = w.oy = w.oz = 0.0f;
+                w.waveSpeed = 1.0f;
+                AutoPoint a0{0.0, 0.5f}, a1{2.0, 0.75f};
+                a0.shape = asStep;
+                w.pts = {a0, a1};
+                const float nearV = autoValue(w, autoPipeTime(w, 5.0, 0.0f, 2.0f, 0.0f)),
+                            farV = autoValue(w, autoPipeTime(w, 5.0, 0.0f, 6.0f, 0.0f));
+                w.inward = true; // from 25 m in: the far pipe first
+                const float farIn = autoValue(w, autoPipeTime(w, 22.0, 0.0f, 6.0f, 0.0f)),
+                            nearIn = autoValue(w, autoPipeTime(w, 22.0, 0.0f, 2.0f, 0.0f));
+                w.inward = false;
+                AutoEngineView view;
+                view.pipe[0] = {&w, tgtAz};
+                view.numPipe = 1;
+                auto prm = proc->readParams();
+                const auto base = proc->engine.displayPosition(0, 3, prm);
+                float bx = 0, by = 0, bz = 0;
+                const auto home = proc->engine.currentPosition(0, 3, prm); // (what the lanes measure from)
+                autoPosToXyz(home.az, home.el, home.dist, bx, by, bz);
+                const double reach = std::sqrt(bx * bx + by * by + bz * bz); // beats until it arrives
+                prm.autoView = &view;
+                prm.autoBeats = 2.0 + reach - 0.5;
+                const float before = proc->engine.displayPosition(0, 3, prm).az;
+                prm.autoBeats = 2.0 + reach + 0.5;
+                const float after = proc->engine.displayPosition(0, 3, prm).az;
+                const bool engineOk = std::abs(wrapAz(before - base.az)) < 0.01f &&
+                                      std::abs(wrapAz(after - before - 90.0f)) < 0.5f;
+                // saved and loaded with the lane
+                AutoSet ss;
+                w.ox = 3.5f;
+                w.waveSpeed = 7.0f;
+                w.inward = true;
+                ss.lanes = {w};
+                const auto back = autoFromTree(autoToTree(ss));
+                const bool savedOk = back.lanes.size() == 1 && back.lanes[0].spread &&
+                                     std::abs(back.lanes[0].ox - 3.5f) < 1e-4f &&
+                                     std::abs(back.lanes[0].waveSpeed - 7.0f) < 1e-4f && back.lanes[0].inward &&
+                                     std::abs(back.lanes[0].speed - 1.0f) < 1e-6f;
+                const bool ok = std::abs(nearV - 0.75f) < 1e-5f && std::abs(farV - 0.5f) < 1e-5f &&
+                                std::abs(farIn - 0.75f) < 1e-5f && std::abs(nearIn - 0.5f) < 1e-5f &&
+                                engineOk && savedOk;
+                std::cout << "verlauf spreads: near " << nearV << " far " << farV << ", inward far " << farIn
+                          << " near " << nearIn << ", engine " << engineOk << " (az " << before - base.az
+                          << " -> " << after - base.az << "), saved " << savedOk << (ok ? "  ok" : "  FAIL")
+                          << std::endl;
+            }
+            // a timetable: where along its drawn path a stop is comes from its lane
+            {
+                const auto pathBefore = proc->getDrawnPath(0);
+                auto *motion0 = proc->apvts.getParameter(RysumProcessor::motionParamId(0));
+                const float motionBefore = motion0->getValue();
+                std::vector<RysumProcessor::DrawnPath::Pt> pts;
+                for (int i = 0; i <= 20; ++i)
+                    pts.push_back({-90.0f + 9.0f * (float)i, 10.0f, 0.1f * (float)i});
+                proc->setDrawnPath(0, pts);
+                proc->setPathOptions(0, false, false);
+                motion0->setValueNotifyingHost(motion0->convertTo0to1((float)rysum::Motion::Drawn));
+                AutoLane tl;
+                tl.paramId = autoPathLaneId(0);
+                tl.pts = {{0.0, 0.0f}, {8.0, 1.0f}};
+                const auto lanesBefore = S.lanes;
+                S.lanes.push_back(tl);
+                proc->autoPublish();
+                proc->autoPlay(false);
+                proc->autoSeek(2.0);
+                block();
+                block();
+                const double loopPh = proc->engine.motionPhase[0].load();
+                proc->setPathOptions(0, true, false);
+                proc->autoSeek(6.0);
+                block();
+                block();
+                const double pingPh = proc->engine.motionPhase[0].load();
+                S.lanes = lanesBefore;
+                proc->autoPublish();
+                proc->setDrawnPath(0, pathBefore.points);
+                proc->setPathOptions(0, pathBefore.pingPong, pathBefore.drawnTiming);
+                motion0->setValueNotifyingHost(motionBefore);
+                block();
+                const bool ok = std::abs(loopPh - 0.25) < 0.01 && std::abs(pingPh - 0.375) < 0.01;
+                std::cout << "verlauf timetable: phase at beat 2 (loop) " << loopPh << ", at beat 6 (there and back) "
+                          << pingPh << (ok ? "  ok" : "  FAIL") << std::endl;
+            }
             // the host's clock: its song position (also standing still), else the own clock
             {
                 struct FakeHead : juce::AudioPlayHead
@@ -2874,7 +2963,35 @@ public:
             d.pts = {{0.0, 0.0f}, {8.0, 1.0f}};
             d.pts[0].shape = asStairs;
             d.pts[0].rate = 1.0f;
-            S.lanes = {a, b, c, d};
+            AutoLane e; // a swell of brightness running through the room from front left
+            e.paramId = pipeTargetId(tgtBright);
+            e.spread = true;
+            e.ox = -6.0f;
+            e.oy = 8.0f;
+            e.waveSpeed = 3.0f;
+            e.pts = {{0.0, 0.5f}, {2.0, 0.9f}, {5.0, 0.5f}, {7.0, 0.2f}, {10.0, 0.5f}};
+            e.pts[1].shape = asWave;
+            e.pts[1].rate = 2.0f;
+            e.pts[1].depth = 0.15f;
+            AutoLane f; // the Praestant's timetable: there in 6 beats, wait, back by beat 16
+            f.paramId = autoPathLaneId(0);
+            f.pts = {{0.0, 0.0f}, {6.0, 0.45f}, {10.0, 0.45f}, {16.0, 1.0f}};
+            f.pts[0].bend = 0.6f;
+            S.lanes = {e, a, b, c, d, f};
+            const auto pathBefore = proc->getDrawnPath(0);
+            auto *motion0 = proc->apvts.getParameter(RysumProcessor::motionParamId(0));
+            const float motionBefore = motion0->getValue();
+            {
+                std::vector<RysumProcessor::DrawnPath::Pt> pts;
+                for (int i = 0; i <= 40; ++i)
+                {
+                    const float u = (float)i / 40.0f;
+                    pts.push_back({-120.0f + 240.0f * u, 15.0f + 45.0f * std::sin(u * 3.14159f), u});
+                }
+                proc->setDrawnPath(0, pts);
+                proc->setPathOptions(0, true, false);
+                motion0->setValueNotifyingHost(motion0->convertTo0to1((float)rysum::Motion::Drawn));
+            }
             proc->autoChanged();
             proc->autoPublish();
             proc->autoSeek(9.0);
@@ -2885,6 +3002,12 @@ public:
             }
             juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
             shoot(9, "ui_verlauf.png");
+            if (auto *rc = dynamic_cast<RysumContent *>(content))
+                rc->selectRaumStop(0);
+            shoot(1, "ui_raum_fahrplan.png");
+            proc->setDrawnPath(0, pathBefore.points);
+            proc->setPathOptions(0, pathBefore.pingPong, pathBefore.drawnTiming);
+            motion0->setValueNotifyingHost(motionBefore);
             // the sliders follow their curves (their timers run only in a window on screen)
             if (auto *rc = dynamic_cast<RysumContent *>(content))
             {

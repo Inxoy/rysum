@@ -23,6 +23,25 @@ private:
     juce::String title;
 };
 
+/** a spreading lane's origin, from above (front up, the listener in the middle, 20 m to the
+    edge): the pipes of the pulled stops, the origin (drag it; double-click: at the listener) and
+    the fronts of the gesture running through the room */
+class OriginPad : public juce::Component
+{
+public:
+    explicit OriginPad(VerlaufView &o) : owner(o) {}
+    void paint(juce::Graphics &) override;
+    void mouseDown(const juce::MouseEvent &) override;
+    void mouseDrag(const juce::MouseEvent &) override;
+    void mouseDoubleClick(const juce::MouseEvent &) override;
+    static constexpr float kRange = 20.0f;
+
+private:
+    VerlaufView &owner;
+    juce::Point<float> toPad(float x, float y) const;
+    juce::Point<float> fromPad(juce::Point<float>) const;
+};
+
 /** the lanes over time: ruler on top, a header per lane on the left, the curves on the right */
 class VerlaufTimeline : public juce::Component
 {
@@ -99,6 +118,7 @@ public:
 
 private:
     friend class VerlaufTimeline;
+    friend class OriginPad;
     RysumProcessor &proc;
     AutoSet &set()
     {
@@ -115,6 +135,17 @@ private:
     void showLaneMenu(int lane);
     void showPointMenu(int lane, int point);
     juce::String timeText(double beats) const;
+
+public:
+    /** a clock time as the ruler shows it: bars.beats (host) or m:ss (own clock) */
+    static juce::String clockText(const RysumProcessor &, double beats);
+    /** an edit from another page (the Raum page's timetable marks): one undo step */
+    void noteExternalEdit()
+    {
+        pushUndo();
+    }
+
+private:
     juce::String laneName(int lane) const;
     juce::String valueText(int lane, float v) const;
     int laneParam(int lane) const;
@@ -155,6 +186,11 @@ private:
         revButton{juce::String::fromUTF8("R\xc3\xbc"
                                          "ckw\xc3\xa4rts")},
         clearButton{"Leeren"};
+    // spreading (per-pipe lanes)
+    juce::TextButton spreadButton{"Ausbreitung"}, inwardButton{"nach innen"};
+    FreeRow waveRow{"Geschwindigkeit der Front", 0.25, 100.0, 6.0};
+    OriginPad originPad{*this};
+    bool selectedIsPipeLane() const;
     // segment
     std::array<juce::TextButton, kNumAutoShapes> shapeButtons;
     FreeRow bendRow{"Biegung", -1.0, 1.0}, rateRow{"Tempo", 0.05, 32.0, 2.0},

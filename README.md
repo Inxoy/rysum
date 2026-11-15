@@ -410,6 +410,28 @@ loops of different lengths running against each other.
 - **Lane** (*Spur*): *Länge* of its region, *Schleife* (the region repeats), *Rückwärts* (read
   backwards), *Dehnung* (× 2 = twice as fast, × 0.5 = half), *Versatz* (where it starts on the
   clock). Lanes with different lengths and stretches drift against each other (polymetric).
+- **Gestures that spread through the room** (*+ Spur → Je Pfeife – breitet sich im Raum aus*): a
+  lane on one of the per-pipe targets (*Richtung, Höhe, Abstand, Lautstärke, Tonhöhe, Helligkeit,
+  Wind, Verfall …*, the same as in the modulation matrix). The middle of the lane is "no change",
+  top and bottom are the target's full swing (like a routing at ±100 %). With *Ausbreitung* on, the
+  gesture starts at an **origin** and runs through the room as a front: every pipe hears the curve
+  as late as the front takes to reach it (distance ÷ *Geschwindigkeit der Front*, in metres per
+  beat). Draw one swell of brightness and it ripples through the case, near pipes first; slow the
+  front down and one gesture becomes a canon in space. *nach innen*: the front comes from far away
+  (25 m) towards the origin, the far pipes first. The small plan next to it shows the room from
+  above (front up, 20 m to the edge) with the pipes of the pulled stops: drag the origin
+  (double-click: at the listener) and watch the fronts run. Moving pipes hear the front where they
+  are at that moment. Without *Ausbreitung* all pipes change together.
+- **Timetables for drawn paths** (*Fahrplan*): on the Raum page, a stop with a drawn path
+  (*Gezeichnet*) gets a *Fahrplan* button. It adds a lane *Bahn: …* whose value is *where on its path*
+  the stop is (0 % = the start, 100 % = the end) at each moment of the clock, instead of running
+  round at a fixed speed. Its points show on the path in the top view as marks with their times:
+  drag a mark along the path to change where the stop is then; Alt + click on the path sets a mark
+  at the clock's present time. Two marks at the same place = the stop waits there ("0:06 – 0:10").
+  Everything a lane can do works on the journey: bent segments arrive slowly, *Stufe* jumps,
+  *Welle* shivers back and forth along the path, *Schleife* makes it a round trip. *Verteilung auf
+  der Bahn* still spreads the pipes behind each other like a train. *Fahrplan* again switches it
+  off (the stop runs at its *Geschwindigkeit* again).
 - **Recording**: switch on *● Aufnahme*, arm a lane (● in its head) and move its slider while the
   clock runs: the movement is written into the lane (only where you moved it), thinned to a few
   points you can edit afterwards.

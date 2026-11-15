@@ -1884,6 +1884,7 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     q.playing = p.playing;
     q.autoBeats = p.autoBeats;
     q.autoBeatRate = p.autoBeatRate;
+    q.autoView = p.autoView;
     q.roomHarmonics = p.roomHarmonics;
     q.roomFollow = p.roomFollow;
     q.roomBaseAz = p.roomBaseAz;
@@ -2182,6 +2183,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
             params.autoBeatRate = autoRun.load() ? (ac != nullptr ? ac->tempo : 60.0) / 60.0 : 0.0;
             autoOwnBeats += buffer.getNumSamples() / sr * params.autoBeatRate;
         }
+        params.autoView = ac != nullptr && ac->on ? &ac->view : nullptr;
         autoNow = params.autoBeats;
         autoHostNow = host;
         autoMovingNow = params.autoBeatRate > 0.0;

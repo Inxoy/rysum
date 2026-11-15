@@ -306,7 +306,8 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
     const bool sel = li == owner.selLane;
     const int param = owner.laneParam(li);
     const int steps = P.autoSteps(param);
-    const bool live = s.on && l.on && param >= 0;
+    const int pipeT = autoPipeTarget(l.paramId), pathS = autoPathStop(l.paramId);
+    const bool live = s.on && l.on && (param >= 0 || pipeT >= 0 || pathS >= 0);
 
     // header
     auto h = r.withWidth(kHeaderW);
@@ -323,8 +324,14 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
     g.drawText(owner.laneName(li), ht.removeFromTop(18), juce::Justification::centredLeft, true);
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::faint);
-    juce::String info = param >= 0 ? ModView::paramGroup(P.getParamAt(param)->getParameterID())
-                                   : juce::String::fromUTF8("(unbekannter Regler)");
+    juce::String info =
+        param >= 0 ? ModView::paramGroup(P.getParamAt(param)->getParameterID())
+        : pipeT >= 0
+            ? (l.spread ? juce::String::fromUTF8("je Pfeife \xc2\xb7 breitet sich aus ") +
+                              juce::String(l.waveSpeed, l.waveSpeed < 10.0f ? 1 : 0) + " m/S."
+                        : juce::String("je Pfeife"))
+        : pathS >= 0 ? juce::String("Fahrplan der Bahn")
+                     : juce::String::fromUTF8("(unbekannter Regler)");
     if (l.loop)
         info << juce::String::fromUTF8(" \xc2\xb7 Schleife ") << beatsText(l.length);
     if (l.reverse)
@@ -342,6 +349,14 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
         const juce::String vt =
             touched ? juce::String("Hand") : (std::isnan(an) ? juce::String("-") : owner.valueText(li, an));
         g.drawText(vt, ht.removeFromTop(14), juce::Justification::centredLeft, true);
+    }
+    else if (live)
+    {
+        // per-pipe and path lanes: the curve at the clock (at the origin, for a spreading one)
+        const float v = autoValue(l, P.getAutoNow());
+        g.setColour(col::dim);
+        g.drawText(std::isnan(v) ? juce::String("-") : owner.valueText(li, v), ht.removeFromTop(14),
+                   juce::Justification::centredLeft, true);
     }
     // header buttons
     const char *labels[]{"an", "\xe2\x97\x8f", "\xc3\x97"};
@@ -1029,6 +1044,48 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
     };
     addAndMakeVisible(clearButton);
 
+    // spreading through the room (per-pipe lanes)
+    spreadButton.setClickingTogglesState(true);
+    spreadButton.setTooltip(juce::String::fromUTF8(
+        "Die Geste breitet sich vom Ursprung (rechts im Plan) durch den Raum aus: jede Pfeife h\xc3\xb6rt "
+        "sie, wenn die Front bei ihr ankommt. Aus: alle Pfeifen zugleich."));
+    inwardButton.setClickingTogglesState(true);
+    inwardButton.setTooltip(juce::String::fromUTF8(
+        "Die Front l\xc3\xa4uft von weit drau\xc3\x9f"
+        "en (25 m) auf den Ursprung zu: die fernen Pfeifen zuerst"));
+    waveRow.format = [](double v) { return juce::String(v, v < 10.0 ? 1 : 0) + " m / Schlag"; };
+    waveRow.slider.setTooltip(juce::String::fromUTF8(
+        "Wie schnell die Front l\xc3\xa4uft. Langsam: aus einer Geste wird ein Kanon im Raum. "
+        "(Schall: etwa 170 m je Schlag bei 60 BPM.)"));
+    spreadButton.onClick = [this]
+    {
+        if (!selectedIsPipeLane())
+            return;
+        pushUndo();
+        set().lanes[(size_t)selLane].spread = spreadButton.getToggleState();
+        changed();
+    };
+    inwardButton.onClick = [this]
+    {
+        if (!selectedIsPipeLane())
+            return;
+        pushUndo();
+        set().lanes[(size_t)selLane].inward = inwardButton.getToggleState();
+        changed();
+    };
+    waveRow.onDragStart = [this] { pushUndo(); };
+    waveRow.onChange = [this](double v)
+    {
+        if (updating || !selectedIsPipeLane())
+            return;
+        set().lanes[(size_t)selLane].waveSpeed = (float)v;
+        changed();
+    };
+    addChildComponent(spreadButton);
+    addChildComponent(inwardButton);
+    addChildComponent(waveRow);
+    addChildComponent(originPad);
+
     // segment settings
     for (int k = 0; k < kNumAutoShapes; ++k)
     {
@@ -1095,13 +1152,34 @@ juce::String VerlaufView::laneName(int lane) const
 {
     const int p = laneParam(lane);
     if (p < 0)
-        return validLane(lane) ? proc.getAuto().lanes[(size_t)lane].paramId : juce::String();
+    {
+        if (!validLane(lane))
+            return {};
+        const auto &id = proc.getAuto().lanes[(size_t)lane].paramId;
+        if (const int t = autoPipeTarget(id); t >= 0)
+            return pipeTargetNames()[t];
+        if (const int s = autoPathStop(id); s >= 0)
+            return "Bahn: " + juce::String::fromUTF8(kStops[(size_t)s].label);
+        return id;
+    }
     return proc.getParamAt(p)->getName(64);
 }
 
 juce::String VerlaufView::valueText(int lane, float v) const
 {
     const int p = laneParam(lane);
+    if (p < 0 && validLane(lane))
+    {
+        const auto &id = proc.getAuto().lanes[(size_t)lane].paramId;
+        if (autoPipeTarget(id) >= 0)
+        {
+            // the offset the pipes get (like a routing: 100 % = the target's full swing)
+            const int o = juce::roundToInt(autoPipeOffset(v) * 100.0f);
+            return (o > 0 ? "+" : "") + juce::String(o) + " %";
+        }
+        if (autoPathStop(id) >= 0)
+            return juce::String(juce::roundToInt(v * 100.0f)) + " % der Bahn";
+    }
     if (p < 0)
         return juce::String(juce::roundToInt(v * 100.0f)) + " %";
     auto *prm = proc.getParamAt(p);
@@ -1109,6 +1187,11 @@ juce::String VerlaufView::valueText(int lane, float v) const
 }
 
 juce::String VerlaufView::timeText(double beats) const
+{
+    return clockText(proc, beats);
+}
+
+juce::String VerlaufView::clockText(const RysumProcessor &proc, double beats)
 {
     if (proc.isAutoHostClock())
     {
@@ -1227,6 +1310,31 @@ void VerlaufView::addLaneFor(const juce::String &paramId)
         }
     if ((int)s.lanes.size() >= kMaxAutoLanes)
         return;
+    if (autoPipeTarget(paramId) >= 0 || autoPathStop(paramId) >= 0)
+    {
+        pushUndo();
+        AutoLane l;
+        l.paramId = paramId;
+        if (autoPipeTarget(paramId) >= 0)
+        {
+            // a gesture that spreads from in front of the listener: nothing at first, a swell
+            // and back (0.5 = no change)
+            l.spread = true;
+            l.pts = {{0.0, 0.5f}, {2.0, 0.85f}, {4.0, 0.5f}};
+        }
+        else
+        {
+            // a timetable: one pass along the path in 16 beats
+            l.pts = {{0.0, 0.0f}, {16.0, 1.0f}};
+        }
+        s.lanes.push_back(std::move(l));
+        selLane = (int)s.lanes.size() - 1;
+        selPoint = 0;
+        changed();
+        timeline.scrollY =
+            juce::jmax(0, timeline.contentHeight() - (timeline.getHeight() - VerlaufTimeline::kRulerH));
+        return;
+    }
     const int p = proc.getParamIndex(paramId);
     if (!proc.isAutoTarget(p))
         return;
@@ -1264,7 +1372,32 @@ void VerlaufView::showAddMenu()
     for (int i = 0; i < proc.getNumParams(); ++i)
         if (proc.isAutoTarget(i) && !proc.isModTarget(i))
             switches.addItem(base + i, proc.getParamAt(i)->getName(64), true, taken.count(i) > 0);
-    menu.addSectionHeader(juce::String::fromUTF8("Eine Spur f\xc3\xbcr \xe2\x80\xa6"));
+    menu.addSectionHeader(juce::String::fromUTF8("Im Raum"));
+    {
+        // per-pipe targets: the gesture spreads through the room from an origin
+        juce::PopupMenu pipes;
+        const auto names = pipeTargetNames();
+        for (int t = 0; t < kNumPipeTargets; ++t)
+        {
+            bool has = false;
+            for (auto &l : set().lanes)
+                has = has || l.paramId == pipeTargetId(t);
+            pipes.addItem(5000 + t, names[t].fromFirstOccurrenceOf("Pfeife: ", false, false), true, has);
+        }
+        menu.addSubMenu(juce::String::fromUTF8("Je Pfeife \xe2\x80\x93 breitet sich im Raum aus"), pipes);
+        // timed paths
+        juce::PopupMenu paths;
+        for (int k = 0; k < kNumStops; ++k)
+        {
+            const int st = kDisplayOrder[(size_t)k];
+            bool has = false;
+            for (auto &l : set().lanes)
+                has = has || l.paramId == autoPathLaneId(st);
+            paths.addItem(6000 + st, juce::String::fromUTF8(kStops[(size_t)st].label), true, has);
+        }
+        menu.addSubMenu(juce::String::fromUTF8("Fahrplan einer gezeichneten Bahn"), paths);
+    }
+    menu.addSectionHeader(juce::String::fromUTF8("Regler"));
     if (switches.getNumItems() > 0)
         menu.addSubMenu(juce::String::fromUTF8("Schalter (Register, Bewegung, Freeze \xe2\x80\xa6)"), switches);
     for (auto &grp : groups)
@@ -1287,7 +1420,12 @@ void VerlaufView::showAddMenu()
                        {
                            if (safe == nullptr || r < base)
                                return;
-                           safe->addLaneFor(safe->proc.getParamAt(r - base)->getParameterID());
+                           if (r >= 6000 && r < 6000 + kNumStops)
+                               safe->addLaneFor(autoPathLaneId(r - 6000));
+                           else if (r >= 5000 && r < 5000 + kNumPipeTargets)
+                               safe->addLaneFor(pipeTargetId(r - 5000));
+                           else if (auto *prm = safe->proc.getParamAt(r - base))
+                               safe->addLaneFor(prm->getParameterID());
                        });
 }
 
@@ -1406,6 +1544,23 @@ void VerlaufView::syncControls()
                                (juce::Component *)&offsetRow, (juce::Component *)&loopButton,
                                (juce::Component *)&revButton, (juce::Component *)&clearButton})
         c->setEnabled(lane);
+    {
+        const bool pipeLane = selectedIsPipeLane();
+        for (juce::Component *c : {(juce::Component *)&spreadButton, (juce::Component *)&inwardButton,
+                                   (juce::Component *)&waveRow, (juce::Component *)&originPad})
+            c->setVisible(pipeLane);
+        if (pipeLane)
+        {
+            const auto &l = s.lanes[(size_t)selLane];
+            spreadButton.setToggleState(l.spread, juce::dontSendNotification);
+            inwardButton.setToggleState(l.inward, juce::dontSendNotification);
+            waveRow.slider.setValue(l.waveSpeed, juce::dontSendNotification);
+            inwardButton.setEnabled(l.spread);
+            waveRow.setEnabled(l.spread);
+            waveRow.repaint();
+            originPad.repaint();
+        }
+    }
     bool seg = false;
     if (lane)
     {
@@ -1481,6 +1636,8 @@ void VerlaufView::timerCallback()
             s.viewStart = juce::jmax(0.0, now - s.viewLen * 0.1);
         timeline.repaint();
         repaint(titleBox);
+        if (originPad.isVisible())
+            originPad.repaint();
     }
     const bool rec = proc.isAutoRecord();
     if (recButton.getToggleState() != rec)
@@ -1562,7 +1719,7 @@ void VerlaufView::resized()
     zoomOut.setBounds(bar.removeFromRight(26));
 
     r.removeFromTop(10);
-    auto bottom = r.removeFromBottom(122);
+    auto bottom = r.removeFromBottom(152);
     r.removeFromBottom(14);
     timeline.setBounds(r);
 
@@ -1572,6 +1729,18 @@ void VerlaufView::resized()
     segBox = bottom;
     {
         auto b = laneBox.withTrimmedTop(38);
+        // the origin plan on the right (per-pipe lanes)
+        originPad.setBounds(b.removeFromRight(b.getHeight()).reduced(2));
+        b.removeFromRight(16);
+        {
+            auto row3 = b.withTrimmedTop(34 + 8 + 24 + 10);
+            row3 = row3.withHeight(34);
+            spreadButton.setBounds(row3.removeFromLeft(96).withTrimmedTop(10));
+            row3.removeFromLeft(6);
+            inwardButton.setBounds(row3.removeFromLeft(86).withTrimmedTop(10));
+            row3.removeFromLeft(16);
+            waveRow.setBounds(row3);
+        }
         auto row1 = b.removeFromTop(34);
         const int w = (row1.getWidth() - 2 * 18) / 3;
         lenRow.setBounds(row1.removeFromLeft(w));
@@ -1604,5 +1773,139 @@ void VerlaufView::resized()
         row2.removeFromLeft(18);
         depthRow.setBounds(row2);
     }
+}
+bool VerlaufView::selectedIsPipeLane() const
+{
+    return validLane(selLane) && autoPipeTarget(proc.getAuto().lanes[(size_t)selLane].paramId) >= 0;
+}
+
+// ---------------------------------------------------------------------------
+// the origin of a spreading lane
+// ---------------------------------------------------------------------------
+juce::Point<float> OriginPad::toPad(float x, float y) const
+{
+    const auto c = getLocalBounds().toFloat().getCentre();
+    const float k = (float)juce::jmin(getWidth(), getHeight()) * 0.5f / kRange;
+    return {c.x + x * k, c.y - y * k};
+}
+
+juce::Point<float> OriginPad::fromPad(juce::Point<float> p) const
+{
+    const auto c = getLocalBounds().toFloat().getCentre();
+    const float k = (float)juce::jmin(getWidth(), getHeight()) * 0.5f / kRange;
+    return {(p.x - c.x) / k, (c.y - p.y) / k};
+}
+
+void OriginPad::paint(juce::Graphics &g)
+{
+    if (!owner.selectedIsPipeLane())
+        return;
+    auto &A = Assets::get();
+    auto &P = owner.proc;
+    const auto &l = P.getAuto().lanes[(size_t)owner.selLane];
+    const auto b = getLocalBounds().toFloat();
+    const auto c = b.getCentre();
+    const float R = juce::jmin(b.getWidth(), b.getHeight()) * 0.5f;
+    g.setColour(col::panel);
+    g.fillEllipse(b.withSizeKeepingCentre(2 * R, 2 * R));
+    // rings every 5 m
+    g.setColour(col::line);
+    for (int m = 5; m <= (int)kRange; m += 5)
+    {
+        const float r = R * (float)m / kRange;
+        g.drawEllipse(juce::Rectangle<float>(2 * r, 2 * r).withCentre(c), m == (int)kRange ? 1.0f : 0.6f);
+    }
+    g.setColour(col::border);
+    g.drawEllipse(b.withSizeKeepingCentre(2 * R, 2 * R), 1.0f);
+    // the pipes of the pulled stops
+    const auto params = P.readParams();
+    g.setColour(col::dim.withAlpha(0.55f));
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        if (!params.stopOn[(size_t)s])
+            continue;
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const auto pos = P.engine.displayPosition(s, k, params);
+            float x = 0, y = 0, z = 0;
+            autoPosToXyz(pos.az, pos.el, pos.dist, x, y, z);
+            const auto q = toPad(x, y);
+            if (b.contains(q))
+                g.fillRect(juce::Rectangle<float>(2.0f, 2.0f).withCentre(q));
+        }
+    }
+    // the listener (front up)
+    {
+        juce::Path tri;
+        tri.addTriangle(c.x, c.y - 4.5f, c.x - 3.5f, c.y + 3.0f, c.x + 3.5f, c.y + 3.0f);
+        g.setColour(col::ink);
+        g.fillPath(tri);
+    }
+    if (l.spread)
+    {
+        // the fronts: one ring per point of the curve that the clock has passed (each change
+        // runs through the room)
+        const auto o = toPad(l.ox, l.oy);
+        const double now = P.getAutoNow();
+        const float k = R / kRange;
+        juce::Graphics::ScopedSaveState ss(g);
+        g.reduceClipRegion(juce::Rectangle<float>(2 * R, 2 * R).withCentre(c).toNearestInt());
+        for (const auto &pt : l.pts)
+        {
+            const double since = now - VerlaufView::beatOfLocal(l, pt.t);
+            if (since < 0.0)
+                continue;
+            float run = (float)since * l.waveSpeed;
+            float rad = l.inward ? kAutoInwardRadius - run : run;
+            if (rad < 0.0f || rad > kRange * 2.2f || run > kAutoInwardRadius * 2.0f)
+                continue;
+            const float fade = juce::jlimit(0.15f, 1.0f, 1.0f - run / (kRange * 2.2f));
+            g.setColour(col::rubric.withAlpha(0.8f * fade));
+            g.drawEllipse(juce::Rectangle<float>(2 * rad * k, 2 * rad * k).withCentre(o), 1.2f);
+        }
+        g.setColour(col::rubric.brighter(0.3f));
+        drawLozenge(g, o, 4.5f, 6.0f);
+    }
+    else
+    {
+        g.setColour(col::faint);
+        g.setFont(A.monoFont(9.5f));
+        g.drawFittedText(juce::String::fromUTF8("alle Pfeifen\nzugleich"), getLocalBounds().reduced(8),
+                         juce::Justification::centredBottom, 2);
+    }
+}
+
+void OriginPad::mouseDown(const juce::MouseEvent &e)
+{
+    if (!owner.selectedIsPipeLane() || !owner.set().lanes[(size_t)owner.selLane].spread)
+        return;
+    owner.pushUndo();
+    mouseDrag(e);
+}
+
+void OriginPad::mouseDrag(const juce::MouseEvent &e)
+{
+    if (!owner.selectedIsPipeLane())
+        return;
+    auto &l = owner.set().lanes[(size_t)owner.selLane];
+    if (!l.spread)
+        return;
+    auto q = fromPad(e.position);
+    if (!e.mods.isShiftDown())
+        q = {std::round(q.x * 2.0f) * 0.5f, std::round(q.y * 2.0f) * 0.5f}; // half metres
+    l.ox = juce::jlimit(-kRange, kRange, q.x);
+    l.oy = juce::jlimit(-kRange, kRange, q.y);
+    owner.changed();
+    repaint();
+}
+
+void OriginPad::mouseDoubleClick(const juce::MouseEvent &)
+{
+    if (!owner.selectedIsPipeLane())
+        return;
+    auto &l = owner.set().lanes[(size_t)owner.selLane];
+    l.ox = l.oy = l.oz = 0.0f; // at the listener
+    owner.changed();
+    repaint();
 }
 } // namespace rysum::ui

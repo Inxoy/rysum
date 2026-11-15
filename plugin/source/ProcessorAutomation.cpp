@@ -42,6 +42,19 @@ void RysumProcessor::autoPublish()
     c->clock = autoSet.clock;
     c->tempo = autoSet.tempo;
     c->startOnKey = autoSet.startOnKey;
+    // per-pipe and path lanes: copied first, then the engine's view points into the copies
+    c->spatial.reserve((size_t)kMaxAutoLanes);
+    for (const auto &l : autoSet.lanes)
+        if (l.on && (autoPipeTarget(l.paramId) >= 0 || autoPathStop(l.paramId) >= 0) &&
+            !l.pts.empty() && (int)c->spatial.size() < kMaxAutoLanes)
+            c->spatial.push_back(l);
+    for (const auto &l : c->spatial)
+    {
+        if (const int t = autoPipeTarget(l.paramId); t >= 0)
+            c->view.pipe[(size_t)c->view.numPipe++] = {&l, t};
+        else if (const int s = autoPathStop(l.paramId); s >= 0 && c->view.path[(size_t)s] == nullptr)
+            c->view.path[(size_t)s] = &l;
+    }
     for (int li = 0; li < (int)autoSet.lanes.size(); ++li)
     {
         const auto &l = autoSet.lanes[(size_t)li];
