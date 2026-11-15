@@ -31,6 +31,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     std::function<void()> onBack;
     /** "Immersiv": only the picture - no buttons, no writing, no map - over the whole window, and the mouse looks
@@ -72,6 +73,29 @@ public:
     void setGrab (bool on, bool fast = false);
     /** F: while on, everything that moves stands still */
     void setFreeze (bool on);
+    // ---- arranging the pipes: choosing some, formations, layouts (F1 to F8), undo, the magnet, the sweep
+    /** Ctrl+click: one pipe into the choice or out of it (toggle) / only into it */
+    void selectPipe (int stop, int key, bool toggle = true);
+    /** Ctrl+double-click: all pipes of a stop */
+    void selectRegister (int stop);
+    void clearSelection();
+    int selectedCount() const noexcept;
+    bool isSelected (int stop, int key) const noexcept { return stop >= 0 && stop < kNumStops && key >= 0 && key < kNumKeys && ((sel[(size_t) stop] >> key) & 1u) != 0u; }
+    /** 1 row, 2 circle around you, 3 spiral, 4 grid, 5 scattered: the chosen pipes (none chosen: all of the
+        pulled stops) fly there and stay; false = no pipe to move */
+    bool formation (int kind);
+    /** Ctrl+F1..F8 / F1..F8: where the pipes stand now, kept (with the project) / brought back */
+    bool storeLayout (int slot);
+    bool recallLayout (int slot);
+    /** Ctrl+Z: the pipes back to where they stood before the last shock, throw, call, formation, layout or magnet */
+    bool undo();
+    int undoDepth() const noexcept { return (int) undoStack.size(); }
+    /** the right mouse button held: +1 draws the pipes to a point ahead of you, -1 (Shift) drives them away, 0 off */
+    void setMagnet (int mode);
+    /** Alt+drag: every pipe the pointer passes from 'from' to 'to' is knocked (once); how many */
+    int sweepTo (juce::Point<float> from, juce::Point<float> to, float strength);
+    /** tests: hold Tab (all the keys shown) */
+    void setHelpForTest (bool on) { helpHeld = on; repaint(); }
     /** tests: what the timer does for the actions (the hand's place, a pipe taken once its stop hovers) */
     void updateActionsForTest() { updateActions (heldStop >= 0, frozen); }
     /** tests: the pipe under the cross (-1 = none), from the last frame drawn */
@@ -133,6 +157,8 @@ private:
     void chooseModel();
     void loadBuiltInRoom (int index);
     void updateButtons();
+    void drawHelp (juce::Graphics& g, juce::Rectangle<int> area);
+    void drawArranging (juce::Graphics& g, juce::Rectangle<int> area);
     void drawMap (juce::Graphics& g, juce::Rectangle<float> area, const RoomParams& r, const EngineParams& params, V3 home);
 
     RysumProcessor& proc;
@@ -158,6 +184,21 @@ private:
     float shockAmt = 1.0f, dragged = 0.0f;
     juce::Point<float> downPos;
     bool pickPipe (juce::Point<float> at, float maxDist, int& stop, int& key) const;
+    // arranging (see formation, storeLayout, undo, setMagnet, sweepTo)
+    std::array<uint64_t, kNumStops> sel {};                      // the chosen pipes (bit = key)
+    std::vector<RysumProcessor::WalkLayout> undoStack;
+    RysumProcessor::WalkLayout capture() const;
+    int applyLayout (const RysumProcessor::WalkLayout& lay);     // how many pipes are sent on their way
+    void pushUndo();
+    double arrangeUntil = 0.0, arrangeLast = 0.0;                // (Arrange is sent again until stops just woken take it)
+    int magnet = 0;
+    float magnetDist = 3.0f;
+    bool boxing = false, sweeping = false, helpHeld = false;
+    juce::Point<float> boxFrom, boxTo, sweepLast;
+    double sweepLastMs = 0.0;
+    std::array<std::array<double, kNumKeys>, kNumStops> sweptAt {};
+    uint32_t scatterSeed = 1;
+    bool overlayBusy() const noexcept { return helpHeld || magnet != 0 || boxing || selectedCount() > 0; }
     // a frame in two parts: the picture (the room and the pipes as triangles), and what is drawn over it
     struct Glow { V3 at; float amount, size; };
     struct Scene

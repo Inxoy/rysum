@@ -722,6 +722,21 @@ The hands are also buttons in a row at the bottom (*E Druckwelle*, *Q Greifen*, 
 (see *MIDI buttons for any button* in chapter 4) – also *Immersiv* itself. *Greifen*, *Anhalten*
 and *Springen* act for as long as the MIDI button is held.
 
+**Arranging the pipes.** Hold *Tab* to see every key of the 3D view. *Ctrl+click* chooses a pipe (again:
+out of the choice), *Ctrl+double-click* its whole stop, *Ctrl+drag* a frame around several; *Esc* empties
+the choice (red lozenges mark it). The keys **1 to 5** set the chosen pipes – or, with none chosen, all
+pipes of the pulled stops – into a formation around where you stand: a row across the view (low notes on
+the left, more than 24 in rows behind), a circle around you, a spiral, a grid ahead, or scattered at all
+heights. They fly there and stay. **Ctrl+F1 … F8** keeps where the pipes stand now as a layout (saved
+with the project, not with a patch), **F1 … F8** brings it back in one flight. **Ctrl+Z** undoes the
+last shockwave, throw, call home, formation, layout or magnet (up to 24 steps). **Holding the right
+mouse button** is a magnet a few metres ahead (where you look): the pipes gather around it in a loose
+cloud, with *Shift* they flee from it, the wheel moves it nearer or further; moving the mouse meanwhile
+still looks around, so the cloud can be led through the room. **Alt+drag** strokes over the pipes like
+a hand over strings: every pipe the pointer passes is knocked once, as hard as the pointer is fast. In
+the immersive view all of this happens at the cross. Stops that stand still start to hover when they
+are arranged or drawn (as with E and Q).
+
 *Publikum* (the last button of that row): the audience plays along with their phones. A QR code
 appears in the corner of the 3D view (also in the immersive view, so it can be projected) with the
 address under it; phones on the same network open a small page there, nothing to install. Every

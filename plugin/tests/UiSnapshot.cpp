@@ -597,6 +597,139 @@ public:
                     juce::String(crept, 3) + " m in 2 s)",
                 hd > 1.0f && hd < 3.2f && along > 0.9f * hd && flew > 1.0f && crept < 0.3f);
 
+            // ---- arranging: choosing pipes, a formation, undo, a layout kept and brought back (also through the
+            // project), the magnet, the sweep, the list of the keys
+            {
+                auto& en = proc->engine;
+                auto snapshot = [&]
+                {
+                    std::array<Vec3f, kNumKeys> a{};
+                    for (int k = 0; k < kNumKeys; ++k)
+                        en.bodyAt(0, k, a[(size_t)k]);
+                    return a;
+                };
+                auto apart = [&](const std::array<Vec3f, kNumKeys> &a, int keys)
+                {
+                    float sum = 0.0f;
+                    int n = 0;
+                    for (int k = 0; k < keys; ++k)
+                    {
+                        Vec3f b;
+                        if (!en.bodyAt(0, k, b))
+                            continue;
+                        const auto &p = a[(size_t)k];
+                        sum += std::sqrt((b.x - p.x) * (b.x - p.x) + (b.y - p.y) * (b.y - p.y));
+                        ++n;
+                    }
+                    return n > 0 ? sum / (float)n : 99.0f;
+                };
+                auto targets = [&]
+                {
+                    std::array<Vec3f, kNumKeys> a{};
+                    for (int k = 0; k < kNumKeys; ++k)
+                        a[(size_t)k] = {en.goX[0][(size_t)k].load(), en.goY[0][(size_t)k].load(), en.goZ[0][(size_t)k].load()};
+                    return a;
+                };
+                wv.setPoseForTest(0, 0, 0);
+                wv.setPitchForTest(0.0f);
+                run(20, {});
+                const auto before = snapshot();
+                for (int k = 0; k < 12; ++k)
+                    wv.selectPipe(0, k, false);
+                const int chosen = wv.selectedCount();
+                const bool row = wv.formation(1);
+                run(400, {});
+                const float offRow = apart(targets(), 12);
+                Vec3f lo, hi;
+                en.bodyAt(0, 0, lo);
+                en.bodyAt(0, 11, hi);
+                shot("walk_row.png");
+                say("arranging: " + juce::String(chosen) + " pipes chosen, a row: they stand " + juce::String(offRow, 2) +
+                        " m from their places in it, low on the left (" + juce::String(lo.x, 1) + " < " + juce::String(hi.x, 1) + " m)",
+                    chosen == 12 && row && offRow < 0.25f && lo.x < hi.x);
+
+                // knocked over the row like strings: Alt+drag across the view
+                const uint32_t i0 = en.impactCount.load();
+                const auto mid = wv.getLocalBounds().getCentre().toFloat();
+                int swept = 0;
+                for (float x = 60.0f; x < (float)wv.getWidth() - 60.0f; x += 40.0f)
+                    swept += wv.sweepTo({x, mid.y + 10.0f}, {x + 40.0f, mid.y + 10.0f}, 1.0f);
+                run(10, {});
+                const uint32_t i1 = en.impactCount.load();
+                say("arranging: a sweep over the row knocks " + juce::String(swept) + " pipes (the row and those behind it), each once (" +
+                        juce::String((int)(i1 - i0)) + " knocks)",
+                    swept >= 6 && (int)(i1 - i0) == swept);
+                run(150, {});
+
+                const int depth = wv.undoDepth();
+                wv.undo();
+                run(400, {});
+                const float offUndo = apart(before, kNumKeys);
+                say("arranging: undo brings them back (" + juce::String(offUndo, 2) + " m from where they stood)",
+                    depth >= 1 && offUndo < 0.25f && wv.undoDepth() == depth - 1);
+
+                wv.clearSelection();
+                const bool kept = wv.storeLayout(0);
+                wv.formation(2);
+                run(400, {});
+                const float offCircle = apart(before, kNumKeys);
+                wv.recallLayout(0);
+                run(400, {});
+                const float offBack = apart(before, kNumKeys);
+                // (kept with the project)
+                const auto keptHas = proc->walkLayouts[0].has[0];
+                const auto keptAt = proc->walkLayouts[0].at[0][3];
+                juce::MemoryBlock ls;
+                proc->getStateInformation(ls);
+                proc->walkLayouts[0] = {};
+                proc->setStateInformation(ls.getData(), (int)ls.getSize());
+                const auto &back = proc->walkLayouts[0];
+                const bool inProject = back.has[0] == keptHas && keptHas != 0 &&
+                                       std::abs(back.at[0][3].x - keptAt.x) < 0.01f && std::abs(back.at[0][3].z - keptAt.z) < 0.01f;
+                say("arranging: F1 keeps the layout, a circle takes them " + juce::String(offCircle, 1) + " m away, F1 brings them back (" +
+                        juce::String(offBack, 2) + " m), the layout is in the project: " + (inProject ? "yes" : "no"),
+                    kept && offCircle > 0.5f && offBack < 0.25f && inProject);
+
+                // the magnet: three metres ahead; everything comes closer
+                wv.setPoseForTest(0, 0, 0);
+                wv.setPitchForTest(0.0f);
+                run(2, {});
+                auto toMagnet = [&]
+                {
+                    float sum = 0.0f;
+                    int n = 0;
+                    for (int k = 0; k < kNumKeys; ++k)
+                    {
+                        Vec3f b;
+                        if (!en.bodyAt(0, k, b))
+                            continue;
+                        const float dx = b.x - en.magnetX.load(), dy = b.y - en.magnetY.load(), dz = b.z - en.magnetZ.load();
+                        sum += std::sqrt(dx * dx + dy * dy + dz * dz);
+                        ++n;
+                    }
+                    return n > 0 ? sum / (float)n : 99.0f;
+                };
+                wv.setMagnet(1);
+                wv.updateActionsForTest();
+                const float m0 = toMagnet();
+                for (int i = 0; i < 300; ++i)
+                {
+                    wv.updateActionsForTest();
+                    run(1, {});
+                }
+                const float m1 = toMagnet();
+                shot("walk_magnet.png");
+                wv.setMagnet(0);
+                say("arranging: the magnet draws the pipes from " + juce::String(m0, 2) + " m to " + juce::String(m1, 2) + " m around its point",
+                    m1 < m0 - 1.0f && m1 < 2.0f);
+                wv.undo();
+                run(400, {});
+
+                wv.setHelpForTest(true);
+                shot("walk_keys.png");
+                wv.setHelpForTest(false);
+            }
+
             // ---- the audience: a "phone" (this computer, 127.0.0.1) opens the page, gets a pipe,
             // knocks it, sends a shockwave, blows wind; a connection that never sends holds nothing up
             {

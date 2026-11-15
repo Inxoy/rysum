@@ -526,12 +526,15 @@ void WalkView::timerCallback()
         const bool fast = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
         advance (dt, f, b, l, r, turn / (90.0f * (float) juce::jmax (1.0e-4, dt)), fast, down (juce::KeyPress::spaceKey) || jumpHeld);
         updateActions (down ('Q') || down ('q') || grabHeld, down ('F') || down ('f') || freezeHeld);
+        { const bool tab = down (juce::KeyPress::tabKey); if (tab != helpHeld) { helpHeld = tab; repaint(); } }
 
     }
     else
     {
         advance (dt, false, false, false, false, 0.0f, false, jumpHeld);      // (keys let go by losing the focus: coming to rest, landing)
         updateActions (grabHeld, freezeHeld);
+        if (helpHeld) { helpHeld = false; repaint(); }
+        if (magnet != 0) setMagnet (0);
     }
     updateGpu();
     if (! gpuOn()) { overWasCard = false; repaint(); return; }
@@ -542,7 +545,7 @@ void WalkView::timerCallback()
     ++overTick;
     const bool shockNow = shockFx > 0.0 && t - shockFx < 600.0;
     const int cross = (aimStop >= 0 || heldStop >= 0) ? 1 : 0;
-    if (! overWasCard || shockNow || overShock || overTick % 120 == 0 || overText.isEmpty() != overTextWasEmpty)
+    if (! overWasCard || shockNow || overShock || overTick % 120 == 0 || overlayBusy() || overText.isEmpty() != overTextWasEmpty)
         repaint();
     else
     {
@@ -621,9 +624,21 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
 {
     if (k == juce::KeyPress::escapeKey)
     {
+        if (selectedCount() > 0) { clearSelection(); say (U ("Auswahl leer")); return true; }
         if (immersive) setImmersive (false);
         else if (onBack) onBack();
         return true;
+    }
+    {
+        // arranging: layouts on F1 to F8 (Ctrl: keep), undo, the formations, the list of the keys
+        const auto mods = k.getModifiers();
+        const bool ctrlKey = mods.isCtrlDown() || mods.isCommandDown();
+        const int kc = k.getKeyCode();
+        for (int i = 0; i < 8; ++i)
+            if (kc == juce::KeyPress::F1Key + i) { if (ctrlKey) storeLayout (i); else recallLayout (i); return true; }
+        if (ctrlKey && (kc == 'Z' || kc == 'z')) { undo(); return true; }
+        if (kc == juce::KeyPress::tabKey) return true;      // (held: see the timer)
+        if (! ctrlKey && ! mods.isAltDown() && kc >= '1' && kc <= '5') { formation (kc - '0'); return true; }
     }
     const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
     if (c == 'i' && ! k.getModifiers().isCtrlDown() && ! k.getModifiers().isCommandDown()) { toggleImmersive(); return true; }
@@ -724,21 +739,69 @@ void WalkView::mouseMove (const juce::MouseEvent&) { pollLockedMouse(); }
 void WalkView::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
-    if (immersive)
+    const bool ctrl = e.mods.isCtrlDown() || e.mods.isCommandDown();
+    const auto centre = getLocalBounds().getCentre().toFloat();
+    if (e.mods.isPopupMenu())
     {
-        // no pointer: a click knocks on the pipe under the cross
-        strikeAt (getLocalBounds().getCentre().toFloat(), e.mods.isShiftDown() ? 1.7f : 1.0f);
+        // the right button held: the magnet (moving the mouse meanwhile still looks around)
+        setMagnet (e.mods.isShiftDown() ? -1 : 1);
+        if (immersive) return;
+        looking = true;
+        lastMouse = downPos = e.position;
+        dragged = 0.0f;
+        e.source.enableUnboundedMouseMovement (true);
         return;
     }
-    looking = true;
+    if (immersive)
+    {
+        // no pointer: everything happens at the cross
+        int s = -1, k = -1;
+        if (ctrl) { if (pickPipe (centre, 40.0f, s, k)) selectPipe (s, k); return; }
+        if (e.mods.isAltDown()) { sweeping = true; sweepTo (centre, centre, 1.0f); return; }
+        strikeAt (centre, e.mods.isShiftDown() ? 1.7f : 1.0f);
+        return;
+    }
     lastMouse = downPos = e.position;
     dragged = 0.0f;
+    if (e.mods.isAltDown())
+    {
+        // Alt+drag: over the pipes like a hand over strings
+        sweeping = true;
+        sweepLast = e.position;
+        sweepLastMs = juce::Time::getMillisecondCounterHiRes();
+        sweepTo (e.position, e.position, 1.0f);
+        return;
+    }
+    if (ctrl) { boxing = true; boxFrom = boxTo = e.position; return; }      // (a click chooses one pipe, a drag a frame)
+    looking = true;
     e.source.enableUnboundedMouseMovement (true);
 }
 
 void WalkView::mouseDrag (const juce::MouseEvent& e)
 {
-    if (immersive) { pollLockedMouse(); return; }
+    if (immersive)
+    {
+        pollLockedMouse();
+        if (sweeping) { const auto c = getLocalBounds().getCentre().toFloat(); sweepTo (c, c, 1.0f); }
+        return;
+    }
+    if (sweeping)
+    {
+        // as hard as the pointer is fast
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const float speed = e.position.getDistanceFrom (sweepLast) / (float) juce::jmax (1.0, now - sweepLastMs);
+        sweepTo (sweepLast, e.position, juce::jlimit (0.4f, 1.7f, 0.35f + 0.5f * speed));
+        sweepLast = e.position;
+        sweepLastMs = now;
+        return;
+    }
+    if (boxing)
+    {
+        dragged += std::abs (e.position.x - boxTo.x) + std::abs (e.position.y - boxTo.y);
+        boxTo = e.position;
+        repaint();
+        return;
+    }
     if (! looking) return;
     const auto d = e.position - lastMouse;
     lastMouse = e.position;
@@ -750,6 +813,36 @@ void WalkView::mouseDrag (const juce::MouseEvent& e)
 
 void WalkView::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+    {
+        setMagnet (0);
+        if (looking) e.source.enableUnboundedMouseMovement (false);
+        looking = false;
+        return;
+    }
+    if (sweeping) { sweeping = false; return; }
+    if (boxing)
+    {
+        boxing = false;
+        int s = -1, k = -1;
+        if (dragged < 5.0f) { if (pickPipe (downPos, 40.0f, s, k)) selectPipe (s, k); repaint(); return; }
+        // every pipe drawn inside the frame is added to the choice
+        const auto box = juce::Rectangle<float> (boxFrom, boxTo);
+        const float isc = rast.width() > 0 ? (float) getWidth() / (float) rast.width() : 1.0f;
+        int added = 0;
+        for (int st = 0; st < kNumStops; ++st)
+            for (int ky = 0; ky < kNumKeys; ++ky)
+            {
+                const auto& sh = shown[(size_t) st][(size_t) ky];
+                float sx, sy, d;
+                if (! sh.on || ! rast.project (sh.c, sx, sy, d) || ! box.contains (sx * isc, sy * isc)) continue;
+                if (! isSelected (st, ky)) ++added;
+                sel[(size_t) st] |= (uint64_t) 1 << ky;
+            }
+        say (juce::String (added) + U (" Pfeifen dazu, ") + juce::String (selectedCount()) + U (" gew\xc3\xa4hlt  \xc2\xb7  1 bis 5: aufstellen, rechte Maustaste: Magnet, Esc: Auswahl leeren"), 3500.0);
+        repaint();
+        return;
+    }
     if (immersive || ! looking) { looking = false; return; }
     looking = false;
     e.source.enableUnboundedMouseMovement (false);
@@ -840,6 +933,7 @@ void WalkView::shock (float strength)
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (now - lastShock < 300.0) return;                 // (a held key: three bursts a second, not thirty)
+    pushUndo();
     lastShock = now;
     // the stops that stand still start to hover, so there is something to push
     const auto params = proc.readParams();
@@ -866,6 +960,7 @@ void WalkView::shock (float strength)
 
 void WalkView::callHome()
 {
+    pushUndo();
     proc.engine.playerAct (OrganEngine::Act::Home);
     proc.engine.pipeLenReset = true;      // (and every broken or grown pipe is whole again)
     say (U ("Alle Pfeifen fliegen an ihren Platz zur\xc3\xbc" "ck"));
@@ -908,6 +1003,7 @@ void WalkView::setGrab (bool on, bool fast)
     if (en.grabStop.load() >= 0)
     {
         // let go: it flies on with the hand's speed, your own, and a push ahead
+        pushUndo();
         const V3 d = lookDir();
         const float push = fast ? 9.0f : 4.5f;
         en.playerAct (OrganEngine::Act::Throw, heldStop, heldKey, { d.x * push + vx, d.y * push + vy, d.z * push + juce::jmax (0.0f, vz) });
@@ -941,6 +1037,18 @@ void WalkView::updateActions (bool qDown, bool fDown)
         Vec3f b;
         if (en.grabStop.load() < 0 && en.bodyAt (heldStop, heldKey, b)) { en.grabKey = heldKey; en.grabStop = heldStop; }
     }
+    if (magnet != 0)
+    {
+        const V3 p = eyeNow() + lookDir() * magnetDist;
+        en.magnetX = p.x; en.magnetY = p.y; en.magnetZ = juce::jmax (0.3f, p.z);
+    }
+    if (arrangeUntil > 0.0 && now - arrangeLast > 60.0)
+    {
+        bool waiting = false;
+        for (const auto& m : en.goMask) waiting = waiting || m.load() != 0;
+        if (waiting && now < arrangeUntil) { en.playerAct (OrganEngine::Act::Arrange); arrangeLast = now; }
+        else arrangeUntil = 0.0;
+    }
     if (shockAt > 0.0 && now >= shockAt)
     {
         shockAt = 0.0;
@@ -952,6 +1060,7 @@ void WalkView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDe
 {
     // a pipe in the hand: the wheel brings it nearer (right up to the ear: "Fluestern") or holds it further away
     if (heldStop >= 0) { holdDist = juce::jlimit (0.2f, 4.0f, holdDist * std::exp (w.deltaY * 1.2f)); return; }
+    if (magnet != 0) { magnetDist = juce::jlimit (0.8f, 14.0f, magnetDist * std::exp (w.deltaY * 1.2f)); return; }
     fov = juce::jlimit (40.0f, 110.0f, fov - w.deltaY * 30.0f);
     repaint();
 }
@@ -1721,7 +1830,8 @@ void WalkView::drawOver (juce::Graphics& g)
         g.drawFittedText (overText, box.reduced (6, 3), juce::Justification::topLeft, 9);
     }
     drawAudience (g, area);     // (also in the immersive view: it is what the room is shown)
-    if (immersive) return;      // (only the picture and the cross)
+    drawArranging (g, area);
+    if (immersive) { if (helpHeld) drawHelp (g, area); return; }      // (only the picture and the cross)
 
     // heading, hints, status (on dark bands, so they stay readable over a bright model)
     {
@@ -1742,7 +1852,7 @@ void WalkView::drawOver (juce::Graphics& g)
                      + (proc.engine.breakCount.load() > 0 ? U ("   \xc2\xb7   ") + juce::String ((int) proc.engine.breakCount.load()) + U (" Pfeifen gebrochen") : juce::String()),
                 area.reduced (18, 0).withTrimmedTop (84).removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (col::faint);
-    g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Esc zur\xc3\xbc" "ck"
+    g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Tab: alle Tasten  \xc2\xb7  Esc zur\xc3\xbc" "ck"
                   "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
                 area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
     g.drawText (U ("Klick: anschlagen  \xc2\xb7  Shift: st\xc3\xa4rker  \xc2\xb7  I: immersiv  \xc2\xb7  G: Bild ") + (gpuOn() ? juce::String ("Grafikkarte") : (gpuWanted() && gpuNote.isNotEmpty() ? "Prozessor (" + gpuNote + ")" : juce::String ("Prozessor"))), handsArea.withTrimmedLeft (8), juce::Justification::centredLeft);
@@ -1770,6 +1880,7 @@ void WalkView::drawOver (juce::Graphics& g)
     }
 
     drawMap (g, juce::Rectangle<float> (190.0f, 150.0f).withPosition ((float) area.getRight() - 206.0f, (float) area.getBottom() - 186.0f), r, params, homeP);
+    if (helpHeld) drawHelp (g, area);
 }
 
 void WalkView::drawMap (juce::Graphics& g, juce::Rectangle<float> box, const RoomParams& r, const EngineParams& params, V3 homeP)

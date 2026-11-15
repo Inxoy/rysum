@@ -179,6 +179,7 @@ set(RYSUM_PLUGIN_SOURCES
     source/RoomModels.cpp
     source/WalkGpu.cpp
     source/WalkView.cpp
+    source/WalkArrange.cpp
     source/ModView.cpp)
 
 function(rysum_setup_plugin target)
@@ -296,7 +297,7 @@ if(RYSUM_BUILD_TESTS)
         tests/UiSnapshot.cpp
         ${RYSUM_KERNEL_SOURCES}
         source/SampleLibrary.cpp source/OrganEngine.cpp source/OrganLive.cpp source/OrganBodies.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/Audience.cpp source/ProcessorScenes.cpp source/PluginEditor.cpp
-        source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp source/Walk3D.cpp source/RoomModels.cpp source/WalkGpu.cpp source/WalkView.cpp)
+        source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp source/Walk3D.cpp source/RoomModels.cpp source/WalkGpu.cpp source/WalkView.cpp source/WalkArrange.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
         JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0

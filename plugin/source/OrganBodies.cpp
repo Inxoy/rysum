@@ -188,6 +188,9 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         const int heldKey = grabStop.load() == s ? grabKey.load() : -1;
         const Vec3f hand { grabX.load(), grabY.load(), grabZ.load() };
         const bool goHome = homing > 0.0f;
+        const int magnet = magnetMode.load();
+        const uint64_t magnetBits = magnetMask[(size_t) s].load();
+        const Vec3f mag { magnetX.load(), magnetY.load(), magnetZ.load() };
 
         // Schwarm: the flock's middle and heading, once per 1/60 s (flocking per stop)
         float cx = 0, cy = 0, cz = 0, ax = 0, ay = 0, az = 0;
@@ -254,6 +257,19 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     b.vx += (tx - b.vx) * k2; b.vy += (ty - b.vy) * k2; b.vz += (tz - b.vz) * k2;
                     b.hx = b.x; b.hy = b.y; b.hz = b.z;
                     b.pushed = 3.0f; b.loose = false; b.rest = 0.0f;
+                }
+                // ---- arranged (a formation, a layout, undo): straight to its new place, and there it rests
+                else if (b.going > 0.0f)
+                {
+                    b.going -= h;
+                    const float dx = b.tx - b.x, dy = b.ty - b.y, dz = b.tz - b.z;
+                    b.vx += (16.0f * dx - 8.0f * b.vx) * h;
+                    b.vy += (16.0f * dy - 8.0f * b.vy) * h;
+                    b.vz += (16.0f * dz - 8.0f * b.vz) * h;
+                    b.hx = b.tx; b.hy = b.ty; b.hz = b.tz;
+                    b.rest = 0.0f;
+                    if (b.going <= 0.0f || (dx * dx + dy * dy + dz * dz < 0.0009f && len3 (b.vx, b.vy, b.vz) < 0.1f))
+                        b.going = 0.0f;
                 }
                 // ---- called home: straight back to its place in the organ, arriving without overshooting
                 else if (goHome)
@@ -348,7 +364,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 }
 
                 // ---- the player: a mass the pipes fall towards, or flee; a centre they circle; a wake that takes them along
-                if (pOn && ! held && ! goHome)
+                if (pOn && ! held && ! goHome && b.going <= 0.0f)
                 {
                     const float rx = br.player.x - b.x, ry = br.player.y - b.y, rz = br.player.z - b.z;
                     const float d2 = rx * rx + ry * ry + rz * rz, d = std::sqrt (d2) + 1.0e-4f;
@@ -379,6 +395,37 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     }
                     // (never through the player: pushed out of an arm's length)
                     if (d < 0.45f && pMode != 2) { b.vx -= 20.0f * ux * h; b.vy -= 20.0f * uy * h; }
+                }
+
+                // ---- the magnet (the right mouse button held): drawn into a loose cloud around the point, or driven off
+                if (magnet != 0 && ! held && ! goHome && b.going <= 0.0f && ((magnetBits >> k) & 1u) != 0u)
+                {
+                    const float rx = mag.x - b.x, ry = mag.y - b.y, rz = mag.z - b.z;
+                    const float d = std::sqrt (rx * rx + ry * ry + rz * rz) + 1.0e-4f;
+                    bool moved = false;
+                    if (magnet > 0 && d < 14.0f)
+                    {
+                        // (each pipe at a distance of its own: a cloud, not one point)
+                        const float r0 = 0.45f + 0.9f * (float) ((k * 37 + s * 11) % 17) / 16.0f;
+                        const float pull = 5.0f * juce::jlimit (-3.0f, 6.0f, d - r0);
+                        b.vx += (pull * rx / d - 2.5f * b.vx) * h;
+                        b.vy += (pull * ry / d - 2.5f * b.vy) * h;
+                        b.vz += (pull * rz / d - 2.5f * b.vz) * h;
+                        moved = true;
+                    }
+                    else if (magnet < 0 && d < 10.0f)
+                    {
+                        const float push = 14.0f * (1.0f - d / 10.0f);
+                        b.vx -= push * rx / d * h; b.vy -= push * ry / d * h; b.vz -= push * rz / d * h;
+                        moved = true;
+                    }
+                    if (moved)
+                    {
+                        // (it stays where the magnet leaves it)
+                        b.hx = b.x; b.hy = b.y; b.hz = b.z;
+                        b.loose = false; b.rest = 0.0f;
+                        b.pushed = juce::jmax (b.pushed, 0.5f);
+                    }
                 }
 
                 // ---- move, and meet the room
@@ -620,7 +667,7 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                         const float l = juce::jmax (1.0e-3f, len3 (dx, dy, dz));
                         const float dv = 12.0f * amt / (1.0f + (d / 6.0f) * (d / 6.0f)) * (1.0f - d / 16.0f);
                         b.vx += dv * dx / l; b.vy += dv * dy / l; b.vz += dv * (dz / l + 0.3f);
-                        b.pushed = 5.0f; b.rest = 0.0f;
+                        b.pushed = 5.0f; b.rest = 0.0f; b.going = 0.0f;
                     }
                 }
                 startBurst (1, 0.22f * juce::jmin (1.5f, amt), 0.7f);
@@ -639,15 +686,33 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                 break;
             case Act::Home:
                 homing = 3.0f;
-                for (auto& bs : bodies) for (auto& b : bs) { b.loose = false; b.pushed = 0.0f; }
+                for (auto& bs : bodies) for (auto& b : bs) { b.loose = false; b.pushed = 0.0f; b.going = 0.0f; }
                 break;
             case Act::Throw:
                 if (valid (c.stop, c.key) && isBody (c.stop))
                 {
                     auto& b = bodies[(size_t) c.stop][(size_t) c.key];
                     b.vx += c.v.x; b.vy += c.v.y; b.vz += c.v.z;
-                    b.loose = true; b.pushed = 6.0f; b.rest = 0.0f;
+                    b.loose = true; b.pushed = 6.0f; b.rest = 0.0f; b.going = 0.0f;
                 }
+                break;
+            case Act::Arrange:
+                // (a stop that is not a body yet keeps its marks: the view sends Arrange again once it is)
+                for (int s = 0; s < kNumStops; ++s)
+                {
+                    if (! isBody (s)) continue;
+                    const uint64_t m = goMask[(size_t) s].exchange (0);
+                    for (int k = 0; k < kNumKeys; ++k)
+                        if (((m >> k) & 1u) != 0u)
+                        {
+                            auto& b = bodies[(size_t) s][(size_t) k];
+                            b.tx = goX[(size_t) s][(size_t) k].load();
+                            b.ty = goY[(size_t) s][(size_t) k].load();
+                            b.tz = goZ[(size_t) s][(size_t) k].load();
+                            b.going = 4.0f; b.loose = false; b.pushed = 0.0f; b.rest = 0.0f;
+                        }
+                }
+                homing = 0.0f;
                 break;
             case Act::Strike:
                 if (valid (c.stop, c.key))

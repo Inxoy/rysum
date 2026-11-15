@@ -644,6 +644,21 @@ public:
     bool walkZUp = false;
     bool walkDark = false; // the 3D view with the light off: the sounding pipes light the room
     float walkScale = 1.0f;
+    /** the 3D view's layouts (F1 to F8): where each pipe that was a body in the Saal stood, in its
+        room (m). Saved with the project, not with a patch. Message thread. */
+    struct WalkLayout
+    {
+        std::array<uint64_t, rysum::kNumStops> has{}; // which pipes (bit = key)
+        std::array<std::array<rysum::Vec3f, rysum::kNumKeys>, rysum::kNumStops> at{};
+        bool empty() const noexcept
+        {
+            for (auto m : has)
+                if (m != 0)
+                    return false;
+            return true;
+        }
+    };
+    std::array<WalkLayout, 8> walkLayouts{};
     /** counts the times something other than the 3D view changed its room, light or pose (a patch
      *  with a built-in room): the open view takes them over */
     std::atomic<int> walkSerial{0};

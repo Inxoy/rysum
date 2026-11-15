@@ -476,13 +476,23 @@ public:
         Throw,  // the pipe (stop, key) let go with the speed v (m/s) added
         Strike, // the pipe (stop, key), at the place v, knocked: it rings without its key
         Clap,   // a hand clap where the player stands: the room answers
-        Wind    // every pipe that is a body in the Saal gets the speed v (m/s) added (the audience)
+        Wind,   // every pipe that is a body in the Saal gets the speed v (m/s) added (the audience)
+        Arrange // the pipes marked in goMask fly to goX/goY/goZ and stay there (formations, layouts, undo)
     };
     void playerAct(Act a, int stop = -1, int key = -1, Vec3f v = {}, float amount = 1.0f) noexcept;
     std::atomic<bool> actFreeze{false};      // held: everything that moves stands still
     std::atomic<int> grabStop{-1}, grabKey{-1}; // the pipe carried by the player (-1: none)
     std::atomic<float> grabX{0.0f}, grabY{0.0f}, grabZ{0.0f}; // where the hand holds it (m, in its room)
     std::atomic<int> hiddenNow{0}; // sounding pipes heard around a corner (out of sight)
+    // arranging: where each pipe is to fly (m, in its room), and which pipes take part; the message thread
+    // writes them, then sends Act::Arrange
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> goX, goY, goZ;
+    std::array<std::atomic<uint64_t>, kNumStops> goMask{};
+    // the magnet (the right mouse button held): +1 draws the pipes to the point, -1 drives them away, 0 off;
+    // only the pipes in magnetMask (all of them while it is all ones)
+    std::atomic<int> magnetMode{0};
+    std::atomic<float> magnetX{0.0f}, magnetY{0.0f}, magnetZ{0.0f};
+    std::array<std::atomic<uint64_t>, kNumStops> magnetMask{};
 
     // ---- room motion (Flug, Fall, Schwarm, Strömung): every pipe a body in the Saal, for the
     // display
@@ -1092,6 +1102,7 @@ private:
         float meshClear = 0;
         bool meshGround = false, meshInside = false;
         bool loose = false;           // thrown ("Schweben"): it stays where it comes to rest
+        float tx = 0, ty = 0, tz = 0, going = 0; // arranged: flying to (tx, ty, tz) for at most 'going' s more
         XorShift rng{1};
     };
     std::array<std::array<Body, kNumKeys>, kNumStops> bodies{};

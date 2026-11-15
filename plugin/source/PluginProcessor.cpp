@@ -3596,6 +3596,30 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         wk.setProperty("y", walkPose[1].load(), nullptr);
         wk.setProperty("yaw", walkPose[2].load(), nullptr);
         wk.setProperty("pitch", walkPose[3].load(), nullptr);
+        for (int slot = 0; slot < (int)walkLayouts.size(); ++slot)
+        {
+            const auto &lay = walkLayouts[(size_t)slot];
+            if (lay.empty())
+                continue;
+            juce::ValueTree lt("LAYOUT");
+            lt.setProperty("slot", slot, nullptr);
+            for (int s = 0; s < rysum::kNumStops; ++s)
+            {
+                if (lay.has[(size_t)s] == 0)
+                    continue;
+                // "key x y z key x y z ..."
+                juce::String text;
+                for (int k = 0; k < rysum::kNumKeys; ++k)
+                    if (((lay.has[(size_t)s] >> k) & 1u) != 0u)
+                    {
+                        const auto &p = lay.at[(size_t)s][(size_t)k];
+                        text << k << ' ' << juce::String(p.x, 3) << ' ' << juce::String(p.y, 3) << ' '
+                             << juce::String(p.z, 3) << ' ';
+                    }
+                lt.setProperty("s" + juce::String(s), text.trimEnd(), nullptr);
+            }
+            wk.appendChild(lt, nullptr);
+        }
         extra.appendChild(wk, nullptr);
     }
     else if (rysum::builtInRoomIndex(walkModelFile.getFileName()) >= 0 && getWalkMesh() != nullptr)
@@ -3940,6 +3964,29 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                 walkScale = scale;
                 walkHear = (bool)wk.getProperty("hear", true);
                 walkDark = (bool)wk.getProperty("dark", false);
+                walkLayouts = {};
+                for (const auto &lt : wk)
+                {
+                    if (!lt.hasType("LAYOUT"))
+                        continue;
+                    const int slot = (int)lt.getProperty("slot", -1);
+                    if (slot < 0 || slot >= (int)walkLayouts.size())
+                        continue;
+                    auto &lay = walkLayouts[(size_t)slot];
+                    for (int s = 0; s < rysum::kNumStops; ++s)
+                    {
+                        const auto parts = juce::StringArray::fromTokens(lt["s" + juce::String(s)].toString(), " ", "");
+                        for (int i = 0; i + 3 < parts.size(); i += 4)
+                        {
+                            const int k = parts[i].getIntValue();
+                            if (k < 0 || k >= rysum::kNumKeys)
+                                continue;
+                            lay.has[(size_t)s] |= (uint64_t)1 << k;
+                            lay.at[(size_t)s][(size_t)k] = {parts[i + 1].getFloatValue(), parts[i + 2].getFloatValue(),
+                                                             parts[i + 3].getFloatValue()};
+                        }
+                    }
+                }
                 if (same)
                     setWalkHear(walkHear);
                 if (mf == juce::File())
