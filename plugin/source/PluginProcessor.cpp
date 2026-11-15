@@ -2393,6 +2393,20 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
 
         !stereo, juce::roundToInt(apvts.getRawParameterValue("dsfPartials")->load()));
 
+    // ---- AmbiX out: looking around in the 3D view turns the scene that is sent out, as the
+    //      headphones below hear it (the room included). The view closed: it glides back to the front.
+    if (!binaural && !speakers && params.outputMode > 0)
+    {
+        int order = juce::jmin(params.outputMode, 5);
+        while (order > 0 && (order + 1) * (order + 1) > buffer.getNumChannels())
+            --order; // (a host bus with fewer channels: only the orders it carries)
+        const float yaw = engine.viewWalkOn.load() ? engine.viewYaw.load() : 0.0f;
+        if (order > 0)
+            ambiViewRot.process(buffer.getArrayOfWritePointers(), n, order, yaw);
+    }
+    else
+        ambiViewRot.reset();
+
     // ---- binaural decoding (head rotation + HRTF filters)
     if (binaural)
     {

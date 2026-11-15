@@ -664,12 +664,14 @@ void BinauralDecoder::reset() noexcept
     conv.reset();
 }
 
-void BinauralDecoder::rotate(float *const *in, int n, float yawDeg) noexcept
+void AmbiYawRotator::process(float *const *in, int n, int order, float yawDeg) noexcept
 {
     // turning the head by +yaw (to the left) turns the scene by -yaw: only (l, m) / (l, -m) pairs
     // mix
     const float y0 = lastYaw, y1 = yawDeg;
     lastYaw = yawDeg;
+    if (n <= 0)
+        return;
     if (std::abs(y0) < 1.0e-4f && std::abs(y1) < 1.0e-4f)
         return;
     const float d = wrapAz(y1 - y0);
@@ -698,7 +700,7 @@ void BinauralDecoder::rotate(float *const *in, int n, float yawDeg) noexcept
 void BinauralDecoder::process(float *const *in, int n, float *left, float *right,
                               float yawDeg) noexcept
 {
-    rotate(in, n, yawDeg);
+    rotator.process(in, n, order, yawDeg);
     int done = 0;
     while (done < n)
     {

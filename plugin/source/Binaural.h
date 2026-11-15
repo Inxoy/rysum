@@ -62,6 +62,27 @@ struct BinauralFilters
                                                    std::function<bool()> shouldAbort = {});
 };
 
+/** turns an AmbiX (ACN / SN3D) scene about the vertical axis, in place: the head turned by +yaw
+   degrees (to the left, like "Kopfdrehung") turns the scene by -yaw. The angle glides from the last
+   call's over the block. Used before the headphone decoder, and on the AmbiX outputs while the 3D view
+   is open (looking around turns what is sent out). */
+class AmbiYawRotator
+{
+public:
+    void process(float *const *ch, int n, int order, float yawDeg) noexcept;
+    void reset() noexcept
+    {
+        lastYaw = 0.0f;
+    }
+    float lastYawDeg() const noexcept
+    {
+        return lastYaw;
+    }
+
+private:
+    float lastYaw = 0.0f;
+};
+
 /** real-time part: uniformly partitioned convolution (block 128, PFFFT, the older partitions
    computed spread over the block) of up to 36 Ambisonics channels into two ears, plus a rotation
    about the vertical axis (head turned). Latency: 128 samples. */
@@ -93,14 +114,12 @@ public:
     void reset() noexcept;
 
 private:
-    void rotate(float *const *in, int n, float yawDeg) noexcept;
-
     int order = 1, numCh = 4, parts = 1;
     juce::String description;
     AlignedFloats spectra;       // [ear][ch][part][2 * kBlock]
     PartitionedConvolution conv; // (the filters delayed by one block: latency 128 as before)
     AlignedFloats
         scratch; // [ear][kBlock]: the output is written after the input is read (in-place hosts)
-    float lastYaw = 0.0f;
+    AmbiYawRotator rotator;
 };
 } // namespace rysum

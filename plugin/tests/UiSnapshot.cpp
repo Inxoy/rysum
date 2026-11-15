@@ -1112,6 +1112,58 @@ public:
                         (had ? "loaded" : "NOT loaded") + ")",
                     ok);
             }
+            // AmbiX out: turning the head in the 3D view turns the scene sent out. A held chord, its
+            // direction from the first-order intensity (ACN: W, Y = left, Z, X = front); the head
+            // turned 90 degrees to the left moves it 90 degrees to the right
+            {
+                setReal("output", 1.0f);
+                setReal("simOn", 0.0f);
+                setReal(RysumProcessor::stopParamId(0), 1.0f);
+                setReal(RysumProcessor::motionParamId(0), 0.0f);
+                juce::AudioBuffer<float> ab(36, 512);
+                auto direction = [&](float yaw, double &level)
+                {
+                    proc->engine.viewWalkOn = true;
+                    proc->engine.viewYaw = yaw;
+                    double wx = 0.0, wy = 0.0, ww = 0.0;
+                    for (int b = 0; b < 60; ++b)
+                    {
+                        juce::MidiBuffer mb;
+                        if (b == 0)
+                            for (int m : {60, 64, 67})
+                                mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)100), 0);
+                        ab.clear();
+                        proc->processBlock(ab, mb);
+                        if (b < 20)
+                            continue;
+                        const float *w = ab.getReadPointer(0), *y = ab.getReadPointer(1), *x = ab.getReadPointer(3);
+                        for (int i = 0; i < ab.getNumSamples(); ++i)
+                        {
+                            wx += (double)w[i] * x[i];
+                            wy += (double)w[i] * y[i];
+                            ww += (double)w[i] * w[i];
+                        }
+                    }
+                    for (int b = 0; b < 60; ++b)
+                    {
+                        juce::MidiBuffer mb;
+                        if (b == 0)
+                            mb.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+                        ab.clear();
+                        proc->processBlock(ab, mb);
+                    }
+                    level = ww;
+                    return juce::radiansToDegrees(std::atan2(wy, wx));
+                };
+                double l0 = 0.0, l1 = 0.0;
+                const double a0 = direction(0.0f, l0), a1 = direction(90.0f, l1);
+                proc->engine.viewYaw = 0.0f;
+                const double turned = rysum::wrapAz((float)(a1 - a0));
+                say("AmbiX out: the scene at " + juce::String(a0, 1) + " deg, with the head turned 90 deg left at " +
+                        juce::String(a1, 1) + " deg (turned " + juce::String(turned, 1) + ", expected -90)",
+                    l0 > 1.0e-6 && l1 > 1.0e-6 && std::abs(turned + 90.0) < 5.0);
+                setReal("output", 0.0f);
+            }
         }
     }
 
