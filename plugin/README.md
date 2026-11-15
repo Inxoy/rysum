@@ -737,6 +737,26 @@ a hand over strings: every pipe the pointer passes is knocked once, as hard as t
 the immersive view all of this happens at the cross. Stops that stand still start to hover when they
 are arranged or drawn (as with E and Q).
 
+**More hands.** *Holding the click* on a pipe (still, a little longer than a knock) sounds it like a
+held key until the button is let go. With a pipe in the hand (Q held), the **right mouse button sets it
+down** where the cross points – on the floor, against a wall, or in the air – and there it stays. The
+**middle mouse button pins** a pipe: shockwaves, wind, magnet and whirlwind leave it where it is (a
+small nail head marks it; again: free). **T** starts a **whirlwind** up to five metres ahead for four
+seconds (Shift: stronger): the pipes near it go round and are lifted. **P** pauses everything that moves
+until P again; **Z held** is slow motion (the pipes' time at a quarter).
+
+**The room.** **Ctrl+wheel** makes the Saal larger or smaller (its *Größe*, 0.25 to 3 times), and the
+reverberation grows with it (not with a room model loaded: it has its own size). **Alt+M** gives every
+surface of the Saal the next material of the one under the cross (M alone: that surface only). **K**
+puts a lantern where the cross points (up to 16, saved with the project): with the light off (L) each
+lights the room around it like a sounding pipe; *Shift+K* takes the nearest away, *Ctrl+K* all of them.
+**H** leaves your ears where you stand: you walk on and watch while you hear from there (a red ring
+marks the place); H again brings them back.
+
+**Controls of this computer** (the button *Steuerung …*, kept in Documents/Rysum/Steuerung.xml): how
+fast the mouse looks around, the mouse upside down (up = look down), and the walking pace (also
+*Shift+wheel*).
+
 *Publikum* (the last button of that row): the audience plays along with their phones. A QR code
 appears in the corner of the 3D view (also in the immersive view, so it can be projected) with the
 address under it; phones on the same network open a small page there, nothing to install. Every

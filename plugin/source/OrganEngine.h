@@ -477,7 +477,10 @@ public:
         Strike, // the pipe (stop, key), at the place v, knocked: it rings without its key
         Clap,   // a hand clap where the player stands: the room answers
         Wind,   // every pipe that is a body in the Saal gets the speed v (m/s) added (the audience)
-        Arrange // the pipes marked in goMask fly to goX/goY/goZ and stay there (formations, layouts, undo)
+        Arrange, // the pipes marked in goMask fly to goX/goY/goZ and stay there (formations, layouts, undo)
+        Whirl,   // a whirlwind at the place v for a few seconds: the pipes near it are spun around it (amount: strength)
+        BowOn,   // the pipe (stop, key) sounds like a held key, for as long as the hand holds it
+        BowOff   // ... and is let go
     };
     void playerAct(Act a, int stop = -1, int key = -1, Vec3f v = {}, float amount = 1.0f) noexcept;
     std::atomic<bool> actFreeze{false};      // held: everything that moves stands still
@@ -493,6 +496,11 @@ public:
     std::atomic<int> magnetMode{0};
     std::atomic<float> magnetX{0.0f}, magnetY{0.0f}, magnetZ{0.0f};
     std::array<std::atomic<uint64_t>, kNumStops> magnetMask{};
+    // pinned pipes stay where they are, whatever pushes them (bit = key); held: everything stands still
+    // (P); the pipes' time runs at this pace (Z held: slow motion)
+    std::array<std::atomic<uint64_t>, kNumStops> pinMask{};
+    std::atomic<bool> actPause{false};
+    std::atomic<float> bodyPace{1.0f};
 
     // ---- room motion (Flug, Fall, Schwarm, Strömung): every pipe a body in the Saal, for the
     // display
@@ -1153,6 +1161,8 @@ private:
     juce::AbstractFifo actFifo{32};
     std::array<ActCmd, 32> actQueue{};
     float homing = 0.0f; // s left of the flight home
+    float whirlLeft = 0.0f, whirlAmt = 1.0f; // s left of a whirlwind, and how strong
+    Vec3f whirlAt;
     /** the sounds the player makes itself: the clap, the burst of the shockwave */
     struct Burst
     {

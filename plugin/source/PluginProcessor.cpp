@@ -3596,6 +3596,12 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         wk.setProperty("y", walkPose[1].load(), nullptr);
         wk.setProperty("yaw", walkPose[2].load(), nullptr);
         wk.setProperty("pitch", walkPose[3].load(), nullptr);
+        {
+            juce::String lt;
+            for (const auto &l : walkLanterns)
+                lt << juce::String(l.x, 3) << ' ' << juce::String(l.y, 3) << ' ' << juce::String(l.z, 3) << ' ';
+            wk.setProperty("lanterns", lt.trimEnd(), nullptr);
+        }
         for (int slot = 0; slot < (int)walkLayouts.size(); ++slot)
         {
             const auto &lay = walkLayouts[(size_t)slot];
@@ -3964,6 +3970,12 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
                 walkScale = scale;
                 walkHear = (bool)wk.getProperty("hear", true);
                 walkDark = (bool)wk.getProperty("dark", false);
+                walkLanterns.clear();
+                {
+                    const auto parts = juce::StringArray::fromTokens(wk["lanterns"].toString(), " ", "");
+                    for (int i = 0; i + 2 < parts.size() && walkLanterns.size() < 16; i += 3)
+                        walkLanterns.push_back({parts[i].getFloatValue(), parts[i + 1].getFloatValue(), parts[i + 2].getFloatValue()});
+                }
                 walkLayouts = {};
                 for (const auto &lt : wk)
                 {

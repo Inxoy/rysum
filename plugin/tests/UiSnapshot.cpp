@@ -725,6 +725,160 @@ public:
                 wv.undo();
                 run(400, {});
 
+                // ---- more hands: a pinned pipe stays, pause, slow motion, a pipe held sounding, the whirlwind
+                {
+                    wv.setPoseForTest(0, 0, 0);
+                    run(10, {});
+                    const auto a = snapshot();
+                    wv.togglePin(0, 5);
+                    en.playerAct(OrganEngine::Act::Shock, -1, -1, {}, 1.5f);
+                    run(60, {});
+                    Vec3f p5;
+                    en.bodyAt(0, 5, p5);
+                    const float pinMoved = std::sqrt((p5.x - a[5].x) * (p5.x - a[5].x) + (p5.y - a[5].y) * (p5.y - a[5].y));
+                    const float othersMoved = apart(a, kNumKeys);
+                    wv.togglePin(0, 5);
+                    say("more hands: a pinned pipe stays (" + juce::String(pinMoved, 3) + " m) while a shockwave drives the others " +
+                            juce::String(othersMoved, 2) + " m",
+                        pinMoved < 0.01f && othersMoved > 0.3f);
+                    wv.undo();
+                    run(400, {});
+
+                    // pause: a shockwave waits until it is over
+                    const auto b = snapshot();
+                    wv.setPause(true);
+                    en.playerAct(OrganEngine::Act::Shock, -1, -1, {}, 1.5f);
+                    run(60, {});
+                    const float duringPause = apart(b, kNumKeys);
+                    wv.setPause(false);
+                    run(60, {});
+                    const float afterPause = apart(b, kNumKeys);
+                    say("more hands: paused, a shockwave moves nothing (" + juce::String(duringPause, 3) + " m), then they fly (" +
+                            juce::String(afterPause, 2) + " m)",
+                        duringPause < 0.005f && afterPause > 0.3f);
+                    en.playerAct(OrganEngine::Act::Home);
+                    run(400, {});
+
+                    // slow motion: the same shockwave goes a quarter as far in the same time
+                    auto flight = [&](bool slowly)
+                    {
+                        const auto c0 = snapshot();
+                        wv.setSlow(slowly);
+                        en.playerAct(OrganEngine::Act::Shock, -1, -1, {}, 1.5f);
+                        run(20, {});
+                        const float d = apart(c0, kNumKeys);
+                        wv.setSlow(false);
+                        en.playerAct(OrganEngine::Act::Home);
+                        run(500, {});
+                        return d;
+                    };
+                    const float normal = flight(false), slowly = flight(true);
+                    say("more hands: in slow motion a shockwave takes them " + juce::String(slowly, 2) + " m in the time it otherwise takes them " +
+                            juce::String(normal, 2) + " m",
+                        slowly < 0.45f * normal && slowly > 0.0f);
+
+                    // a pipe held sounding: a voice while held, none after
+                    run(300, {});
+                    const int v0 = en.activeVoices.load();
+                    wv.bowStart(0, 20);
+                    run(20, {});
+                    const int v1 = en.activeVoices.load();
+                    wv.bowStop();
+                    run(500, {});
+                    const int v2 = en.activeVoices.load();
+                    say("more hands: a pipe held sounding: " + juce::String(v0) + " -> " + juce::String(v1) + " voices, let go: " + juce::String(v2),
+                        v1 > v0 && v2 <= v0);
+
+                    // the whirlwind: the pipes near it go round
+                    shot("walk_whirl_before.png");
+                    const auto w0 = snapshot();
+                    wv.whirl();
+                    run(150, {});
+                    const float whirled = apart(w0, kNumKeys);
+                    shot("walk_whirl.png");
+                    say("more hands: a whirlwind takes the pipes round, " + juce::String(whirled, 2) + " m on average",
+                        whirled > 0.5f);
+                    run(400, {});
+                    wv.undo();
+                    run(400, {});
+                }
+
+                // ---- the room: larger, lanterns (kept with the project), the ears left behind
+                {
+                    auto *sizeP = proc->apvts.getParameter(RysumProcessor::roomParamId(0, "Size"));
+                    const float s0 = sizeP->convertFrom0to1(sizeP->getValue());
+                    const bool grown = wv.scaleRoom(1.5f);
+                    const float s1 = sizeP->convertFrom0to1(sizeP->getValue());
+                    wv.scaleRoom(1.0f / 1.5f);
+                    const float s2 = sizeP->convertFrom0to1(sizeP->getValue());
+                    say("room: Ctrl+wheel makes the Saal larger (" + juce::String(s0, 2) + " -> " + juce::String(s1, 2) + ") and back (" +
+                            juce::String(s2, 2) + ")",
+                        grown && std::abs(s1 - 1.5f * s0) < 0.01f && std::abs(s2 - s0) < 0.01f);
+
+                    // (in the dark, with nothing sounding: what a lantern on the floor ahead lights)
+                    auto brightness = [&]
+                    {
+                        auto img = wv.createComponentSnapshot(wv.getLocalBounds().reduced(0, 120), true, 1.0f);
+                        double sum = 0;
+                        int n = 0;
+                        for (int y = 0; y < img.getHeight(); y += 4)
+                            for (int x = 0; x < img.getWidth(); x += 4)
+                            {
+                                sum += img.getPixelAt(x, y).getBrightness();
+                                ++n;
+                            }
+                        return sum / juce::jmax(1, n);
+                    };
+                    run(800, {});
+                    wv.setPoseForTest(0, 0, 0);
+                    wv.setPitchForTest(-30.0f);
+                    wv.setDarkForTest(true);
+                    run(4, {});
+                    shot("walk_dark_nolantern.png");
+                    const double darkB = brightness();
+                    wv.placeLantern();
+                    run(4, {});
+                    shot("walk_lantern.png");
+                    const double lanternB = brightness();
+                    wv.setPoseForTest(0, 0, 40);
+                    wv.setPitchForTest(-30.0f);
+                    run(2, {});
+                    shot("walk_aim_lantern.png");
+                    wv.placeLantern();
+                    wv.setPoseForTest(0, 0, 0);
+                    run(4, {});
+                    shot("walk_lanterns.png");
+                    say("room: in the dark a lantern on the floor lights the room (" + juce::String(darkB, 3) + " -> " +
+                            juce::String(lanternB, 3) + ")",
+                        lanternB > darkB * 1.15);
+                    const auto lanterns = proc->walkLanterns;
+                    juce::MemoryBlock lsb;
+                    proc->getStateInformation(lsb);
+                    proc->walkLanterns.clear();
+                    proc->setStateInformation(lsb.getData(), (int)lsb.getSize());
+                    const bool keptL = proc->walkLanterns.size() == 2 && lanterns.size() == 2 &&
+                                       std::abs(proc->walkLanterns[1].x - lanterns[1].x) < 0.01f;
+                    wv.removeLantern();
+                    const size_t afterRemove = proc->walkLanterns.size();
+                    wv.clearLanterns();
+                    wv.setDarkForTest(false);
+                    say("room: two lanterns, kept with the project: " + juce::String(keptL ? "yes" : "no") + ", Shift+K takes one away (" +
+                            juce::String((int)afterRemove) + " left), Ctrl+K all (" + juce::String((int)proc->walkLanterns.size()) + ")",
+                        keptL && afterRemove == 1 && proc->walkLanterns.empty());
+
+                    wv.setPoseForTest(0, 0, 0);
+                    wv.leaveEars(true);
+                    wv.setPoseForTest(3.0f, 2.0f, 90.0f);
+                    const float earX = en.viewX.load(), earYaw = en.viewYaw.load();
+                    shot("walk_ears.png");
+                    wv.leaveEars(false);
+                    const float backX = en.viewX.load();
+                    say("room: the ears stay behind (heard from x " + juce::String(earX, 1) + ", yaw " + juce::String(earYaw, 0) +
+                            " while you stand at 3.0), H brings them back (x " + juce::String(backX, 1) + ")",
+                        std::abs(earX) < 0.01f && std::abs(earYaw) < 0.01f && std::abs(backX - 3.0f) < 0.01f);
+                    wv.setPoseForTest(0, 0, 0);
+                }
+
                 wv.setHelpForTest(true);
                 shot("walk_keys.png");
                 wv.setHelpForTest(false);

@@ -122,7 +122,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
     const int64_t due = (int64_t) std::floor ((double) bodySamples / (kBodyStep * sr) + 1.0e-9);
     int steps = (int) juce::jlimit ((int64_t) 0, (int64_t) 2400, due - (int64_t) bodyStepCount);
     if (due - (int64_t) bodyStepCount > 2400) bodyStepCount = (uint32_t) (due - 2400);     // (a stalled host: never minutes of catching up)
-    const float h = (float) kBodyStep;
+    const float h = (float) kBodyStep * juce::jlimit (0.0f, 1.0f, bodyPace.load());      // (slow motion: the pipes' time runs slower)
     const auto& lv = p.live;
 
     for (int s = 0; s < kNumStops; ++s)
@@ -184,7 +184,10 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         const bool pOn = pMode > 0 && pForce > 0.0f;
         const float eFloor = mode == (int) Motion::Fall ? 0.3f + 0.65f * depth : eWall;
         // the player's hands: everything held still (freeze), one pipe carried, all of them called home
-        const bool frozen = actFreeze.load();
+        const bool frozen = actFreeze.load() || actPause.load();
+        const uint64_t pinned = pinMask[(size_t) s].load();
+        const bool whirl = whirlLeft > 0.0f;
+        const float whirlFade = juce::jlimit (0.0f, 1.0f, whirlLeft / 1.5f) * whirlAmt;
         const int heldKey = grabStop.load() == s ? grabKey.load() : -1;
         const Vec3f hand { grabX.load(), grabY.load(), grabZ.load() };
         const bool goHome = homing > 0.0f;
@@ -246,6 +249,13 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 if (b.pushed > 0.0f) b.pushed -= h;
                 const bool held = k == heldKey;
                 if (frozen && ! held) continue;
+                if (! held && ((pinned >> k) & 1u) != 0u)
+                {
+                    // pinned: right where it is (and it stays there when it is let go again)
+                    b.vx = b.vy = b.vz = 0.0f; b.going = 0.0f; b.loose = false;
+                    b.hx = b.x; b.hy = b.y; b.hz = b.z;
+                    continue;
+                }
 
                 // ---- in the player's hand: it follows the hand (and keeps the hand's speed when let go)
                 if (held)
@@ -395,6 +405,25 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     }
                     // (never through the player: pushed out of an arm's length)
                     if (d < 0.45f && pMode != 2) { b.vx -= 20.0f * ux * h; b.vy -= 20.0f * uy * h; }
+                }
+
+                // ---- a whirlwind (T): spun around its upright axis, drawn in a little and lifted near the middle
+                if (whirl && ! held && ! goHome && b.going <= 0.0f)
+                {
+                    const float rx = b.x - whirlAt.x, ry = b.y - whirlAt.y;
+                    const float d = std::sqrt (rx * rx + ry * ry) + 1.0e-4f;
+                    if (d < 7.0f)
+                    {
+                        const float close = 1.0f - d / 7.0f;
+                        const float vt = 6.0f * close * whirlFade;              // (the speed around)
+                        const float k2 = juce::jmin (1.0f, 3.0f * h);
+                        b.vx += (-ry / d * vt - b.vx) * k2 - 1.2f * close * whirlFade * rx / d * h;
+                        b.vy += (rx / d * vt - b.vy) * k2 - 1.2f * close * whirlFade * ry / d * h;
+                        b.vz += 2.5f * close * close * whirlFade * h;
+                        b.hx = b.x; b.hy = b.y; b.hz = b.z;
+                        b.loose = false; b.rest = 0.0f;
+                        b.pushed = juce::jmax (b.pushed, 0.5f);
+                    }
                 }
 
                 // ---- the magnet (the right mouse button held): drawn into a loose cloud around the point, or driven off
@@ -607,6 +636,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         bodyOn[(size_t) s] = true;
     }
     bodyStepCount += (uint32_t) steps;
+    if (whirlLeft > 0.0f) whirlLeft -= (float) blockSeconds * juce::jlimit (0.0f, 1.0f, bodyPace.load());
     if (homing > 0.0f)
     {
         homing -= (float) blockSeconds;
@@ -713,6 +743,18 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                         }
                 }
                 homing = 0.0f;
+                break;
+            case Act::Whirl:
+                whirlAt = c.v;
+                whirlAmt = juce::jlimit (0.2f, 2.0f, c.amount);
+                whirlLeft = 4.0f;
+                break;
+            case Act::BowOn:
+                // (a pipe sounded by the hand: as a held key, wherever the pipe is now)
+                if (valid (c.stop, c.key)) { releaseStopKey (c.stop, c.key); startVoice (c.stop, c.key); }
+                break;
+            case Act::BowOff:
+                if (valid (c.stop, c.key)) releaseStopKey (c.stop, c.key);
                 break;
             case Act::Strike:
                 if (valid (c.stop, c.key))

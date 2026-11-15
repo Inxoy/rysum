@@ -94,6 +94,40 @@ public:
     void setMagnet (int mode);
     /** Alt+drag: every pipe the pointer passes from 'from' to 'to' is knocked (once); how many */
     int sweepTo (juce::Point<float> from, juce::Point<float> to, float strength);
+    // ---- more hands: setting a pipe down, pinning, sounding a pipe, the whirlwind, time
+    /** the right mouse button while a pipe is in the hand: it is set down where the cross points (on the floor,
+        against a wall, or in the air at the hand's distance) and stays */
+    bool setDown();
+    /** the middle mouse button: the pipe stays where it is, whatever pushes it (again: free) */
+    bool togglePin (int stop, int key);
+    bool isPinned (int stop, int key) const noexcept;
+    /** the mouse held on a pipe: it sounds as long as it is held */
+    bool bowStart (int stop, int key);
+    void bowStop();
+    bool isBowing() const noexcept { return bowStop_ >= 0; }
+    /** T: a whirlwind where the cross points, for a few seconds */
+    void whirl (float strength = 1.0f);
+    /** P: everything that moves stands still until P again; Z held: slow motion */
+    void setPause (bool on);
+    bool isPaused() const noexcept { return paused; }
+    void setSlow (bool on);
+    // ---- the room
+    /** Ctrl+wheel: the Saal larger or smaller (its "Groesse"); false with a room model loaded */
+    bool scaleRoom (float factor);
+    /** Alt+M: every surface of the Saal gets the next material of the one under the cross */
+    bool materialAll();
+    /** K: a lantern where the cross points (the light off: it lights the room); Shift+K: the nearest one
+        taken away; Ctrl+K: all of them */
+    bool placeLantern();
+    bool removeLantern();
+    void clearLanterns();
+    /** H: the ears stay where you stand now while you walk on and watch; H again: back */
+    void leaveEars (bool on);
+    bool earsLeft() const noexcept { return earsAway; }
+    // ---- the controls of this computer (Documents/Rysum/Steuerung.xml): mouse speed, upside-down mouse, walking pace
+    struct Controls { float mouse = 1.0f, walk = 1.0f; bool invertY = false; };
+    static Controls controls();
+    static void setControls (const Controls&);
     /** tests: hold Tab (all the keys shown) */
     void setHelpForTest (bool on) { helpHeld = on; repaint(); }
     /** tests: what the timer does for the actions (the hand's place, a pipe taken once its stop hovers) */
@@ -159,6 +193,7 @@ private:
     void updateButtons();
     void drawHelp (juce::Graphics& g, juce::Rectangle<int> area);
     void drawArranging (juce::Graphics& g, juce::Rectangle<int> area);
+    void drawMoreHands (juce::Graphics& g, juce::Rectangle<int> area);
     void drawMap (juce::Graphics& g, juce::Rectangle<float> area, const RoomParams& r, const EngineParams& params, V3 home);
 
     RysumProcessor& proc;
@@ -198,7 +233,22 @@ private:
     double sweepLastMs = 0.0;
     std::array<std::array<double, kNumKeys>, kNumStops> sweptAt {};
     uint32_t scatterSeed = 1;
-    bool overlayBusy() const noexcept { return helpHeld || magnet != 0 || boxing || selectedCount() > 0; }
+    // more hands, the room
+    V3 crossPoint (float fallback) const;           // where the cross meets a surface (or 'fallback' m ahead)
+    int bowStop_ = -1, bowKey_ = -1;
+    bool bowArmed = false;
+    juce::Point<float> bowFrom;
+    double bowDownMs = 0.0;
+    double whirlFx = 0.0, whirlAgain = 0.0;
+    V3 whirlPoint;
+    float whirlStrength = 1.0f;
+    bool paused = false, slow = false, earsAway = false;
+    V3 earEye;
+    float earPose[4] {};
+    juce::TextButton controlsButton { juce::String::fromUTF8 ("Steuerung \xe2\x80\xa6") };
+    void showControlsMenu();
+    bool anyPinned() const noexcept { for (const auto& m : proc.engine.pinMask) if (m.load() != 0) return true; return false; }
+    bool overlayBusy() const noexcept { return ! proc.walkLanterns.empty() || anyPinned() || whirlFx > 0.0 || earsAway || helpHeld || magnet != 0 || boxing || selectedCount() > 0; }
     // a frame in two parts: the picture (the room and the pipes as triangles), and what is drawn over it
     struct Glow { V3 at; float amount, size; };
     struct Scene

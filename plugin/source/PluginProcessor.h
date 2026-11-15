@@ -659,6 +659,8 @@ public:
         }
     };
     std::array<WalkLayout, 8> walkLayouts{};
+    /** the lanterns put into the 3D view (K), in the Saal (m); saved with the project */
+    std::vector<rysum::Vec3f> walkLanterns;
     /** counts the times something other than the 3D view changed its room, light or pose (a patch
      *  with a built-in room): the open view takes them over */
     std::atomic<int> walkSerial{0};

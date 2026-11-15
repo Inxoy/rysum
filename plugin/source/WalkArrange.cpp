@@ -348,17 +348,21 @@ void WalkView::drawHelp (juce::Graphics& g, juce::Rectangle<int> area)
     struct Group { const char* title; std::vector<Line> lines; };
     const std::vector<Group> groups {
         { "Gehen", { { "W A S D", "gehen" }, { "\xe2\x86\x90 \xe2\x86\x92", "drehen" }, { "Maus ziehen", "schauen" }, { "Leertaste", "springen" },
-                     { "Shift", "schneller" }, { "Rad", "Blickwinkel" } } },
-        { "H\xc3\xa4nde", { { "Klick", "anschlagen (Shift: st\xc3\xa4rker)" }, { "Alt + ziehen", "\xc3\xbc" "ber die Pfeifen streichen" },
-                            { "Q halten", "greifen, loslassen: werfen" }, { "Rechte Taste", "Magnet (Shift: absto\xc3\x9f" "en, Rad: Abstand)" },
-                            { "E", "Druckwelle (Shift: st\xc3\xa4rker)" }, { "R", "alle zur\xc3\xbc" "ckrufen" }, { "C", "klatschen" }, { "F halten", "anhalten" } } },
+                     { "Shift", "schneller" }, { "Rad", "Blickwinkel" }, { "Shift + Rad", "Gehtempo" } } },
+        { "H\xc3\xa4nde", { { "Klick", "anschlagen (Shift: st\xc3\xa4rker)" }, { "Klick halten", "die Pfeife klingt, solange gehalten" },
+                            { "Alt + ziehen", "\xc3\xbc" "ber die Pfeifen streichen" }, { "Q halten", "greifen, loslassen: werfen" },
+                            { "Rechte Taste", "Magnet (Shift: weg, Rad: Abstand)" }, { "Rechts + Q", "die Pfeife in der Hand abstellen" },
+                            { "Mittlere Taste", "Pfeife festhalten / l\xc3\xb6sen" }, { "E", "Druckwelle (Shift: st\xc3\xa4rker)" },
+                            { "T", "Wirbelwind (Shift: st\xc3\xa4rker)" }, { "R", "alle zur\xc3\xbc" "ckrufen" }, { "C", "klatschen" },
+                            { "F halten", "anhalten" }, { "P", "Pause / weiter" }, { "Z halten", "Zeitlupe" } } },
+        { "Raum", { { "M", "Material der Fl\xc3\xa4" "che (Alt: aller)" }, { "Strg + Rad", "Saal gr\xc3\xb6\xc3\x9f" "er / kleiner" },
+                    { "L", "Licht aus / an" }, { "K", "Laterne (Shift: weg, Strg: alle)" }, { "H", "die Ohren hier lassen" },
+                    { "I", "immersiv" }, { "G", "Grafikkarte / Prozessor" }, { "Tab halten", "diese Tasten" }, { "Esc", "zur\xc3\xbc" "ck" } } },
         { "Ordnen", { { "Strg + Klick", "Pfeife w\xc3\xa4hlen" }, { "Strg + Doppelklick", "ganzes Register" }, { "Strg + ziehen", "Rahmen ziehen" },
                       { "Esc", "Auswahl leeren" }, { "1 2 3 4 5", "Reihe, Kreis, Spirale, Raster, verstreut" }, { "F1 \xe2\x80\x93 F8", "Aufstellung abrufen" },
-                      { "Strg + F1 \xe2\x80\x93 F8", "Aufstellung speichern" }, { "Strg + Z", "r\xc3\xbc" "ckg\xc3\xa4ngig" } } },
-        { "Raum", { { "M", "Material der Fl\xc3\xa4" "che" }, { "L", "Licht aus / an" }, { "I", "immersiv" }, { "G", "Grafikkarte / Prozessor" },
-                    { "Tab halten", "diese Tasten" }, { "Esc", "zur\xc3\xbc" "ck" } } } };
+                      { "Strg + F1 \xe2\x80\x93 F8", "Aufstellung speichern" }, { "Strg + Z", "r\xc3\xbc" "ckg\xc3\xa4ngig" } } } };
 
-    const int colW = 360, lineH = 21, headH = 38, pad = 22;
+    const int colW = 380, lineH = 20, headH = 38, pad = 22;
     const int cols = area.getWidth() >= 2 * colW + 3 * pad ? 2 : 1;
     std::array<int, 2> colH {};
     for (size_t gi = 0; gi < groups.size(); ++gi)
