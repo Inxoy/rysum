@@ -36,6 +36,8 @@ public:
     /** fills a combo with all modulation targets (pipe targets + parameters, grouped in sub-menus)
      */
     static void fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int idOffset);
+    /** the group a parameter belongs to in the target menus (Register, Klang, Saal ...) */
+    static juce::String paramGroup(const juce::String &id);
 
 private:
     friend class MatrixList;

@@ -1897,6 +1897,122 @@ public:
                       << std::endl;
         }
 
+        // Verlauf (automation): a lane takes its parameter over at the clock's time, a switch
+        // steps, a held control makes its lane give way, a hand records, the project keeps it
+        {
+            using namespace rysum;
+            juce::AudioBuffer<float> abuf(proc->getTotalNumOutputChannels(), 256);
+            juce::MidiBuffer none;
+            auto block = [&]
+            {
+                abuf.clear();
+                proc->processBlock(abuf, none);
+            };
+            const int air = proc->getParamIndex("air"), stop = proc->getParamIndex("stop2");
+            auto &S = proc->getAuto();
+            S = AutoSet();
+            AutoLane la;
+            la.paramId = "air";
+            la.pts = {{0.0, 0.2f}, {8.0, 0.8f}};
+            AutoLane ls;
+            ls.paramId = "stop2";
+            AutoPoint s0{0.0, 0.0f}, s1{2.0, 1.0f};
+            s0.shape = asStep;
+            ls.pts = {s0, s1};
+            S.clock = 1; // own clock
+            S.lanes = {la, ls};
+            proc->autoPublish();
+            proc->autoPlay(false);
+            proc->autoSeek(4.0);
+            block();
+            block();
+            const float a4 = proc->getAutomatedNorm(air), m4 = proc->getModulatedNorm(air);
+            const float st4 = proc->getAutomatedNorm(stop);
+            proc->autoSeek(1.0);
+            block();
+            const float st1 = proc->getAutomatedNorm(stop);
+            std::cout << "verlauf: air at beat 4 = " << a4 << " (mod " << m4 << "), stop 2 at beat 1 / 4 = "
+                      << st1 << " / " << st4
+                      << ((std::abs(a4 - 0.5f) < 0.01f && std::abs(m4 - 0.5f) < 0.01f && st1 == 0.0f &&
+                           st4 == 1.0f)
+                              ? "  ok"
+                              : "  FAIL")
+                      << std::endl;
+            // the own clock runs: 60 BPM = one beat per second
+            proc->autoSeek(0.0);
+            proc->autoPlay(true);
+            block();
+            const double t0 = proc->getAutoNow();
+            const int nb = (int)std::round(proc->getSampleRate() / 256.0);
+            for (int i = 0; i < nb; ++i)
+                block();
+            const double t1 = proc->getAutoNow();
+            std::cout << "verlauf clock: one second = " << (t1 - t0) << " beats"
+                      << (std::abs(t1 - t0 - 1.0) < 0.02 ? "  ok" : "  FAIL") << std::endl;
+            // loop, stretch, reverse: pure functions of the time
+            {
+                AutoLane l = la;
+                l.length = 8.0;
+                l.loop = true;
+                const bool loopOk = std::abs(autoValue(l, 2.0) - autoValue(l, 10.0)) < 1e-5f;
+                l.speed = 2.0f;
+                const bool speedOk = std::abs(autoValue(l, 2.0) - autoValue(la, 4.0)) < 1e-5f;
+                l.speed = 1.0f;
+                l.reverse = true;
+                const bool revOk = std::abs(autoValue(l, 2.0) - autoValue(la, 6.0)) < 1e-5f;
+                AutoLane w = la;
+                w.pts[0].shape = asJitter;
+                w.pts[0].depth = 0.5f;
+                const bool jitterSame = autoValue(w, 3.3) == autoValue(w, 3.3) &&
+                                        std::abs(autoValue(w, 3.3) - autoValue(la, 3.3)) > 1e-4f;
+                std::cout << "verlauf loop / stretch / reverse / jitter: " << loopOk << speedOk << revOk
+                          << jitterSame << ((loopOk && speedOk && revOk && jitterSame) ? "  ok" : "  FAIL")
+                          << std::endl;
+            }
+            // a hand on the control: the lane gives way; armed + recording: it writes
+            auto *airP = proc->getParamAt(air);
+            S.lanes[0].armed = true;
+            proc->autoPublish();
+            proc->setAutoRecord(true);
+            airP->beginChangeGesture();
+            airP->setValueNotifyingHost(0.9f);
+            for (int i = 0; i < nb / 2; ++i)
+                block();
+            const bool gaveWay = std::isnan(proc->getAutomatedNorm(air));
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(200); // (the 40 Hz timer)
+            airP->endChangeGesture();
+            proc->setAutoRecord(false);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+            int recorded = 0;
+            for (auto &p : S.lanes[0].pts)
+                if (std::abs(p.v - 0.9f) < 0.01f)
+                    ++recorded;
+            block();
+            const bool back = !std::isnan(proc->getAutomatedNorm(air));
+            std::cout << "verlauf hand: gives way " << gaveWay << ", recorded points at 0.9: " << recorded
+                      << ", takes over again " << back << ((gaveWay && recorded >= 1 && back) ? "  ok" : "  FAIL")
+                      << std::endl;
+            // saved with the project
+            juce::MemoryBlock mb;
+            proc->getStateInformation(mb);
+            const auto xml = juce::AudioProcessor::getXmlFromBinary(mb.getData(), (int)mb.getSize());
+            const bool saved = xml != nullptr && xml->toString().contains("VERLAUF") &&
+                               xml->toString().contains("stop2");
+            std::cout << "verlauf saved with the project: " << (saved ? "ok" : "FAIL") << std::endl;
+            proc->autoPlay(false);
+            proc->autoSeek(0.0);
+            airP->setValueNotifyingHost(airP->getDefaultValue());
+            S = AutoSet();
+            proc->autoPublish();
+            block();
+            block();
+            std::cout << "verlauf removed -> NaN: "
+                      << (std::isnan(proc->getAutomatedNorm(air)) && std::isnan(proc->getModulatedNorm(air))
+                              ? "ok"
+                              : "FAIL")
+                      << std::endl;
+        }
+
         // MIDI learn: a knob, a range, a button, and a learned CC wins over the fixed map
         {
             for (int i = 0; i < RysumProcessor::kNumMidiMaps; ++i)
@@ -2608,6 +2724,58 @@ public:
             proc->setSpeakerLayout(rysum::speakerPresets()[4], false);
         }
         shoot(5, "ui_mod.png");
+        {
+            // the Verlauf page with a few lanes: a wave, a loop with a pencil line, stepped stops
+            using namespace rysum;
+            auto &S = proc->getAuto();
+            S = AutoSet();
+            S.clock = 1;
+            AutoLane a;
+            a.paramId = "wind";
+            a.pts = {{0.0, 0.1f}, {6.0, 0.7f}, {14.0, 0.4f}, {22.0, 0.9f}};
+            a.pts[1].shape = asWave;
+            a.pts[1].rate = 1.5f;
+            a.pts[1].depth = 0.25f;
+            a.pts[2].bend = 0.7f;
+            AutoLane b;
+            b.paramId = "air";
+            b.loop = true;
+            b.length = 6.0;
+            b.pts = {{0.0, 0.3f}, {2.0, 0.85f}, {4.0, 0.5f}, {6.0, 0.3f}};
+            b.pts[2].shape = asJitter;
+            b.pts[2].depth = 0.3f;
+            AutoLane c;
+            c.paramId = "stop2";
+            c.armed = true;
+            for (int k = 0; k < 8; ++k)
+            {
+                AutoPoint p{k * 3.0, (float)(k % 2)};
+                p.shape = asStep;
+                c.pts.push_back(p);
+            }
+            AutoLane d;
+            d.paramId = "doppler";
+            d.speed = 0.5f;
+            d.pts = {{0.0, 0.0f}, {8.0, 1.0f}};
+            d.pts[0].shape = asStairs;
+            d.pts[0].rate = 1.0f;
+            S.lanes = {a, b, c, d};
+            proc->autoChanged();
+            proc->autoPublish();
+            proc->autoSeek(9.0);
+            {
+                juce::AudioBuffer<float> abuf(proc->getTotalNumOutputChannels(), 256);
+                juce::MidiBuffer none;
+                proc->processBlock(abuf, none);
+            }
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+            shoot(9, "ui_verlauf.png");
+            shoot(0, "ui_spieltisch_verlauf.png"); // the sliders follow their curves
+            S = AutoSet();
+            proc->autoChanged();
+            proc->autoPublish();
+            proc->autoSeek(0.0);
+        }
         {
             proc->apvts.getParameter("windModel")->setValueNotifyingHost(1.0f);
             shoot(3, "ui_klang_wind2.png");

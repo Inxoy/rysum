@@ -1258,6 +1258,25 @@ RysumProcessor::RysumProcessor()
         modNorm[static_cast<size_t>(i)] = std::numeric_limits<float>::quiet_NaN();
     hits.reserve(kNumRoutes);
     prevHits.reserve(kNumRoutes);
+    // Verlauf: the curve values, which controls a hand holds, the slices' bookkeeping
+    autoNorm.reset(new std::atomic<float>[(size_t)N]);
+    autoTouched.reset(new std::atomic<uint8_t>[(size_t)N]);
+    for (int i = 0; i < N; ++i)
+    {
+        autoNorm[(size_t)i] = std::numeric_limits<float>::quiet_NaN();
+        autoTouched[(size_t)i] = 0;
+    }
+    autoFlag.assign((size_t)N, 0);
+    autoHits.reserve(rysum::kMaxAutoLanes);
+    prevAutoHits.reserve(rysum::kMaxAutoLanes);
+    hostToList.assign((size_t)getParameters().size(), -1);
+    for (int i = 0; i < N; ++i)
+    {
+        const int h = prmList[(size_t)i]->getParameterIndex();
+        if (h >= 0 && h < (int)hostToList.size())
+            hostToList[(size_t)h] = i;
+        prmList[(size_t)i]->addListener(&gestureWatch);
+    }
     auto I = [this](const juce::String &id)
     {
         jassert(paramIndex.count(id) > 0);
@@ -1452,6 +1471,8 @@ bool RysumProcessor::setAudience(bool on, bool loopbackOnly)
 RysumProcessor::~RysumProcessor()
 {
     audience.reset(); // (the port closes before anything it plays to goes)
+    for (auto *prm : prmList)
+        prm->removeListener(&gestureWatch);
     if (mts != nullptr)
     {
         MTS_DeregisterClient(mts);
@@ -1805,6 +1826,8 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     const int N = (int)rawList.size();
     for (int i = 0; i < N; ++i)
         modVals[(size_t)i] = rawList[(size_t)i]->load();
+    // Verlauf first: a lane takes its parameter over, the routings below add on top of the curve
+    applyAutomation(p);
     hits.clear();
     for (int r = 0; r < kNumRoutes; ++r)
     {
@@ -1824,7 +1847,22 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
         modOff[(size_t)t] += a * shapeSource(sIdx, src[sIdx], routeUni[(size_t)r].load());
     }
     for (int t : prevHits)
-        modNorm[static_cast<size_t>(t)] = std::numeric_limits<float>::quiet_NaN();
+        if (!autoFlag[(size_t)t])
+            modNorm[static_cast<size_t>(t)] = std::numeric_limits<float>::quiet_NaN();
+    // automated parameters without a routing: their value is the curve's
+    for (int t : prevAutoHits)
+        if (!autoFlag[(size_t)t])
+        {
+            autoNorm[(size_t)t] = std::numeric_limits<float>::quiet_NaN();
+            if (!modHitFlag[(size_t)t])
+                modNorm[static_cast<size_t>(t)] = std::numeric_limits<float>::quiet_NaN();
+        }
+    for (int t : autoHits)
+        if (!modHitFlag[(size_t)t])
+            modNorm[static_cast<size_t>(t)] = autoNorm[(size_t)t].load();
+    for (int t : autoHits)
+        autoFlag[(size_t)t] = 0;
+    std::swap(autoHits, prevAutoHits);
     for (int t : hits)
     {
         auto *prm = prmList[(size_t)t];
@@ -1836,14 +1874,16 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     }
     std::swap(hits, prevHits);
     haveModVals = true;
-    if (prevHits.empty())
-        return; // nothing global is modulated: p already holds these values
+    if (prevHits.empty() && prevAutoHits.empty())
+        return; // nothing global is modulated or automated: p already holds these values
 
     EngineParams q = readParams(modVals.data());
     applyCcOverrides(q);
     q.bpm = p.bpm;
     q.ppq = p.ppq;
     q.playing = p.playing;
+    q.autoBeats = p.autoBeats;
+    q.autoBeatRate = p.autoBeatRate;
     q.roomHarmonics = p.roomHarmonics;
     q.roomFollow = p.roomFollow;
     q.roomBaseAz = p.roomBaseAz;
@@ -2101,6 +2141,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     applyCcOverrides(params);
 
     // host tempo / position for tempo-synced movement
+    bool hostPpq = false;
     if (auto *ph = getPlayHead())
         if (auto pos = ph->getPosition())
         {
@@ -2109,7 +2150,42 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
             if (auto ppq = pos->getPpqPosition())
                 params.ppq = *ppq;
             params.playing = pos->getIsPlaying() && pos->getPpqPosition().hasValue();
+            hostPpq = pos->getPpqPosition().hasValue();
         }
+
+    // Verlauf: the automation's clock - the host's song position (also standing still, at the
+    // cursor), without a host or by choice the own clock
+    {
+        if (auto pend = std::atomic_exchange(&autoPending, std::shared_ptr<const AutoCompiled>()))
+            autoActive = std::move(pend); // the one before stays alive in autoKeep
+        const auto *ac = autoActive.get();
+        const double sr = getSampleRate() > 0 ? getSampleRate() : 48000.0;
+        const double seek = autoSeekReq.exchange(-1.0);
+        if (seek >= 0.0)
+            autoOwnBeats = seek;
+        if (ac != nullptr && ac->startOnKey && !autoRun.load())
+            for (const auto meta : midi)
+                if (meta.getMessage().isNoteOn())
+                {
+                    autoRun = true;
+                    break;
+                }
+        const bool host = hostPpq && (ac == nullptr || ac->clock == 0);
+        if (host)
+        {
+            params.autoBeats = params.ppq;
+            params.autoBeatRate = params.playing ? params.bpm / 60.0 : 0.0;
+        }
+        else
+        {
+            params.autoBeats = autoOwnBeats;
+            params.autoBeatRate = autoRun.load() ? (ac != nullptr ? ac->tempo : 60.0) / 60.0 : 0.0;
+            autoOwnBeats += buffer.getNumSamples() / sr * params.autoBeatRate;
+        }
+        autoNow = params.autoBeats;
+        autoHostNow = host;
+        autoMovingNow = params.autoBeatRate > 0.0;
+    }
 
     // room: take a new impulse response before the engine runs (the sends depend on it)
     if (irClearRequest.exchange(false))
@@ -3659,6 +3735,7 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
             wk.appendChild(lt, nullptr);
         }
         extra.appendChild(wk, nullptr);
+        extra.appendChild(rysum::autoToTree(autoSet), nullptr);
     }
     else if (rysum::builtInRoomIndex(walkModelFile.getFileName()) >= 0 && getWalkMesh() != nullptr)
     {
@@ -4097,6 +4174,10 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
             const auto mm = extra.getChildWithName("MIDIMAP");
             if (mm.isValid())
                 applyMidiMapState(mm);
+            // Verlauf: the project's piece (patches leave it as it is)
+            autoSet = rysum::autoFromTree(extra.getChildWithName("VERLAUF"));
+            ++autoVersion;
+            autoPublish();
             {
                 const juce::File lr(extra["lucRecording"].toString());
                 juce::String err;

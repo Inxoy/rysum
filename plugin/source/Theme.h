@@ -394,6 +394,11 @@ struct ModUiAccess
     }
     /** opens the mode in which a click on any button waits for a MIDI button to press it */
     virtual void startButtonLearn() {}
+    /** Verlauf: the curve's value of an automated parameter (before modulation), NaN = none */
+    virtual float automatedNorm(int)
+    {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
 };
 
 /** a switch of the interface bound to its parameter; the button also says which parameter it is,
@@ -695,21 +700,24 @@ public:
         }
         else
         {
+            // automated (Verlauf): the value the curve gives it right now
+            const bool automated = !std::isnan(autoNorm) && param != nullptr;
+            const juce::String valueText =
+                automated ? param->getText(autoNorm, 1024)
+                          : (param != nullptr ? param->getCurrentValueAsText() : juce::String());
             g.setColour(valueHover ? col::white : col::dim);
-            g.drawText(param != nullptr ? param->getCurrentValueAsText() : juce::String(), r,
-                       juce::Justification::centredRight);
-            if (midiCc >= 0)
+            g.drawText(valueText, r, juce::Justification::centredRight);
+            if (midiCc >= 0 || automated)
             {
-                // a small tag: this one follows a controller
-                const auto tag = midiCc >= 128 ? "Note " + juce::MidiMessage::getMidiNoteName(midiCc - 128, true, true, 4) : "CC " + juce::String(midiCc); // (128 + n: note n)
+                // a small tag: this one follows a controller / the Verlauf
+                const auto tag = automated ? juce::String("Verlauf") : midiCc >= 128 ? "Note " + juce::MidiMessage::getMidiNoteName(midiCc - 128, true, true, 4) : "CC " + juce::String(midiCc); // (128 + n: note n)
                 g.setFont(Assets::get().monoFont(compact ? 8.5f : 9.5f));
-                g.setColour(col::faint);
+                g.setColour(automated ? col::rubric.brighter(0.35f) : col::faint);
                 const int tw = juce::roundToInt(juce::GlyphArrangement::getStringWidth(
                                    g.getCurrentFont(), tag)) +
                                4;
                 const int vw = juce::roundToInt(juce::GlyphArrangement::getStringWidth(
-                    Assets::get().monoFont(compact ? 10.0f : 12.0f),
-                    param != nullptr ? param->getCurrentValueAsText() : juce::String()));
+                    Assets::get().monoFont(compact ? 10.0f : 12.0f), valueText));
                 g.drawText(tag, r.withTrimmedRight(vw + 6).removeFromRight(tw),
                            juce::Justification::centredRight);
             }
@@ -769,7 +777,7 @@ public:
 
         // routing ranges (red) with a draggable lozenge at the full-amount end
         nHandles = access->routesFor(index, handleRoute.data(), (int)handleRoute.size());
-        const float base = param->getValue();
+        const float base = std::isnan(autoNorm) ? param->getValue() : autoNorm;
         for (int i = 0; i < nHandles; ++i)
         {
             const int r = handleRoute[(size_t)i];
@@ -897,6 +905,25 @@ private:
             routeSig = sig;
             repaint();
         }
+        // Verlauf: the slider follows the curve (the parameter itself stays where the hand left
+        // it); while it is held, the hand counts
+        {
+            const float an = access->automatedNorm(index);
+            const bool wasA = !std::isnan(autoNorm), isA = !std::isnan(an);
+            if (param != nullptr && !slider.isMouseButtonDown())
+            {
+                if (isA)
+                    slider.setValue(param->convertFrom0to1(an), juce::dontSendNotification);
+                else if (wasA)
+                    slider.setValue(param->convertFrom0to1(param->getValue()),
+                                    juce::dontSendNotification);
+            }
+            if (wasA != isA || (isA && std::abs(an - autoNorm) > 0.0005f))
+            {
+                autoNorm = an;
+                repaint();
+            }
+        }
         const int cc = access->midiControllerFor(index);
         if (cc != midiCc)
         {
@@ -912,6 +939,7 @@ private:
     ModUiAccess *access = nullptr;
     int index = -1;
     float modNorm = std::numeric_limits<float>::quiet_NaN();
+    float autoNorm = std::numeric_limits<float>::quiet_NaN(); // Verlauf: the curve's value
     float routeSig = 0.0f; // what the routing ranges were drawn from
     juce::RangedAudioParameter *param = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;

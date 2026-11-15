@@ -216,6 +216,8 @@ struct EngineParams
     bool sync = false; // speeds relative to 120 BPM, locked to the host position
     double bpm = 120.0, ppq = 0.0;
     bool playing = false;
+    // the Verlauf (automation) clock: beats at the start of the block / slice, beats per second
+    double autoBeats = 0.0, autoBeatRate = 0.0;
 
     // distance
     float doppler = 1.0f; // 0 = off, 1 = physical, up to 4 = exaggerated

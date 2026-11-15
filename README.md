@@ -94,7 +94,7 @@ the order, the HRTF or the sample rate changes. The built-in HRTF is the **FABIA
 torso simulator of the TU Berlin (2000 of the 11 950 measured directions). Latency of the
 binaural decoder: 128 samples.
 
-## 3. The six pages
+## 3. The pages
 
 **Top bar, next to the patches:**
 - *Tastatur*: play with the computer keyboard. `A W S E D F T G Z H U J K O L P` = C up to
@@ -381,6 +381,42 @@ follow the pipes. Everything is off in older patches.
   are automatable parameters; sources and targets of the slots are saved with the project.
 - **MIDI-Regler** (the second tab of *Zuordnungen*): knobs, faders and buttons of your MIDI
   keyboard on any control of the plugin – see section 4.
+
+**Verlauf** – automation over time, like the automation lanes of a DAW, but inside the plugin
+and with things a hand can't do: exact, long, synchronised changes of many controls, textures,
+loops of different lengths running against each other.
+- *+ Spur* adds a lane for a control (up to 16), or right-click any slider → *Im Verlauf
+  automatisieren*. Besides every slider, a few switches can have a lane too: the stops
+  (*gezogen*), the motion of each stop, Freeze, Tremulant, Saal an, Stimmung, Verfall mode and
+  a few others. Switches move in steps.
+- A lane **takes its control over** while it is on: the slider follows the curve (a small red
+  *Verlauf* next to its value), and modulation (LFOs, envelopes …) adds on top, as it does on
+  the slider. Grab the slider and the lane gives way for as long as you hold it. A fixed MIDI CC
+  (section 4) still wins over a lane.
+- **Clock**: *Host* follows the song position of the DAW in beats, also when it is stopped (the
+  value at the cursor). Without a host (standalone) the own clock runs instead. *Eigene Uhr* is the
+  plugin's own clock: ▶ / ■ (a second ■ goes back to the start) / ⏮, the space bar, or
+  *Erste Taste* (the first key starts it). *Tempo* sets its speed (60 BPM = one beat per second).
+  Click into the ruler to move the own clock there.
+- **Tools**: *Punkte* – click sets a point (on the *Raster*; Shift: off the grid), drag moves it
+  (Ctrl: only its value), double-click or Delete removes it, Alt + drag on a segment bends it,
+  right-click chooses the segment's shape. *Stift* – draw freehand; the line is thinned to
+  the points that matter and replaces the points under it. *Treppe* – draw one step per grid cell.
+- **Segment shapes** (*Abschnitt*, for the segment from the selected point to the next):
+  *Kurve* (straight or bent), *Stufe* (holds, then jumps), *Welle* (the line plus a sine wave:
+  *Tempo* = waves per beat, *Tiefe*), *Zittern* (the line plus smooth random wandering – the same
+  every time, so a bounce sounds like the playback), *Treppe* (the line in steps).
+- **Lane** (*Spur*): *Länge* of its region, *Schleife* (the region repeats), *Rückwärts* (read
+  backwards), *Dehnung* (× 2 = twice as fast, × 0.5 = half), *Versatz* (where it starts on the
+  clock). Lanes with different lengths and stretches drift against each other (polymetric).
+- **Recording**: switch on *● Aufnahme*, arm a lane (● in its head) and move its slider while the
+  clock runs: the movement is written into the lane (only where you moved it), thinned to a few
+  points you can edit afterwards.
+- Ctrl+Z / Ctrl+Y undo / redo, Ctrl + mouse wheel zooms, Shift + wheel scrolls in time, the
+  middle mouse button drags the view; *Alles* shows all points.
+- The lanes are saved with the project, not in patches: loading a patch mid-piece keeps them.
+- Only the slider rows follow their curves on screen; switches (stop knobs, buttons) sound as
+  the lane says but do not move.
 
 Pipes the preprocessing flagged as unusable (Gedackt f and f♯ in the current
 samples) are replaced by the neighbouring pipe, pitch-shifted to the exact

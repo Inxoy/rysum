@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Audience.h"
+#include "Automation.h"
 #include "Binaural.h"
 #include "Convolver.h"
 #include "DsfReferenceInstrument.h"
@@ -115,6 +116,74 @@ public:
     }
     /** normalised value after modulation, NaN if the parameter is not modulated right now */
     float getModulatedNorm(int index) const;
+
+    // ---- Verlauf: automation over time (message thread unless noted)
+    rysum::AutoSet &getAuto()
+    {
+        return autoSet;
+    }
+    /** after any change of getAuto(): hands a copy to the audio thread */
+    void autoChanged();
+    /** hands the lanes to the audio thread now (autoChanged does it at the next tick) */
+    void autoPublish();
+    /** counts changes of getAuto() (also by recording), for the page to redraw */
+    int getAutoVersion() const
+    {
+        return autoVersion.load();
+    }
+    /** the clock in beats, as the audio thread saw it last */
+    double getAutoNow() const
+    {
+        return autoNow.load();
+    }
+    /** true = the clock follows the host's song position right now */
+    bool isAutoHostClock() const
+    {
+        return autoHostNow.load();
+    }
+    /** the clock moves right now (host playing, or the own clock running) */
+    bool isAutoMoving() const
+    {
+        return autoMovingNow.load();
+    }
+    /** the own clock: run / stop, jump to a time */
+    void autoPlay(bool run)
+    {
+        autoRun.store(run);
+    }
+    bool isAutoOwnRunning() const
+    {
+        return autoRun.load();
+    }
+    void autoSeek(double beats)
+    {
+        autoSeekReq.store(beats);
+    }
+    /** record: armed lanes write while their control is moved and the clock moves */
+    void setAutoRecord(bool on)
+    {
+        autoRec.store(on);
+    }
+    bool isAutoRecord() const
+    {
+        return autoRec.load();
+    }
+    /** the curve's value (before modulation) of an automated parameter, NaN = not automated now */
+    float getAutomatedNorm(int index) const
+    {
+        return index >= 0 && index < (int)prmList.size() ? autoNorm[(size_t)index].load()
+                                                         : std::numeric_limits<float>::quiet_NaN();
+    }
+    /** a hand holds this parameter's control (its lane gives way meanwhile) */
+    bool isAutoTouched(int index) const
+    {
+        return index >= 0 && index < (int)prmList.size() && autoTouched[(size_t)index].load() != 0;
+    }
+    /** parameters a lane may drive: every continuous one plus a few switches (stops, motion,
+        freeze, tremulant, Saal, tuning, Verfall mode) */
+    bool isAutoTarget(int i) const;
+    /** number of values of a stepped parameter (switch: 2), 0 = continuous */
+    int autoSteps(int i) const;
     int getRouteSrc(int r) const
     {
         return routeSrc[(size_t)r].load();
@@ -961,12 +1030,71 @@ private:
     void applySceneMorph();
     juce::ValueTree scenesState() const;
     void applyScenesState(const juce::ValueTree &t);
+    // ---- Verlauf (automation)
+    struct AutoCompiled
+    {
+        bool on = true;
+        int clock = 0;
+        double tempo = 60.0;
+        bool startOnKey = false;
+        struct Lane
+        {
+            int param = -1, steps = 0, index = 0; // index: in AutoSet::lanes
+            rysum::AutoLane lane;
+        };
+        std::vector<Lane> lanes;
+    };
+    rysum::AutoSet autoSet;                                   // message thread
+    std::shared_ptr<const AutoCompiled> autoPending, autoActive; // pending: swapped atomically
+    std::deque<std::shared_ptr<const AutoCompiled>> autoKeep; // message thread keeps them alive
+    std::atomic<int> autoVersion{0};
+    std::atomic<double> autoNow{0.0}, autoSeekReq{-1.0};
+    std::atomic<bool> autoHostNow{false}, autoMovingNow{false}, autoRun{false}, autoRec{false};
+    double autoOwnBeats = 0.0; // audio thread
+    std::unique_ptr<std::atomic<float>[]> autoNorm;
+    std::unique_ptr<std::atomic<uint8_t>[]> autoTouched;
+    std::vector<char> autoFlag;           // audio thread: automated in this slice
+    std::vector<int> autoHits, prevAutoHits; // audio thread
+    std::vector<int> hostToList;          // processor parameter index -> prmList index
+    struct AutoRecSample
+    {
+        int lane;
+        double t;
+        float v;
+    };
+    static constexpr int kAutoFifo = 8192;
+    juce::AbstractFifo autoFifo{kAutoFifo};
+    std::array<AutoRecSample, kAutoFifo> autoFifoData{};
+    struct AutoPass // one recorded pass of a lane (message thread)
+    {
+        bool active = false;
+        double t0 = 0.0, tLast = 0.0;
+        juce::uint32 lastMs = 0;
+        std::vector<rysum::AutoPoint> raw, before;
+    };
+    std::array<AutoPass, rysum::kMaxAutoLanes> autoPass;
+    void applyAutomation(const rysum::EngineParams &p); // audio thread, from modulate()
+    void autoTick();                                    // message thread, 40 Hz: recording
+    bool autoDirty = false;
+    struct GestureWatch : juce::AudioProcessorParameter::Listener
+    {
+        explicit GestureWatch(RysumProcessor &p) : proc(p) {}
+        void parameterValueChanged(int, float) override {}
+        void parameterGestureChanged(int i, bool starting) override
+        {
+            if (i >= 0 && i < (int)proc.hostToList.size() && proc.hostToList[(size_t)i] >= 0)
+                proc.autoTouched[(size_t)proc.hostToList[(size_t)i]] = starting ? 1 : 0;
+        }
+        RysumProcessor &proc;
+    } gestureWatch{*this};
+
     struct MorphTimer : juce::Timer
     {
         explicit MorphTimer(RysumProcessor &p) : proc(p) {}
         void timerCallback() override
         {
             proc.applySceneMorph();
+            proc.autoTick();
             proc.followTuningLayouts();
         }
         RysumProcessor &proc;

@@ -2,9 +2,7 @@
 
 namespace rysum::ui
 {
-namespace
-{
-juce::String groupFor(const juce::String &id)
+juce::String ModView::paramGroup(const juce::String &id)
 {
     if (id.startsWith("vol") || id.startsWith("swind") || id.startsWith("rate") ||
         id.startsWith("depth") || id.startsWith("ellipse"))
@@ -18,6 +16,8 @@ juce::String groupFor(const juce::String &id)
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
         id == "wind" || id == "master")
         return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
+    if (id.startsWith("stop") || id.startsWith("motion") || id.startsWith("jumpHard"))
+        return "Register";
     if (id.startsWith("ir"))
         return "Hall";
     if (id.startsWith("fx"))
@@ -31,6 +31,8 @@ juce::String groupFor(const juce::String &id)
     return "Klang";
 }
 
+namespace
+{
 int targetFromComboId(int id)
 {
     return id <= 0 ? -1 : (id < 1000 ? id - 1 : kGlobalTargetBase + (id - 1000));
@@ -74,7 +76,7 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
     {
         juce::PopupMenu sub;
         for (int i = 0; i < proc.getNumParams(); ++i)
-            if (proc.isModTarget(i) && groupFor(proc.getParamAt(i)->getParameterID()) == grp)
+            if (proc.isModTarget(i) && paramGroup(proc.getParamAt(i)->getParameterID()) == grp)
                 sub.addItem(idOffset + 1000 + i, proc.getParamAt(i)->getName(64));
         if (sub.getNumItems() > 0)
             menu.addSubMenu(grp, sub);

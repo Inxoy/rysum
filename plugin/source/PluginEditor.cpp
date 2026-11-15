@@ -75,11 +75,12 @@ RysumContent::RysumContent(RysumProcessor &p)
     addChildComponent(mod);
     addChildComponent(fx);
     addChildComponent(saal);
-    const char *names[]{"Spieltisch", "Raum", "Saal", "Klang", "Effekte", "Modulation"};
-    for (int i = 0; i < 6; ++i)
+    addChildComponent(verlauf);
+    const char *names[]{"Spieltisch", "Raum", "Saal", "Klang", "Effekte", "Modulation", "Verlauf"};
+    for (int i = 0; i < kNumTabs; ++i)
     {
         tabs[(size_t)i].setButtonText(juce::String(names[i]).toUpperCase());
-        tabs[(size_t)i].onClick = [this, i] { showView(i); };
+        tabs[(size_t)i].onClick = [this, i] { showView(tabView(i)); };
         addAndMakeVisible(tabs[(size_t)i]);
     }
     showView(0);
@@ -184,7 +185,7 @@ RysumContent::RysumContent(RysumProcessor &p)
     {
         const std::pair<juce::Component *, const char *> named[]{
             {&console, "spieltisch"},  {&space, "raum"},         {&saal, "saal"},
-            {&klang, "klang"},         {&fx, "effekte"},         {&mod, "modulation"},
+            {&klang, "klang"},         {&fx, "effekte"},         {&mod, "modulation"}, {&verlauf, "verlauf"},
             {&organ, "orgel"},         {&speakers, "lautsprecher"}, {&walk, "begehen"},
             {&outInfoButton, "ausgabe-info"}, {&logoButton, "logo"}, {&diceButton, "zufall"},
             {&keysButton, "tastatur"}, {&latchButton, "halten"}, {&fullButton, "vollbild"},
@@ -192,7 +193,7 @@ RysumContent::RysumContent(RysumProcessor &p)
             {&patchName, "patch"},     {&patchSave, "patch-speichern"}, {&learnOverlay, "midi-tasten"}};
         for (auto &n : named)
             n.first->setComponentID(n.second);
-        for (int i = 0; i < 6; ++i)
+        for (int i = 0; i < kNumTabs; ++i)
             tabs[(size_t)i].setComponentID("seite-" + juce::String(i));
     }
     learnOverlay.onClose = [this] { stopButtonLearn(); };
@@ -539,13 +540,16 @@ void RysumContent::showView(int v)
     klang.setVisible(v == 3);
     fx.setVisible(v == 4);
     mod.setVisible(v == 5);
-    for (int i = 0; i < 6; ++i)
-        tabs[(size_t)i].setToggleState(i == v, juce::dontSendNotification);
+    verlauf.setVisible(v == 9);
+    for (int i = 0; i < kNumTabs; ++i)
+        tabs[(size_t)i].setToggleState(tabView(i) == v, juce::dontSendNotification);
     if (v == 8)
     {
         if (walk.isShowing())
             walk.grabKeyboardFocus();
     }
+    else if (v == 9 && !proc.computerKeys)
+        verlauf.grabKeyboardFocus();
     else if (proc.computerKeys)
         grabKeyboardFocus();
 }
@@ -557,6 +561,7 @@ void RysumContent::resized()
     space.setBounds(body);
     klang.setBounds(body);
     mod.setBounds(body);
+    verlauf.setBounds(body);
     fx.setBounds(body);
     saal.setBounds(body);
     organ.setBounds(body);
@@ -565,20 +570,22 @@ void RysumContent::resized()
     learnOverlay.setBounds(getLocalBounds());
     outInfoButton.setBounds(kOutX + kOutW + 2, 8, kFullX - 5 - (kOutX + kOutW + 2), kHeader - 16);
     logoButton.setBounds(24, 6, 116, 44);
+    // (tightened for the seventh page, Verlauf)
     patchPrev.setBounds(152, 14, 22, 28);
-    patchName.setBounds(177, 14, 112, 28);
-    patchNext.setBounds(292, 14, 22, 28);
-    patchSave.setBounds(318, 14, 72, 28);
-    diceButton.setBounds(394, 14, 60, 28);
-    keysButton.setBounds(462, 14, 74, 28);
-    latchButton.setBounds(540, 14, 60, 28);
-    const int tw[]{94, 58, 54, 58, 76, 102};
-    const int tabOrder[]{0, 3, 4, 5, 2, 1}; // Spieltisch, Klang, Effekte, Modulation, Saal, Raum
-    int x = 608;
+    patchName.setBounds(176, 14, 100, 28);
+    patchNext.setBounds(278, 14, 22, 28);
+    patchSave.setBounds(303, 14, 70, 28);
+    diceButton.setBounds(378, 14, 54, 28);
+    keysButton.setBounds(437, 14, 72, 28);
+    latchButton.setBounds(513, 14, 54, 28);
+    const int tw[]{88, 52, 48, 54, 68, 92, 70};
+    // Spieltisch, Klang, Effekte, Modulation, Verlauf, Saal, Raum
+    const int tabOrder[]{0, 3, 4, 5, 6, 2, 1};
+    int x = 574;
     for (const int i : tabOrder)
     {
         tabs[(size_t)i].setBounds(x, 13, tw[i], 30);
-        x += tw[i] + 3;
+        x += tw[i] + 2;
     }
     outputChoice.setBounds(kOutX, 14, kOutW, 28);
     fullButton.setBounds(kFullX, 14, 28, 28);
@@ -1131,7 +1138,15 @@ void RysumContent::showModMenu(juce::Component &target, const juce::String &para
                   u8("MIDI-Zuordnung entfernen: ") +
                       (mm.cc >= 0 ? "CC " + juce::String(mm.cc) : u8("noch nicht gelernt")));
     }
+    // Verlauf: a lane for this control
     m.addSeparator();
+    if (proc.isAutoTarget(idx))
+    {
+        bool has = false;
+        for (auto &l : proc.getAuto().lanes)
+            has = has || l.paramId == paramId;
+        m.addItem(600, has ? u8("Im Verlauf zeigen") : u8("Im Verlauf automatisieren"));
+    }
     m.addItem(300, "Modulationsseite " + juce::String(u8("\xc3\xb6")) + "ffnen");
     juce::Component::SafePointer<RysumContent> safe(this);
     m.showMenuAsync(
@@ -1149,6 +1164,12 @@ void RysumContent::showModMenu(juce::Component &target, const juce::String &para
             {
                 self.mod.showMidiTab(false);
                 self.showView(5);
+            }
+            else if (res == 600)
+            {
+                if (auto *prm = self.proc.getParamAt(idx))
+                    self.verlauf.addLaneFor(prm->getParameterID());
+                self.showView(9);
             }
             else if (res == 400)
             {

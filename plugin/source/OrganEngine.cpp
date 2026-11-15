@@ -4491,6 +4491,7 @@ void OrganEngine::process(juce::AudioBuffer<float> &out, const juce::MidiBuffer 
         chunkMidi.addEvents(midi, start, len, -start);
         EngineParams pc = pIn;
         pc.ppq = pIn.ppq + (start / sr) * pIn.bpm / 60.0;
+        pc.autoBeats = pIn.autoBeats + (start / sr) * pIn.autoBeatRate;
         followInput(start, len, pIn);
         advanceModulation(pc, len / sr);
         if (modHook != nullptr)

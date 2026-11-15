@@ -9,6 +9,7 @@
 #include "SaalView.h"
 #include "SpaceView.h"
 #include "SpeakerView.h"
+#include "VerlaufView.h"
 #include "Theme.h"
 #include "WalkView.h"
 
@@ -139,6 +140,10 @@ public:
     {
         return proc.getModulatedNorm(index);
     }
+    float automatedNorm(int index) override
+    {
+        return proc.getAutomatedNorm(index);
+    }
     int routesFor(int paramIndex, int *out, int maxCount) override
     {
         int n = 0;
@@ -215,6 +220,7 @@ private:
     rysum::ui::OrganView organ;
     rysum::ui::SpeakerView speakers{proc}; // view 7: the loudspeaker layout
     rysum::ui::WalkView walk{proc};        // view 8: the Saal in 3D, walked with WASD and the mouse
+    rysum::ui::VerlaufView verlauf{proc}; // view 9: automation over time
     rysum::ui::ButtonLearnOverlay learnOverlay{proc, *this};
     bool immersive = false;     // the 3D view fills the whole window
     bool immersiveFull = false; // ... and went to the full screen for it
@@ -231,7 +237,13 @@ private:
     int viewBeforeOrgan = 0;
     juce::TextButton diceButton{"Zufall"};
     void showDiceMenu();
-    std::array<juce::TextButton, 6> tabs;
+    static constexpr int kNumTabs = 7;
+    /** the page a tab shows: tabs 0..5 are views 0..5, the seventh (Verlauf) is view 9 */
+    static int tabView(int tab)
+    {
+        return tab < 6 ? tab : 9;
+    }
+    std::array<juce::TextButton, kNumTabs> tabs;
     juce::TextButton keysButton{"Tastatur"}, latchButton{"Halten"};
     std::array<int, 18> keyNoteDown{}; // MIDI note each computer key is playing (-1 = up)
     int keysVelocity = 100;
