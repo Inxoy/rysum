@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Audience.h"
 #include "Binaural.h"
 #include "Convolver.h"
 #include "DsfReferenceInstrument.h"
@@ -646,6 +647,14 @@ public:
     /** counts the times something other than the 3D view changed its room, light or pose (a patch
      *  with a built-in room): the open view takes them over */
     std::atomic<int> walkSerial{0};
+    /** "Publikum": the audience's phones as hands (see Audience.h). Message thread; made when
+     * first switched on, off with every new instance (not saved). False: no port could be opened */
+    bool setAudience(bool on, bool loopbackOnly = false);
+    rysum::AudienceHands *getAudience() const noexcept
+    {
+        return audience != nullptr && audience->running() ? audience.get() : nullptr;
+    }
+    std::unique_ptr<rysum::AudienceHands> audience;
     /** the Saal (room 1) takes the loaded model's size, as a box; false = no model */
     bool fitSaalToWalkModel();
     /** a patch's room for the 3D view: one of the built-in models (by file name) and the light */

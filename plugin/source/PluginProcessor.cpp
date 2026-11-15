@@ -1412,8 +1412,28 @@ RysumProcessor::RysumProcessor()
     morphTimer.startTimerHz(40);
 }
 
+bool RysumProcessor::setAudience(bool on, bool loopbackOnly)
+{
+    if (!on)
+    {
+        audience.reset();
+        return true;
+    }
+    if (audience == nullptr)
+        audience = std::make_unique<rysum::AudienceHands>(*this);
+    if (audience->running())
+        return true;
+    if (!audience->start(loopbackOnly))
+    {
+        audience.reset();
+        return false;
+    }
+    return true;
+}
+
 RysumProcessor::~RysumProcessor()
 {
+    audience.reset(); // (the port closes before anything it plays to goes)
     if (mts != nullptr)
     {
         MTS_DeregisterClient(mts);

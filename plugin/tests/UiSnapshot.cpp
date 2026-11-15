@@ -597,6 +597,172 @@ public:
                     juce::String(crept, 3) + " m in 2 s)",
                 hd > 1.0f && hd < 3.2f && along > 0.9f * hd && flew > 1.0f && crept < 0.3f);
 
+            // ---- the audience: a "phone" (this computer, 127.0.0.1) opens the page, gets a pipe,
+            // knocks it, sends a shockwave, blows wind; a connection that never sends holds nothing up
+            {
+                const bool on = wv.setAudienceForTest(true);
+                auto *au = proc->getAudience();
+                const int port = au != nullptr ? au->serverForTest().portNumber() : 0;
+                auto http = [&](const juce::String &req, double *ms = nullptr) -> juce::String
+                {
+                    const double t0 = juce::Time::getMillisecondCounterHiRes();
+                    juce::StreamingSocket s;
+                    if (port <= 0 || !s.connect("127.0.0.1", port, 1000))
+                        return {};
+                    const auto raw = req + " HTTP/1.1\r\nHost: test\r\nContent-Length: 0\r\n\r\n";
+                    s.write(raw.toRawUTF8(), (int)std::strlen(raw.toRawUTF8()));
+                    juce::MemoryBlock got;
+                    while (juce::Time::getMillisecondCounterHiRes() - t0 < 3000.0)
+                    {
+                        if (s.waitUntilReady(true, 100) != 1)
+                            continue;
+                        char buf[4096];
+                        const int n = s.read(buf, (int)sizeof(buf), false);
+                        if (n <= 0)
+                            break;
+                        got.append(buf, (size_t)n);
+                    }
+                    if (ms != nullptr)
+                        *ms = juce::Time::getMillisecondCounterHiRes() - t0;
+                    return juce::String::fromUTF8((const char *)got.getData(), (int)got.getSize());
+                };
+                const auto page = http("GET /");
+                http("POST /hi?p=testphone1");
+                au->tickForTest();
+                const auto hello = http("POST /hi?p=testphone1");
+                const bool gotPipe = hello.contains("\"c\":\"#") && au->phoneCount() == 1 && au->hands()[0].stop == 0;
+                say("audience: the page is served (" + juce::String(page.length()) + " bytes), the phone gets a pipe: " +
+                        hello.fromFirstOccurrenceOf("\r\n\r\n", false, false),
+                    on && page.startsWith("HTTP/1.1 200") && page.contains("Druckwelle") && gotPipe);
+
+                const uint32_t k0 = proc->engine.impactCount.load();
+                http("POST /act?p=testphone1&a=k&s=1");
+                au->tickForTest();
+                run(4, {});
+                const uint32_t k1 = proc->engine.impactCount.load();
+                http("POST /act?p=testphone1&a=k&s=1"); // (at once again: too fast, dropped)
+                au->tickForTest();
+                run(4, {});
+                const uint32_t k2 = proc->engine.impactCount.load();
+                say("audience: a tap knocks the phone's pipe (" + juce::String((int)(k1 - k0)) +
+                        " knock), a second tap within 90 ms does not (" + juce::String((int)(k2 - k1)) + ")",
+                    k1 == k0 + 1 && k2 == k1);
+
+                wv.callHome();
+                run(400, {});
+                const float s0 = meanDist();
+                http("POST /act?p=testphone1&a=s&s=1.2");
+                au->tickForTest();
+                run(60, {});
+                const float s1 = meanDist();
+                say("audience: a swipe sends a shockwave: the pipes " + juce::String(s0, 2) + " -> " + juce::String(s1, 2) + " m away",
+                    s1 > s0 + 0.5f);
+
+                wv.callHome();
+                run(400, {});
+                auto alongRight = [&]
+                {
+                    const float ya = juce::degreesToRadians(proc->walkPose[2].load());
+                    float sum = 0.0f;
+                    int n = 0;
+                    for (int k = 0; k < kNumKeys; ++k)
+                    {
+                        Vec3f b;
+                        if (!proc->engine.bodyAt(0, k, b))
+                            continue;
+                        sum += (b.x - home.x) * std::cos(ya) + (b.y - home.y) * std::sin(ya);
+                        ++n;
+                    }
+                    return n > 0 ? sum / (float)n : 0.0f;
+                };
+                const float w0 = alongRight();
+                for (int i = 0; i < 10; ++i)
+                {
+                    http("POST /act?p=testphone1&a=w&x=1&y=0");
+                    au->tickForTest();
+                    run(8, {});
+                }
+                const float w1 = alongRight();
+                say("audience: dragging to the right blows the pipes to the right of the view: " + juce::String(w0, 2) +
+                        " -> " + juce::String(w1, 2) + " m",
+                    w1 > w0 + 0.3f);
+
+                juce::StreamingSocket idle;
+                idle.connect("127.0.0.1", port, 1000); // (opened, never sends)
+                double ms = 0.0;
+                const auto r = http("POST /hi?p=testphone2", &ms);
+                AudienceServer second;
+                const bool secondOk = second.start(port, true);
+                say("audience: an idle connection holds nothing up (" + juce::String(ms, 0) + " ms), a second instance opens port " +
+                        juce::String(second.portNumber()) + " instead of " + juce::String(port),
+                    r.startsWith("HTTP/1.1 200") && ms < 500.0 && secondOk && second.portNumber() != port);
+                second.stop();
+                idle.close();
+
+                // the QR code as a picture, for a decoder outside the test
+                // (and codes of other lengths: versions 3 to 6, several blocks)
+                const char *texts[]{"http://192.168.178.123:8796/",
+                                    "http://192.168.178.123:8796/abcdefghijklmnopqrstuvwxyz0123",
+                                    "http://192.168.178.123:8796/abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz012345"};
+                for (int t = 0; t <= 3; ++t)
+                {
+                    const QrCode extra = t > 0 ? QrCode::encode(texts[t - 1]) : QrCode{};
+                    const auto &q = t > 0 ? extra : au->qr();
+                    juce::Image img(juce::Image::RGB, (q.size + 8) * 8, (q.size + 8) * 8, true);
+                    {
+                        // (the drawing reaches the image when the Graphics goes)
+                        juce::Graphics g(img);
+                        g.fillAll(juce::Colours::white);
+                        g.setColour(juce::Colours::black);
+                        for (int y = 0; y < q.size; ++y)
+                            for (int x = 0; x < q.size; ++x)
+                                if (q.at(x, y))
+                                    g.fillRect((x + 4) * 8, (y + 4) * 8, 8, 8);
+                    }
+                    juce::PNGImageFormat png;
+                    auto f = outDir.getChildFile("audience_qr" + juce::String(t) + ".png");
+                    f.deleteFile();
+                    juce::FileOutputStream os(f);
+                    png.writeImageToStream(img, os);
+                    std::cout << "audience: QR for " << (t > 0 ? juce::String(texts[t - 1]) : au->url()) << " (" << q.size
+                              << " modules) in " << f.getFullPathName() << std::endl;
+                }
+                // (look at the phone's pipe, which has just knocked: its ring in the phone's colour)
+                if (!au->hands().empty() && au->hands()[0].stop >= 0)
+                {
+                    Vec3f pp;
+                    proc->engine.bodyAt(au->hands()[0].stop, au->hands()[0].key, pp);
+                    wv.setPoseForTest(0, 0, juce::radiansToDegrees(std::atan2(-(pp.x - home.x), pp.y - home.y)));
+                    wv.setPitchForTest(0.0f);
+                    http("POST /act?p=testphone1&a=k&s=1");
+                    au->tickForTest();
+                    run(2, {});
+                }
+                shot("walk_audience.png");
+                if (const char *serve = std::getenv("RYSUM_AUDIENCE_SERVE"))
+                {
+                    // (by hand: a browser on this computer plays the phone for so many seconds)
+                    const uint32_t k0 = proc->engine.impactCount.load();
+                    const int taps0 = au->serverForTest().knocksServed();
+                    const double until = juce::Time::getMillisecondCounterHiRes() + 1000.0 * std::atof(serve);
+                    std::cout << "audience: serving " << au->url() << " for " << serve << " s" << std::endl;
+                    while (juce::Time::getMillisecondCounterHiRes() < until)
+                    {
+                        au->tickForTest();
+                        run(2, {});
+                        juce::Thread::sleep(15);
+                    }
+                    std::cout << "audience: phones " << au->phoneCount() << ", taps received "
+                              << au->serverForTest().knocksServed() - taps0 << ", knocks "
+                              << (int)(proc->engine.impactCount.load() - k0) << std::endl;
+                    shot("walk_audience_live.png");
+                }
+                wv.setAudienceForTest(false);
+                juce::StreamingSocket after;
+                say("audience: switched off, the port is closed",
+                    proc->getAudience() == nullptr && !after.connect("127.0.0.1", port, 500));
+            }
+
             // a clap is heard (the late reverb is built in the background by the plugin, not in this test)
             {
                 juce::AudioBuffer<float> buf(

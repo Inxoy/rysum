@@ -195,6 +195,16 @@ private:
                      actClap { "C Klatschen" }, actMat { "M Material" };
     HoldButton actGrab { "Q Greifen" }, actFreeze { "F Anhalten" }, actJump { "Springen" };
     juce::TextButton actLight { "L Licht aus" };
+    // "Publikum": the audience's phones as hands (a QR code in the corner leads them to the page)
+    juce::TextButton actAudience { "Publikum" };
+    void setAudience (bool on);
+    void drawAudience (juce::Graphics& g, juce::Rectangle<int> area);
+    double audienceShockSeen = 0.0;
+    bool audienceLoopback = false;   // (tests: only this computer can reach it - no firewall question)
+public:
+    /** tests: switch the audience on (only reachable from this computer) / off */
+    bool setAudienceForTest (bool on) { audienceLoopback = true; setAudience (on); return proc.getAudience() != nullptr; }
+private:
     int seenWalkSerial = 0;          // (proc.walkSerial when the view last took over the room, light and pose)
     std::vector<Raster::Lamp> lamps;
     void setDark (bool on);

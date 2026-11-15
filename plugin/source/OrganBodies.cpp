@@ -626,6 +626,17 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                 startBurst (1, 0.22f * juce::jmin (1.5f, amt), 0.7f);
                 break;
             }
+            case Act::Wind:
+                for (int s = 0; s < kNumStops; ++s)
+                {
+                    if (! isBody (s)) continue;
+                    for (auto& b : bodies[(size_t) s])
+                    {
+                        b.vx += c.v.x; b.vy += c.v.y; b.vz += c.v.z;
+                        b.pushed = juce::jmax (b.pushed, 1.0f); b.rest = 0.0f;
+                    }
+                }
+                break;
             case Act::Home:
                 homing = 3.0f;
                 for (auto& bs : bodies) for (auto& b : bs) { b.loose = false; b.pushed = 0.0f; }

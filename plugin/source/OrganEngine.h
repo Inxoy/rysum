@@ -475,7 +475,8 @@ public:
         Home,   // every pipe flies back to its place in the organ
         Throw,  // the pipe (stop, key) let go with the speed v (m/s) added
         Strike, // the pipe (stop, key), at the place v, knocked: it rings without its key
-        Clap    // a hand clap where the player stands: the room answers
+        Clap,   // a hand clap where the player stands: the room answers
+        Wind    // every pipe that is a body in the Saal gets the speed v (m/s) added (the audience)
     };
     void playerAct(Act a, int stop = -1, int key = -1, Vec3f v = {}, float amount = 1.0f) noexcept;
     std::atomic<bool> actFreeze{false};      // held: everything that moves stands still

@@ -722,6 +722,22 @@ The hands are also buttons in a row at the bottom (*E Druckwelle*, *Q Greifen*, 
 (see *MIDI buttons for any button* in chapter 4) – also *Immersiv* itself. *Greifen*, *Anhalten*
 and *Springen* act for as long as the MIDI button is held.
 
+*Publikum* (the last button of that row): the audience plays along with their phones. A QR code
+appears in the corner of the 3D view (also in the immersive view, so it can be projected) with the
+address under it; phones on the same network open a small page there, nothing to install. Every
+phone gets one pipe of its own, marked with a ring of its colour in the view, and its name on the
+phone. **Tapping** knocks that pipe, a quick **swipe** sends a shockwave from where the player
+stands, **holding and dragging** blows all the pipes like wind (up on the phone = the way the view
+looks). Only pipes that are free in the Saal take part; when *Publikum* is switched on, the pulled
+stops that stand still start to hover (once, then the phones change no settings). A phone can knock
+about ten times a second and send a shockwave every 1.5 s; all together, at most one shockwave every
+0.35 s. Up to 48 phones; a phone that leaves gives its pipe back after a few seconds. *Publikum* is
+never saved: opening a project does not open the page. The page is plain HTTP on port 8787 (8788 …
+for a second Rysum). Windows asks once whether Rysum may use the network – allow it for private
+networks. Guest and public Wi-Fi often keep phones from reaching other devices; then a phone hotspot
+or a small router of one's own is the way. Tilting the phone is not used: phones only give their
+motion sensors to secure (HTTPS) pages.
+
 *Illusions* (the row of sliders under the buttons; all off at first, all of them parameters – they
 can be modulated, automated and put on MIDI knobs with a right-click):
 

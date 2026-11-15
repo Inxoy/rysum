@@ -98,7 +98,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
 {
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::CrosshairCursor);
-    for (juce::Button* b : std::initializer_list<juce::Button*> { &back, &load, &clear, &fit, &zUp, &home, &hear, &immerse, &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight })
+    for (juce::Button* b : std::initializer_list<juce::Button*> { &back, &load, &clear, &fit, &zUp, &home, &hear, &immerse, &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -122,6 +122,12 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     actLight.setToggleState (proc.walkDark, juce::dontSendNotification);
     actLight.setTooltip (U ("Licht aus: nur die klingenden Pfeifen (und die Funken ihrer St\xc3\xb6\xc3\x9f" "e) erhellen den Raum (Taste L)"));
     actLight.onClick = [this] { setDark (actLight.getToggleState()); };
+    actAudience.setClickingTogglesState (true);
+    actAudience.setTooltip (U ("Das Publikum spielt mit: ein QR-Code f\xc3\xbchrt die Handys im selben WLAN zu einer kleinen Seite. Jedes Handy bekommt "
+                               "eine Pfeife in eigener Farbe: Tippen schl\xc3\xa4gt sie an, schnell Wischen schickt eine Druckwelle, Halten und Ziehen "
+                               "bl\xc3\xa4st die Pfeifen wie Wind (nach oben = wohin der Blick geht). Nur Pfeifen, die frei im Saal sind, spielen mit; "
+                               "beim Einschalten schweben alle gezogenen Register, die stillstehen. Wird nicht gespeichert."));
+    actAudience.onClick = [this] { setAudience (actAudience.getToggleState()); };
     back.setTooltip (U ("Zur\xc3\xbc" "ck zum Saal (Esc)"));
     load.onClick = [this]
     {
@@ -244,9 +250,9 @@ void WalkView::resized()
         // the hands: a row above the hints at the bottom
         auto h = getLocalBounds().reduced (18, 0).withTrimmedBottom (26).removeFromBottom (22);
         handsArea = h;
-        const int widths[] { 104, 88, 92, 104, 96, 92, 78, 96 };
-        juce::Button* hands[] { &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight };
-        for (int i = 0; i < 8; ++i)
+        const int widths[] { 104, 88, 92, 104, 96, 92, 78, 96, 80 };
+        juce::Button* hands[] { &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience };
+        for (int i = 0; i < 9; ++i)
         {
             hands[i]->setBounds (h.removeFromLeft (widths[i]));
             h.removeFromLeft (5);
@@ -288,6 +294,7 @@ void WalkView::visibilityChanged()
     {
         seenWalkSerial = proc.walkSerial.load();
         actLight.setToggleState (proc.walkDark, juce::dontSendNotification);
+        actAudience.setToggleState (proc.getAudience() != nullptr, juce::dontSendNotification);
         px = proc.walkPose[0].load(); py = proc.walkPose[1].load(); yaw = proc.walkPose[2].load(); pitch = proc.walkPose[3].load();
         yawT = yaw; pitchT = pitch; vx = vy = vz = turnV = 0.0f; fz = 0.0f; onGround = true;
         proc.engine.viewWalkOn = true;
@@ -1710,6 +1717,7 @@ void WalkView::drawOver (juce::Graphics& g)
         g.setFont (A.monoFont (10.0f));
         g.drawFittedText (overText, box.reduced (6, 3), juce::Justification::topLeft, 9);
     }
+    drawAudience (g, area);     // (also in the immersive view: it is what the room is shown)
     if (immersive) return;      // (only the picture and the cross)
 
     // heading, hints, status (on dark bands, so they stay readable over a bright model)
@@ -1821,5 +1829,74 @@ void WalkView::drawMap (juce::Graphics& g, juce::Rectangle<float> box, const Roo
     g.fillPath (cone);
     g.setColour (col::rubric.brighter (0.3f));
     g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (me));
+}
+
+void WalkView::setAudience (bool on)
+{
+    if (! on)
+    {
+        proc.setAudience (false);
+        actAudience.setToggleState (false, juce::dontSendNotification);
+        say (U ("Publikum aus: die Seite f\xc3\xbcr die Handys ist geschlossen"));
+        return;
+    }
+    // (the phones knock and blow pipes that are bodies in the Saal: the pulled stops that stand still start
+    //  to hover now, once, at the player's click - never because a phone asked)
+    const auto params = proc.readParams();
+    int woken = 0;
+    for (int s = 0; s < kNumStops; ++s)
+        if (params.stopOn[(size_t) s] && ! isRoomMotion (params.motionMode[(size_t) s]) && makeHover (s, false)) ++woken;
+    const bool ok = proc.setAudience (true, audienceLoopback);
+    actAudience.setToggleState (ok, juce::dontSendNotification);
+    if (! ok) { say (U ("Publikum: kein freier Port (8787 bis 8796) \xe2\x80\x93 l\xc3\xa4uft Rysum schon mehrmals?"), 5000.0); return; }
+    say (U ("Publikum an: ") + proc.getAudience()->url() + (woken > 0 ? U ("  \xc2\xb7  ") + juce::String (woken) + U (" Register schweben jetzt") : juce::String())
+         + U ("  \xc2\xb7  Windows fragt beim ersten Mal, ob Rysum ins Netz darf"), 6000.0);
+}
+
+void WalkView::drawAudience (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    auto* au = proc.getAudience();
+    if (au == nullptr) return;
+    auto& A = Assets::get();
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const float isc = rast.width() > 0 ? (float) area.getWidth() / (float) rast.width() : 1.0f;
+
+    // every phone's pipe: a ring in its colour (bright for a moment after it knocked)
+    for (const auto& h : au->hands())
+    {
+        if (h.stop < 0) continue;
+        const auto& sh = shown[(size_t) h.stop][(size_t) h.key];
+        float sx, sy, d;
+        if (! sh.on || ! rast.project (sh.c, sx, sy, d)) continue;
+        const float hit = (float) juce::jlimit (0.0, 1.0, 1.0 - (now - h.lastAct) / 500.0);
+        if (hit > 0.0f) glow[(size_t) h.stop][(size_t) h.key] = juce::jmax (glow[(size_t) h.stop][(size_t) h.key], hit);
+        const juce::Point<float> c (sx * isc, sy * isc);
+        const float rad = juce::jlimit (10.0f, 70.0f, 0.5f / juce::jmax (0.3f, d) * 0.5f * (float) area.getWidth() * 0.3f) * (1.0f + 0.8f * hit);
+        const auto colr = AudienceHands::colour (h.colour);
+        g.setColour (colr.withAlpha (0.55f + 0.45f * hit));
+        g.drawEllipse (juce::Rectangle<float> (2.0f * rad, 2.0f * rad).withCentre (c), 2.0f + 3.0f * hit);
+        g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (c));
+    }
+    // a phone's shockwave: the ring around the cross, as for E
+    if (au->lastShockMs() > audienceShockSeen) { audienceShockSeen = au->lastShockMs(); shockFx = audienceShockSeen; }
+
+    // the way in: the QR code (dark on white, with its quiet zone) and the address; bigger in the immersive view
+    const auto& q = au->qr();
+    if (q.size <= 0) return;
+    // (top right, under the row of sliders - the map has the bottom right; immersive: bottom right, bigger)
+    const int mod = juce::jlimit (3, 10, (immersive ? area.getHeight() / 3 : area.getHeight() / 4) / (q.size + 8));
+    const int side = (q.size + 8) * mod;
+    auto box = juce::Rectangle<int> (area.getRight() - side - 18, immersive ? area.getBottom() - side - 52 : area.getY() + 128, side, side);
+    g.setColour (juce::Colours::white);
+    g.fillRect (box.withHeight (side + 34));
+    g.setColour (juce::Colours::black);
+    for (int y = 0; y < q.size; ++y)
+        for (int x = 0; x < q.size; ++x)
+            if (q.at (x, y)) g.fillRect (box.getX() + (x + 4) * mod, box.getY() + (y + 4) * mod, mod, mod);
+    g.setFont (A.monoFont (10.0f));
+    const int phones = au->phoneCount();
+    g.drawText (au->url().fromFirstOccurrenceOf ("//", false, false).trimCharactersAtEnd ("/"), box.getX(), box.getBottom() - 4, side, 16, juce::Justification::centred);
+    g.drawText (phones == 0 ? U ("Handy: QR-Code scannen") : juce::String (phones) + (phones == 1 ? U (" Handy spielt mit") : U (" Handys spielen mit")),
+                box.getX(), box.getBottom() + 12, side, 16, juce::Justification::centred);
 }
 } // namespace rysum::ui
