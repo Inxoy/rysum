@@ -702,8 +702,8 @@ away (*stößt ab*), lets them circle (*Umlaufbahn*) or drags them along (*Sog*)
 Strömung) – and on the new motion *Schweben*, where the pipes rest at their place until the
 player moves them (*Tiefe* = how free they are, *Geschwindigkeit* = an unrest of their own).
 **G** lets the graphics card or the processor draw the picture (see chapter 6; the card is the default).
-**L** (or *L Licht aus* in the row at the bottom) turns the light off: the room goes dark, only a
-faint trace of it is left, and the sounding pipes light it - each a small lamp, brighter the
+**L** (or *L Licht aus* in the row at the bottom) turns the light off: the room goes dark – with nothing sounding it can
+barely be made out, the silent pipes only a ghost of an outline – and the sounding pipes light it - each a small lamp, brighter the
 louder it sounds, lighting what faces it and fading with distance (no shadows); a knock flashes
 as a spark. A full chord is brighter than one pipe, but not without end. Saved with the project.
 The pipes look like what they are: the Gedackt as square wooden pipes with a mouth cut into the

@@ -370,7 +370,7 @@ public:
                 say("light off: the picture " + juce::String(lightOn, 3) + " with the light on, " +
                         juce::String(lit, 3) + " dark with a chord, " + juce::String(unlit, 3) +
                         " dark and silent",
-                    lit < lightOn && unlit < lit * 0.85);
+                    lit < lightOn && unlit < lit * 0.85 && unlit < 0.058); // (0.051: the ink black itself)
                 wv.setDarkForTest(false);
                 {
                     // (close up: only the wooden Gedackt and the Trompete with its funnels, in the bare Saal)

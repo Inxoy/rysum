@@ -13,6 +13,8 @@ juce::String U (const char* s) { return juce::String::fromUTF8 (s); }
 const juce::Colour kMetal[kNumStops] { juce::Colour (0xffd9d6cd), juce::Colour (0xff8e877a), juce::Colour (0xffc9c6bd), juce::Colour (0xffbdbab2),
                                        juce::Colour (0xffb5afa2), juce::Colour (0xffaaa69c), juce::Colour (0xffc8a15a), juce::Colour (0xffe4e0d6) };
 constexpr float kUnitScale[] { 1.0f, 0.01f, 0.001f, 0.0254f, 0.3048f };
+// "Licht aus": what is left of the usual light where no pipe shines - the room barely to be made out
+constexpr float kDarkRest = 0.018f;
 
 
 // the floor and ceiling follow the outline exactly: the outline cut into triangles (ear clipping; it may be
@@ -1403,9 +1405,10 @@ void WalkView::buildScene (float phys)
     rast.setCamera (eye, yaw, pitch, fov);
     viewScale = (float) area.getWidth() / (float) juce::jmax (1, rast.width());
     const float fogDist = juce::jmax (12.0f, 1.5f * juce::jmax (r.W(), r.L()));      // (floor and ceiling stay readable to the far end)
-    const float grainAmt = compareNow ? 0.0f : 0.12f;        // (a comparison: without the film grain)
     // (light off: what is far away sinks into the dark, not into a grey haze)
     const bool dark = (proc.walkDark && ! compareNow) || testStep == 11;      // (the test: one lamp, below)
+    // (a comparison: without the film grain; in the dark less of it, so nothing glitters where no lamp shines)
+    const float grainAmt = compareNow ? 0.0f : (dark ? 0.05f : 0.12f);
     rast.begin (dark ? 0.0f : 0.07f, fogDist, grainAmt, ++frame);
 
     // the surfaces from the Saal's absorption, scatter and high damping
@@ -1531,7 +1534,7 @@ void WalkView::buildScene (float phys)
             const float bob = proc.engine.bodyAt (s, k, bodyNow) ? 0.0f : 0.06f * (float) std::sin (now * 0.7 + (double) (s * 41 + k) * 1.37);
             const V3 bottom { c.x, c.y, c.z - 0.5f * len + bob };
             const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x);       // the mouth towards the listener's place
-            addPipe (bottom, len, rad, face, metalTone, dark ? gl + 0.12f : gl, s);     // (light off: a faint shimmer of their own)
+            addPipe (bottom, len, rad, face, metalTone, dark ? gl + 0.025f : gl, s);    // (light off: the barest shimmer of their own)
             shown[(size_t) s][(size_t) k] = { { c.x, c.y, c.z + bob }, len, rad, true };
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });
         }
@@ -1576,7 +1579,7 @@ void WalkView::buildScene (float phys)
             const float ya = juce::degreesToRadians (yaw);
             lamps.push_back ({ eye + V3 { -std::sin (ya) * 3.0f, std::cos (ya) * 3.0f, 0.3f }, 1.5f, 3.0f });
         }
-        rast.setLamps (lamps, dark ? 0.07f : 1.0f);
+        rast.setLamps (lamps, dark ? kDarkRest : 1.0f);
     }
     geoMs = (float) (juce::Time::getMillisecondCounterHiRes() - t0);
     if (card)
