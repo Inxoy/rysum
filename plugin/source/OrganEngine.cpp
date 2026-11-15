@@ -1326,37 +1326,41 @@ float OrganEngine::centsFor(int noteId, int key) const noexcept
     return 1200.0f * std::log2(hz / slotHz[(size_t)key]);
 }
 
+int OrganEngine::pipeForFreeNote(int id, const EngineParams &p) const noexcept
+{
+    if (notesNow == nullptr || id < 0 || id >= NoteTable::kSize ||
+        !notesNow->mapped[(size_t)tableIndex(id)])
+        return -1;
+    const float hz = notesNow->hz[(size_t)tableIndex(id)];
+    if (!(hz > 1.0f))
+        return -1;
+    const int midi = id & 127;
+    const int key = keyIndexForMidi(midi);
+    if (notesNow == &keyboardTable && key >= 0)
+        return juce::jlimit(0, kNumKeys - 1, p.tuning.source[static_cast<std::size_t>(key)]);
+    // For a chromatic gap or external tuning, use the nearest pipe.
+    int k = 0;
+    float best = 1.0e9f;
+    for (int i = 0; i < kNumKeys; ++i)
+    {
+        const float distance = std::abs(std::log2(hz / slotHz[static_cast<std::size_t>(i)]));
+        if (distance < best)
+        {
+            best = distance;
+            k = i;
+        }
+    }
+    const bool extended =
+        p.extendedRange && midi >= kExtendedLowestMidiNote && midi <= kExtendedHighestMidiNote;
+    return best > 2.0f && !extended ? -1 : k;
+}
+
 void OrganEngine::noteOnFree(const juce::MidiMessage &m, const EngineParams &p)
 {
     const int id = (juce::jlimit(1, 16, m.getChannel()) - 1) * 128 + m.getNoteNumber();
-    if (notesNow == nullptr || !notesNow->mapped[(size_t)tableIndex(id)])
+    const int k = pipeForFreeNote(id, p);
+    if (k < 0)
         return;
-    const float hz = notesNow->hz[(size_t)tableIndex(id)];
-    if (!(hz > 1.0f))
-        return;
-    const int key = keyIndexForMidi(m.getNoteNumber());
-    int k = 0;
-    if (notesNow == &keyboardTable && key >= 0)
-        k = juce::jlimit(0, kNumKeys - 1, p.tuning.source[static_cast<std::size_t>(key)]);
-    else
-    {
-        // For a chromatic gap or external tuning, use the nearest pipe.
-        float best = 1.0e9f;
-        for (int i = 0; i < kNumKeys; ++i)
-        {
-            const float distance = std::abs(std::log2(hz / slotHz[static_cast<std::size_t>(i)]));
-            if (distance < best)
-            {
-                best = distance;
-                k = i;
-            }
-        }
-        const int midi = m.getNoteNumber();
-        const bool extended =
-            p.extendedRange && midi >= kExtendedLowestMidiNote && midi <= kExtendedHighestMidiNote;
-        if (best > 2.0f && !extended)
-            return;
-    }
     auto &fn = freeNotes[(size_t)id];
     if (fn.held)
         keyUp(fn.key, p, id); // struck again without a note-off
@@ -1488,6 +1492,7 @@ void OrganEngine::keyDown(int key, float velocity, const EngineParams &p, int no
     lastVelocity = juce::jlimit(0.0f, 1.0f, velocity);
     keyVelocity[(size_t)key] = lastVelocity;
     lastDownKey = key;
+    lastDownNote = noteId;
 
     // click: blend between the console position and the average position of the pipes
     std::array<float, kMaxAmbiChannels> console{}, pipes{}, tmp{};

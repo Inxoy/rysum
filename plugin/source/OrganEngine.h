@@ -836,6 +836,8 @@ private:
     void noteOnFree(const juce::MidiMessage &m, const EngineParams &p);
     void noteOffFree(const juce::MidiMessage &m, const EngineParams &p);
     void releaseAllKeys(const EngineParams &p);
+    /** free tuning: the pipe that sounds note id (channel * 128 + MIDI note), -1 = none */
+    int pipeForFreeNote(int id, const EngineParams &p) const noexcept;
     float centsFor(int noteId, int key) const noexcept;
     struct FreeNote
     {
@@ -995,6 +997,7 @@ private:
     XorShift rng{4711};
     int lastDown = -1, lastUp = -1, lastPull = -1;
     int lastDownKey = -1; // the key struck last (the Tonnetz walker starts there)
+    int lastDownNote = -1; // free tuning: the note (channel * 128 + MIDI note) struck last
     std::vector<float> scratch, scratchRamp,
         hidBuf; // hidBuf: the direct sound of a pipe heard around a corner (and its ramp)
     std::array<std::vector<float>, kMaxRoomSends> roomSend;
@@ -1237,8 +1240,10 @@ private:
     struct NetNote
     {
         int key = -1, left = 0;
+        int note = -1; // free tuning: the note it plays on that pipe (-1: the key itself)
     };
     std::array<NetNote, 8> netNotes{};
+    // (in free tuning the walk goes through MIDI notes: netSeed / netPrev are then note ids)
     double netPhase = 0.0, netLastStep = -1.0e18;
     int netA = 0, netB = 0, netStep = 0, netSeed = -1, netPrev = -1, netLastDir = -1;
     uint64_t netHeld = 0; // the keys the player holds (not the walker's own)

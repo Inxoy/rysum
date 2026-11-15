@@ -6942,6 +6942,32 @@ int main(int argc, char **argv)
                 check(e.activeVoices.load() == 0, "Tonnetz walker: stops when the keys are let go");
                 writeWav(outDir.getChildFile("85_tonnetz_wanderer.wav"), b, fsr);
             }
+            // the same in free tuning (every tuning but the original one plays note by note): the
+            // walker must walk there too
+            {
+                OrganEngine e;
+                uint64_t seen = 0;
+                const auto b = play(
+                    e,
+                    [](EngineParams &p)
+                    {
+                        p.correctSamplePitch = true;
+                        p.live.netOn = true;
+                        p.live.netPath = 0;
+                        p.live.netRate = 8.0f;
+                        p.live.netGate = 0.6f;
+                    },
+                    {60}, 4.0, 0, 100, 2.0, [&](int) { seen |= e.soundingMask[0].load(); });
+                int keys = 0;
+                for (int k = 0; k < kNumKeys; ++k)
+                    keys += (seen >> k) & 1 ? 1 : 0;
+                const bool g = (seen >> keyIndexForMidi(67)) & 1;
+                std::cout << "Tonnetz walker in free tuning: " << keys << " keys sounded, g' " << g
+                          << "; voices left at the end " << e.activeVoices.load() << std::endl;
+                check(keys >= 8 && g && finiteB(b), "Tonnetz walker: walks in free tuning too");
+                check(e.activeVoices.load() == 0,
+                      "Tonnetz walker: stops in free tuning when the keys are let go");
+            }
         }
     }
 

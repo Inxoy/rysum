@@ -477,21 +477,28 @@ void OrganEngine::renderLive (float* const* outs, int n, const EngineParams& p) 
 void OrganEngine::stepWalker (const EngineParams& p, int numSamples)
 {
     const auto& lv = p.live;
-    auto stillWanted = [this] (int key)
+    // free tuning (any tuning but the original one, Scala, MTS-ESP, MPE): the walk goes through MIDI notes on the
+    // channel struck last, each sounding on its pipe as if played; otherwise through the keys
+    const bool free = freeMode && notesNow != nullptr;
+    // is this pipe / note still sounding without the walker's note? (free tuning: a held note keeps it)
+    auto stillWanted = [this] (int key, int note)
     {
-        for (const auto& nn : netNotes) if (nn.key == key) return true;
+        for (const auto& nn : netNotes) if (nn.key == key && nn.note == note) return true;
+        if (note >= 0) return freeNotes[(size_t) note].held;
         return keyHeld[(size_t) key] || keySustained[(size_t) key];
     };
+    auto release = [this] (int key, int note) { for (int s = 0; s < kNumStops; ++s) releaseStopKey (s, key, note); };
     for (auto& nn : netNotes)
         if (nn.key >= 0 && (nn.left -= numSamples) <= 0)
         {
-            const int key = nn.key;
-            nn.key = -1;
-            if (! stillWanted (key)) for (int s = 0; s < kNumStops; ++s) releaseStopKey (s, key);
+            const int key = nn.key, note = nn.note;
+            nn.key = nn.note = -1;
+            if (! stillWanted (key, note)) release (key, note);
         }
     bool anyHeld = false;
     for (int k = 0; k < kNumKeys; ++k) anyHeld = anyHeld || keyHeld[(size_t) k] || keySustained[(size_t) k];
-    if (! (lv.netOn && anyHeld && ! freeMode && library != nullptr && lastDownKey >= 0))
+    const int seedNow = free ? lastDownNote : lastDownKey;
+    if (! (lv.netOn && anyHeld && library != nullptr && seedNow >= 0))
     {
         if (netRunning) { netRunning = false; netKeyNow = -1; }       // (the last notes end with their own length)
         return;
@@ -499,11 +506,11 @@ void OrganEngine::stepWalker (const EngineParams& p, int numSamples)
     static const double divQuarters[] { 0.0, 4.0, 2.0, 1.0, 0.5, 0.25, 1.0 / 3.0, 1.0 / 6.0 };
     const double q = divQuarters[juce::jlimit (0, 7, lv.netDiv)];
     const double stepSeconds = q > 0.0 ? q * 60.0 / juce::jmax (20.0, p.bpm) : 1.0 / juce::jmax (0.05, (double) lv.netRate);
-    if (! netRunning || lastDownKey != netSeed)
+    if (! netRunning || seedNow != netSeed)
     {
         // a new key: the walk starts there again
         netRunning = true;
-        netSeed = netPrev = lastDownKey;
+        netSeed = netPrev = seedNow;
         netA = netB = netStep = 0; netLastDir = -1;
         netPhase = 0.0;
         netLastStep = q > 0.0 && p.playing ? std::floor (p.ppq / q) : -1.0e18;
@@ -546,23 +553,31 @@ void OrganEngine::stepWalker (const EngineParams& p, int numSamples)
         }
     }
     netA += dA[dir]; netB += dB[dir]; ++netStep; netLastDir = dir;
-    const int seedMidi = kPhysKeys[(size_t) netSeed], want = kPhysKeys[(size_t) juce::jlimit (0, kNumKeys - 1, netPrev)] + semis[dir];
+    // (free tuning: netSeed / netPrev are note ids, the MIDI note is their low seven bits)
+    auto midiOf = [&] (int at) { return free ? (at & 127) : kPhysKeys[(size_t) juce::jlimit (0, kNumKeys - 1, at)]; };
+    const int seedMidi = midiOf (netSeed), want = midiOf (netPrev) + semis[dir];
     const int pc = (((seedMidi + 7 * netA + 4 * netB) % 12) + 12) % 12;
     // the key with that note: where the step leads, but never far from where the walk began
-    int best = -1; float bestCost = 1.0e9f;
-    for (int k = 0; k < kNumKeys; ++k)
+    int best = -1, bestPipe = -1; float bestCost = 1.0e9f;
+    const int channelBase = free ? (netSeed & ~127) : 0;
+    for (int i = 0; i < (free ? 128 : kNumKeys); ++i)
     {
-        const int m = kPhysKeys[(size_t) k];
+        const int m = free ? i : kPhysKeys[(size_t) i];
         if (m % 12 != pc) continue;
         const float cost = (float) std::abs (m - want) + 0.35f * (float) std::abs (m - seedMidi);
-        if (cost < bestCost) { bestCost = cost; best = k; }
+        if (cost >= bestCost) continue;
+        const int pipe = free ? pipeForFreeNote (channelBase + i, p) : i;  // (free tuning: only notes that sound)
+        if (pipe < 0) continue;
+        bestCost = cost; best = free ? channelBase + i : i; bestPipe = pipe;
     }
     if (best < 0) return;
+    const int note = free ? best : -1;
     netPrev = best;
-    netKeyNow = best;
+    netKeyNow = bestPipe;
     const int length = juce::jmax (64, (int) ((double) juce::jlimit (0.05f, 8.0f, lv.netGate) * stepSeconds * sr));
-    bool sounding = keyHeld[(size_t) best] || keySustained[(size_t) best];
-    for (auto& nn : netNotes) if (nn.key == best) { nn.left = juce::jmax (nn.left, length); sounding = true; }
+    bool sounding = free ? freeNotes[(size_t) note].held : keyHeld[(size_t) bestPipe] || keySustained[(size_t) bestPipe];
+    for (auto& nn : netNotes)
+        if (nn.key == bestPipe && nn.note == note) { nn.left = juce::jmax (nn.left, length); sounding = true; }
     if (sounding) return;                                  // the player (or an earlier step) already sounds it
     NetNote* slot = nullptr;
     for (auto& nn : netNotes) if (nn.key < 0) { slot = &nn; break; }
@@ -571,13 +586,13 @@ void OrganEngine::stepWalker (const EngineParams& p, int numSamples)
         // all eight are ringing: the one with the least time left makes room
         slot = &netNotes[0];
         for (auto& nn : netNotes) if (nn.left < slot->left) slot = &nn;
-        const int old = slot->key;
-        slot->key = -1;
-        if (! stillWanted (old)) for (int s = 0; s < kNumStops; ++s) releaseStopKey (s, old);
+        const int oldKey = slot->key, oldNote = slot->note;
+        slot->key = slot->note = -1;
+        if (! stillWanted (oldKey, oldNote)) release (oldKey, oldNote);
     }
-    slot->key = best; slot->left = length;
-    keyVelocity[(size_t) best] = lastVelocity;
+    slot->key = bestPipe; slot->note = note; slot->left = length;
+    keyVelocity[(size_t) bestPipe] = lastVelocity;
     for (int s = 0; s < kNumStops; ++s)
-        if (p.stopOn[(size_t) s]) { releaseStopKey (s, best); startVoice (s, best); }
+        if (p.stopOn[(size_t) s]) { releaseStopKey (s, bestPipe, note); startVoice (s, bestPipe, -1, note); }
 }
 } // namespace rysum
