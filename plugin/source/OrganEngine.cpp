@@ -3393,6 +3393,25 @@ void OrganEngine::renderErGroup(int group) noexcept
                     // high ringing)
                     float *x = xs[j];
                     const float dd = (t.d1 - t.d0) * inv;
+                    if (dd == 0.0f)
+                    {
+                        // (the usual case: a reflection that stays put in this slice. The same
+                        // arithmetic as below with one read position: a straight run through the
+                        // ring the compiler can vectorise - the general loop was more than half of
+                        // the reflections' time)
+                        const int di = (int)t.d0;
+                        const float fd = t.d0 - (float)di;
+                        const uint32_t at0 = (erClock - (uint32_t)di) & (kErRing - 1);
+                        if (at0 >= 1u && at0 + (uint32_t)n <= (uint32_t)kErRing)
+                        {
+                            const float *RYSUM_RESTRICT rb = ring + at0;
+                            const float *RYSUM_RESTRICT ra = ring + at0 - 1;
+                            float *RYSUM_RESTRICT xo = x;
+                            for (int i = 0; i < n; ++i)
+                                xo[i] = rb[i] + fd * (ra[i] - rb[i]);
+                            continue;
+                        }
+                    }
                     for (int i = 0; i < n; ++i)
                     {
                         const float d = t.d0 + dd * (float)(i + 1);
