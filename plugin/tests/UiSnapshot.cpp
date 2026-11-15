@@ -1992,13 +1992,128 @@ public:
             std::cout << "verlauf hand: gives way " << gaveWay << ", recorded points at 0.9: " << recorded
                       << ", takes over again " << back << ((gaveWay && recorded >= 1 && back) ? "  ok" : "  FAIL")
                       << std::endl;
-            // saved with the project
+            // the host's clock: its song position (also standing still), else the own clock
+            {
+                struct FakeHead : juce::AudioPlayHead
+                {
+                    juce::Optional<PositionInfo> getPosition() const override
+                    {
+                        PositionInfo p;
+                        if (hasPpq)
+                            p.setPpqPosition(ppq);
+                        p.setBpm(120.0);
+                        p.setIsPlaying(playing);
+                        return p;
+                    }
+                    double ppq = 4.0;
+                    bool playing = false, hasPpq = true;
+                } head;
+                S.lanes[0].armed = false;
+                S.lanes[0].pts = la.pts; // (without what the hand recorded)
+                S.clock = 0;
+                proc->autoPublish();
+                proc->autoPlay(false);
+                proc->setPlayHead(&head);
+                block();
+                block();
+                const float stopped = proc->getAutomatedNorm(air);
+                const bool hostNow = proc->isAutoHostClock(), stillNow = !proc->isAutoMoving();
+                head.playing = true;
+                head.ppq = 6.0;
+                block();
+                const float playing = proc->getAutomatedNorm(air);
+                const bool moving = proc->isAutoMoving();
+                head.hasPpq = false;
+                head.playing = false;
+                proc->autoSeek(2.0);
+                block();
+                const bool fallback = !proc->isAutoHostClock() && std::abs(proc->getAutoNow() - 2.0) < 1e-6;
+                proc->setPlayHead(nullptr);
+                const bool ok = std::abs(stopped - 0.5f) < 0.01f && hostNow && stillNow &&
+                                std::abs(playing - 0.65f) < 0.01f && moving && fallback;
+                std::cout << "verlauf host clock: at ppq 4 (stopped) " << stopped << ", ppq 6 (playing) "
+                          << playing << ", no position -> own clock " << fallback << (ok ? "  ok" : "  FAIL")
+                          << std::endl;
+                S.clock = 1;
+                proc->autoPublish();
+            }
+            // an LFO routed to the automated parameter swings around the curve, not the hand
+            {
+                airP->setValueNotifyingHost(0.95f);
+                proc->setRoute(19, srcLfo1, kGlobalTargetBase + air);
+                proc->apvts.getParameter("mod20Amt")->setValueNotifyingHost(
+                    proc->apvts.getParameter("mod20Amt")->convertTo0to1(0.2f));
+                proc->autoPlay(false);
+                proc->autoSeek(4.0);
+                float lo = 1.0f, hi = 0.0f;
+                for (int i = 0; i < nb * 3; ++i)
+                {
+                    block();
+                    const float n = proc->getModulatedNorm(air);
+                    lo = juce::jmin(lo, n);
+                    hi = juce::jmax(hi, n);
+                }
+                proc->setRoute(19, -1, -1);
+                proc->apvts.getParameter("mod20Amt")->setValueNotifyingHost(
+                    proc->apvts.getParameter("mod20Amt")->convertTo0to1(0.0f));
+                airP->setValueNotifyingHost(airP->getDefaultValue());
+                const bool ok = hi - lo > 0.2f && lo > 0.25f && hi < 0.75f;
+                std::cout << "verlauf + LFO: range " << lo << " .. " << hi << " around the curve's 0.5"
+                          << (ok ? "  ok" : "  FAIL") << std::endl;
+            }
+            // a lane pulls the only stop while a key is held: silent before, sound after
+            {
+                std::array<float, kNumStops> stopsBefore{};
+                for (int s = 0; s < kNumStops; ++s)
+                {
+                    auto *sp = proc->apvts.getParameter(RysumProcessor::stopParamId(s));
+                    stopsBefore[(size_t)s] = sp->getValue();
+                    sp->setValueNotifyingHost(0.0f);
+                }
+                S.lanes.resize(2); // air, stop2 (0 until beat 2, then 1)
+                proc->autoPublish();
+                proc->autoSeek(0.0);
+                proc->autoPlay(true);
+                double before = 0.0, after = 0.0;
+                juce::MidiBuffer on;
+                on.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
+                abuf.clear();
+                proc->processBlock(abuf, on);
+                for (int i = 0; i < nb * 3; ++i)
+                {
+                    block();
+                    const double now = proc->getAutoNow();
+                    const double e = abuf.getRMSLevel(0, 0, abuf.getNumSamples());
+                    if (now > 1.0 && now < 1.9)
+                        before = juce::jmax(before, e);
+                    if (now > 2.5)
+                        after = juce::jmax(after, e);
+                }
+                juce::MidiBuffer off;
+                off.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+                abuf.clear();
+                proc->processBlock(abuf, off);
+                proc->autoPlay(false);
+                for (int s = 0; s < kNumStops; ++s)
+                    proc->apvts.getParameter(RysumProcessor::stopParamId(s))
+                        ->setValueNotifyingHost(stopsBefore[(size_t)s]);
+                std::cout << "verlauf pulls a stop: rms before " << before << ", after " << after
+                          << ((after > 1e-4 && after > before * 8.0) ? "  ok" : "  FAIL") << std::endl;
+            }
+            // saved with the project, and loaded back
             juce::MemoryBlock mb;
             proc->getStateInformation(mb);
             const auto xml = juce::AudioProcessor::getXmlFromBinary(mb.getData(), (int)mb.getSize());
             const bool saved = xml != nullptr && xml->toString().contains("VERLAUF") &&
                                xml->toString().contains("stop2");
-            std::cout << "verlauf saved with the project: " << (saved ? "ok" : "FAIL") << std::endl;
+            const auto lanesSaved = S.lanes.size();
+            const auto ptsSaved = S.lanes[0].pts.size();
+            S = AutoSet();
+            proc->setStateInformation(mb.getData(), (int)mb.getSize());
+            const bool loaded = S.lanes.size() == lanesSaved && S.lanes[1].paramId == "stop2" &&
+                                S.lanes[0].pts.size() == ptsSaved && S.clock == 1;
+            std::cout << "verlauf saved with the project and loaded back: " << ((saved && loaded) ? "ok" : "FAIL")
+                      << std::endl;
             proc->autoPlay(false);
             proc->autoSeek(0.0);
             airP->setValueNotifyingHost(airP->getDefaultValue());
@@ -2770,7 +2885,50 @@ public:
             }
             juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
             shoot(9, "ui_verlauf.png");
-            shoot(0, "ui_spieltisch_verlauf.png"); // the sliders follow their curves
+            // the sliders follow their curves (their timers run only in a window on screen)
+            if (auto *rc = dynamic_cast<RysumContent *>(content))
+            {
+                std::function<rysum::ui::ParamRow *(juce::Component &, const juce::String &)> findRow;
+                findRow = [&](juce::Component &parent, const juce::String &id) -> rysum::ui::ParamRow *
+                {
+                    for (auto *ch : parent.getChildren())
+                    {
+                        if (auto *pr = dynamic_cast<rysum::ui::ParamRow *>(ch))
+                            if (pr->getParamId() == id && pr->isShowing())
+                                return pr;
+                        if (auto *f = findRow(*ch, id))
+                            return f;
+                    }
+                    return nullptr;
+                };
+                editor->addToDesktop(0);
+                editor->setVisible(true);
+                rc->showView(0);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(400);
+                const int windIdx = proc->getParamIndex("wind");
+                auto *windP = proc->getParamAt(windIdx);
+                auto *row = findRow(*rc, "wind");
+                const float curve = proc->getAutomatedNorm(windIdx);
+                const double follows = row != nullptr ? row->slider.getValue() : -1.0;
+                const bool followOk = row != nullptr && !std::isnan(curve) &&
+                                      std::abs(follows - windP->convertFrom0to1(curve)) < 1e-3 &&
+                                      std::abs(curve - windP->getValue()) > 0.02f;
+                S = AutoSet();
+                proc->autoPublish();
+                {
+                    juce::AudioBuffer<float> abuf(proc->getTotalNumOutputChannels(), 256);
+                    juce::MidiBuffer none;
+                    proc->processBlock(abuf, none);
+                    proc->processBlock(abuf, none);
+                }
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+                const bool backOk = row != nullptr && std::abs(row->slider.getValue() -
+                                                               windP->convertFrom0to1(windP->getValue())) < 1e-3;
+                editor->removeFromDesktop();
+                std::cout << "verlauf: the wind slider follows its curve " << followOk << " ("
+                          << follows << "), back to the parameter after " << backOk
+                          << ((followOk && backOk) ? "  ok" : "  FAIL") << std::endl;
+            }
             S = AutoSet();
             proc->autoChanged();
             proc->autoPublish();

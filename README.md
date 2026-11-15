@@ -387,8 +387,9 @@ and with things a hand can't do: exact, long, synchronised changes of many contr
 loops of different lengths running against each other.
 - *+ Spur* adds a lane for a control (up to 16), or right-click any slider → *Im Verlauf
   automatisieren*. Besides every slider, a few switches can have a lane too: the stops
-  (*gezogen*), the motion of each stop, Freeze, Tremulant, Saal an, Stimmung, Verfall mode and
-  a few others. Switches move in steps.
+  (*gezogen*), the motion of each stop and its *harte Sprünge*, Freeze, Tremulant and the wind
+  model (*Registerwind*). Switches move in steps. (Saal, Lucier, Stimmung and the IR switches are
+  read once per block or in the background, so they have no lanes.)
 - A lane **takes its control over** while it is on: the slider follows the curve (a small red
   *Verlauf* next to its value), and modulation (LFOs, envelopes …) adds on top, as it does on
   the slider. Grab the slider and the lane gives way for as long as you hold it. A fixed MIDI CC

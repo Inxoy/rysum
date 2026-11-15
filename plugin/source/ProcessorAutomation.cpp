@@ -15,9 +15,9 @@ bool RysumProcessor::isAutoTarget(int i) const
     for (int s = 0; s < kNumStops; ++s)
         if (id == stopParamId(s) || id == motionParamId(s) || id == jumpHardParamId(s))
             return true;
-    static const juce::StringArray sw{"freeze",   "tremOn",     "simOn",      "temperament",
-                                      "degMode",  "windModel",  "lucOn",      "fxEchoSync",
-                                      "fxPathWait", "fxWindRound", "irFollow", "lvNetOn"};
+    // (only switches the engine reads in every slice: others - Saal, Lucier, tuning, the IR - are
+    // read once per block or off the audio thread, so a lane would not reach them)
+    static const juce::StringArray sw{"freeze", "tremOn", "windModel"};
     return sw.contains(id);
 }
 
@@ -119,7 +119,10 @@ void RysumProcessor::autoTick()
                 return;
             auto &ps = autoPass[(size_t)s.lane];
             // a new pass: the first sample, or the time jumped (loop, seek)
-            if (!ps.active || s.t < ps.tLast - 1.0e-6 || s.t > ps.tLast + 4.0)
+            // (a lane read backwards runs backwards in its own time)
+            const double dir = autoSet.lanes[(size_t)s.lane].reverse ? -1.0 : 1.0;
+            const double step = (s.t - ps.tLast) * dir;
+            if (!ps.active || step < -1.0e-6 || step > 4.0)
             {
                 ps.active = true;
                 ps.t0 = s.t;
@@ -129,7 +132,7 @@ void RysumProcessor::autoTick()
             AutoPoint pt;
             pt.t = s.t;
             pt.v = s.v;
-            if (ps.raw.empty() || s.t - ps.raw.back().t >= 1.0 / 64.0)
+            if (ps.raw.empty() || std::abs(s.t - ps.raw.back().t) >= 1.0 / 64.0)
                 ps.raw.push_back(pt);
             else
                 ps.raw.back().v = s.v; // (closer than 1/64 beat: the newest value)
@@ -151,7 +154,9 @@ void RysumProcessor::autoTick()
         {
             auto &lane = autoSet.lanes[(size_t)li];
             lane.pts = ps.before;
-            autoReplaceRange(lane, ps.t0, ps.tLast, autoThin(ps.raw, 0.004f, 0.25));
+            auto raw = ps.raw;
+            std::stable_sort(raw.begin(), raw.end(), [](const AutoPoint &a, const AutoPoint &b) { return a.t < b.t; });
+            autoReplaceRange(lane, ps.t0, ps.tLast, autoThin(raw, 0.004f, 0.25));
             any = true;
         }
         else if (ps.active && now - ps.lastMs > 300)

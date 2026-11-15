@@ -576,12 +576,12 @@ void RysumContent::resized()
     patchNext.setBounds(278, 14, 22, 28);
     patchSave.setBounds(303, 14, 70, 28);
     diceButton.setBounds(378, 14, 54, 28);
-    keysButton.setBounds(437, 14, 72, 28);
-    latchButton.setBounds(513, 14, 54, 28);
+    keysButton.setBounds(437, 14, 76, 28);
+    latchButton.setBounds(517, 14, 60, 28);
     const int tw[]{88, 52, 48, 54, 68, 92, 70};
     // Spieltisch, Klang, Effekte, Modulation, Verlauf, Saal, Raum
     const int tabOrder[]{0, 3, 4, 5, 6, 2, 1};
-    int x = 574;
+    int x = 582;
     for (const int i : tabOrder)
     {
         tabs[(size_t)i].setBounds(x, 13, tw[i], 30);

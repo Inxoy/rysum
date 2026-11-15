@@ -107,6 +107,7 @@ private:
     void timerCallback() override;
     void changed(); // after an edit: to the audio, redraw
     void pushUndo();
+    void restore(const AutoSet &from);
     void undo();
     void redo();
     void syncControls();

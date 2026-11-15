@@ -1144,12 +1144,23 @@ void VerlaufView::pushUndo()
     redoStack.clear();
 }
 
+void VerlaufView::restore(const AutoSet &from)
+{
+    // the lanes and the clock come back; where one looks (zoom, scroll, grid) stays
+    auto &s = set();
+    const double vs = s.viewStart, vl = s.viewLen, gr = s.grid;
+    s = from;
+    s.viewStart = vs;
+    s.viewLen = vl;
+    s.grid = gr;
+}
+
 void VerlaufView::undo()
 {
     if (undoStack.empty())
         return;
     redoStack.push_back(set());
-    set() = undoStack.back();
+    restore(undoStack.back());
     undoStack.pop_back();
     if (!validLane(selLane))
         selLane = (int)set().lanes.size() - 1;
@@ -1162,7 +1173,7 @@ void VerlaufView::redo()
     if (redoStack.empty())
         return;
     undoStack.push_back(set());
-    set() = redoStack.back();
+    restore(redoStack.back());
     redoStack.pop_back();
     if (!validLane(selLane))
         selLane = (int)set().lanes.size() - 1;
