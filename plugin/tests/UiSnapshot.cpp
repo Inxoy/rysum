@@ -634,6 +634,13 @@ public:
                 say("audience: the page is served (" + juce::String(page.length()) + " bytes), the phone gets a pipe: " +
                         hello.fromFirstOccurrenceOf("\r\n\r\n", false, false),
                     on && page.startsWith("HTTP/1.1 200") && page.contains("Druckwelle") && gotPipe);
+                {
+                    // the page in the plugin's hand: its fonts and the stops' photographs, from the plugin's data
+                    const auto font = http("GET /f/roman.ttf"), knob = http("GET /i/k1.jpg"), none = http("GET /i/k9.jpg");
+                    say("audience: the page gets the plugin's font and the stop's photograph, and nothing else",
+                        font.startsWith("HTTP/1.1 200") && font.contains("font/ttf") && knob.startsWith("HTTP/1.1 200") &&
+                            knob.contains("image/jpeg") && none.startsWith("HTTP/1.1 404") && hello.contains("\"s\":0"));
+                }
 
                 const uint32_t k0 = proc->engine.impactCount.load();
                 http("POST /act?p=testphone1&a=k&s=1");

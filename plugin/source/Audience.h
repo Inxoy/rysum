@@ -21,8 +21,8 @@ namespace rysum
     looks). Only pipes that are bodies in the Saal (Schweben, Flug, Fall, Schwarm, Stroemung) take
     part. Off by default and never saved: a project that opens does not open a port.
 
-    The server is one thread that answers plain HTTP (no files, no outside addresses, a few short
-    paths); it never touches the engine. What the phones do is queued and played on the message
+    The server is one thread that answers plain HTTP (no files from disk, no outside addresses, a few
+    short paths; the page's fonts and photographs come from the plugin's own data); it never touches the engine. What the phones do is queued and played on the message
     thread, a few at a time. */
 class AudienceServer : private juce::Thread
 {
@@ -50,7 +50,7 @@ public:
     /** message thread: what the phones did since the last call */
     std::vector<Event> takeEvents();
     /** message thread: what a phone is shown (its pipe and colour); -1 colour = no pipe yet */
-    void setShown(int phone, const juce::String &label, int colour);
+    void setShown(int phone, const juce::String &label, int colour, int stop = -1);
     /** the phones heard from within the last few seconds (index; when last seen, ms) */
     std::vector<std::pair<int, double>> phonesSeen(double withinMs = 6000.0) const;
     int knocksServed() const noexcept
@@ -63,7 +63,7 @@ public:
 
 private:
     void run() override;
-    juce::String answer(const juce::String &request);
+    juce::MemoryBlock answer(const juce::String &request);
     std::unique_ptr<juce::StreamingSocket> listener;
     std::atomic<int> port{0};
     std::atomic<int> served{0};
@@ -75,6 +75,7 @@ private:
         double seen = 0.0;
         juce::String label;
         int colour = -1;
+        int stop = -1; // which stop (the page shows its knob)
     };
     std::array<Phone, kMaxPhones> phones{};
     int nextPhone = 0;

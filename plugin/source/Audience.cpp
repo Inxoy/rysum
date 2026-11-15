@@ -1,5 +1,6 @@
 #include "Audience.h"
 #include "PluginProcessor.h"
+#include "RysumBinaryData.h"
 #include <cstring>
 
 namespace rysum
@@ -9,39 +10,90 @@ namespace rysum
 // ---------------------------------------------------------------------------
 const char *AudienceServer::page()
 {
+    // in the plugin's own hand: near-black paper, IM Fell, the Fraktur name with its red initial,
+    // thick-thin double rules with a red lozenge, the stop's photograph in a ruled frame
     return R"HTML(<!doctype html>
 <html lang="de"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Rysum &ndash; deine Pfeife</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0d0d0c">
+<title>Rysum &ndash; Publikum</title>
 <style>
-html,body{margin:0;height:100%;background:#1b1a18;color:#f3f0e8;font:16px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
-#pad{position:fixed;inset:0;touch-action:none;user-select:none;-webkit-user-select:none;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box;transition:background .4s}
-#dot{width:38vmin;height:38vmin;border-radius:50%;background:#555;box-shadow:0 0 0 0 rgba(255,255,255,.0);transition:transform .08s,box-shadow .3s}
-#dot.hit{transform:scale(.9);box-shadow:0 0 0 18px rgba(255,255,255,.25)}
-#name{margin-top:22px;font-size:22px;font-weight:600;min-height:1.4em}
-#help{margin-top:18px;font-size:14px;opacity:.75;max-width:320px}
-#state{position:fixed;left:0;right:0;bottom:14px;font-size:12px;opacity:.6;text-align:center}
-#ring{position:fixed;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;border:3px solid #fff;opacity:0;pointer-events:none}
-#ring.go{animation:go .6s ease-out}
-@keyframes go{from{opacity:.8;transform:scale(1)}to{opacity:0;transform:scale(70)}}
+@font-face{font-family:Fell;src:url(/f/roman.ttf) format('truetype');font-display:swap}
+@font-face{font-family:Fell;font-style:italic;src:url(/f/italic.ttf) format('truetype');font-display:swap}
+@font-face{font-family:Fraktur;src:url(/f/fraktur.ttf) format('truetype');font-display:block}
+:root{--bg:#0d0d0c;--ink:#e9e7e2;--dim:#b9b7b2;--mute:#a3a19b;--faint:#858380;--line:#2a2a28;--border:#3f3f3c;--panel:#141413;--rubric:#a8442e;--rubric2:#c4573f;--me:#3f3f3c}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:17px/1.35 Fell,Georgia,'Times New Roman',serif;overflow:hidden;-webkit-tap-highlight-color:transparent}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;background:url(/i/grain.png);opacity:.10;mix-blend-mode:screen}
+#pad{position:fixed;inset:0;touch-action:none;user-select:none;-webkit-user-select:none;display:flex;flex-direction:column;padding:max(14px,env(safe-area-inset-top)) 18px max(12px,env(safe-area-inset-bottom));box-sizing:border-box}
+.rule{position:relative;height:6px;flex:none}
+.rule::before{content:"";position:absolute;left:0;right:0;top:0;height:1.5px;background:rgba(233,231,226,.9)}
+.rule::after{content:"";position:absolute;left:0;right:0;top:3.5px;height:.6px;background:rgba(233,231,226,.45)}
+.rule i{position:absolute;right:-2px;top:-2.5px;width:7px;height:9px;background:var(--rubric);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+header{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:8px;flex:none}
+.logo{font:34px/1 Fraktur,serif;color:var(--ink);letter-spacing:.01em}
+.logo b{font-weight:normal;color:var(--rubric2)}
+.tag{font-style:italic;color:var(--mute);font-size:15px}
+main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0}
+#frame{position:relative;width:min(70vw,40vh,340px);aspect-ratio:420/362;padding:5px;border:1px solid var(--border);box-sizing:content-box;transition:border-color .25s}
+#frame::after{content:"";position:absolute;inset:2.5px;border:.6px solid rgba(63,63,60,.45);pointer-events:none;transition:border-color .25s}
+#frame.mine{border-color:var(--ink)}
+#frame.mine::after{border-color:rgba(13,13,12,.35)}
+#photo{width:100%;height:100%;background:var(--panel) center/cover no-repeat;filter:grayscale(1) sepia(.32) contrast(1.06) brightness(.92);transition:filter .1s,transform .08s}
+#frame.hit #photo{filter:grayscale(1) sepia(.2) contrast(1.1) brightness(1.35);transform:scale(.97)}
+#mark{position:absolute;left:50%;bottom:-11px;width:16px;height:20px;margin-left:-8px;background:var(--me);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);transition:background .4s}
+#wait{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-style:italic;color:var(--faint);font-size:15px;text-align:center;padding:0 12px}
+#name{margin-top:26px;font-size:28px;line-height:1.1;text-align:center;min-height:1.1em}
+#key{margin-top:4px;font-style:italic;font-size:20px;color:var(--dim);text-align:center;min-height:1.2em}
+.head{display:flex;align-items:baseline;margin:0 0 10px;padding-top:8px}
+.head .i{font-size:21px;color:var(--rubric2);margin-right:1px}
+.head .r{font-size:15px;letter-spacing:.14em;color:var(--ink)}
+.head .n{margin-left:auto;font-style:italic;color:var(--mute);font-size:14px}
+section{flex:none;margin-top:14px}
+ul{list-style:none;margin:0;padding:0}
+li{display:flex;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font-size:16px}
+li:last-child{border-bottom:0}
+li em{color:var(--dim);margin-left:auto;font-size:15px;text-align:right}
+li::before{content:"";flex:none;width:6px;height:9px;background:var(--faint);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);transform:translateY(1px)}
+#state{margin-top:8px;font-style:italic;color:var(--faint);font-size:13px;text-align:center}
+#state.off{color:var(--rubric2)}
+#ring{position:fixed;left:50%;top:44%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;border:1.5px solid var(--ink);box-shadow:0 0 0 3px rgba(13,13,12,.9),0 0 0 3.6px rgba(233,231,226,.45);opacity:0;pointer-events:none}
+#ring.go{animation:go .7s ease-out}
+@keyframes go{from{opacity:.9;transform:scale(1)}to{opacity:0;transform:scale(60)}}
+#wind{position:fixed;width:0;height:2px;background:var(--ink);opacity:0;transform-origin:0 50%;pointer-events:none}
+@media (max-height:560px){section{display:none}#name{margin-top:18px}}
 </style></head><body>
-<div id="pad"><div id="dot"></div><div id="name">verbinde &hellip;</div>
-<div id="help">Tippen: deine Pfeife anschlagen<br>Schnell wischen: Druckwelle<br>Halten und ziehen: Wind</div></div>
-<div id="ring"></div><div id="state"></div>
+<div id="pad">
+<header><span class="logo"><b>R</b>ysum</span><span class="tag">Publikum</span></header>
+<div class="rule"><i></i></div>
+<main><div id="frame"><div id="photo"></div><div id="wait">verbinde &hellip;</div><div id="mark"></div></div>
+<div id="name"></div><div id="key"></div></main>
+<section><div class="rule"><i></i></div>
+<div class="head"><span class="i">S</span><span class="r">PIELEN</span><span class="n">deine Pfeife</span></div>
+<ul><li>Tippen<em>anschlagen</em></li><li>Schnell wischen<em>Druckwelle</em></li><li>Halten und ziehen<em>Wind</em></li></ul></section>
+<div id="state"></div>
+</div>
+<div id="ring"></div><div id="wind"></div>
 <script>
 (function(){
 var id;try{id=localStorage.getItem('rysumId')}catch(e){}
 if(!id||!/^[a-z0-9]{8,16}$/.test(id)){id=(Math.random().toString(36).slice(2,12)+'00000000').slice(0,10);try{localStorage.setItem('rysumId',id)}catch(e){}}
-var pad=document.getElementById('pad'),dot=document.getElementById('dot'),nm=document.getElementById('name'),st=document.getElementById('state'),ring=document.getElementById('ring');
+function $(i){return document.getElementById(i)}
+var pad=$('pad'),fr=$('frame'),ph=$('photo'),wt=$('wait'),mk=$('mark'),nm=$('name'),ky=$('key'),st=$('state'),ring=$('ring'),wd=$('wind'),stop=-2;
 function show(j){
- if(j.full){nm.textContent='Alle Plätze sind belegt';dot.style.background='#555';return}
- if(j.c){dot.style.background=j.c;pad.style.background='linear-gradient(#1b1a18 40%,'+j.c+'33)';nm.textContent=j.n}
- else{dot.style.background='#555';pad.style.background='#1b1a18';nm.textContent='wartet auf eine Pfeife …'}
- st.textContent=(j.k||1)+(j.k==1?' Handy':' Handys')+' im Saal';
+ st.classList.remove('off');
+ if(j.full){wt.textContent='Alle Plätze sind belegt';wt.style.display='';ph.style.backgroundImage='none';fr.classList.remove('mine');nm.textContent='';ky.textContent='';stop=-2;return}
+ if(j.c){
+  var s=j.s|0;if(s!==stop){stop=s;ph.style.backgroundImage='url(/i/k'+s+'.jpg)'}
+  wt.style.display='none';fr.classList.add('mine');mk.style.background=j.c;
+  var p=(j.n||'').split(' · ');nm.textContent=p[0]||'';ky.textContent=p[1]?'Ton '+p[1]:'';
+ }else{
+  stop=-2;ph.style.backgroundImage='none';wt.style.display='';wt.textContent='wartet auf eine Pfeife …';fr.classList.remove('mine');mk.style.background='';nm.textContent='';ky.textContent='';
+ }
+ var k=j.k||1;st.textContent=k+(k==1?' Handy':' Handys')+' im Saal';
 }
 function send(a,extra){
  fetch('/'+(a?'act':'hi')+'?p='+id+(a?'&a='+a:'')+(extra||''),{method:'POST',cache:'no-store'})
-  .then(function(r){return r.json()}).then(show).catch(function(){st.textContent='keine Verbindung zur Orgel'});
+  .then(function(r){return r.json()}).then(show).catch(function(){st.textContent='keine Verbindung zur Orgel';st.classList.add('off')});
 }
 function cl(v){return Math.max(-1,Math.min(1,v))}
 var d=null,windT=0;
@@ -49,13 +101,17 @@ pad.addEventListener('pointerdown',function(e){try{pad.setPointerCapture(e.point
 pad.addEventListener('pointermove',function(e){
  if(!d)return;var dx=e.clientX-d.x,dy=e.clientY-d.y,el=performance.now()-d.t;
  if(!d.wind&&el>280&&Math.hypot(dx,dy)>14)d.wind=true;
- if(d.wind&&performance.now()-windT>100){windT=performance.now();var s=Math.min(innerWidth,innerHeight)*0.35;
-  send('w','&x='+cl(dx/s).toFixed(2)+'&y='+cl(-dy/s).toFixed(2))}
+ if(d.wind){
+  wd.style.left=d.x+'px';wd.style.top=d.y+'px';wd.style.width=Math.hypot(dx,dy)+'px';wd.style.transform='rotate('+Math.atan2(dy,dx)+'rad)';wd.style.opacity=.7;
+  if(performance.now()-windT>100){windT=performance.now();var s=Math.min(innerWidth,innerHeight)*0.35;
+   send('w','&x='+cl(dx/s).toFixed(2)+'&y='+cl(-dy/s).toFixed(2))}
+ }
 });
 function up(e,cancel){
  if(!d)return;var dx=e.clientX-d.x,dy=e.clientY-d.y,dist=Math.hypot(dx,dy),el=performance.now()-d.t;
+ wd.style.opacity=0;
  if(!cancel&&!d.wind){
-  if(dist<24){send('k','&s=1');dot.classList.add('hit');setTimeout(function(){dot.classList.remove('hit')},120);if(navigator.vibrate)navigator.vibrate(15)}
+  if(dist<24){send('k','&s=1');fr.classList.add('hit');setTimeout(function(){fr.classList.remove('hit')},120);if(navigator.vibrate)navigator.vibrate(15)}
   else if(el<450){var v=dist/Math.max(1,el);send('s','&s='+Math.max(.5,Math.min(1.7,v/1.5)).toFixed(2));
    ring.classList.remove('go');void ring.offsetWidth;ring.classList.add('go');if(navigator.vibrate)navigator.vibrate([30,40,30])}
  }
@@ -116,13 +172,14 @@ std::vector<AudienceServer::Event> AudienceServer::takeEvents()
     return out;
 }
 
-void AudienceServer::setShown(int phone, const juce::String &label, int colour)
+void AudienceServer::setShown(int phone, const juce::String &label, int colour, int stop)
 {
     if (phone < 0 || phone >= kMaxPhones)
         return;
     const juce::ScopedLock sl(lock);
     phones[(size_t)phone].label = label;
     phones[(size_t)phone].colour = colour;
+    phones[(size_t)phone].stop = stop;
 }
 
 std::vector<std::pair<int, double>> AudienceServer::phonesSeen(double withinMs) const
@@ -138,12 +195,26 @@ std::vector<std::pair<int, double>> AudienceServer::phonesSeen(double withinMs) 
 
 namespace
 {
-juce::String httpReply(const char *status, const char *type, const juce::String &body)
+juce::MemoryBlock httpReply(const char *status, const char *type, const juce::String &body)
 {
     const auto utf8 = body.toRawUTF8();
-    return juce::String("HTTP/1.1 ") + status + "\r\nContent-Type: " + type +
-           "\r\nContent-Length: " + juce::String((int)std::strlen(utf8)) +
-           "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n" + body;
+    const auto head = juce::String("HTTP/1.1 ") + status + "\r\nContent-Type: " + type +
+                      "\r\nContent-Length: " + juce::String((int)std::strlen(utf8)) +
+                      "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+    juce::MemoryBlock m(head.toRawUTF8(), std::strlen(head.toRawUTF8()));
+    m.append(utf8, std::strlen(utf8));
+    return m;
+}
+
+/** a file of the page (fonts, the stops' photographs, the grain): kept by the phone for a day */
+juce::MemoryBlock fileReply(const char *type, const void *data, int size)
+{
+    const auto head = juce::String("HTTP/1.1 200 OK\r\nContent-Type: ") + type +
+                      "\r\nContent-Length: " + juce::String(size) +
+                      "\r\nCache-Control: max-age=86400\r\nConnection: close\r\n\r\n";
+    juce::MemoryBlock m(head.toRawUTF8(), std::strlen(head.toRawUTF8()));
+    m.append(data, (size_t)size);
+    return m;
 }
 
 juce::String jsonText(const juce::String &s)
@@ -152,13 +223,31 @@ juce::String jsonText(const juce::String &s)
 }
 } // namespace
 
-juce::String AudienceServer::answer(const juce::String &request)
+juce::MemoryBlock AudienceServer::answer(const juce::String &request)
 {
     const auto first = request.upToFirstOccurrenceOf("\r\n", false, false);
     const auto target = first.fromFirstOccurrenceOf(" ", false, false).upToFirstOccurrenceOf(" ", false, false);
     const auto path = target.upToFirstOccurrenceOf("?", false, false);
     if (path == "/" || path == "/index.html")
         return httpReply("200 OK", "text/html; charset=utf-8", juce::String::fromUTF8(page()));
+    {
+        using namespace RysumData;
+        if (path == "/f/roman.ttf")
+            return fileReply("font/ttf", RysumFellRoman_ttf, RysumFellRoman_ttfSize);
+        if (path == "/f/italic.ttf")
+            return fileReply("font/ttf", RysumFellItalic_ttf, RysumFellItalic_ttfSize);
+        if (path == "/f/fraktur.ttf")
+            return fileReply("font/ttf", UnifrakturMaguntiaBook_ttf, UnifrakturMaguntiaBook_ttfSize);
+        if (path == "/i/grain.png")
+            return fileReply("image/png", grain_png, grain_pngSize);
+        // the stops' knobs, in the order of kStops
+        static const char *const knob[8]{k_praestant_jpg, k_gedackt_jpg, k_oktave4_jpg, k_oktave2_jpg,
+                                         k_sesquialtera_jpg, k_mixtur_jpg, k_trompete_jpg, k_praestant16_jpg};
+        static const int knobSize[8]{k_praestant_jpgSize, k_gedackt_jpgSize, k_oktave4_jpgSize, k_oktave2_jpgSize,
+                                     k_sesquialtera_jpgSize, k_mixtur_jpgSize, k_trompete_jpgSize, k_praestant16_jpgSize};
+        if (path.length() == 9 && path.startsWith("/i/k") && path.endsWith(".jpg") && path[4] >= '0' && path[4] <= '7')
+            return fileReply("image/jpeg", knob[path[4] - '0'], knobSize[path[4] - '0']);
+    }
     if (path != "/act" && path != "/hi")
         return httpReply("404 Not Found", "text/plain", "nicht hier");
 
@@ -202,7 +291,7 @@ juce::String AudienceServer::answer(const juce::String &request)
     juce::String body = "{\"k\":" + juce::String(count);
     if (ph.colour >= 0)
         body << ",\"c\":" << jsonText("#" + AudienceHands::colour(ph.colour).toDisplayString(false))
-             << ",\"n\":" << jsonText(ph.label);
+             << ",\"n\":" << jsonText(ph.label) << ",\"s\":" << ph.stop;
     body << "}";
     return httpReply("200 OK", "application/json", body);
 }
@@ -249,8 +338,7 @@ void AudienceServer::run()
                     else if (text.contains("\r\n\r\n"))
                     {
                         const auto reply = answer(text);
-                        const auto *raw = reply.toRawUTF8();
-                        p.s->write(raw, (int)std::strlen(raw));
+                        p.s->write(reply.getData(), (int)reply.getSize());
                         drop = true;
                     }
                 }
@@ -391,7 +479,7 @@ void AudienceHands::assign()
             server.setShown(i,
                             juce::String::fromUTF8(kStops[(size_t)h.stop].label) +
                                 juce::String::fromUTF8(" \xc2\xb7 ") + helmholtzName(kPhysKeys[(size_t)h.key]),
-                            h.colour);
+                            h.colour, h.stop);
         else
             server.setShown(i, {}, -1);
         now.push_back(h);
