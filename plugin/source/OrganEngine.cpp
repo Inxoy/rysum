@@ -2871,6 +2871,27 @@ void OrganEngine::releaseSlot(int &slot) noexcept
     slot = -1;
 }
 
+// The reflections of a pipe are worked out again only when something changed. A pipe's own place
+// drifts slowly in most motions (hundredths of a degree per block): that moves its reflections by a
+// fraction of a sample, and working all of them out again every block cost a quarter of the audio
+// time with the Saal on (and its worst blocks went over the time). So its place counts as changed
+// once it has moved a quarter of a degree or half a percent in distance since the taps were made
+// (fast motions still move that far every block; the delays glide to the new values within the block
+// as before). The same for the listener walking (4 mm a block at a walk): a centimetre. Everything
+// else in the key still has to be equal. (Key: az, el, dist, base, W, L, H, listenerX, listenerY, ...)
+template <size_t N>
+static bool erKeyStill(const std::array<float, N> &now, const std::array<float, N> &made) noexcept
+{
+    if (std::abs(wrapAz(now[0] - made[0])) > 0.25f || std::abs(now[1] - made[1]) > 0.25f ||
+        std::abs(now[2] - made[2]) > 0.005f * juce::jmax(0.1f, made[2]))
+        return false;
+    if (!std::equal(now.begin() + 3, now.begin() + 7, made.begin() + 3))
+        return false;
+    if (std::abs(now[7] - made[7]) * now[4] > 0.01f || std::abs(now[8] - made[8]) * now[5] > 0.01f)
+        return false;
+    return std::equal(now.begin() + 9, now.end(), made.begin() + 9);
+}
+
 void OrganEngine::updateSlotTaps(ErSlot &s, ErWork &w, Pos srcPos, float base,
                                  const EngineParams &p,
                                  const RoomParams &r, const RoomParams *placeFrom,
@@ -2889,7 +2910,7 @@ void OrganEngine::updateSlotTaps(ErSlot &s, ErWork &w, Pos srcPos, float base,
             r.H(),     r.listenerX,    r.listenerY, r.absWalls,    r.absFloor, r.highDamp,
             r.scatter, (float)r.order, r.erGain,    distAmountNow, p.air,      (float)order,
             surfKey(r), r.listenerZ,   0.0f};
-        if (!s.fresh && s.keyValid && key == s.key)
+        if (!s.fresh && s.keyValid && erKeyStill(key, s.key))
             return;
         s.key = key;
         s.keyValid = true;
@@ -3014,7 +3035,7 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, ErWork &w, Pos srcPos, float bas
         r.H(),          r.listenerX,    r.listenerY,    r.absWalls,    r.absFloor, r.highDamp,
         r.scatter,      (float)r.order, r.erGain,       distAmountNow, p.air,      (float)order,
         (float)r.shape, r.shapeAmt,     (float)r.plan.n, surfKey(r),   r.listenerZ};
-    if (!s.fresh && s.keyValid && key == s.key && !s.fading)
+    if (!s.fresh && s.keyValid && erKeyStill(key, s.key) && !s.fading)
         return;
     bool roomChanged = !s.keyValid;
     // Cache identity is exact: even small parameter edits invalidate the room.

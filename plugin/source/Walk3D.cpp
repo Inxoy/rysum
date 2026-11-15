@@ -721,9 +721,14 @@ void Raster::finishDepth()
     const int bands = (int) bins.size();
     const std::function<void (int)> depth = [this] (int b) { rasterBand (b); };
     const double tA = juce::Time::getMillisecondCounterHiRes();
-    // (on this thread alone: it is little work, and waking the helpers for it costs more than it saves)
+    // (on this thread alone in the Saal: little work, and waking the helpers for it costs more than it saves;
+    //  a loaded model has thousands of triangles - the Hallenkirche took 4.4 ms of the message thread every
+    //  frame, the thread that also takes every click - so then the helpers share it)
     depthOnly = true;
-    for (int b = 0; b < bands; ++b) depth (b);
+    if (tris.size() > 1000)
+        runParallel (bands, depth);
+    else
+        for (int b = 0; b < bands; ++b) depth (b);
     depthOnly = false;
     rasterMs = (float) (juce::Time::getMillisecondCounterHiRes() - tA); shadeMs = 0.0f;
 }
