@@ -93,6 +93,24 @@ public:
         double seenMs = 0.0;
     };
     std::vector<Figure> figures() const;
+
+    /** the player: what the listeners' hands may do in the Saal - 0 nothing, 1 knock, push (the
+        shockwave) and clap, 2 also carry, throw, call the pipes home, whirl and sound pipes */
+    void setGuestHands(int level) noexcept
+    {
+        guestHands = juce::jlimit(0, 2, level);
+    }
+    int getGuestHands() const noexcept
+    {
+        return guestHands.load();
+    }
+    /** the listener: what the player allows its hands now (0 .. 2) */
+    int allowedHands() const noexcept
+    {
+        return roleNow.load() == Role::listener && isJoined.load() ? allowedLevel.load() : 0;
+    }
+    /** the listener: ask the player to let this stop's pipes hover (so they can be taken) */
+    void requestHover(int stop);
     /** the listener's name, as the others see it over their figure */
     void setName(const juce::String &n);
     juce::String getName() const;
@@ -205,6 +223,22 @@ private:
     int myId = -1;             // the listener: its own id (from the player)
     juce::String myName{"Gast"};
     juce::MemoryBlock figuresFrame(const std::vector<Figure> &all);
+    // the listeners' hands
+    std::atomic<int> guestHands{0}, allowedLevel{0};
+    struct GuestAct
+    {
+        int client = 0, act = 0, stop = -1, key = -1;
+        Vec3f v{};
+        float amount = 1.0f;
+    };
+    std::vector<GuestAct> guestActsIn; // the player: network thread -> message thread (figLock)
+    std::vector<GuestAct> actsOut;     // the listener: message thread -> network thread (figLock)
+    std::array<int, 8> handOwner{};    // the player, network thread: the client holding each guest hand
+    int lastGrabSent = -2;             // the listener, network thread
+    double lastHandMs = 0.0;
+    static constexpr int kHoverRequest = 200;
+    void applyGuestActs(); // the player, message thread
+    void releaseGuestHand(int clientId); // the player, network thread
     void readClientFrame(Client &c, char type, juce::MemoryInputStream &in); // the player, network thread
     // the message thread makes join packages and parameter / state changes
     juce::CriticalSection outLock;

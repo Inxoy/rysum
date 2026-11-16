@@ -255,6 +255,10 @@ private:
     juce::TextButton controlsButton { juce::String::fromUTF8 ("Steuerung \xe2\x80\xa6") };
     void showControlsMenu();
     bool alwaysSpectator = false, spectatorShown = false;
+    int handsShown = 0;
+    int handLevel() const noexcept;                               // what the hands may do (2 = all; listening: the player's leave)
+    bool handsMay (int need) const noexcept { return handLevel() >= need; }
+    bool shownWhileListening (juce::Component*) const;
     std::map<int, std::array<float, 4>> figSmooth;   // Konzert: the others' places as drawn (eased)
     double figSmoothMs = 0.0;
     void refreshSpectator();

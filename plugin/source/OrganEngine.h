@@ -484,9 +484,21 @@ public:
         Arrange, // the pipes marked in goMask fly to goX/goY/goZ and stay there (formations, layouts, undo)
         Whirl,   // a whirlwind at the place v for a few seconds: the pipes near it are spun around it (amount: strength)
         BowOn,   // the pipe (stop, key) sounds like a held key, for as long as the hand holds it
-        BowOff   // ... and is let go
+        BowOff,  // ... and is let go
+        ShockAt  // a shockwave from the place v (a listener's hands, Konzert)
     };
     void playerAct(Act a, int stop = -1, int key = -1, Vec3f v = {}, float amount = 1.0f) noexcept;
+    /** Konzert, the listener: the hands' acts go to the player instead (message thread; set while
+        listening) */
+    std::function<void(Act, int, int, Vec3f, float)> actRedirect;
+    /** Konzert, the player: pipes carried by listeners' hands (stop -1 = none) */
+    static constexpr int kGuestHands = 8;
+    struct GuestHand
+    {
+        std::atomic<int> stop{-1}, key{-1};
+        std::atomic<float> x{0.0f}, y{0.0f}, z{0.0f};
+    };
+    std::array<GuestHand, kGuestHands> guestHands;
     std::atomic<bool> actFreeze{false};      // held: everything that moves stands still
     std::atomic<int> grabStop{-1}, grabKey{-1}; // the pipe carried by the player (-1: none)
     std::atomic<float> grabX{0.0f}, grabY{0.0f}, grabZ{0.0f}; // where the hand holds it (m, in its room)

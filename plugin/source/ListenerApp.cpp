@@ -209,7 +209,12 @@ private:
         if (proc.getLibrary() == nullptr)
             s = proc.getLoadStatus();
         else if (listening)
+        {
             s = proc.concert.status();
+            const int hands = proc.concert.allowedHands();
+            if (hands > 0)
+                s << (hands == 1 ? u("  \xc2\xb7  du darfst anklopfen") : u("  \xc2\xb7  du darfst die Pfeifen bewegen"));
+        }
         else
             s = u("Adresse eingeben, Zuh\xc3\xb6ren \xe2\x80\x93 dann gehen: WASD, Maus ziehen, Leertaste, I immersiv");
         if (s != statusNow)

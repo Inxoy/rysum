@@ -217,6 +217,23 @@ bool ConcertLink::startListener(const juce::String &h, int p)
     for (auto *id : {"lvNetOn", "lvSelfPlay"})
         if (const int i = proc.getParamIndex(id); i >= 0)
             forcedOff[(size_t)i] = 1;
+    {
+        const juce::ScopedLock sl(figLock);
+        actsOut.clear();
+    }
+    // the hands' acts go to the player
+    proc.engine.actRedirect = [this](OrganEngine::Act a, int s, int k, Vec3f v, float amount)
+    {
+        const juce::ScopedLock sl(figLock);
+        GuestAct g;
+        g.act = (int)a;
+        g.stop = s;
+        g.key = k;
+        g.v = v;
+        g.amount = amount;
+        if (actsOut.size() < 256)
+            actsOut.push_back(g);
+    };
     fifo.reset();
     roleNow = Role::listener;
     setStatus(juce::String::fromUTF8("Verbinde mit ") + host + juce::String::fromUTF8(" \xe2\x80\xa6"));
@@ -230,6 +247,8 @@ void ConcertLink::stop()
     const auto was = roleNow.load();
     if (was == Role::off)
         return;
+    proc.engine.actRedirect = nullptr;
+    allowedLevel = 0;
     stopTimer();
     signalThreadShouldExit();
     if (listenerSocket != nullptr)
@@ -686,6 +705,10 @@ void ConcertLink::runPerformer()
                 }
             }
         }
+        // the hands of listeners who left (or no leave to carry any more) let go
+        for (auto &c : clients)
+            if (c->sock == nullptr || guestHands.load() < 2)
+                releaseGuestHand(c->id);
         // who stands where, ten times a second: to everyone (not timed - the latest is what counts)
         if (now - lastFiguresMs > 100.0)
         {
@@ -774,6 +797,7 @@ juce::MemoryBlock ConcertLink::figuresFrame(const std::vector<Figure> &all)
                          o.writeFloat(f.yaw);
                          o.writeString(f.name);
                      }
+                     o.writeInt(guestHands.load()); // (what the listeners' hands may do)
                  });
 }
 
@@ -795,6 +819,110 @@ void ConcertLink::readClientFrame(Client &c, char type, juce::MemoryInputStream 
         c.fig = f;
         c.hasFig = true;
     }
+    else if (type == 'Q')
+    {
+        // a listener's hand: the pipe it carries and where the hand is (only with leave to carry)
+        const int s = in.readInt(), k = in.readInt();
+        const float x = in.readFloat(), y = in.readFloat(), z = in.readFloat();
+        const int slot = c.id % OrganEngine::kGuestHands;
+        auto &gh = proc.engine.guestHands[(size_t)slot];
+        if (guestHands.load() < 2 || s < 0 || s >= kNumStops || k < 0 || k >= kNumKeys ||
+            !std::isfinite(x + y + z) || std::abs(x) + std::abs(y) + std::abs(z) > 3000.0f)
+        {
+            releaseGuestHand(c.id);
+            return;
+        }
+        gh.x = x;
+        gh.y = y;
+        gh.z = z;
+        gh.key = k;
+        gh.stop = s;
+        handOwner[(size_t)slot] = c.id;
+    }
+    else if (type == 'E')
+    {
+        GuestAct a;
+        a.client = c.id;
+        a.act = in.readInt();
+        a.stop = in.readInt();
+        a.key = in.readInt();
+        a.v = {in.readFloat(), in.readFloat(), in.readFloat()};
+        a.amount = in.readFloat();
+        if (!std::isfinite(a.v.x + a.v.y + a.v.z + a.amount))
+            return;
+        const juce::ScopedLock sl(figLock);
+        if (guestActsIn.size() < 256)
+            guestActsIn.push_back(a);
+    }
+}
+
+void ConcertLink::releaseGuestHand(int clientId)
+{
+    const int slot = clientId % OrganEngine::kGuestHands;
+    if (handOwner[(size_t)slot] != clientId)
+        return;
+    proc.engine.guestHands[(size_t)slot].stop = -1;
+    proc.engine.guestHands[(size_t)slot].key = -1;
+    handOwner[(size_t)slot] = 0;
+}
+
+void ConcertLink::applyGuestActs()
+{
+    // the player, message thread: what the listeners' hands did, as far as they may
+    std::vector<GuestAct> acts;
+    std::vector<Figure> where;
+    {
+        const juce::ScopedLock sl(figLock);
+        acts.swap(guestActsIn);
+        where = figs;
+    }
+    using Act = OrganEngine::Act;
+    const int level = guestHands.load();
+    auto &en = proc.engine;
+    for (auto &a : acts)
+    {
+        const auto act = (Act)a.act;
+        if (a.act == kHoverRequest)
+        {
+            // (a stop that stands still starts to hover, so its pipes can be taken)
+            if (level < 2 || a.stop < 0 || a.stop >= kNumStops)
+                continue;
+            if (auto *prm = proc.apvts.getParameter(RysumProcessor::motionParamId(a.stop)))
+                if (juce::roundToInt(prm->convertFrom0to1(prm->getValue())) == (int)Motion::Static)
+                    prm->setValueNotifyingHost(prm->convertTo0to1((float)(int)Motion::Hover));
+            continue;
+        }
+        const bool knock = act == Act::Shock || act == Act::Clap || act == Act::Strike;
+        const bool carry = act == Act::Throw || act == Act::Home || act == Act::Whirl || act == Act::BowOn;
+        if (act == Act::BowOff)
+        {
+            en.playerAct(act, a.stop, a.key, a.v, a.amount); // (always: nothing stays sounding)
+            continue;
+        }
+        if (!((knock && level >= 1) || (carry && level >= 2)))
+            continue;
+        if (act == Act::Shock)
+        {
+            // from where that listener stands
+            Vec3f at{en.homeX[0].load(), en.homeY[0].load(), en.homeZ[0].load()};
+            for (auto &f : where)
+                if (f.id == a.client)
+                    at = {at.x + f.x, at.y + f.y, at.z + f.z};
+            en.playerAct(Act::ShockAt, -1, -1, at, a.amount);
+            continue;
+        }
+        en.playerAct(act, a.stop, a.key, a.v, a.amount);
+    }
+}
+
+void ConcertLink::requestHover(int stop)
+{
+    const juce::ScopedLock sl(figLock);
+    GuestAct a;
+    a.act = kHoverRequest;
+    a.stop = stop;
+    if (actsOut.size() < 256)
+        actsOut.push_back(a);
 }
 
 std::vector<ConcertLink::Figure> ConcertLink::figures() const
@@ -849,6 +977,8 @@ void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
             if (f.id != myId && std::isfinite(f.x + f.y + f.z + f.yaw))
                 all.push_back(f);
         }
+        if (in.getNumBytesRemaining() >= 4)
+            allowedLevel = juce::jlimit(0, 2, in.readInt());
         const juce::ScopedLock sl(figLock);
         figs = std::move(all);
         return;
@@ -1047,6 +1177,8 @@ bool ConcertLink::listenSession()
                          }));
     lastHeardMs = juce::Time::getMillisecondCounterHiRes();
     myId = -1;
+    lastGrabSent = -2;
+    allowedLevel = 0;
     ++audioSession; // (what is left of the last connection's input is not played)
     while (!threadShouldExit())
     {
@@ -1068,6 +1200,49 @@ bool ConcertLink::listenSession()
                                           })))
                     break;
             }
+        }
+        if (isJoined.load())
+        {
+            // what this listener's hands do: to the player (who decides what may happen)
+            std::vector<GuestAct> acts;
+            {
+                const juce::ScopedLock sl(figLock);
+                acts.swap(actsOut);
+            }
+            bool ok = true;
+            for (auto &a : acts)
+                ok = ok && sendAll(*sock, frame('E',
+                                                [&](juce::MemoryOutputStream &o)
+                                                {
+                                                    o.writeInt(a.act);
+                                                    o.writeInt(a.stop);
+                                                    o.writeInt(a.key);
+                                                    o.writeFloat(a.v.x);
+                                                    o.writeFloat(a.v.y);
+                                                    o.writeFloat(a.v.z);
+                                                    o.writeFloat(a.amount);
+                                                }));
+            // the pipe in the hand, 50 times a second while it is carried (and once when let go)
+            const double nowMs = juce::Time::getMillisecondCounterHiRes();
+            auto &en = proc.engine;
+            const int gs = en.grabStop.load(), gk = en.grabKey.load();
+            const int code = gs < 0 ? -1 : gs * 64 + gk;
+            if (ok && (code != lastGrabSent || (gs >= 0 && nowMs - lastHandMs > 20.0)))
+            {
+                lastGrabSent = code;
+                lastHandMs = nowMs;
+                ok = sendAll(*sock, frame('Q',
+                                          [&](juce::MemoryOutputStream &o)
+                                          {
+                                              o.writeInt(gs);
+                                              o.writeInt(gk);
+                                              o.writeFloat(en.grabX.load());
+                                              o.writeFloat(en.grabY.load());
+                                              o.writeFloat(en.grabZ.load());
+                                          }));
+            }
+            if (!ok)
+                break;
         }
         const int ready = sock->waitUntilReady(true, 20);
         if (ready < 0)
@@ -1476,6 +1651,7 @@ void ConcertLink::timerCallback()
             const juce::ScopedLock sl(outLock);
             joinPackages.push_back(std::move(pk));
         }
+        applyGuestActs();
         scanParameters();
         const int n = numListeners.load();
         setStatus(n == 0 ? juce::String::fromUTF8("Spielt \xe2\x80\x93 noch niemand h\xc3\xb6rt zu")

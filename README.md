@@ -495,8 +495,17 @@ renders the organ itself, from wherever they stand and walk in the 3D Saal, with
   shockwave, called home, arranged – sent 50 times a second while they move. Their knocks, claps,
   bowed pipes and the lengths of *Wachsen & Brechen* are heard at the listener as well, from the
   listener's own place.
-- While listening, the 3D Saal only walks and looks: the hands, the room model buttons and the
-  Saal's settings are the player's.
+- Everyone in the Saal is a figure the others see: the player and every listener, with their names
+  over their heads (red dots on the map). A listener sets their name in the listener app.
+- The player's audio input (*Eingang*) travels too: while it is on, the input goes out as plain
+  16-bit audio (about 1.5 Mbit/s per listener) on the player's clock, and every listener places and
+  processes it themselves, in time with the notes. Lucier works at the listener on that input.
+- **The listeners' hands**: in the Konzert window the player chooses what listeners may do in the
+  3D Saal - nothing (the default), knock, push with the shockwave and clap, or everything: also
+  carry and throw pipes, call them home, whirl and sound pipes by holding them. What a listener
+  does happens at the player (who stays in charge), so everyone sees and hears the same; a pipe in
+  a listener's own hand follows that hand at once on their screen. Otherwise, while listening the
+  3D Saal only walks and looks: the room model buttons and the Saal's settings are the player's.
 - What stays the listener's: output format, headphone and loudspeaker settings, the volume, the
   samples folder and where they stand. A listener's own changes of the player's controls go back
   to the player's within half a second. *Beenden* gives the listener their own setup back.
@@ -504,9 +513,9 @@ renders the organ itself, from wherever they stand and walk in the 3D Saal, with
   listener keeps trying to reconnect and joins again (with the notes held down at that moment).
 - While someone listens, saving (the standalone on quit, a host's project) keeps their own setup,
   not the player's piece.
-- Not mirrored yet (Lucier, the Tonnetz-Wanderer and *Selbstspiel* stay off at listeners): the
-  audio input (*Eingang*), Lucier, the Tonnetz-Wanderer, *Selbstspiel*, *Publikum* and loaded room
-  models other than the six built-in ones. MIDI Tuning SysEx is not forwarded (Scala files are).
+- Not mirrored yet (the Tonnetz-Wanderer and *Selbstspiel* stay off at listeners): the
+  Tonnetz-Wanderer, *Selbstspiel*, *Publikum* and loaded room models other than the six built-in
+  ones. MIDI Tuning SysEx is not forwarded (Scala files are).
 - For now this is for one home network: a player on the internet needs a relay server (planned).
   Both sides must have the same version of the plugin.
 

@@ -4881,6 +4881,58 @@ private:
                 seesListener && seesPlayer);
             A.walkPose[0] = A.walkPose[1] = A.walkPose[2] = 0.0f;
         }
+        // the listeners' hands: only as far as the player allows, and they act at the player
+        {
+            using Act = rysum::OrganEngine::Act;
+            setN(A, RysumProcessor::motionParamId(2),
+                 A.apvts.getParameter(RysumProcessor::motionParamId(2))->convertTo0to1((float)rysum::Motion::Hover));
+            A.concert.setGuestHands(0);
+            run(1.0);
+            auto at = [&](RysumProcessor &p) { rysum::Vec3f v{}; p.engine.bodyAt(2, 5, v); return v; };
+            auto dist = [](rysum::Vec3f a, rysum::Vec3f b)
+            { return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z)); };
+            const auto p0 = at(A);
+            const auto knocks0 = A.engine.impactCount.load();
+            B->engine.playerAct(Act::Throw, 2, 5, {0.0f, 6.0f, 2.0f});
+            B->engine.playerAct(Act::Strike, 2, 6, p0, 1.0f);
+            run(1.0);
+            const bool refused = dist(at(A), p0) < 0.05f && A.engine.impactCount.load() == knocks0;
+            A.concert.setGuestHands(1);
+            run(0.3);
+            const int levelSeen1 = B->concert.allowedHands();
+            B->engine.playerAct(Act::Throw, 2, 5, {0.0f, 6.0f, 2.0f});
+            B->engine.playerAct(Act::Strike, 2, 6, p0, 1.0f);
+            run(1.0);
+            const bool knockOnly = dist(at(A), p0) < 0.05f && A.engine.impactCount.load() > knocks0;
+            A.concert.setGuestHands(2);
+            run(0.3);
+            const int levelSeen2 = B->concert.allowedHands();
+            // the listener takes the pipe: it follows the listener's hand at the player
+            const rysum::Vec3f hand{p0.x + 1.5f, p0.y, p0.z + 0.5f};
+            B->engine.grabX = hand.x;
+            B->engine.grabY = hand.y;
+            B->engine.grabZ = hand.z;
+            B->engine.grabKey = 5;
+            B->engine.grabStop = 2;
+            run(0.8);
+            const float carried = dist(at(A), hand), ownHand = dist(at(*B), hand);
+            // and throws it
+            B->engine.grabStop = -1;
+            B->engine.grabKey = -1;
+            B->engine.playerAct(Act::Throw, 2, 5, {0.0f, 6.0f, 2.0f});
+            run(4.5);
+            const float thrown = dist(at(A), hand), apart = dist(at(A), at(*B));
+            say("concert: a listener's hands - nothing without leave (" + juce::String(refused ? "yes" : "no") +
+                    "), knocking only with the first (" + juce::String(knockOnly ? "yes" : "no") + ", leave seen " +
+                    juce::String(levelSeen1) + "/" + juce::String(levelSeen2) + "), the carried pipe follows its hand at the player (" +
+                    juce::String(carried, 2) + " m off, " + juce::String(ownHand, 2) + " m in its own view), thrown " +
+                    juce::String(thrown, 1) + " m, both see it at the same place (" + juce::String(apart, 2) + " m)",
+                refused && knockOnly && levelSeen1 == 1 && levelSeen2 == 2 && carried < 0.3f && ownHand < 0.05f &&
+                    thrown > 1.0f && apart < 0.1f);
+            A.concert.setGuestHands(0);
+            setN(A, RysumProcessor::motionParamId(2), 0.0f);
+            run(0.5);
+        }
         // nothing changes: the state is not sent again and again
         {
             run(0.5);
@@ -4948,6 +5000,7 @@ private:
         A.walkPose[1] = 5.0f;
         A.walkPose[2] = 180.0f;
         const bool ok = A.concert.startPerformer(port, true);
+        A.concert.setGuestHands(2); // (the listener app shows its hands)
         std::cout << "serve: playing on port " << port << (ok ? "" : " FAILED") << std::endl;
         double start = juce::Time::getMillisecondCounterHiRes();
         long long k = 0;

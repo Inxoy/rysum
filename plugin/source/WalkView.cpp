@@ -260,7 +260,7 @@ void WalkView::resized()
         for (int i = 0; i < 10; ++i)
         {
             // (listening: only jumping, the light and the controls - packed together)
-            if (sp && hands[i] != &actJump && hands[i] != &actLight && hands[i] != &controlsButton) continue;
+            if (sp && ! shownWhileListening (hands[i])) continue;
             hands[i]->setBounds (h.removeFromLeft (widths[i]));
             h.removeFromLeft (5);
         }
@@ -513,7 +513,7 @@ void WalkView::timerCallback()
         updateButtons();
         if (auto m = proc.getWalkMesh()) { status = m->name; statusUntil = t + 3000; }
     }
-    if (isSpectator() != spectatorShown) refreshSpectator();      // (Konzert: listening began or ended)
+    if (isSpectator() != spectatorShown || handLevel() != handsShown) refreshSpectator();      // (Konzert: listening began or ended)
     const bool grabHeld = actGrab.held(), freezeHeld = actFreeze.held(), jumpHeld = actJump.held();
     if (immersive && ! testMode)
     {
@@ -533,7 +533,7 @@ void WalkView::timerCallback()
         if (down (juce::KeyPress::rightKey)) turn -= 90.0f * (float) dt;
         const bool fast = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
         advance (dt, f, b, l, r, turn / (90.0f * (float) juce::jmax (1.0e-4, dt)), fast, down (juce::KeyPress::spaceKey) || jumpHeld);
-        if (isSpectator()) updateActions (false, false);
+        if (isSpectator()) updateActions (handsMay (2) && (down ('Q') || down ('q') || grabHeld), false);
         else updateActions (down ('Q') || down ('q') || grabHeld, down ('F') || down ('f') || freezeHeld);
         { const bool tab = down (juce::KeyPress::tabKey); if (tab != helpHeld) { helpHeld = tab; repaint(); } }
         {
@@ -640,6 +640,21 @@ bool WalkView::isSpectator() const noexcept
     return alwaysSpectator || proc.concert.role() == ConcertLink::Role::listener;
 }
 
+int WalkView::handLevel() const noexcept
+{
+    return isSpectator() ? proc.concert.allowedHands() : 2;
+}
+
+bool WalkView::shownWhileListening (juce::Component* c) const
+{
+    // walking and looking always; the hands the player allows
+    if (c == &back) return ! alwaysSpectator;
+    if (c == &immerse || c == &home || c == &actJump || c == &controlsButton || c == &actLight) return true;
+    if (c == &actShock || c == &actClap) return handsMay (1);
+    if (c == &actGrab || c == &actHome) return handsMay (2);
+    return false;
+}
+
 void WalkView::refreshSpectator()
 {
     // listening: only what walks and looks stays (the rest is the player's)
@@ -647,15 +662,10 @@ void WalkView::refreshSpectator()
     spectatorShown = sp;
     if (immersive) return;
     resized();
-    juce::Component* keep[] { &immerse, &home, &actJump, &controlsButton, &actLight };
+    handsShown = handLevel();
     for (auto* c : getChildren())
-    {
-        bool stays = false;
-        for (auto* k : keep) stays = stays || c == k;
-        if (c == &back) stays = ! alwaysSpectator;
-        c->setVisible (! sp || stays);
-    }
-    if (sp)
+        c->setVisible (! sp || shownWhileListening (c));
+    if (sp && ! handsMay (2))
     {
         heldStop = heldKey = -1;
         proc.engine.grabStop = -1; proc.engine.grabKey = -1;
@@ -684,6 +694,12 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
         if (c == 'l') { setDark (! proc.walkDark); return true; }
         if (c == 'h' && ! ctrlKey) { leaveEars (! earsAway); return true; }
         if (c == 'g' && ! ctrlKey) { setGpuWanted (! gpuWanted()); gpuGaveUp = false; gpuNote = {}; return true; }
+        // the hands, as far as the player allows
+        const bool hard = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
+        if (c == 'e' && handsMay (1)) { shock (hard ? 1.7f : 1.0f); return true; }
+        if (c == 'c' && handsMay (1)) { clap(); return true; }
+        if (c == 'r' && ! ctrlKey && handsMay (2)) { callHome(); return true; }
+        if (c == 't' && ! ctrlKey && handsMay (2)) { whirl (hard ? 1.7f : 1.0f); return true; }
         // (the other keys are taken, so none of them plays the computer keyboard's notes)
         return ! ctrlKey;
     }
@@ -816,9 +832,10 @@ void WalkView::mouseMove (const juce::MouseEvent&) { pollLockedMouse(); }
 void WalkView::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
-    if (isSpectator())
+    const bool guestHand = isSpectator() && handsMay (1) && e.mods.isLeftButtonDown() && ! e.mods.isCtrlDown() && ! e.mods.isCommandDown();
+    if (isSpectator() && ! guestHand)
     {
-        // listening: a drag looks around, and that is all
+        // listening: a drag looks around (with the player's leave the left button also knocks)
         if (immersive || e.mods.isMiddleButtonDown()) return;
         looking = true;
         lastMouse = downPos = e.position;
@@ -912,7 +929,7 @@ void WalkView::mouseDrag (const juce::MouseEvent& e)
 void WalkView::mouseUp (const juce::MouseEvent& e)
 {
     bowArmed = false;
-    if (isSpectator())
+    if (isSpectator() && ! (handsMay (1) && ! e.mods.isPopupMenu() && ! e.mods.isMiddleButtonDown()))
     {
         if (looking) e.source.enableUnboundedMouseMovement (false);
         looking = false;
@@ -1033,6 +1050,16 @@ bool WalkView::makeHover (int stop, bool tell)
     if (stop < 0 || stop >= kNumStops) return false;
     const int m = proc.readParams().motionMode[(size_t) stop];
     if (isRoomMotion (m)) return true;
+    if (isSpectator())
+    {
+        // listening: the stop is the player's - ask (with leave to carry) and take it once it hovers
+        if (m == (int) Motion::Static && handsMay (2))
+        {
+            proc.concert.requestHover (stop);
+            if (tell) say (U ("Register ") + juce::String (stop + 1) + U (" schwebt gleich \xe2\x80\x93 dann noch einmal greifen"), 3000.0);
+        }
+        return false;
+    }
     if (m != (int) Motion::Static)
     {
         if (tell) say (U ("Dieses Register bewegt sich anders (") + motionNames()[m] + U ("): zum Greifen die Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c w\xc3\xa4hlen (Raum-Seite)"), 4000.0);
@@ -2118,7 +2145,10 @@ void WalkView::drawOver (juce::Graphics& g)
     g.setColour (col::faint);
     if (isSpectator())
         g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  "
-                       "I immersiv  \xc2\xb7  L Licht  \xc2\xb7  H Ohren hierlassen   \xe2\x80\x94   du h\xc3\xb6rst zu: gespielt wird beim Spieler"),
+                       "I immersiv  \xc2\xb7  L Licht  \xc2\xb7  H Ohren hierlassen")
+                       + (handsMay (2) ? U ("  \xc2\xb7  E Druckwelle  \xc2\xb7  C klatschen  \xc2\xb7  Klick: anklopfen  \xc2\xb7  Q tragen und werfen  \xc2\xb7  R zur\xc3\xbc" "ckrufen  \xc2\xb7  T Wirbel")
+                          : handsMay (1) ? U ("  \xc2\xb7  E Druckwelle  \xc2\xb7  C klatschen  \xc2\xb7  Klick: anklopfen")
+                                         : U ("   \xe2\x80\x94   du h\xc3\xb6rst zu: gespielt wird beim Spieler")),
                     area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
     else
         g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Tab: alle Tasten  \xc2\xb7  Esc zur\xc3\xbc" "ck"

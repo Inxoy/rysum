@@ -967,7 +967,15 @@ public:
                                    (juce::Component *)&stopButton, (juce::Component *)&hostField,
                                    (juce::Component *)&delayRow})
             addAndMakeVisible(c);
-        setSize(460, 268);
+        handsBox.addItem(u8("H\xc3\xa4nde der Zuh\xc3\xb6rer: keine"), 1);
+        handsBox.addItem(u8("H\xc3\xa4nde: anklopfen, Druckwelle, klatschen"), 2);
+        handsBox.addItem(u8("H\xc3\xa4nde: alles \xe2\x80\x93 auch tragen, werfen, zur\xc3\xbc" "ckrufen"), 3);
+        handsBox.setSelectedId(link.getGuestHands() + 1, juce::dontSendNotification);
+        handsBox.onChange = [this] { proc.concert.setGuestHands(handsBox.getSelectedId() - 1); };
+        handsBox.setTooltip(u8("Was die Zuh\xc3\xb6rer im 3D-Saal mit den Pfeifen tun d\xc3\xbc" "rfen. Was sie tun, geschieht bei dir "
+                               "und alle sehen und h\xc3\xb6ren es."));
+        addAndMakeVisible(handsBox);
+        setSize(460, 304);
         refresh();
         startTimerHz(4);
     }
@@ -996,7 +1004,7 @@ public:
         }
         g.setFont(A.monoFont(9.5f));
         g.setColour(col::faint);
-        g.drawFittedText(u8("Im Netz zu Hause. Nicht mitgespielt werden: Eingang, Lucier, Tonnetz-Wanderer, "
+        g.drawFittedText(u8("Im Netz zu Hause. Nicht mitgespielt werden: Tonnetz-Wanderer, "
                             "Selbstspiel, Publikum und eigene Raummodelle. Zuh\xc3\xb6rer brauchen nur die App \xe2\x80\x9eRysum Konzert\xe2\x80\x9c."),
                          getLocalBounds().reduced(16, 8).removeFromBottom(26), juce::Justification::bottomLeft, 2);
     }
@@ -1018,6 +1026,8 @@ public:
         stopButton.setBounds(row3.removeFromRight(100).withTrimmedTop(8));
         row3.removeFromRight(16);
         delayRow.setBounds(row3);
+        r.removeFromTop(8);
+        handsBox.setBounds(r.removeFromTop(26).withWidth(330));
     }
 
 private:
@@ -1045,6 +1055,7 @@ private:
     RysumProcessor &proc;
     juce::TextButton playButton{"Spielen"}, listenButton{u8("Zuh\xc3\xb6ren bei")}, stopButton{"Beenden"};
     juce::TextEditor hostField;
+    juce::ComboBox handsBox;
     FreeRow delayRow{u8("Verz\xc3\xb6gerung (Zuh\xc3\xb6rer)"), 60.0, 1000.0, 250.0};
     juce::Rectangle<int> addrBox;
 };
