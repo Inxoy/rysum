@@ -15,7 +15,7 @@ constexpr int kMaxFrameBytes = 4096;
 bool isLocalSetting(const juce::String &id)
 {
     static const juce::StringArray local{"output",      "master",   "binOrder", "binYaw",
-                                         "binDfEq",     "inpOn",    "spkOrder", "spkDistComp",
+                                         "binDfEq",     "spkOrder", "spkDistComp",
                                          "trAngle",     "trAmount", "trBoost",  "trSideEq",
                                          "audioThreads", "midiCC"};
     return local.contains(id) || id.startsWith("dsf");
@@ -184,6 +184,7 @@ bool ConcertLink::startPerformer(int p, bool loopbackOnly)
         outFrames.clear();
         joinPackages.clear();
     }
+    audioOutFifo.reset();
     fifo.reset();
     roleNow = Role::performer;
     setStatus(juce::String::fromUTF8("Spielt \xe2\x80\x93 noch niemand h\xc3\xb6rt zu"));
@@ -213,7 +214,7 @@ bool ConcertLink::startListener(const juce::String &h, int p)
     isJoined = false;
     everJoined = false;
     forcedOff.assign((size_t)numParams, 0);
-    for (auto *id : {"lvNetOn", "lucOn", "lvSelfPlay"})
+    for (auto *id : {"lvNetOn", "lvSelfPlay"})
         if (const int i = proc.getParamIndex(id); i >= 0)
             forcedOff[(size_t)i] = 1;
     fifo.reset();
@@ -277,7 +278,7 @@ juce::MemoryBlock ConcertLink::makeStateFrame(double t, int seq)
     auto st = proc.makeState(true);
     juce::ValueTree extra("CONCERT");
     extra.setProperty("extendedRange", proc.extendedRange.load(), nullptr);
-    for (auto *id : {"mpe", "mpeBend", "temperament"})
+    for (auto *id : {"mpe", "mpeBend", "temperament", "inpOn"})
         if (auto *prm = proc.apvts.getParameter(id))
             extra.setProperty(id, prm->getValue(), nullptr);
     extra.appendChild(rysum::autoToTree(proc.getAuto()), nullptr);
@@ -615,6 +616,27 @@ void ConcertLink::runPerformer()
                 frames.push_back({fifoData[(size_t)(s2 + i)].t, encode(fifoData[(size_t)(s2 + i)])});
             fifo.finishedRead(n1 + n2);
         }
+        {
+            // the audio input
+            int s1, n1, s2, n2;
+            audioOutFifo.prepareToRead(audioOutFifo.getNumReady(), s1, n1, s2, n2);
+            auto enc = [&](const AudioChunk &a)
+            {
+                frames.push_back({a.t, frame('A',
+                                             [&](juce::MemoryOutputStream &o)
+                                             {
+                                                 o.writeDouble(a.t);
+                                                 o.writeInt(a.sr);
+                                                 o.writeShort((short)a.n);
+                                                 o.write(a.s.data(), (size_t)a.n * 2 * sizeof(int16_t));
+                                             })});
+            };
+            for (int i = 0; i < n1; ++i)
+                enc(audioOut[(size_t)(s1 + i)]);
+            for (int i = 0; i < n2; ++i)
+                enc(audioOut[(size_t)(s2 + i)]);
+            audioOutFifo.finishedRead(n1 + n2);
+        }
         std::deque<juce::MemoryBlock> joins;
         {
             const juce::ScopedLock sl(outLock);
@@ -722,11 +744,14 @@ double ConcertLink::scheduleAt(double remoteT)
         off = juce::jmin(off, o.second);
     // the estimate goes up at once (the player's clock paused, or the clocks drift that way: late
     // messages would play at once, without a buffer) but comes down gliding, half a millisecond
-    // per message at most (a message that came quicker must not shift the rhythm)
+    // per 20 ms at most, however many messages come (a message that came quicker must not shift
+    // the rhythm)
+    const double glide = 0.0005 * juce::jlimit(0.0, 5.0, (nowMs - lastGlideMs) / 20.0);
+    lastGlideMs = nowMs;
     if (offsets.size() == 1 || lastTarget == 0.0 || off > smoothOff)
         smoothOff = off;
     else
-        smoothOff += juce::jmax(-0.0005, off - smoothOff);
+        smoothOff += juce::jmax(-glide, off - smoothOff);
     // (never earlier than what is queued: the order stays)
     const double t = juce::jmax(lastTarget, remoteT + smoothOff + delayMs.load() * 0.001);
     lastTarget = t;
@@ -826,6 +851,33 @@ void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
         }
         const juce::ScopedLock sl(figLock);
         figs = std::move(all);
+        return;
+    }
+    if (type == 'A')
+    {
+        // the player's audio input: into the ring, with the time its end is due here
+        const int rsr = in.readInt(), n = (int)(uint16_t)in.readShort();
+        if (rsr < 8000 || rsr > 384000 || n < 1 || n > 512 || in.getNumBytesRemaining() < n * 4)
+            return;
+        std::array<int16_t, 2 * 512> s{};
+        in.read(s.data(), n * 4);
+        const double at = scheduleAt(t);
+        if (!isJoined.load())
+            return;
+        int s1, n1, s2, n2;
+        audioInFifo.prepareToWrite(n, s1, n1, s2, n2);
+        if (n1 + n2 < n)
+            return; // (full: the listener's audio stalls - this piece is lost)
+        constexpr float k = 1.0f / 32767.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const int at_ = i < n1 ? s1 + i : s2 + i - n1;
+            audioInL[(size_t)at_] = s[(size_t)(2 * i)] * k;
+            audioInR[(size_t)at_] = s[(size_t)(2 * i + 1)] * k;
+        }
+        audioSr = rsr;
+        audioDueEnd = at + n / (double)rsr;
+        audioInFifo.finishedWrite(n);
         return;
     }
     if (type == 'J')
@@ -995,6 +1047,7 @@ bool ConcertLink::listenSession()
                          }));
     lastHeardMs = juce::Time::getMillisecondCounterHiRes();
     myId = -1;
+    ++audioSession; // (what is left of the last connection's input is not played)
     while (!threadShouldExit())
     {
         {
@@ -1140,6 +1193,131 @@ void ConcertLink::playInto(juce::MidiBuffer &midi, double blockTime, int numSamp
     }
 }
 
+void ConcertLink::captureAudio(const float *l, const float *r, int n, double blockTime, double sr) noexcept
+{
+    if (roleNow.load() != Role::performer || l == nullptr || n <= 0)
+        return;
+    if (r == nullptr)
+        r = l;
+    for (int done = 0; done < n;)
+    {
+        const int m = juce::jmin(512, n - done);
+        int s1, n1, s2, n2;
+        audioOutFifo.prepareToWrite(1, s1, n1, s2, n2);
+        if (n1 + n2 < 1)
+            return; // (the network thread is behind: this piece is lost)
+        auto &c = audioOut[(size_t)(n1 > 0 ? s1 : s2)];
+        c.t = blockTime + done / sr;
+        c.sr = juce::roundToInt(sr);
+        c.n = m;
+        for (int i = 0; i < m; ++i)
+        {
+            c.s[(size_t)(2 * i)] = (int16_t)juce::roundToInt(juce::jlimit(-1.0f, 1.0f, l[done + i]) * 32767.0f);
+            c.s[(size_t)(2 * i + 1)] = (int16_t)juce::roundToInt(juce::jlimit(-1.0f, 1.0f, r[done + i]) * 32767.0f);
+        }
+        audioOutFifo.finishedWrite(1);
+        done += m;
+    }
+}
+
+bool ConcertLink::playAudioInto(float *l, float *r, int n, double blockTime, double sr) noexcept
+{
+    // the listener: the player's input, each sample at the moment it is due here (like the notes).
+    // Read a little faster or slower as needed (at most 0.3 %, a few cents): different sample rates,
+    // sound cards whose clocks drift apart, the delay estimate settling - all without a gap.
+    if (roleNow.load() != Role::listener || !isJoined.load())
+    {
+        audioRunning = false;
+        return false;
+    }
+    if (const auto ses = audioSession.load(); ses != audioSessionSeen)
+    {
+        audioSessionSeen = ses;
+        audioInFifo.finishedRead(audioInFifo.getNumReady());
+        audioRunning = false;
+    }
+    const double rsr = (double)audioSr.load();
+    auto pop = [&](float &L, float &R)
+    {
+        int s1, n1, s2, n2;
+        audioInFifo.prepareToRead(1, s1, n1, s2, n2);
+        if (n1 + n2 < 1)
+            return false;
+        const int at = n1 > 0 ? s1 : s2;
+        L = audioInL[(size_t)at];
+        R = audioInR[(size_t)at];
+        audioInFifo.finishedRead(1);
+        return true;
+    };
+    // the sample about to be read: when it is due here
+    const int avail = audioInFifo.getNumReady();
+    const double headDue = audioDueEnd.load() - avail / rsr;
+    if (!audioRunning)
+    {
+        // wait for the first sample's time (it may also be long past: skip to now)
+        if (avail < 2 || headDue > blockTime + n / sr)
+            return false;
+        const int late = (int)std::floor((blockTime - headDue) * rsr);
+        if (late > 0)
+            audioInFifo.finishedRead(juce::jmin(late, juce::jmax(0, avail - 2)));
+        if (!pop(aL, aR) || !pop(bL, bR))
+            return false;
+        audioStartAt = juce::jlimit(0, n - 1, (int)std::lround((headDue - blockTime) * sr));
+        audioFrac = 0.0;
+        audioErr = 0.0;
+        audioRunning = true;
+    }
+    else
+    {
+        // how far off the reading is (+ = ahead of time), smoothed over about half a second
+        const double err = headDue - blockTime;
+        if (err < -0.12 && avail > 0)
+        {
+            // far behind (a stall): jump to now
+            audioInFifo.finishedRead(juce::jmin(avail, (int)((-err) * rsr)));
+            audioErr = 0.0;
+        }
+        else if (err > 0.12)
+        {
+            // far ahead (the player's audio paused): wait for the time to come
+            audioRunning = false;
+            return false;
+        }
+        else
+            audioErr += (err - audioErr) * juce::jmin(1.0, n / sr / 0.5);
+    }
+    // (starting: silence until the first sample's moment within this block)
+    const int first = audioStartAt;
+    audioStartAt = 0;
+    for (int i = 0; i < first; ++i)
+        l[i] = r[i] = 0.0f;
+    const double rate = rsr / sr * (1.0 - juce::jlimit(-0.003, 0.003, audioErr * 0.3));
+    for (int i = first; i < n; ++i)
+    {
+        const float f = (float)audioFrac;
+        l[i] = aL + f * (bL - aL);
+        r[i] = aR + f * (bR - aR);
+        if (loudAt.load() < 0.0 && std::abs(l[i]) > 0.5f)
+            loudAt = blockTime + i / sr;
+        audioFrac += rate;
+        while (audioFrac >= 1.0)
+        {
+            audioFrac -= 1.0;
+            aL = bL;
+            aR = bR;
+            if (!pop(bL, bR))
+            {
+                // run dry (the player's input went off, or the network stalls): silence, then start again
+                for (int j = i + 1; j < n; ++j)
+                    l[j] = r[j] = 0.0f;
+                audioRunning = false;
+                return true;
+            }
+        }
+    }
+    return true;
+}
+
 void ConcertLink::followBodies(double now) noexcept
 {
     // the listener: every stop's pipes where the player's were at this moment (between the two
@@ -1265,7 +1443,7 @@ void ConcertLink::applyState(const juce::String &xml)
     if (extra.isValid())
     {
         proc.extendedRange = (bool)extra.getProperty("extendedRange", false);
-        for (auto *id : {"mpe", "mpeBend", "temperament"})
+        for (auto *id : {"mpe", "mpeBend", "temperament", "inpOn"})
             if (auto *prm = proc.apvts.getParameter(id); prm != nullptr && extra.hasProperty(id))
                 prm->setValueNotifyingHost((float)(double)extra.getProperty(id));
         // the Verlauf plays on the player's clock (and never records here)

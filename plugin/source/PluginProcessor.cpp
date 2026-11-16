@@ -2286,6 +2286,14 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
                 }
             }
         }
+        // Konzert: the player's input goes to the listeners; a listener hears the player's input
+        // (in time with the notes), never its own
+        if (concertRole == rysum::ConcertLink::Role::performer && any &&
+            apvts.getRawParameterValue("inpOn")->load() > 0.5f)
+            concert.captureAudio(inBuf.getReadPointer(0), inBuf.getReadPointer(1), n, concertBlockTime, concertSr);
+        else if (concertRole == rysum::ConcertLink::Role::listener)
+            any = concert.playAudioInto(inBuf.getWritePointer(0), inBuf.getWritePointer(1), n, concertBlockTime,
+                                        concertSr);
         inputThisBlock = any;
         if (!any)
             engine.setInput(nullptr, nullptr, 0);

@@ -4559,6 +4559,7 @@ private:
             std::vector<double> &rms;
         } listenerAudio(*B, bb, rmsLock, rmsB);
         listenerAudio.startThread(juce::Thread::Priority::highest);
+        std::function<void(long long)> feedA; // (the player's audio input, block by block)
         auto run = [&](double seconds, const std::function<void(long long, juce::MidiBuffer &)> &playA = {})
         {
             const long long n = (long long)std::ceil(seconds * sr / bs);
@@ -4568,6 +4569,8 @@ private:
                 if (playA)
                     playA(k, ma);
                 ba.clear();
+                if (feedA)
+                    feedA(k);
                 A.processBlock(ba, ma);
                 const double due = wallStart + (double)(blocks + 1) * bs / sr * 1000.0;
                 while (juce::Time::getMillisecondCounterHiRes() < due)
@@ -4816,6 +4819,45 @@ private:
             setN(A, RysumProcessor::motionParamId(2), 0.0f);
             B->engine.viewWalkOn = false;
             B->engine.viewX = 0.0f;
+            run(0.5);
+        }
+        // the player's audio input: a click with a note at the same moment arrive together, a tone
+        // goes on into the listener's input
+        {
+            setN(A, "inpOn", 1.0f);
+            run(0.5);
+            const bool switchCame = getN(*B, "inpOn") > 0.5f;
+            B->concert.testResetLoud();
+            float peakB = 0.0f;
+            feedA = [&](long long k)
+            {
+                if (k == 10)
+                    for (int c = 0; c < juce::jmin(2, A.getTotalNumInputChannels()); ++c)
+                        ba.setSample(c, 100, 0.9f);
+                if (k >= 40)
+                    for (int c = 0; c < juce::jmin(2, A.getTotalNumInputChannels()); ++c)
+                        for (int i = 0; i < bs; ++i)
+                            ba.setSample(c, i, 0.3f * (float)std::sin(2.0 * juce::MathConstants<double>::pi * 440.0 * (double)(k * bs + i) / sr));
+            };
+            run(1.6,
+                [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == 10)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 72, (juce::uint8)100), 100);
+                    if (k == 30)
+                        m.addEvent(juce::MidiMessage::noteOff(1, 72), 0);
+                    if (k > 200)
+                        peakB = juce::jmax(peakB, B->engine.inPeak.load());
+                });
+            feedA = {};
+            const auto notes = B->concert.testNoteTimes();
+            const double apart = notes.empty() ? 1.0 : B->concert.testLoudAt() - notes.back();
+            say("concert: the player's input comes (switch " + juce::String(switchCame ? "on" : "off") +
+                    "), a click and a note played together are " + juce::String(apart * 1000.0, 2) +
+                    " ms apart at the listener, a tone reaches its input (peak " + juce::String(peakB, 3) + ")",
+                A.getTotalNumInputChannels() > 0 && switchCame && B->concert.testLoudAt() > 0.0 &&
+                    std::abs(apart) < 0.002 && peakB > 0.2f && peakB < 0.4f);
+            setN(A, "inpOn", 0.0f);
             run(0.5);
         }
         // the others in the Saal: the player sees the listener where it stands, the listener the player

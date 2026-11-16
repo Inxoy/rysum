@@ -105,6 +105,10 @@ public:
                        bool running) noexcept;
     /** the listener: what is due in this block (MIDI into 'midi'; parameters, clocks applied) */
     void playInto(juce::MidiBuffer &midi, double blockTime, int numSamples, double sr) noexcept;
+    /** the player: this block's audio input (only while the input is on) */
+    void captureAudio(const float *l, const float *r, int n, double blockTime, double sr) noexcept;
+    /** the listener: the player's input for this block, in time with the notes (false = none) */
+    bool playAudioInto(float *l, float *r, int n, double blockTime, double sr) noexcept;
     /** both: the audio clock (seconds of audio processed), set at the start of every block */
     void setAudioTime(double t) noexcept
     {
@@ -121,6 +125,15 @@ public:
     int stateSendsForTest() const noexcept
     {
         return stateSeq;
+    }
+    /** the listener: the local audio time the player's input first went over 0.5 (-1 = not yet) */
+    double testLoudAt() const noexcept
+    {
+        return loudAt.load();
+    }
+    void testResetLoud() noexcept
+    {
+        loudAt = -1.0;
     }
     /** the listener: knocks of the player's pipes heard so far */
     int knocksHeardForTest() const noexcept
@@ -223,6 +236,7 @@ private:
     std::unique_ptr<juce::StreamingSocket> sock; // (the listener's)
     std::deque<std::pair<double, double>> offsets; // (wall ms, local - remote), last few seconds
     double lastTarget = 0.0;
+    double lastGlideMs = 0.0;
     double smoothOff = 0.0; // the offset in use (glides towards the smallest)
     double lastHeardMs = 0.0;
     juce::CriticalSection stateLock;
@@ -267,6 +281,29 @@ private:
     static constexpr int kLenRing = 16;
     juce::AbstractFifo lenFifo{kLenRing};
     std::vector<LenSnap> lenData = std::vector<LenSnap>((size_t)kLenRing);
+    // the player's audio input: 16-bit chunks of up to 512 frames (the player: audio thread ->
+    // network thread), then a ring of samples at the listener (network thread -> audio thread)
+    struct AudioChunk
+    {
+        double t = 0.0;
+        int sr = 48000, n = 0;
+        std::array<int16_t, 2 * 512> s{};
+    };
+    static constexpr int kAudioChunks = 256;
+    juce::AbstractFifo audioOutFifo{kAudioChunks};
+    std::vector<AudioChunk> audioOut = std::vector<AudioChunk>((size_t)kAudioChunks);
+    static constexpr int kAudioRing = 1 << 19;
+    juce::AbstractFifo audioInFifo{kAudioRing};
+    std::vector<float> audioInL = std::vector<float>((size_t)kAudioRing), audioInR = std::vector<float>((size_t)kAudioRing);
+    std::atomic<double> audioDueEnd{0.0}; // local time the sample after the last one written is due
+    std::atomic<int> audioSr{48000};
+    std::atomic<uint32_t> audioSession{0};
+    uint32_t audioSessionSeen = 0; // audio thread from here
+    bool audioRunning = false;
+    float aL = 0, aR = 0, bL = 0, bR = 0;
+    double audioFrac = 0.0, audioErr = 0.0;
+    int audioStartAt = 0;
+    std::atomic<double> loudAt{-1.0};
     void followBodies(double blockTime) noexcept; // audio thread
     void stopFollowing() noexcept;                // audio thread
     std::vector<char> forcedOff; // parameters kept off here (notes / sound of their own on the player)
