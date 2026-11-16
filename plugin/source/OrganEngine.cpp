@@ -3619,6 +3619,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             tailSerialInUseR[(size_t)ri] = R.tail.oldestSerialInUse();
         }
         erActive = 0;
+        roomTailSeconds.store(0.0f, std::memory_order_relaxed);
         tailSerialInUse = rt[0].tail.oldestSerialInUse();
         return;
     }
@@ -3721,6 +3722,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
                 juce::FloatVectorOperations::subtract(in0, rt[(size_t)ri].send.data() + roomOffset,
                                                       n);
     }
+    float usedRoomsTail = 0.0f;
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         auto &R = rt[(size_t)ri];
@@ -3754,6 +3756,10 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         const float rc = juce::jmax(0.2f, 0.057f * std::sqrt(V / rtL)); // critical distance
         heard[(size_t)ri].rtLow = rtL;
         heard[(size_t)ri].rtHigh = rtH;
+        usedRoomsTail = juce::jmax(usedRoomsTail,
+                                   rm.tailModel == 1 ? juce::jmin(30.0f, 1.5f * rtL)
+                                   : ir != nullptr   ? (float)ir->length / (float)sr
+                                                     : 1.25f * rtL);
         if (ri == 0)
         {
             roomRtLow = rtL;
@@ -3762,15 +3768,23 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         }
         // reverberant level from the critical distance, softly capped at +4 dB so very long, hard
         // rooms do not drown everything
-        const float level = (used >> ri) & 1
-                                ? juce::jmin(1.6f, distanceGain(rc, distAmountNow)) * rm.tailGain * wallGainNow[(size_t)ri]
-                                : 0.0f;
+        const bool usedNow = (used >> ri) & 1;
         const bool useFdn = rm.tailModel == 1;
+        // (a room no source plays into any more: its input is silent, and what it holds rings out
+        //  at the level it had - the gain sits on the reverb's output, so turning it down would cut
+        //  the tail off instead of letting it decay)
+        if (!usedNow && R.wasUsed)
+            R.idleLeft = juce::jmax(ir != nullptr ? ir->length : TailIR::roomMaxLength(sr),
+                                    (int)(juce::jmin(30.0f, 1.5f * juce::jmax(rtL, 0.1f)) * (float)sr));
+        R.wasUsed = usedNow;
+        const float level = usedNow
+                                ? juce::jmin(1.6f, distanceGain(rc, distAmountNow)) * rm.tailGain * wallGainNow[(size_t)ri]
+                                : (useFdn ? R.fdnLevelLast : R.tailGain);
         if (useFdn != (R.lastTailModel == 1))
         {
             // switched: the other one keeps ringing out with a silent input
             if (useFdn)
-                R.convRingOut = TailIR::maxLength(sr);
+                R.convRingOut = ir != nullptr ? ir->length : TailIR::roomMaxLength(sr);
             else
                 R.fdnRingOut = (int)(juce::jmin(30.0f, 1.5f * juce::jmax(rtL, 0.1f)) * (float)sr);
             R.lastTailModel = useFdn ? 1 : 0;
@@ -3812,8 +3826,9 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             }
         }
         // an unused room stops once its tail has faded
-        if (!((used >> ri) & 1) && R.tailGain < 1.0e-4f && R.fdnLevelLast < 1.0e-4f &&
-            R.convRingOut == 0 && R.fdnRingOut == 0)
+        if (!usedNow)
+            R.idleLeft = juce::jmax(0, R.idleLeft - n);
+        if (!usedNow && R.idleLeft == 0 && R.convRingOut == 0 && R.fdnRingOut == 0)
         {
             R.tailGain = 0.0f;
             R.tailWasOn = false;
@@ -3822,6 +3837,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         }
         tailSerialInUseR[(size_t)ri] = R.tail.oldestSerialInUse();
     }
+    roomTailSeconds.store(usedRoomsTail, std::memory_order_relaxed);
     tailSerialInUse = rt[0].tail.oldestSerialInUse();
     erClock += (uint32_t)n;
 }

@@ -373,6 +373,8 @@ public:
     // simulated room as heard right now (with modulation), for the Saal page
     std::atomic<float> roomW{14.0f}, roomL{28.0f}, roomH{11.0f}, roomLx{0.5f}, roomLy{0.4f},
         roomRtLow{0.0f}, roomRtHigh{0.0f}, roomCritDist{0.0f};
+    /** how long the late reverb of the rooms in use rings after the last note (s; for the host) */
+    std::atomic<float> roomTailSeconds{0.0f};
     std::atomic<int> lastStruckStop{-1}, lastStruckKey{-1}, erActive{0};
     // ...and the rest of it, for building the late reverb (processor, message thread)
     std::atomic<float> roomAbsW{0.0f}, roomAbsF{0.0f}, roomHighD{0.0f}, roomScat{0.0f},
@@ -1069,6 +1071,8 @@ private:
         int convRingOut = 0, fdnRingOut = 0, lastTailModel = 0;
         std::vector<float> send; // rooms 1..3: the sources in this room (room 0 = all others)
         bool running = false;
+        bool wasUsed = false; // a source played into it in the last block
+        int idleLeft = 0;     // unused: samples until what it holds has rung out
     };
     std::array<RoomTail, kNumRooms> rt;
     std::array<std::array<float, kFdnLines>, kFdnLines>

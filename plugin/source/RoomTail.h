@@ -28,7 +28,10 @@ struct TailIR
         256, 4096, 32768}; // the first 256 samples (~5 ms) are left to the early reflections
     static constexpr int kLag[kStages]{
         1, 2, 2}; // see PartitionedConvolution (lag 2: work spread over time)
-    static constexpr double kMaxSeconds = 6.0;
+    static constexpr double kMaxSeconds = 6.0; // responses given from outside (Lucier)
+    /** the Saal's own synthesised response may be longer: a long room rings out instead of being
+        cut off (a room that would ring longer still bends its decay down smoothly before the end) */
+    static constexpr double kRoomMaxSeconds = 12.0;
 
     int channels = 0; // output channels (2 = stereo, else Ambisonics (o+1)^2)
     int order = 0;    // 0 = stereo
@@ -43,9 +46,10 @@ struct TailIR
     std::array<int, kStages> first{}, parts{};
 
     static int maxLength(double sr) noexcept;
+    static int roomMaxLength(double sr) noexcept;
     static int stageEnd(int stage, double sr) noexcept
     {
-        return stage + 1 < kStages ? kStart[stage + 1] : maxLength(sr);
+        return stage + 1 < kStages ? kStart[stage + 1] : roomMaxLength(sr);
     }
 
     /** ray-traces the room (as heard right now), synthesises and partitions the response.

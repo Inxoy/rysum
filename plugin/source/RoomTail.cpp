@@ -10,6 +10,13 @@ int TailIR::maxLength(double sr) noexcept
     return juce::jmax(kStart[kStages - 1] + 2 * b, n);
 }
 
+int TailIR::roomMaxLength(double sr) noexcept
+{
+    const int b = kBlock[kStages - 1];
+    const int n = (int)std::ceil(kRoomMaxSeconds * sr / (double)b) * b;
+    return juce::jmax(maxLength(sr), n);
+}
+
 std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int outputOrder,
                                             double sr, uint32_t serial, const MeshAcoustics *mesh,
                                             float meshScale)
@@ -38,12 +45,23 @@ std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int 
     const int pre = juce::jmax(
         kStart[0], (int)std::lround(0.5 * mfpSec * sr)); // tail begins after the first reflections
     const int fadeIn = juce::jmax(64, (int)std::lround(mfpSec * sr));
-    const int maxLen = maxLength(sr);
-    const int len =
-        juce::jlimit(pre + fadeIn + 512, maxLen,
-                     (int)std::ceil(1.2 * juce::jmax(ir->rtLow, ir->rtHigh) * sr) + pre);
+    const int maxLen = roomMaxLength(sr);
+    // long enough to decay by 75 dB (inaudible below whatever played into it); a room that rings
+    // longer than the response can hold bends its decay down smoothly towards the end instead of
+    // being cut off: the extra loss grows like the square of the time from 35 % of the length on,
+    // so the decay only gradually gets steeper (no corner, no audible end)
+    constexpr double kEndDb = 75.0;
+    const int len = juce::jlimit(
+        pre + fadeIn + 512, maxLen,
+        (int)std::ceil(kEndDb / 60.0 * juce::jmax(ir->rtLow, ir->rtHigh) * sr) + pre);
     ir->length = len;
-    const int fadeOut = len / 10;
+    const double tLen = (double)(len - pre) / sr;
+    const double bendL = juce::jmax(0.0, kEndDb - 60.0 * tLen / ir->rtLow),
+                 bendH = juce::jmax(0.0, kEndDb - 60.0 * tLen / ir->rtHigh);
+    const double bendFrom = 0.35 * (double)(len - pre), bendSpan = (double)(len - pre) - bendFrom;
+    constexpr double kDbToNp = 0.1151292546497; // ln(10) / 20
+    // (and the last few samples to exact silence: by then it is 75 dB down)
+    const int fadeOut = juce::jmin(len / 20, (int)(0.1 * sr));
     const double kL = 6.9078 / (ir->rtLow * sr), kH = 6.9078 / (ir->rtHigh * sr);
     std::vector<std::vector<float>> h((size_t)ir->channels, std::vector<float>((size_t)len, 0.0f));
     // The noise is the same for every rebuild (fixed seed per channel, indexed from t = 0): when
@@ -71,7 +89,14 @@ std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int 
             if (t < pre)
                 continue;
             const double tt = (double)(t - pre);
-            float a = (float)(lo * std::exp(-kL * tt) + hi * std::exp(-kH * tt));
+            double xL = kL * tt, xH = kH * tt;
+            if (tt > bendFrom && bendSpan > 0.0)
+            {
+                const double u = (tt - bendFrom) / bendSpan, u2 = u * u;
+                xL += bendL * u2 * kDbToNp;
+                xH += bendH * u2 * kDbToNp;
+            }
+            float a = (float)(lo * std::exp(-xL) + hi * std::exp(-xH));
             if (t - pre < fadeIn)
                 a *= 0.5f - 0.5f * std::cos(juce::MathConstants<float>::pi * (float)(t - pre) /
                                             (float)fadeIn);

@@ -71,7 +71,9 @@ public:
     }
     double getTailLengthSeconds() const override
     {
-        return 2.0;
+        // (the Saal's late reverb as it is now: a host that stops or bounces after the tail must not
+        //  cut a long room off)
+        return juce::jmax(2.0, (double)engine.roomTailSeconds.load(std::memory_order_relaxed) + 0.5);
     }
 
     int getNumPrograms() override

@@ -954,6 +954,76 @@ static void testTailConvolver()
           "tail convolver = plain convolution (rel err " + juce::String(err / ref, 7) + ")");
 }
 
+/** a very long room (reverberation longer than the response can hold): it decays to silence
+    smoothly, without being cut off at the end */
+static void testLongTail()
+{
+    std::cout << "long late reverb" << std::endl;
+    const double sr = 48000.0;
+    RoomParams r;
+    r.on = true;
+    r.width = 40;
+    r.length = 80;
+    r.height = 25;
+    r.absWalls = 0.01f;
+    r.absFloor = 0.01f;
+    r.highDamp = 0.0f;
+    r.scatter = 0.3f;
+    auto ir = TailIR::build(r, 0.0f, 0, sr, 1);
+    std::cout << "  RT " << ir->rtLow << " / " << ir->rtHigh << " s, response "
+              << (double)ir->length / sr << " s" << std::endl;
+    check(ir->rtLow > 1.2 * TailIR::kRoomMaxSeconds, "long tail: the room rings longer than the response holds");
+    TailConvolver tc;
+    tc.prepare(sr);
+    tc.setIR(ir);
+    // (the response takes effect at the next block start of each stage: silence first)
+    const int B = 512;
+    std::vector<float> z((size_t)B, 0.0f), o0((size_t)B), o1((size_t)B);
+    for (int i = 0; i < 80; ++i)
+    {
+        float *oo[2]{o0.data(), o1.data()};
+        tc.process(z.data(), oo, 2, B, 1.0f, 1.0f);
+    }
+    const int N = ir->length + 2 * B;
+    std::vector<float> y((size_t)N, 0.0f);
+    for (int pos = 0; pos < N; pos += B)
+    {
+        std::vector<float> x((size_t)B, 0.0f);
+        if (pos == 0)
+            x[0] = 1.0f;
+        float *oo[2]{o0.data(), o1.data()};
+        std::fill(o0.begin(), o0.end(), 0.0f);
+        std::fill(o1.begin(), o1.end(), 0.0f);
+        tc.process(x.data(), oo, 2, B, 1.0f, 1.0f);
+        for (int i = 0; i < B && pos + i < N; ++i)
+            y[(size_t)(pos + i)] = o0[(size_t)i] + o1[(size_t)i];
+    }
+    // level in 50 ms windows (dB against the loudest)
+    const int W = (int)(0.05 * sr);
+    std::vector<double> db;
+    double top = -1e9;
+    for (int a = 0; a + W <= N; a += W)
+    {
+        double e = 0.0;
+        for (int i = 0; i < W; ++i)
+            e += (double)y[(size_t)(a + i)] * y[(size_t)(a + i)];
+        db.push_back(10.0 * std::log10(e / W + 1e-30));
+        top = std::max(top, db.back());
+    }
+    // the steepest fall from one window to the next while it is still audible (above -70 dB), and
+    // the level shortly before the end
+    double worst = 0.0;
+    for (size_t i = 1; i < db.size(); ++i)
+        if (db[i - 1] - top > -70.0)
+            worst = std::max(worst, db[i - 1] - db[i]);
+    const size_t endW = (size_t)juce::jmax(0, (int)((ir->length - (int)(0.15 * sr)) / W));
+    const double nearEnd = endW < db.size() ? db[endW] - top : 0.0;
+    std::cout << "  steepest fall per 50 ms (while above -70 dB): " << worst
+              << " dB, 0.15 s before the end: " << nearEnd << " dB" << std::endl;
+    check(worst < 4.0, "long tail: decays smoothly (no cut)");
+    check(nearEnd < -65.0, "long tail: has died away before the response ends");
+}
+
 static void testMotion()
 {
     std::cout << "motion" << std::endl;
@@ -1999,6 +2069,7 @@ int main(int argc, char **argv)
         testEncoder();
         testConvolver();
         testTailConvolver();
+        testLongTail();
         testMotion();
         testBinaural(argc > 3 ? juce::File(argv[3])
                               : juce::File()); // optional 3rd argument: a SOFA file to test with
@@ -5672,6 +5743,130 @@ int main(int argc, char **argv)
             std::cout << "room: tail impulse response, peaks over local median (99.9 %): " << p999
                       << " dB" << std::endl;
             check(p999 < 14.0, "late reverb is dense (no ringing modes)");
+        }
+        { // no dispersion in the Saal: a one-sample click through the direct sound and the early
+          // reflections - every band arrives at the same time (envelopes of octave bands,
+          // cross-correlated). "Eis" (dispersive walls on purpose) shows that the measure sees it.
+            auto lib2 = std::make_shared<SampleLibrary>(*lib);
+            auto imp = std::make_shared<Sample>();
+            imp->sampleRate = fsr;
+            imp->data.assign(64, 0.0f);
+            imp->data[2] = 1.0f;
+            NoiseSample ns;
+            ns.sample = imp;
+            ns.norm = 1.0f;
+            lib2->custom = {ns};
+            std::shared_ptr<const SampleLibrary> lib2c(lib2);
+            auto renderClick = [&](bool roomOn, float ice)
+            {
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(lib2c);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = true;
+                p.stopGain[0] = 0.0f;
+                p.clickLevel = 0;
+                p.releaseClick = 0;
+                p.wind = 0;
+                p.stopPull = 0;
+                p.outputMode = 0;
+                p.fx.custLevel = 1.0f;
+                p.fx.custPlace = 0;
+                p.room.on = roomOn;
+                p.room.width = 14;
+                p.room.length = 28;
+                p.room.height = 11;
+                p.room.absWalls = 0.06f;
+                p.room.absFloor = 0.2f;
+                p.room.highDamp = 0.15f;
+                p.room.scatter = 0.3f;
+                p.room.order = 2;
+                p.room.tailGain = 0.0f;
+                p.ice = ice;
+                p.iceLen = 0.7f;
+                const int total = (int)(fsr * 0.4);
+                juce::AudioBuffer<float> b(2, B);
+                std::vector<float> mid((size_t)total, 0.0f);
+                for (int pos = 0; pos < total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, 69, (juce::uint8)127), 0);
+                    e.process(b, mb, p);
+                    for (int i = 0; i < B && pos + i < total; ++i)
+                        mid[(size_t)(pos + i)] = 0.5f * (b.getSample(0, i) + b.getSample(1, i));
+                }
+                return mid;
+            };
+            // the envelope of one octave band (zero-phase band filter in the spectrum, analytic
+            // signal): a band delayed against another shows as a shift of its envelope
+            auto bandEnv = [&](const std::vector<float> &x, double f0)
+            {
+                const int ord = 15, N = 1 << ord;
+                juce::dsp::FFT f(ord);
+                std::vector<juce::dsp::Complex<float>> a((size_t)N), s((size_t)N);
+                for (int i = 0; i < N && i < (int)x.size(); ++i)
+                    a[(size_t)i] = x[(size_t)i];
+                f.perform(a.data(), s.data(), false);
+                for (int k = 0; k < N; ++k)
+                {
+                    double w = 0.0;
+                    if (k > 0 && k < N / 2)
+                    {
+                        // a raised cosine over the octave f0 .. 2 f0 (on a log axis), and the
+                        // negative frequencies left out
+                        const double fr = (double)k * fsr / (double)N;
+                        const double u = std::log2(fr / f0);
+                        if (u > -0.5 && u < 1.5)
+                            w = 2.0 * (0.5 - 0.5 * std::cos(juce::MathConstants<double>::pi * (u + 0.5)));
+                    }
+                    s[(size_t)k] *= (float)w;
+                }
+                f.perform(s.data(), a.data(), true);
+                std::vector<float> env(x.size());
+                for (size_t i = 0; i < x.size(); ++i)
+                    env[i] = std::abs(a[i]);
+                return env;
+            };
+            // how much later band b arrives than band a (ms): the lag of the best match of the
+            // two envelopes within +-15 ms
+            auto lagMs = [&](const std::vector<float> &ea, const std::vector<float> &eb)
+            {
+                const int maxLag = (int)(0.015 * fsr), n = (int)ea.size();
+                double best = -1.0;
+                int bestLag = 0;
+                for (int L = -maxLag; L <= maxLag; ++L)
+                {
+                    double c = 0.0;
+                    for (int i = juce::jmax(0, -L); i < n && i + L < n; ++i)
+                        c += (double)ea[(size_t)i] * eb[(size_t)(i + L)];
+                    if (c > best)
+                    {
+                        best = c;
+                        bestLag = L;
+                    }
+                }
+                return 1000.0 * (double)bestLag / fsr;
+            };
+            auto lags = [&](const std::vector<float> &x, double &lowMs, double &midMs)
+            {
+                const auto lo = bandEnv(x, 250.0), md = bandEnv(x, 1000.0), hi = bandEnv(x, 4000.0);
+                lowMs = lagMs(hi, lo);
+                midMs = lagMs(hi, md);
+            };
+            double dryLo, dryMd, roomLo, roomMd, iceLo, iceMd;
+            lags(renderClick(false, 0.0f), dryLo, dryMd);
+            lags(renderClick(true, 0.0f), roomLo, roomMd);
+            lags(renderClick(true, 1.0f), iceLo, iceMd);
+            std::cout << "saal dispersion: 250 Hz / 1 kHz arrive after 4 kHz by (ms): dry " << dryLo
+                      << " / " << dryMd << ", direct + reflections " << roomLo << " / " << roomMd
+                      << ", with Eis " << iceLo << " / " << iceMd << std::endl;
+            check(std::abs(roomLo) < 0.5 && std::abs(roomMd) < 0.5 && std::abs(dryLo) < 0.5,
+                  "saal: no dispersion - low, mid and high bands of a click arrive together");
+            // (at 250 Hz the direct sound, which Eis leaves alone, dominates the envelope)
+            check(juce::jmax(iceLo, iceMd) > 1.0,
+                  "saal: the dispersion measure sees Eis (lower bands held back)");
         }
         { // the room changes while a note sounds: the new response is crossfaded from the same
           // history - no gap

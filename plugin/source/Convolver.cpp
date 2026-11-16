@@ -181,11 +181,28 @@ std::unique_ptr<Convolver> Convolver::create(const juce::File &file, const Setti
     {
         const double e = energy(rs.getReadPointer(0), len);
         const float g = e > 0 ? (float)(1.0 / std::sqrt(e)) : 1.0f;
-        const int fade = juce::jmin(len / 4, (int)(0.05 * s.hostRate));
+        // a response that still sounds where it ends (a file longer than kMaxSeconds, cut there):
+        // a long smooth fade instead of a cut; one that has died away: a short one
+        const bool loudEnd = rs.getMagnitude(len - juce::jmin(len, 2048), juce::jmin(len, 2048)) >
+                             peak * 1.0e-3f;
+        const int fade = loudEnd ? juce::jmin(len / 4, (int)(2.0 * s.hostRate))
+                                 : juce::jmin(len / 4, (int)(0.05 * s.hostRate));
         for (int c = 0; c < keep; ++c)
         {
             rs.applyGain(c, 0, len, g);
-            rs.applyGainRamp(c, len - fade, fade, 1.0f, 0.0f);
+            if (!loudEnd)
+                rs.applyGainRamp(c, len - fade, fade, 1.0f, 0.0f);
+            else
+            {
+                // (cosine squared: the level falls ever faster, no corner where it starts)
+                float *d = rs.getWritePointer(c);
+                for (int i = 0; i < fade; ++i)
+                {
+                    const float w = 0.5f + 0.5f * std::cos(juce::MathConstants<float>::pi *
+                                                           (float)i / (float)fade);
+                    d[len - fade + i] *= w * w;
+                }
+            }
         }
     }
 
