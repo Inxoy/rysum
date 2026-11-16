@@ -167,6 +167,7 @@ private:
     enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWood, kSlotWall0 = 8 };   // (kSlotWall0 + i: wall i, each with its own material)
     struct RTri { Raster::Vert a, b, c; int slot; float tone; };
     void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt, int stop);
+    void addFigure (V3 feet, float height, float yawDeg);      // Konzert: someone else in the Saal
     void addWoodPipe (V3 bottom, float len, float rad, float faceAngle, float glowAmt);
     void addReedPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt, float px);
     V3 pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const;
@@ -254,6 +255,8 @@ private:
     juce::TextButton controlsButton { juce::String::fromUTF8 ("Steuerung \xe2\x80\xa6") };
     void showControlsMenu();
     bool alwaysSpectator = false, spectatorShown = false;
+    std::map<int, std::array<float, 4>> figSmooth;   // Konzert: the others' places as drawn (eased)
+    double figSmoothMs = 0.0;
     void refreshSpectator();
     bool anyPinned() const noexcept { for (const auto& m : proc.engine.pinMask) if (m.load() != 0) return true; return false; }
     bool overlayBusy() const noexcept { return ! proc.walkLanterns.empty() || anyPinned() || whirlFx > 0.0 || earsAway || helpHeld || magnet != 0 || boxing || selectedCount() > 0; }
@@ -266,6 +269,8 @@ private:
         V3 homeP, eye;
         std::shared_ptr<const RoomMesh> mesh;
         std::vector<Glow> glows;
+        struct FigureLabel { V3 head; juce::String name; };
+        std::vector<FigureLabel> figureLabels;   // Konzert: the others in the Saal
     } scene;
     void buildScene (float physicalScale);
     std::unique_ptr<GpuPicture> gpu;

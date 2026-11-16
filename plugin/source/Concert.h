@@ -83,6 +83,20 @@ public:
     static juce::StringArray localAddresses();
     static constexpr int kDefaultPort = 8790;
 
+    /** the others in the Saal: the player and every listener, where they stand (offsets from the
+        Saal's listening place, m, like walkPose) and where they look - not oneself */
+    struct Figure
+    {
+        int id = 0; // 0 = the player
+        juce::String name;
+        float x = 0, y = 0, z = 0, yaw = 0;
+        double seenMs = 0.0;
+    };
+    std::vector<Figure> figures() const;
+    /** the listener's name, as the others see it over their figure */
+    void setName(const juce::String &n);
+    juce::String getName() const;
+
     // ---- audio thread (from processBlock)
     /** the player: this block's MIDI (after Halten and the controller assignments) */
     void captureMidi(const juce::MidiBuffer &midi, double blockTime, double sr) noexcept;
@@ -166,8 +180,19 @@ private:
         double since = 0.0; // events before the join state are in it already
         double connectedMs = 0.0;
         std::vector<std::pair<double, juce::MemoryBlock>> backlog; // while the join is being made
+        int id = 0;
+        Figure fig;          // where this listener stands (from its pose frames)
+        bool hasFig = false;
     };
     std::vector<std::unique_ptr<Client>> clients; // network thread
+    int nextClientId = 1;
+    double lastFiguresMs = 0.0, lastPoseMs = 0.0; // network thread
+    mutable juce::CriticalSection figLock;
+    std::vector<Figure> figs; // what figures() gives
+    int myId = -1;             // the listener: its own id (from the player)
+    juce::String myName{"Gast"};
+    juce::MemoryBlock figuresFrame(const std::vector<Figure> &all);
+    void readClientFrame(Client &c, char type, juce::MemoryInputStream &in); // the player, network thread
     // the message thread makes join packages and parameter / state changes
     juce::CriticalSection outLock;
     std::vector<std::pair<double, juce::MemoryBlock>> outFrames; // (time, frame) for everyone

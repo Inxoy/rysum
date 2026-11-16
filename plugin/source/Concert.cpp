@@ -240,6 +240,10 @@ void ConcertLink::stop()
     sock.reset();
     clients.clear();
     numListeners = 0;
+    {
+        const juce::ScopedLock sl(figLock);
+        figs.clear();
+    }
     if (was == Role::listener)
     {
         // the notes stop; the listener's own setup comes back
@@ -550,10 +554,11 @@ void ConcertLink::runPerformer()
                     auto cl = std::make_unique<Client>();
                     cl->sock = std::move(s);
                     cl->connectedMs = now;
+                    cl->id = nextClientId++;
                     clients.push_back(std::move(cl));
                 }
             }
-        // hellos (and nothing else: a listener has nothing to say)
+        // hellos, then where each listener stands (and what its hands do)
         for (auto &c : clients)
         {
             if (c->sock == nullptr)
@@ -572,7 +577,7 @@ void ConcertLink::runPerformer()
             }
             char type = 0;
             juce::MemoryBlock pl;
-            if (!readFrame(*c->sock, type, pl, 64)) // (a listener only says hello)
+            if (!readFrame(*c->sock, type, pl, 512)) // (a listener says little)
             {
                 c->sock.reset();
                 continue;
@@ -591,6 +596,11 @@ void ConcertLink::runPerformer()
                     sendAll(*c->sock, frame('X', [](juce::MemoryOutputStream &o) { o.writeString("version"); }));
                     c->sock.reset();
                 }
+            }
+            else if (c->helloOk)
+            {
+                juce::MemoryInputStream in(pl, false);
+                readClientFrame(*c, type, in);
             }
         }
         // what was played and changed
@@ -624,7 +634,9 @@ void ConcertLink::runPerformer()
                     c->since = in.readDouble();
                     const auto rest = pk.getSize() - 8;
                     juce::MemoryBlock body(static_cast<const char *>(pk.getData()) + 8, rest);
-                    c->joined = sendAll(*c->sock, body);
+                    // (first who it is: its own figure is not drawn for it)
+                    c->joined = sendAll(*c->sock, frame('I', [&](juce::MemoryOutputStream &o) { o.writeDouble(c->since); o.writeInt(c->id); }))
+                                && sendAll(*c->sock, body);
                     for (auto &f : c->backlog)
                         if (c->joined && f.first >= c->since)
                             c->joined = sendAll(*c->sock, f.second);
@@ -651,6 +663,34 @@ void ConcertLink::runPerformer()
                     break;
                 }
             }
+        }
+        // who stands where, ten times a second: to everyone (not timed - the latest is what counts)
+        if (now - lastFiguresMs > 100.0)
+        {
+            lastFiguresMs = now;
+            std::vector<Figure> all, guests;
+            Figure me;
+            me.id = 0;
+            me.name = juce::String::fromUTF8("Spieler");
+            me.x = proc.walkPose[0].load();
+            me.y = proc.walkPose[1].load();
+            me.z = proc.engine.viewZ.load();
+            me.yaw = proc.walkPose[2].load();
+            all.push_back(me);
+            for (auto &c : clients)
+                if (c->sock != nullptr && c->joined && c->hasFig && now - c->fig.seenMs < 3000.0)
+                {
+                    all.push_back(c->fig);
+                    guests.push_back(c->fig);
+                }
+            {
+                const juce::ScopedLock sl(figLock);
+                figs = guests;
+            }
+            const auto f = figuresFrame(all);
+            for (auto &c : clients)
+                if (c->sock != nullptr && c->joined && !sendAll(*c->sock, f))
+                    c->sock.reset();
         }
         clients.erase(std::remove_if(clients.begin(), clients.end(),
                                      [](const auto &c) { return c->sock == nullptr; }),
@@ -693,10 +733,101 @@ double ConcertLink::scheduleAt(double remoteT)
     return t;
 }
 
+juce::MemoryBlock ConcertLink::figuresFrame(const std::vector<Figure> &all)
+{
+    return frame('F',
+                 [&](juce::MemoryOutputStream &o)
+                 {
+                     o.writeDouble(0.0);
+                     o.writeInt((int)all.size());
+                     for (auto &f : all)
+                     {
+                         o.writeInt(f.id);
+                         o.writeFloat(f.x);
+                         o.writeFloat(f.y);
+                         o.writeFloat(f.z);
+                         o.writeFloat(f.yaw);
+                         o.writeString(f.name);
+                     }
+                 });
+}
+
+void ConcertLink::readClientFrame(Client &c, char type, juce::MemoryInputStream &in)
+{
+    // the player, network thread: a listener says where it stands
+    if (type == 'W')
+    {
+        Figure f;
+        f.id = c.id;
+        f.x = in.readFloat();
+        f.y = in.readFloat();
+        f.z = in.readFloat();
+        f.yaw = in.readFloat();
+        f.name = in.readString().substring(0, 32);
+        if (!std::isfinite(f.x + f.y + f.z + f.yaw) || std::abs(f.x) + std::abs(f.y) + std::abs(f.z) > 3000.0f)
+            return;
+        f.seenMs = juce::Time::getMillisecondCounterHiRes();
+        c.fig = f;
+        c.hasFig = true;
+    }
+}
+
+std::vector<ConcertLink::Figure> ConcertLink::figures() const
+{
+    const juce::ScopedLock sl(figLock);
+    if (roleNow.load() == Role::off)
+        return {};
+    return figs;
+}
+
+void ConcertLink::setName(const juce::String &n)
+{
+    const juce::ScopedLock sl(figLock);
+    myName = n.trim().substring(0, 32);
+    if (myName.isEmpty())
+        myName = "Gast";
+}
+
+juce::String ConcertLink::getName() const
+{
+    const juce::ScopedLock sl(figLock);
+    return myName;
+}
+
 void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
 {
     lastHeardMs = juce::Time::getMillisecondCounterHiRes();
     const double t = in.readDouble();
+    if (type == 'I')
+    {
+        myId = in.readInt();
+        return;
+    }
+    if (type == 'F')
+    {
+        // who stands where (the latest is what counts): everyone but oneself
+        const int n = in.readInt();
+        if (n < 0 || n > 64)
+            return;
+        std::vector<Figure> all;
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        for (int i = 0; i < n; ++i)
+        {
+            Figure f;
+            f.id = in.readInt();
+            f.x = in.readFloat();
+            f.y = in.readFloat();
+            f.z = in.readFloat();
+            f.yaw = in.readFloat();
+            f.name = in.readString().substring(0, 32);
+            f.seenMs = now;
+            if (f.id != myId && std::isfinite(f.x + f.y + f.z + f.yaw))
+                all.push_back(f);
+        }
+        const juce::ScopedLock sl(figLock);
+        figs = std::move(all);
+        return;
+    }
     if (type == 'J')
     {
         const int seq = in.readInt();
@@ -827,6 +958,10 @@ void ConcertLink::runListener()
         const bool lost = listenSession();
         releaseNow = true;
         isJoined = false;
+        {
+            const juce::ScopedLock sl(figLock);
+            figs.clear();
+        }
         if (!lost || threadShouldExit())
             break;
         setStatus(juce::String::fromUTF8("Verbindung weg \xe2\x80\x93 verbinde erneut \xe2\x80\xa6"));
@@ -859,8 +994,28 @@ bool ConcertLink::listenSession()
                              o.writeInt(numParams);
                          }));
     lastHeardMs = juce::Time::getMillisecondCounterHiRes();
+    myId = -1;
     while (!threadShouldExit())
     {
+        {
+            // where this listener stands, ten times a second (the others see a figure there)
+            const double nowMs = juce::Time::getMillisecondCounterHiRes();
+            if (isJoined.load() && nowMs - lastPoseMs > 100.0)
+            {
+                lastPoseMs = nowMs;
+                const auto name = getName();
+                if (!sendAll(*sock, frame('W',
+                                          [&](juce::MemoryOutputStream &o)
+                                          {
+                                              o.writeFloat(proc.walkPose[0].load());
+                                              o.writeFloat(proc.walkPose[1].load());
+                                              o.writeFloat(proc.engine.viewZ.load());
+                                              o.writeFloat(proc.walkPose[2].load());
+                                              o.writeString(name);
+                                          })))
+                    break;
+            }
+        }
         const int ready = sock->waitUntilReady(true, 20);
         if (ready < 0)
             break;

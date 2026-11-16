@@ -4818,6 +4818,27 @@ private:
             B->engine.viewX = 0.0f;
             run(0.5);
         }
+        // the others in the Saal: the player sees the listener where it stands, the listener the player
+        {
+            B->concert.setName("Anna");
+            B->walkPose[0] = 2.0f;
+            B->walkPose[1] = 3.0f;
+            B->walkPose[2] = 45.0f;
+            A.walkPose[0] = -1.0f;
+            A.walkPose[1] = 4.0f;
+            A.walkPose[2] = 180.0f;
+            run(0.6);
+            const auto fa = A.concert.figures(), fb = B->concert.figures();
+            const bool seesListener = fa.size() == 1 && fa[0].name == "Anna" && std::abs(fa[0].x - 2.0f) < 1e-4f &&
+                                      std::abs(fa[0].y - 3.0f) < 1e-4f && std::abs(fa[0].yaw - 45.0f) < 1e-4f;
+            const bool seesPlayer = fb.size() == 1 && fb[0].id == 0 && std::abs(fb[0].x + 1.0f) < 1e-4f &&
+                                    std::abs(fb[0].y - 4.0f) < 1e-4f && std::abs(fb[0].yaw - 180.0f) < 1e-4f;
+            say("concert: the player sees the listener in the Saal (" + juce::String((int)fa.size()) + " figure" +
+                    (fa.empty() ? juce::String() : ", " + fa[0].name) + "), the listener sees the player (" +
+                    juce::String((int)fb.size()) + ", not itself)",
+                seesListener && seesPlayer);
+            A.walkPose[0] = A.walkPose[1] = A.walkPose[2] = 0.0f;
+        }
         // nothing changes: the state is not sent again and again
         {
             run(0.5);
@@ -4880,6 +4901,10 @@ private:
         for (int s = 0; s < rysum::kNumStops; ++s)
             setN(RysumProcessor::stopParamId(s), s == 0 ? 1.0f : 0.0f);
         setN(RysumProcessor::motionParamId(0), (float)rysum::Motion::Hover);
+        // (the player stands five metres ahead of the listening place, facing it)
+        A.walkPose[0] = 0.0f;
+        A.walkPose[1] = 5.0f;
+        A.walkPose[2] = 180.0f;
         const bool ok = A.concert.startPerformer(port, true);
         std::cout << "serve: playing on port " << port << (ok ? "" : " FAILED") << std::endl;
         double start = juce::Time::getMillisecondCounterHiRes();

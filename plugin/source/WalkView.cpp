@@ -1496,6 +1496,65 @@ void WalkView::addPipe (V3 bottom, float len, float rad, float faceAngle, float 
     }
 }
 
+void WalkView::addFigure (V3 feet, float height, float yawDeg)
+{
+    // someone else in the Saal (Konzert): a plain turned figure - a body narrowing to the feet, a head,
+    // a dark band where the eyes are, so one sees where it looks
+    const float ya = juce::degreesToRadians (yawDeg);
+    const V3 fwd { -std::sin (ya), std::cos (ya), 0.0f };
+    const int segs = 12;
+    const float zs = feet.z + 0.80f * height, zh = feet.z + height - 0.12f, rh = 0.12f;
+    auto ringAt = [&] (float z, float rad, float v, Raster::Vert* out, float nz)
+    {
+        for (int i = 0; i <= segs; ++i)
+        {
+            const float a = juce::MathConstants<float>::twoPi * (float) i / (float) segs;
+            const float ca = std::cos (a), sa = std::sin (a);
+            out[i].p = { feet.x + ca * rad, feet.y + sa * rad, z };
+            out[i].n = normalised ({ ca, sa, nz });
+            out[i].u = (float) i / (float) segs; out[i].v = v;
+        }
+    };
+    Raster::Vert body[4][segs + 1];
+    ringAt (feet.z, 0.12f, 0.0f, body[0], -0.1f);
+    ringAt (feet.z + 0.45f * height, 0.17f, 0.4f, body[1], 0.0f);
+    ringAt (zs, 0.22f, 0.8f, body[2], 0.25f);
+    ringAt (zs + 0.06f, 0.07f, 0.85f, body[3], 0.9f);      // the shoulders close in towards the neck
+    const float tone = 0.55f, em = 0.08f;
+    for (int r = 0; r < 3; ++r)
+        for (int i = 0; i < segs; ++i)
+        {
+            rast.triangle (body[r][i], body[r][i + 1], body[r + 1][i + 1], kSlotWood, tone, em);
+            rast.triangle (body[r][i], body[r + 1][i + 1], body[r + 1][i], kSlotWood, tone, em);
+        }
+    // the head: a sphere of a few rings
+    const int lat = 6;
+    Raster::Vert head[lat + 1][segs + 1];
+    for (int j = 0; j <= lat; ++j)
+    {
+        const float th = juce::MathConstants<float>::pi * (float) j / (float) lat;
+        const float rz = std::cos (th), rr = std::sin (th);
+        for (int i = 0; i <= segs; ++i)
+        {
+            const float a = juce::MathConstants<float>::twoPi * (float) i / (float) segs;
+            const V3 n { std::cos (a) * rr, std::sin (a) * rr, rz };
+            head[j][i].p = { feet.x + n.x * rh, feet.y + n.y * rh, zh + n.z * rh };
+            head[j][i].n = n;
+            head[j][i].u = (float) i / (float) segs; head[j][i].v = (float) j / (float) lat;
+        }
+    }
+    for (int j = 0; j < lat; ++j)
+        for (int i = 0; i < segs; ++i)
+        {
+            // (the band of the eyes: the faces of the middle ring turned the way it looks)
+            const float a = juce::MathConstants<float>::twoPi * ((float) i + 0.5f) / (float) segs;
+            const bool eyes = (j == 2 || j == 3) && std::cos (a) * fwd.x + std::sin (a) * fwd.y > 0.55f;
+            const int slot = eyes ? kSlotDark : kSlotWood;
+            rast.triangle (head[j][i], head[j][i + 1], head[j + 1][i + 1], slot, tone, eyes ? 0.0f : em);
+            rast.triangle (head[j][i], head[j + 1][i + 1], head[j + 1][i], slot, tone, eyes ? 0.0f : em);
+        }
+}
+
 void WalkView::addWoodPipe (V3 bottom, float len, float rad, float faceAngle, float glowAmt)
 {
     // the Gedackt: a wooden pipe, square - a narrower block as its foot, the body of boards (deeper than it is
@@ -1812,6 +1871,36 @@ void WalkView::buildScene (float phys)
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });
         }
     }
+    // Konzert: the others in the Saal (the player, the other listeners), eased between their places (they come
+    // ten times a second)
+    {
+        scene.figureLabels.clear();
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        const float k = figSmoothMs > 0.0 ? 1.0f - std::exp (-(float) (nowMs - figSmoothMs) / 90.0f) : 1.0f;
+        figSmoothMs = nowMs;
+        std::map<int, std::array<float, 4>> next;
+        for (const auto& f : proc.concert.figures())
+        {
+            std::array<float, 4> s { f.x, f.y, f.z, f.yaw };
+            if (auto it = figSmooth.find (f.id); it != figSmooth.end())
+            {
+                const auto& o = it->second;
+                const float far = std::abs (f.x - o[0]) + std::abs (f.y - o[1]);
+                if (far < 6.0f)
+                {
+                    for (int i = 0; i < 3; ++i) s[(size_t) i] = o[(size_t) i] + k * (s[(size_t) i] - o[(size_t) i]);
+                    float dy = std::fmod (f.yaw - o[3] + 540.0f, 360.0f) - 180.0f;
+                    s[3] = o[3] + k * dy;
+                }
+            }
+            next[f.id] = s;
+            const V3 feet { homeP.x + s[0], homeP.y + s[1], juce::jmax (0.0f, s[2]) };
+            const float h = juce::jlimit (1.2f, 2.0f, homeP.z + 0.12f);
+            addFigure (feet, h, s[3]);
+            scene.figureLabels.push_back ({ { feet.x, feet.y, feet.z + h + 0.18f }, f.name });
+        }
+        figSmooth = std::move (next);
+    }
     // impacts: a short white flash where a pipe hit (new ones from the engine's ring of the last 16)
     {
         const uint32_t n = proc.engine.impactCount.load();
@@ -2059,6 +2148,23 @@ void WalkView::drawOver (juce::Graphics& g)
         g.drawText (status, area.reduced (18, 0).withTrimmedTop (102).removeFromTop (16), juce::Justification::centredLeft);
     }
 
+    // Konzert: a name over everyone else in the Saal
+    if (! scene.figureLabels.empty())
+    {
+        const float isc = rast.width() > 0 ? (float) area.getWidth() / (float) rast.width() : 1.0f;
+        g.setFont (A.monoFont (12.0f));
+        for (const auto& fl : scene.figureLabels)
+        {
+            float sx, sy, d;
+            if (! rast.project (fl.head, sx, sy, d) || d < 0.3f) continue;
+            const juce::Rectangle<float> box (sx * isc - 80.0f, sy * isc - 18.0f, 160.0f, 16.0f);
+            g.setColour (col::bg.withAlpha (0.55f));
+            g.fillRoundedRectangle (box.withSizeKeepingCentre ((float) juce::GlyphArrangement::getStringWidth (A.monoFont (12.0f), fl.name) + 12.0f, 16.0f), 3.0f);
+            g.setColour (col::ink);
+            g.drawText (fl.name, box, juce::Justification::centred, false);
+        }
+    }
+
     drawMap (g, juce::Rectangle<float> (190.0f, 150.0f).withPosition ((float) area.getRight() - 206.0f, (float) area.getBottom() - 186.0f), r, params, homeP);
     if (helpHeld) drawHelp (g, area);
 }
@@ -2095,6 +2201,17 @@ void WalkView::drawMap (juce::Graphics& g, juce::Rectangle<float> box, const Roo
     walls.closeSubPath();
     g.setColour (col::ink.withAlpha (0.7f));
     g.strokePath (walls, juce::PathStrokeType (1.2f));
+    // Konzert: the others, a red dot with a stroke the way they look
+    for (const auto& [id, s] : figSmooth)
+    {
+        juce::ignoreUnused (id);
+        const auto q = P (homeP.x + s[0], homeP.y + s[1]);
+        const float fa = juce::degreesToRadians (s[3]);
+        const auto ahead = P (homeP.x + s[0] - std::sin (fa) * 1.2f, homeP.y + s[1] + std::cos (fa) * 1.2f);
+        g.setColour (col::rubric.brighter (0.3f));
+        g.drawLine ({ q, ahead }, 1.5f);
+        g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (q));
+    }
     for (int s = 0; s < kNumStops; ++s)
     {
         if (! params.stopOn[(size_t) s]) continue;

@@ -43,6 +43,17 @@ public:
                 c->setVisible(!on);
             resized();
         };
+        nameField.setText(settings.getValue("name", "Gast"), false);
+        nameField.setTextToShowWhenEmpty(u("Dein Name"), col::faint);
+        nameField.setFont(Assets::get().monoFont(13.0f));
+        nameField.setTooltip(u("So sehen dich die anderen im Saal"));
+        proc.concert.setName(nameField.getText());
+        nameField.onTextChange = [this]
+        {
+            proc.concert.setName(nameField.getText());
+            settings.setValue("name", nameField.getText().trim());
+        };
+        nameField.onReturnKey = [this] { walk.grabKeyboardFocus(); };
         address.setText(settings.getValue("host"), false);
         address.setTextToShowWhenEmpty(u("Adresse des Spielers, z. B. 192.168.1.20"), col::faint);
         address.setFont(Assets::get().monoFont(13.0f));
@@ -142,7 +153,9 @@ public:
         }
         auto top = r.removeFromTop(kBar).reduced(14, 9);
         top.removeFromLeft(170);
-        address.setBounds(top.removeFromLeft(220));
+        nameField.setBounds(top.removeFromLeft(110));
+        top.removeFromLeft(6);
+        address.setBounds(top.removeFromLeft(200));
         top.removeFromLeft(6);
         join.setBounds(top.removeFromLeft(96));
         top.removeFromLeft(10);
@@ -170,14 +183,14 @@ private:
     juce::AudioDeviceManager &devices;
     juce::PropertiesFile &settings;
     WalkView walk;
-    juce::TextEditor address;
+    juce::TextEditor address, nameField;
     juce::TextButton join{u("Zuh\xc3\xb6ren")}, audio{u("Audio \xe2\x80\xa6")};
     juce::Slider volume;
     juce::ComboBox delay;
     juce::ComboBox output;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAtt;
-    std::vector<juce::Component *> bar{&address, &join, &delay, &output, &volume, &audio};
+    std::vector<juce::Component *> bar{&nameField, &address, &join, &delay, &output, &volume, &audio};
     juce::Rectangle<int> statusArea;
     juce::String statusNow;
     bool immersive = false;
