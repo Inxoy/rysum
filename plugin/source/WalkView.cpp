@@ -256,8 +256,11 @@ void WalkView::resized()
         handsArea = h;
         const int widths[] { 104, 88, 92, 104, 96, 92, 78, 96, 80, 92 };
         juce::Button* hands[] { &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience, &controlsButton };
+        const bool sp = isSpectator();
         for (int i = 0; i < 10; ++i)
         {
+            // (listening: only jumping, the light and the controls - packed together)
+            if (sp && hands[i] != &actJump && hands[i] != &actLight && hands[i] != &controlsButton) continue;
             hands[i]->setBounds (h.removeFromLeft (widths[i]));
             h.removeFromLeft (5);
         }
@@ -510,6 +513,7 @@ void WalkView::timerCallback()
         updateButtons();
         if (auto m = proc.getWalkMesh()) { status = m->name; statusUntil = t + 3000; }
     }
+    if (isSpectator() != spectatorShown) refreshSpectator();      // (Konzert: listening began or ended)
     const bool grabHeld = actGrab.held(), freezeHeld = actFreeze.held(), jumpHeld = actJump.held();
     if (immersive && ! testMode)
     {
@@ -529,11 +533,12 @@ void WalkView::timerCallback()
         if (down (juce::KeyPress::rightKey)) turn -= 90.0f * (float) dt;
         const bool fast = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
         advance (dt, f, b, l, r, turn / (90.0f * (float) juce::jmax (1.0e-4, dt)), fast, down (juce::KeyPress::spaceKey) || jumpHeld);
-        updateActions (down ('Q') || down ('q') || grabHeld, down ('F') || down ('f') || freezeHeld);
+        if (isSpectator()) updateActions (false, false);
+        else updateActions (down ('Q') || down ('q') || grabHeld, down ('F') || down ('f') || freezeHeld);
         { const bool tab = down (juce::KeyPress::tabKey); if (tab != helpHeld) { helpHeld = tab; repaint(); } }
         {
             const auto m = juce::ModifierKeys::getCurrentModifiersRealtime();
-            setSlow ((down ('Z') || down ('z')) && ! m.isCtrlDown() && ! m.isCommandDown());
+            setSlow ((down ('Z') || down ('z')) && ! m.isCtrlDown() && ! m.isCommandDown() && ! isSpectator());
         }
 
     }
@@ -630,8 +635,58 @@ juce::String WalkView::pictureInfo() const
     return "Prozessor" + (gpuNote.isNotEmpty() ? " (Grafikkarte: " + gpuNote + ")" : juce::String());
 }
 
+bool WalkView::isSpectator() const noexcept
+{
+    return alwaysSpectator || proc.concert.role() == ConcertLink::Role::listener;
+}
+
+void WalkView::refreshSpectator()
+{
+    // listening: only what walks and looks stays (the rest is the player's)
+    const bool sp = isSpectator();
+    spectatorShown = sp;
+    if (immersive) return;
+    resized();
+    juce::Component* keep[] { &immerse, &home, &actJump, &controlsButton, &actLight };
+    for (auto* c : getChildren())
+    {
+        bool stays = false;
+        for (auto* k : keep) stays = stays || c == k;
+        if (c == &back) stays = ! alwaysSpectator;
+        c->setVisible (! sp || stays);
+    }
+    if (sp)
+    {
+        heldStop = heldKey = -1;
+        proc.engine.grabStop = -1; proc.engine.grabKey = -1;
+        clearSelection();
+        if (magnet != 0) setMagnet (0);
+        bowStop();
+        setFreeze (false);
+    }
+    repaint();
+}
+
 bool WalkView::keyPressed (const juce::KeyPress& k)
 {
+    if (isSpectator())
+    {
+        // walking, looking, the picture - nothing that touches the organ
+        if (k == juce::KeyPress::escapeKey)
+        {
+            if (immersive) setImmersive (false);
+            else if (onBack && ! alwaysSpectator) onBack();
+            return true;
+        }
+        const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
+        const bool ctrlKey = k.getModifiers().isCtrlDown() || k.getModifiers().isCommandDown();
+        if (c == 'i' && ! ctrlKey) { toggleImmersive(); return true; }
+        if (c == 'l') { setDark (! proc.walkDark); return true; }
+        if (c == 'h' && ! ctrlKey) { leaveEars (! earsAway); return true; }
+        if (c == 'g' && ! ctrlKey) { setGpuWanted (! gpuWanted()); gpuGaveUp = false; gpuNote = {}; return true; }
+        // (the other keys are taken, so none of them plays the computer keyboard's notes)
+        return ! ctrlKey;
+    }
     if (k == juce::KeyPress::escapeKey)
     {
         if (selectedCount() > 0) { clearSelection(); say (U ("Auswahl leer")); return true; }
@@ -724,6 +779,7 @@ void WalkView::setImmersive (bool on)
     lockFresh = true;
     unfocused = 0;
     if (onImmersive) onImmersive (on);
+    if (! on) refreshSpectator();
     if (on && isShowing()) grabKeyboardFocus();
     repaint();
 }
@@ -760,6 +816,16 @@ void WalkView::mouseMove (const juce::MouseEvent&) { pollLockedMouse(); }
 void WalkView::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
+    if (isSpectator())
+    {
+        // listening: a drag looks around, and that is all
+        if (immersive || e.mods.isMiddleButtonDown()) return;
+        looking = true;
+        lastMouse = downPos = e.position;
+        dragged = 0.0f;
+        e.source.enableUnboundedMouseMovement (true);
+        return;
+    }
     const bool ctrl = e.mods.isCtrlDown() || e.mods.isCommandDown();
     const auto centre = getLocalBounds().getCentre().toFloat();
     if (e.mods.isMiddleButtonDown())
@@ -846,6 +912,12 @@ void WalkView::mouseDrag (const juce::MouseEvent& e)
 void WalkView::mouseUp (const juce::MouseEvent& e)
 {
     bowArmed = false;
+    if (isSpectator())
+    {
+        if (looking) e.source.enableUnboundedMouseMovement (false);
+        looking = false;
+        return;
+    }
     if (bowStop_ >= 0 && ! e.mods.isPopupMenu() && ! e.mods.isMiddleButtonDown())
     {
         bowStop();
@@ -1137,12 +1209,13 @@ void WalkView::updateActions (bool qDown, bool fDown)
 void WalkView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
 {
     // a pipe in the hand: the wheel brings it nearer (right up to the ear: "Fluestern") or holds it further away
-    if (heldStop >= 0) { holdDist = juce::jlimit (0.2f, 4.0f, holdDist * std::exp (w.deltaY * 1.2f)); return; }
-    if (magnet != 0) { magnetDist = juce::jlimit (0.8f, 14.0f, magnetDist * std::exp (w.deltaY * 1.2f)); return; }
+    const bool sp = isSpectator();
+    if (heldStop >= 0 && ! sp) { holdDist = juce::jlimit (0.2f, 4.0f, holdDist * std::exp (w.deltaY * 1.2f)); return; }
+    if (magnet != 0 && ! sp) { magnetDist = juce::jlimit (0.8f, 14.0f, magnetDist * std::exp (w.deltaY * 1.2f)); return; }
     {
         const float dw = w.deltaY != 0.0f ? w.deltaY : w.deltaX;
         const auto mods = juce::ModifierKeys::getCurrentModifiersRealtime();
-        if (mods.isCtrlDown() || mods.isCommandDown()) { scaleRoom (std::exp (dw * 0.6f)); return; }
+        if (mods.isCtrlDown() || mods.isCommandDown()) { if (! sp) scaleRoom (std::exp (dw * 0.6f)); return; }
         if (mods.isShiftDown())
         {
             auto cs = controls();
@@ -1949,14 +2022,19 @@ void WalkView::drawOver (juce::Graphics& g)
                     + U ("   \xc2\xb7   Platz ") + juce::String (eye.x, 1) + " / " + juce::String (eye.y, 1) + U (" m   Blick ") + juce::String (juce::roundToInt (-yaw)) + U ("\xc2\xb0")
                     + U ("   \xc2\xb7   W\xc3\xa4nde: ") + materialName (wallLook)
                     + (proc.engine.hiddenNow.load() > 0 ? U ("   \xc2\xb7   ") + juce::String (proc.engine.hiddenNow.load()) + U (" Pfeifen um die Ecke geh\xc3\xb6rt") : juce::String())
-                    + (aimSurf >= 0 ? U ("   \xc2\xb7   ") + surfaceName (r, aimSurf) + U ("  [M: Material]") : juce::String());
+                    + (aimSurf >= 0 && ! isSpectator() ? U ("   \xc2\xb7   ") + surfaceName (r, aimSurf) + U ("  [M: Material]") : juce::String());
     g.drawText (info + (proc.timeBackNow.load() > 0.05f ? U ("   \xc2\xb7   du h\xc3\xb6rst, was vor ") + juce::String (proc.timeBackNow.load(), 1) + U (" s erklang") : juce::String())
                      + (proc.engine.breakCount.load() > 0 ? U ("   \xc2\xb7   ") + juce::String ((int) proc.engine.breakCount.load()) + U (" Pfeifen gebrochen") : juce::String()),
                 area.reduced (18, 0).withTrimmedTop (84).removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (col::faint);
-    g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Tab: alle Tasten  \xc2\xb7  Esc zur\xc3\xbc" "ck"
-                  "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
-                area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
+    if (isSpectator())
+        g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  "
+                       "I immersiv  \xc2\xb7  L Licht  \xc2\xb7  H Ohren hierlassen   \xe2\x80\x94   du h\xc3\xb6rst zu: gespielt wird beim Spieler"),
+                    area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
+    else
+        g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Tab: alle Tasten  \xc2\xb7  Esc zur\xc3\xbc" "ck"
+                      "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
+                    area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
     g.drawText (U ("Tab: alle Tasten  \xc2\xb7  G: Bild ") + (gpuOn() ? juce::String ("Grafikkarte") : (gpuWanted() && gpuNote.isNotEmpty() ? "Prozessor (" + gpuNote + ")" : juce::String ("Prozessor"))), handsArea.withTrimmedLeft (8), juce::Justification::centredLeft);
     {
         // the player moves pipes, but no stop has pipes that can be moved: say how

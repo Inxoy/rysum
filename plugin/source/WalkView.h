@@ -34,6 +34,10 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
     std::function<void()> onBack;
+    /** Konzert: listening to someone, one only walks and looks - the hands, the room model and the
+        Saal's settings are the player's (on while listening; always in the listener app) */
+    bool isSpectator() const noexcept;
+    void setAlwaysSpectator (bool on) { alwaysSpectator = on; refreshSpectator(); }
     /** "Immersiv": only the picture - no buttons, no writing, no map - over the whole window, and the mouse looks
         around without a button held (the pointer is hidden and kept in the view). Esc, I or losing the keyboard
         leaves it. */
@@ -249,6 +253,8 @@ private:
     float earPose[4] {};
     juce::TextButton controlsButton { juce::String::fromUTF8 ("Steuerung \xe2\x80\xa6") };
     void showControlsMenu();
+    bool alwaysSpectator = false, spectatorShown = false;
+    void refreshSpectator();
     bool anyPinned() const noexcept { for (const auto& m : proc.engine.pinMask) if (m.load() != 0) return true; return false; }
     bool overlayBusy() const noexcept { return ! proc.walkLanterns.empty() || anyPinned() || whirlFx > 0.0 || earsAway || helpHeld || magnet != 0 || boxing || selectedCount() > 0; }
     // a frame in two parts: the picture (the room and the pipes as triangles), and what is drawn over it

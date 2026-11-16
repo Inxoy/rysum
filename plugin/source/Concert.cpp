@@ -6,7 +6,7 @@ namespace rysum
 {
 namespace
 {
-constexpr int kProtocol = 1;
+constexpr int kProtocol = 2; // 2: the pipes as bodies, the sounds of the hands
 constexpr int kMaxListeners = 32;
 constexpr int kMaxStateBytes = 16 * 1024 * 1024;
 constexpr int kMaxFrameBytes = 4096;
@@ -91,6 +91,8 @@ ConcertLink::ConcertLink(RysumProcessor &p) : juce::Thread("Rysum Konzert"), pro
     fifoData.resize((size_t)kFifo);
     for (auto &v : heldVel)
         v = 0;
+    for (auto &r : bodyRings)
+        r = std::make_unique<BodyRing>();
 }
 
 ConcertLink::~ConcertLink()
@@ -172,6 +174,11 @@ bool ConcertLink::startPerformer(int p, bool loopbackOnly)
     stateSeq = 0;
     joinsWanted = 0;
     lastClockSent = -1.0;
+    bodyWasOn.fill(false);
+    bodySentMs.fill(0.0);
+    for (auto &st : lenSent)
+        st.fill(1.0f);
+    lenSentMs = 0.0;
     {
         const juce::ScopedLock sl(outLock);
         outFrames.clear();
@@ -303,7 +310,95 @@ juce::MemoryBlock ConcertLink::makeJoinPackage()
                                  });
             o.write(f.getData(), f.getSize());
         }
+    // where the pipes that are bodies are now, how long every pipe is
+    std::vector<std::pair<double, juce::MemoryBlock>> bodies;
+    scanBodies(bodies, true);
+    for (auto &f : bodies)
+        o.write(f.second.getData(), f.second.getSize());
     return o.getMemoryBlock();
+}
+
+juce::MemoryBlock ConcertLink::bodyFrame(double t, int s, bool on)
+{
+    return frame('D',
+                 [&](juce::MemoryOutputStream &o)
+                 {
+                     o.writeDouble(t);
+                     o.writeByte((char)s);
+                     o.writeBool(on);
+                     if (on)
+                         for (int k = 0; k < kNumKeys; ++k)
+                         {
+                             const auto &q = bodySent[(size_t)s][(size_t)k];
+                             o.writeFloat(q.x);
+                             o.writeFloat(q.y);
+                             o.writeFloat(q.z);
+                         }
+                 });
+}
+
+juce::MemoryBlock ConcertLink::lengthFrame(double t)
+{
+    return frame('L',
+                 [&](juce::MemoryOutputStream &o)
+                 {
+                     o.writeDouble(t);
+                     for (auto &st : lenSent)
+                         for (auto l : st)
+                             o.writeFloat(l);
+                 });
+}
+
+void ConcertLink::scanBodies(std::vector<std::pair<double, juce::MemoryBlock>> &out, bool all)
+{
+    // the player: the stops whose pipes are bodies in the Saal - their places when they moved
+    // (and once a second anyway), a stop that stops being one once
+    const double t = audioTimeNow();
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    auto &en = proc.engine;
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        const bool on = en.bodyOn[(size_t)s].load();
+        if (!on)
+        {
+            if (bodyWasOn[(size_t)s] || all)
+                out.push_back({t, bodyFrame(t, s, false)});
+            bodyWasOn[(size_t)s] = false;
+            continue;
+        }
+        float moved = 0.0f;
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const Vec3f q{en.bodyX[(size_t)s][(size_t)k].load(), en.bodyY[(size_t)s][(size_t)k].load(),
+                          en.bodyZ[(size_t)s][(size_t)k].load()};
+            auto &was = bodySent[(size_t)s][(size_t)k];
+            moved = juce::jmax(moved, std::abs(q.x - was.x) + std::abs(q.y - was.y) + std::abs(q.z - was.z));
+            was = q;
+        }
+        if (all || !bodyWasOn[(size_t)s] || moved > 0.0005f || now - bodySentMs[(size_t)s] > 1000.0)
+        {
+            out.push_back({t, bodyFrame(t, s, true)});
+            bodySentMs[(size_t)s] = now;
+        }
+        bodyWasOn[(size_t)s] = true;
+    }
+    // Wachsen & Brechen: the lengths (five times a second at most)
+    if (all || now - lenSentMs > 200.0)
+    {
+        bool changed = false;
+        for (int s = 0; s < kNumStops; ++s)
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                const float l = en.pipeLen[(size_t)s][(size_t)k].load();
+                changed = changed || std::abs(l - lenSent[(size_t)s][(size_t)k]) > 1.0e-4f;
+                lenSent[(size_t)s][(size_t)k] = l;
+            }
+        if (changed || all)
+        {
+            out.push_back({t, lengthFrame(t)});
+            lenSentMs = now;
+        }
+    }
 }
 
 void ConcertLink::scanParameters()
@@ -337,6 +432,7 @@ void ConcertLink::scanParameters()
             out.push_back({t, makeStateFrame(t, ++stateSeq)});
         }
     }
+    scanBodies(out, false);
     if (!out.empty())
     {
         const juce::ScopedLock sl(outLock);
@@ -373,7 +469,27 @@ void ConcertLink::captureMidi(const juce::MidiBuffer &midi, double blockTime, do
 void ConcertLink::captureClocks(double blockEndTime, const double *motion, const double *lfo,
                                 double beats, bool running) noexcept
 {
-    if (roleNow.load() != Role::performer || (lastClockSent >= 0.0 && blockEndTime - lastClockSent < 0.05))
+    if (roleNow.load() != Role::performer)
+        return;
+    // the sounds of the hands in the 3D Saal this block: knocks, claps, bowed pipes
+    auto &en = proc.engine;
+    for (int i = 0; i < en.numTapped; ++i)
+    {
+        const auto &r = en.tapped[(size_t)i];
+        Ev e;
+        e.type = 'K';
+        e.t = blockEndTime;
+        e.index = r.stop * 64 + r.key;
+        e.b[0] = (uint8_t)r.kind;
+        e.b[1] = (uint8_t)juce::jlimit(0, 255, r.room);
+        e.b[2] = (uint8_t)((r.floor ? 1 : 0) | (r.struck ? 2 : 0));
+        const float f[] = {r.x, r.y, r.z, r.speed, r.absorb, r.high, r.level, r.amount};
+        for (size_t j = 0; j < 8; ++j)
+            e.clocks[j] = f[j];
+        push(e);
+    }
+    en.numTapped = 0;
+    if (lastClockSent >= 0.0 && blockEndTime - lastClockSent < 0.05)
         return;
     lastClockSent = blockEndTime;
     Ev e;
@@ -400,6 +516,17 @@ void ConcertLink::runPerformer()
                              o.writeByte((char)e.n);
                              for (int i = 0; i < e.n; ++i)
                                  o.writeByte((char)e.b[(size_t)i]);
+                         });
+        if (e.type == 'K')
+            return frame('K',
+                         [&](juce::MemoryOutputStream &o)
+                         {
+                             o.writeDouble(e.t);
+                             o.writeInt(e.index);
+                             for (int i = 0; i < 3; ++i)
+                                 o.writeByte((char)e.b[(size_t)i]);
+                             for (size_t j = 0; j < 8; ++j)
+                                 o.writeFloat((float)e.clocks[j]);
                          });
         return frame('S',
                      [&](juce::MemoryOutputStream &o)
@@ -620,6 +747,70 @@ void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
             if (!std::isfinite(c))
                 return;
     }
+    else if (type == 'K')
+    {
+        e.index = in.readInt();
+        for (int i = 0; i < 3; ++i)
+            e.b[(size_t)i] = (uint8_t)in.readByte();
+        for (size_t j = 0; j < 8; ++j)
+        {
+            e.clocks[j] = in.readFloat();
+            if (!std::isfinite(e.clocks[j]))
+                return;
+        }
+        if (e.index < 0 || e.index >= kNumStops * 64 || e.b[0] > 4)
+            return;
+    }
+    else if (type == 'D')
+    {
+        // the places of one stop's pipes: their own ring
+        const int s = (int)(uint8_t)in.readByte();
+        if (s < 0 || s >= kNumStops)
+            return;
+        BodySnap b;
+        b.on = in.readBool();
+        if (b.on)
+            for (auto &q : b.p)
+            {
+                q.x = in.readFloat();
+                q.y = in.readFloat();
+                q.z = in.readFloat();
+                if (!std::isfinite(q.x + q.y + q.z) || std::abs(q.x) + std::abs(q.y) + std::abs(q.z) > 3000.0f)
+                    return;
+            }
+        b.t = scheduleAt(t);
+        b.session = session.load();
+        auto &ring = *bodyRings[(size_t)s];
+        int s1, n1, s2, n2;
+        ring.fifo.prepareToWrite(1, s1, n1, s2, n2);
+        if (n1 + n2 > 0) // (full: this one is skipped - the next places come in 20 ms)
+        {
+            ring.data[(size_t)(n1 > 0 ? s1 : s2)] = b;
+            ring.fifo.finishedWrite(1);
+        }
+        return;
+    }
+    else if (type == 'L')
+    {
+        LenSnap l;
+        for (auto &st : l.len)
+            for (auto &v : st)
+            {
+                v = in.readFloat();
+                if (!std::isfinite(v))
+                    return;
+            }
+        l.t = scheduleAt(t);
+        l.session = session.load();
+        int s1, n1, s2, n2;
+        lenFifo.prepareToWrite(1, s1, n1, s2, n2);
+        if (n1 + n2 > 0)
+        {
+            lenData[(size_t)(n1 > 0 ? s1 : s2)] = l;
+            lenFifo.finishedWrite(1);
+        }
+        return;
+    }
     else
         return;
     e.t = scheduleAt(t);
@@ -717,9 +908,11 @@ void ConcertLink::playInto(juce::MidiBuffer &midi, double blockTime, int numSamp
                 playing[(size_t)i] = 0;
             }
         midi.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+        stopFollowing();
     }
     if (roleNow.load() != Role::listener || !isJoined.load())
         return;
+    followBodies(blockTime);
     const double end = blockTime + numSamples / sr;
     for (;;)
     {
@@ -767,8 +960,113 @@ void ConcertLink::playInto(juce::MidiBuffer &midi, double blockTime, int numSamp
         else if (e.type == 'S')
             proc.concertClocks(e.clocks.data(), e.clocks.data() + kNumStops,
                                e.clocks[kNumStops + kNumLfos], e.running);
+        else if (e.type == 'K')
+        {
+            OrganEngine::RemoteSound r;
+            r.kind = e.b[0];
+            r.room = e.b[1];
+            r.floor = (e.b[2] & 1) != 0;
+            r.struck = (e.b[2] & 2) != 0;
+            r.stop = e.index / 64;
+            r.key = e.index % 64;
+            r.x = (float)e.clocks[0];
+            r.y = (float)e.clocks[1];
+            r.z = (float)e.clocks[2];
+            r.speed = (float)e.clocks[3];
+            r.absorb = (float)e.clocks[4];
+            r.high = (float)e.clocks[5];
+            r.level = (float)e.clocks[6];
+            r.amount = (float)e.clocks[7];
+            proc.engine.remoteSound(r);
+            if (r.kind == 0)
+                ++knocksHeard;
+        }
         fifo.finishedRead(1);
     }
+}
+
+void ConcertLink::followBodies(double now) noexcept
+{
+    // the listener: every stop's pipes where the player's were at this moment (between the two
+    // places sent around it)
+    auto &en = proc.engine;
+    const uint32_t ses = session.load();
+    bool any = false;
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        auto &r = *bodyRings[(size_t)s];
+        if (r.haveCur && r.cur.session != ses)
+            r.haveCur = false;
+        if (r.haveNext && r.next.session != ses)
+            r.haveNext = false;
+        for (;;)
+        {
+            if (!r.haveNext)
+            {
+                int s1, n1, s2, n2;
+                r.fifo.prepareToRead(1, s1, n1, s2, n2);
+                if (n1 + n2 < 1)
+                    break;
+                r.next = r.data[(size_t)(n1 > 0 ? s1 : s2)];
+                r.fifo.finishedRead(1);
+                if (r.next.session != ses)
+                    continue;
+                r.haveNext = true;
+            }
+            if (r.next.t > now)
+                break;
+            r.cur = r.next; // (its time has come)
+            r.haveCur = true;
+            r.haveNext = false;
+        }
+        en.followOn[(size_t)s] = r.haveCur && r.cur.on;
+        if (!en.followOn[(size_t)s])
+            continue;
+        any = true;
+        const bool between = r.haveNext && r.next.on && r.next.t > r.cur.t && r.next.t - r.cur.t < 0.25;
+        const float a = between ? (float)juce::jlimit(0.0, 1.0, (now - r.cur.t) / (r.next.t - r.cur.t)) : 0.0f;
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const auto &p = r.cur.p[(size_t)k];
+            if (!between)
+            {
+                en.followPos[(size_t)s][(size_t)k] = p;
+                continue;
+            }
+            const auto &q = r.next.p[(size_t)k];
+            en.followPos[(size_t)s][(size_t)k] = {p.x + a * (q.x - p.x), p.y + a * (q.y - p.y), p.z + a * (q.z - p.z)};
+        }
+    }
+    // the lengths: the last ones due
+    for (;;)
+    {
+        int s1, n1, s2, n2;
+        lenFifo.prepareToRead(1, s1, n1, s2, n2);
+        if (n1 + n2 < 1)
+            break;
+        const auto &l = lenData[(size_t)(n1 > 0 ? s1 : s2)];
+        if (l.session == ses && l.t > now)
+            break;
+        if (l.session == ses)
+        {
+            en.followLen = l.len;
+            en.followLenHave = true;
+        }
+        lenFifo.finishedRead(1);
+    }
+    en.followPlayer = true;
+    juce::ignoreUnused(any);
+}
+
+void ConcertLink::stopFollowing() noexcept
+{
+    auto &en = proc.engine;
+    en.followPlayer = false;
+    en.followOn.fill(false);
+    en.followLenHave = false;
+    en.releaseBowed();
+    for (auto &r : bodyRings)
+        r->haveCur = r->haveNext = false;
 }
 
 std::vector<double> ConcertLink::testNoteTimes() const

@@ -2003,6 +2003,10 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     concertAudioTime += buffer.getNumSamples() / concertSr;
     concert.setAudioTime(concertBlockTime);
     const auto concertRole = concert.role();
+    // (the player: knocks, claps and bowed pipes go to the listeners too)
+    engine.tapSounds = concertRole == rysum::ConcertLink::Role::performer;
+    if (!engine.tapSounds)
+        engine.numTapped = 0;
     if (concertRole == rysum::ConcertLink::Role::listener)
         midi.clear();
 

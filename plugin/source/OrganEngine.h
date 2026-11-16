@@ -520,6 +520,33 @@ public:
     }
     std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> bodyX, bodyY, bodyZ;
     std::array<std::atomic<bool>, kNumStops> bodyOn{};
+
+    // ---- Konzert. The listener: the pipes that are bodies go where the player's are (no physics
+    // of their own, no knocks of their own: those come from the player too). Audio thread, set
+    // before process(): followOn[s] = this stop has places from the player, followPos the place
+    // of every pipe (m, in its room).
+    bool followPlayer = false;
+    std::array<bool, kNumStops> followOn{};
+    std::array<std::array<Vec3f, kNumKeys>, kNumStops> followPos{};
+    std::array<std::array<float, kNumKeys>, kNumStops> followLen{}; // Wachsen & Brechen: the lengths
+    bool followLenHave = false;                                     // (once they came)
+    /** the listener: a knock / a clap, a pipe sounded by the hand, as the player had it (audio
+        thread, before process()) */
+    struct RemoteSound
+    {
+        int kind = 0; // 0 knock, 1 clap, 2 shockwave burst, 3 bow on, 4 bow off
+        float x = 0, y = 0, z = 0, speed = 0, absorb = 0, high = 0, level = -1.0f, amount = 1.0f;
+        int stop = 0, key = 0, room = 0;
+        bool floor = false, struck = false;
+    };
+    void remoteSound(const RemoteSound &) noexcept;
+    /** the player: the sounds of this block that are not notes (knocks, claps, bows), for the
+        listeners; tapSounds on = collected, read and cleared after process() (audio thread) */
+    bool tapSounds = false;
+    std::array<RemoteSound, 64> tapped{};
+    int numTapped = 0;
+    /** the listener: every pipe sounded by a hand stops (the link went) */
+    void releaseBowed() noexcept;
     std::array<std::atomic<float>, kNumRooms> homeX{}, homeY{},
         homeZ{}; // the usual listening place per room
     /** the last impacts (a ring of 16; impactCount counts them all) */
@@ -1183,6 +1210,9 @@ private:
     void renderBursts(float *const *outs, int n) noexcept;
     static constexpr int kMaxImpactEvents = 24, kNumImpactVoices = 32, kImpactModes = 5;
     std::array<ImpactEvent, kMaxImpactEvents> impactQueue{};
+    std::array<uint64_t, kNumStops> bowedMask{}; // Konzert, the listener: pipes sounded by the player's hand
+    std::array<ActCmd, 16> remoteActs{};          // Konzert, the listener: claps / bursts (audio thread)
+    int numRemoteActs = 0;
     int numImpacts = 0;
     struct ImpactVoice
     {

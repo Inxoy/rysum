@@ -997,7 +997,7 @@ public:
         g.setFont(A.monoFont(9.5f));
         g.setColour(col::faint);
         g.drawFittedText(u8("Im Netz zu Hause. Nicht mitgespielt werden: Eingang, Lucier, Tonnetz-Wanderer, "
-                            "Selbstspiel, die H\xc3\xa4nde im 3D-Saal, Publikum und eigene Raummodelle."),
+                            "Selbstspiel, Publikum und eigene Raummodelle. Zuh\xc3\xb6rer brauchen nur die App \xe2\x80\x9eRysum Konzert\xe2\x80\x9c."),
                          getLocalBounds().reduced(16, 8).removeFromBottom(26), juce::Justification::bottomLeft, 2);
     }
 

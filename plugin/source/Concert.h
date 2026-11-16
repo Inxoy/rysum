@@ -2,6 +2,7 @@
 
 #include "Common.h"
 #include "Modulation.h"
+#include "RoomSim.h"
 #include <array>
 #include <atomic>
 #include <deque>
@@ -107,6 +108,11 @@ public:
     {
         return stateSeq;
     }
+    /** the listener: knocks of the player's pipes heard so far */
+    int knocksHeardForTest() const noexcept
+    {
+        return knocksHeard.load();
+    }
     /** the listener: their own setup, kept while they listen (saving now - the host, the
         standalone on quit - keeps theirs, not the player's piece); invalid = not listening */
     juce::ValueTree ownSetupWhileListening() const
@@ -125,7 +131,7 @@ private:
     struct Ev
     {
         double t = 0.0;    // player: own audio time; listener: local audio time it is due
-        char type = 0;     // 'M' midi, 'P' parameter, 'S' clocks, 'B' barrier (state), 'R' release all
+        char type = 0;     // 'M' midi, 'P' parameter, 'S' clocks, 'B' barrier (state), 'K' a sound of the hands
         uint8_t n = 0;     // midi bytes
         uint8_t b[3]{};    // midi
         int32_t index = 0; // parameter index / state number
@@ -177,6 +183,16 @@ private:
     juce::String stateKey();
     juce::MemoryBlock makeJoinPackage();
     void scanParameters();
+    // the pipes that are bodies in the Saal (thrown, carried, flying): their places, 50 times a
+    // second while they move; the lengths (Wachsen & Brechen) when they change
+    std::array<std::array<Vec3f, kNumKeys>, kNumStops> bodySent{};
+    std::array<bool, kNumStops> bodyWasOn{};
+    std::array<double, kNumStops> bodySentMs{};
+    std::array<std::array<float, kNumKeys>, kNumStops> lenSent{};
+    double lenSentMs = 0.0;
+    juce::MemoryBlock bodyFrame(double t, int stop, bool on);
+    juce::MemoryBlock lengthFrame(double t);
+    void scanBodies(std::vector<std::pair<double, juce::MemoryBlock>> &out, bool all);
 
     // ---- listener
     std::unique_ptr<juce::StreamingSocket> sock; // (the listener's)
@@ -192,12 +208,42 @@ private:
     int numParams = 0;
     std::array<uint8_t, 16 * 128> playing{};  // audio thread: notes this listener plays now
     std::atomic<bool> releaseNow{false};
+    std::atomic<int> knocksHeard{0};
     mutable juce::SpinLock testSpin;
     std::array<double, 64> noteRing{};
     size_t noteRingPos = 0;
     double holdUntil = 0.0; // audio thread
     std::atomic<uint32_t> session{0};
     bool overflow = false, everJoined = false; // network thread
+    // the player's pipe places, per stop: network thread -> audio thread (its own ring: in Flug
+    // every pipe moves all the time, the event FIFO stays for what must not be lost)
+    struct BodySnap
+    {
+        double t = 0.0;
+        uint32_t session = 0;
+        bool on = false;
+        std::array<Vec3f, kNumKeys> p{};
+    };
+    static constexpr int kBodyRing = 256;
+    struct BodyRing
+    {
+        juce::AbstractFifo fifo{kBodyRing};
+        std::vector<BodySnap> data = std::vector<BodySnap>((size_t)kBodyRing);
+        BodySnap cur, next;   // audio thread: the one in use, the one after it
+        bool haveCur = false, haveNext = false;
+    };
+    std::array<std::unique_ptr<BodyRing>, kNumStops> bodyRings;
+    struct LenSnap
+    {
+        double t = 0.0;
+        uint32_t session = 0;
+        std::array<std::array<float, kNumKeys>, kNumStops> len{};
+    };
+    static constexpr int kLenRing = 16;
+    juce::AbstractFifo lenFifo{kLenRing};
+    std::vector<LenSnap> lenData = std::vector<LenSnap>((size_t)kLenRing);
+    void followBodies(double blockTime) noexcept; // audio thread
+    void stopFollowing() noexcept;                // audio thread
     std::vector<char> forcedOff; // parameters kept off here (notes / sound of their own on the player)
     double lastAssert = 0.0;
     bool listenSession(); // true = lost (try again)

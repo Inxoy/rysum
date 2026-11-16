@@ -490,6 +490,13 @@ renders the organ itself, from wherever they stand and walk in the 3D Saal, with
   sound (a new patch, a moved pipe, a drawn path, a Verlauf edit), and 20 times a second the
   clocks that move things – the motions of the stops, the LFOs and the Verlauf clock – so pipes
   fly in the same places at the same moments.
+- The player's hands in the 3D Saal come along too: pipes that are bodies in the Saal (*Schweben*,
+  *Flug*, *Fall*, *Schwarm*, *Strömung*) are where the player's are – thrown, carried, pushed by a
+  shockwave, called home, arranged – sent 50 times a second while they move. Their knocks, claps,
+  bowed pipes and the lengths of *Wachsen & Brechen* are heard at the listener as well, from the
+  listener's own place.
+- While listening, the 3D Saal only walks and looks: the hands, the room model buttons and the
+  Saal's settings are the player's.
 - What stays the listener's: output format, headphone and loudspeaker settings, the volume, the
   samples folder and where they stand. A listener's own changes of the player's controls go back
   to the player's within half a second. *Beenden* gives the listener their own setup back.
@@ -498,11 +505,26 @@ renders the organ itself, from wherever they stand and walk in the 3D Saal, with
 - While someone listens, saving (the standalone on quit, a host's project) keeps their own setup,
   not the player's piece.
 - Not mirrored yet (Lucier, the Tonnetz-Wanderer and *Selbstspiel* stay off at listeners): the
-  audio input (*Eingang*), Lucier, the Tonnetz-Wanderer, *Selbstspiel*,
-  the hands in the 3D Saal (knocking, throwing, carrying), *Publikum* and loaded room models other
-  than the six built-in ones. MIDI Tuning SysEx is not forwarded (Scala files are).
+  audio input (*Eingang*), Lucier, the Tonnetz-Wanderer, *Selbstspiel*, *Publikum* and loaded room
+  models other than the six built-in ones. MIDI Tuning SysEx is not forwarded (Scala files are).
 - For now this is for one home network: a player on the internet needs a relay server (planned).
   Both sides must have the same version of the plugin.
+
+#### Rysum Konzert – the app for listeners
+
+Listeners do not need the organ itself: *Rysum Konzert* is a program of its own that is only the
+3D Saal and a line to join a player – nothing in it plays the organ (it opens no MIDI). The
+samples come with it: hand out the zip (build the target `RysumKonzertZip`; it holds the program
+and the folder `rysum-samples` next to it), unpack it anywhere and start the program.
+
+- At the top: the player's address, *Zuhören* / *Verlassen*, the delay (more = safer on an
+  uneven network), how one hears (*Binaural* for headphones by default, stereo, loudspeakers …),
+  the volume and *Audio …* (output device, sample rate, buffer).
+- Below, the Saal: W A S D to walk, drag the mouse to look, space to jump, I for the immersive
+  view, L for the light, H to leave the ears where one stands.
+- The address, delay, output and volume are remembered (in AppData, folder Rysum).
+- The player still uses the organ (standalone or plugin) and *Konzert … → Spielen*; player and
+  listener app must come from the same version.
 
 ## 4. MIDI
 
