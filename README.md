@@ -493,8 +493,12 @@ renders the organ itself, from wherever they stand and walk in the 3D Saal, with
 - What stays the listener's: output format, headphone and loudspeaker settings, the volume, the
   samples folder and where they stand. A listener's own changes of the player's controls go back
   to the player's within half a second. *Beenden* gives the listener their own setup back.
-- If the player stops or the connection breaks off, the listener's organ falls silent.
-- Not mirrored yet: the audio input (*Eingang*), Lucier, the Tonnetz-Wanderer, *Selbstspiel*,
+- If the player stops or the connection breaks off, the listener's organ falls silent; the
+  listener keeps trying to reconnect and joins again (with the notes held down at that moment).
+- While someone listens, saving (the standalone on quit, a host's project) keeps their own setup,
+  not the player's piece.
+- Not mirrored yet (Lucier, the Tonnetz-Wanderer and *Selbstspiel* stay off at listeners): the
+  audio input (*Eingang*), Lucier, the Tonnetz-Wanderer, *Selbstspiel*,
   the hands in the 3D Saal (knocking, throwing, carrying), *Publikum* and loaded room models other
   than the six built-in ones. MIDI Tuning SysEx is not forwarded (Scala files are).
 - For now this is for one home network: a player on the internet needs a relay server (planned).

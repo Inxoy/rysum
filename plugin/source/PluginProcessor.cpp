@@ -3901,6 +3901,13 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
 
 void RysumProcessor::getStateInformation(juce::MemoryBlock &destData)
 {
+    // listening in a concert: what is saved is the listener's own setup, not the player's piece
+    if (const auto own = concert.ownSetupWhileListening(); own.isValid())
+    {
+        if (auto xml = own.createXml())
+            copyXmlToBinary(*xml, destData);
+        return;
+    }
     if (auto xml = makeState(false).createXml())
         copyXmlToBinary(*xml, destData);
 }

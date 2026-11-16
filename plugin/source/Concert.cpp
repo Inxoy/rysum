@@ -48,13 +48,13 @@ bool readAll(juce::StreamingSocket &s, void *dst, int n)
 }
 
 /** one frame from a socket; false = closed or not a frame of ours */
-bool readFrame(juce::StreamingSocket &s, char &type, juce::MemoryBlock &payload)
+bool readFrame(juce::StreamingSocket &s, char &type, juce::MemoryBlock &payload, int maxLen)
 {
     int32_t len = 0;
     if (!readAll(s, &len, 4))
         return false;
     len = (int32_t)juce::ByteOrder::swapIfBigEndian((uint32_t)len);
-    if (len < 1 || len > kMaxStateBytes)
+    if (len < 1 || len > maxLen)
         return false;
     juce::MemoryBlock b((size_t)len);
     if (!readAll(s, b.getData(), len))
@@ -204,6 +204,11 @@ bool ConcertLink::startListener(const juce::String &h, int p)
     lastTarget = 0.0;
     playing.fill(0);
     isJoined = false;
+    everJoined = false;
+    forcedOff.assign((size_t)numParams, 0);
+    for (auto *id : {"lvNetOn", "lucOn", "lvSelfPlay"})
+        if (const int i = proc.getParamIndex(id); i >= 0)
+            forcedOff[(size_t)i] = 1;
     fifo.reset();
     roleNow = Role::listener;
     setStatus(juce::String::fromUTF8("Verbinde mit ") + host + juce::String::fromUTF8(" \xe2\x80\xa6"));
@@ -440,7 +445,7 @@ void ConcertLink::runPerformer()
             }
             char type = 0;
             juce::MemoryBlock pl;
-            if (!readFrame(*c->sock, type, pl))
+            if (!readFrame(*c->sock, type, pl, 64)) // (a listener only says hello)
             {
                 c->sock.reset();
                 continue;
@@ -543,13 +548,20 @@ double ConcertLink::scheduleAt(double remoteT)
     if (testJitterMs > 0.0)
         local += juce::Random::getSystemRandom().nextDouble() * testJitterMs * 0.001;
     offsets.push_back({nowMs, local - remoteT});
-    while (offsets.size() > 1 && nowMs - offsets.front().first > 8000.0)
+    while (offsets.size() > 1 && nowMs - offsets.front().first > 3000.0)
         offsets.pop_front();
     double off = offsets.front().second;
     for (auto &o : offsets)
         off = juce::jmin(off, o.second);
+    // the estimate goes up at once (the player's clock paused, or the clocks drift that way: late
+    // messages would play at once, without a buffer) but comes down gliding, half a millisecond
+    // per message at most (a message that came quicker must not shift the rhythm)
+    if (offsets.size() == 1 || lastTarget == 0.0 || off > smoothOff)
+        smoothOff = off;
+    else
+        smoothOff += juce::jmax(-0.0005, off - smoothOff);
     // (never earlier than what is queued: the order stays)
-    const double t = juce::jmax(lastTarget, remoteT + off + delayMs.load() * 0.001);
+    const double t = juce::jmax(lastTarget, remoteT + smoothOff + delayMs.load() * 0.001);
     lastTarget = t;
     return t;
 }
@@ -573,7 +585,9 @@ void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
             e.type = 'B';
             e.t = at;
             e.index = seq;
-            push(e);
+            e.session = session.load();
+            if (!push(e))
+                overflow = true;
         }
         else
             barrierWanted = seq; // the first one: at once
@@ -609,16 +623,43 @@ void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
     else
         return;
     e.t = scheduleAt(t);
-    push(e);
+    e.session = session.load();
+    if (!push(e))
+        overflow = true;
 }
 
 void ConcertLink::runListener()
 {
+    // a session per connection; a lost one is tried again (and joins afresh: state, held notes)
+    while (!threadShouldExit())
+    {
+        const bool lost = listenSession();
+        releaseNow = true;
+        isJoined = false;
+        if (!lost || threadShouldExit())
+            break;
+        setStatus(juce::String::fromUTF8("Verbindung weg \xe2\x80\x93 verbinde erneut \xe2\x80\xa6"));
+        wait(1000);
+    }
+}
+
+bool ConcertLink::listenSession()
+{
+    // a new session: what is left of the last one is never played
+    ++session;
+    {
+        const juce::ScopedLock sl(stateLock);
+        pendingStates.clear();
+    }
+    barrierWanted = barrierDone = -1;
+    offsets.clear();
+    lastTarget = 0.0;
+    overflow = false;
     sock = std::make_unique<juce::StreamingSocket>();
     if (!sock->connect(host, port, 4000))
     {
         setStatus(juce::String::fromUTF8("Keine Verbindung zu ") + host + ":" + juce::String(port));
-        return;
+        return everJoined; // (once there was a concert: keep trying)
     }
     sendAll(*sock, frame('H',
                          [&](juce::MemoryOutputStream &o)
@@ -627,7 +668,6 @@ void ConcertLink::runListener()
                              o.writeInt(numParams);
                          }));
     lastHeardMs = juce::Time::getMillisecondCounterHiRes();
-    bool stalled = false;
     while (!threadShouldExit())
     {
         const int ready = sock->waitUntilReady(true, 20);
@@ -635,35 +675,33 @@ void ConcertLink::runListener()
             break;
         if (ready == 0)
         {
-            // nothing for a while (the player sends its clocks 20 times a second): the notes stop
-            if (!stalled && isJoined.load() &&
-                juce::Time::getMillisecondCounterHiRes() - lastHeardMs > 1500.0)
-            {
-                stalled = true;
-                releaseNow = true;
-                setStatus(juce::String::fromUTF8("Verbindung stockt \xe2\x80\xa6"));
-            }
+            // nothing for a while (the player sends its clocks 20 times a second): gone
+            if (juce::Time::getMillisecondCounterHiRes() - lastHeardMs > 1500.0)
+                break;
             continue;
         }
         char type = 0;
         juce::MemoryBlock pl;
-        if (!readFrame(*sock, type, pl))
+        if (!readFrame(*sock, type, pl, kMaxStateBytes))
             break;
         if (type == 'X')
         {
             setStatus(juce::String::fromUTF8("Der Spieler hat eine andere Version des Plugins"));
-            releaseNow = true;
-            return;
+            return false;
         }
-        stalled = false;
         juce::MemoryInputStream in(pl, false);
         receiveFrame(type, in);
+        if (overflow)
+            break; // (more than the buffer holds: start again rather than lose a note-off)
     }
-    releaseNow = true;
-    isJoined = false;
+    sock->close();
+    if (isJoined.load())
+        everJoined = true;
     if (!threadShouldExit())
-        setStatus(juce::String::fromUTF8("Der Spieler hat das Konzert beendet"));
+        setStatus(juce::String::fromUTF8("Der Spieler ist nicht mehr zu h\xc3\xb6ren"));
+    return true;
 }
+
 
 void ConcertLink::playInto(juce::MidiBuffer &midi, double blockTime, int numSamples, double sr) noexcept
 {
@@ -690,6 +728,11 @@ void ConcertLink::playInto(juce::MidiBuffer &midi, double blockTime, int numSamp
         if (n1 + n2 < 1)
             break;
         const Ev &e = fifoData[(size_t)(n1 > 0 ? s1 : s2)];
+        if (e.session != session.load())
+        {
+            fifo.finishedRead(1); // (left from a connection that broke off)
+            continue;
+        }
         if (e.t >= end)
             break; // later
         if (e.type == 'B' && barrierDone.load() < e.index)
@@ -714,11 +757,12 @@ void ConcertLink::playInto(juce::MidiBuffer &midi, double blockTime, int numSamp
             else if (st == 0x80 || st == 0x90)
                 playing[(size_t)(ch * 128 + e.b[1])] = 0;
         }
-        else if (e.type == 'P')
+        else if (e.type == 'P' && !forcedOff[(size_t)e.index])
         {
+            // (what the control should be first: the re-assert must not put the old value back)
+            mirrored[(size_t)e.index] = e.value;
             if (auto *prm = proc.getParamAt(e.index))
                 prm->setValueNotifyingHost(e.value);
-            mirrored[(size_t)e.index] = e.value;
         }
         else if (e.type == 'S')
             proc.concertClocks(e.clocks.data(), e.clocks.data() + kNumStops,
@@ -746,9 +790,25 @@ void ConcertLink::applyState(const juce::String &xml)
     st.removeChild(extra, nullptr);
     // the player's tuning comes with it, whatever the listener chose for their own patches
     const bool tuning = proc.loadPresetTuning.load();
+    // where the listener stands stays theirs: a patch with a built-in room puts one at its
+    // listening place - only when the room is a new one
+    const auto roomBefore = proc.walkModelFile;
+    std::array<float, 4> pose{};
+    for (size_t i = 0; i < pose.size(); ++i)
+        pose[i] = proc.walkPose[i].load();
     proc.loadPresetTuning = true;
     proc.applyState(st, true);
     proc.loadPresetTuning = tuning;
+    if (proc.walkModelFile == roomBefore)
+    {
+        for (size_t i = 0; i < pose.size(); ++i)
+            proc.walkPose[i] = pose[i];
+        ++proc.walkSerial; // (the open 3D view takes the pose back)
+    }
+    // what makes notes or sound of its own on the player is not mirrored: off here
+    for (int i = 0; i < numParams; ++i)
+        if (forcedOff[(size_t)i])
+            proc.getParamAt(i)->setValueNotifyingHost(0.0f);
     if (extra.isValid())
     {
         proc.extendedRange = (bool)extra.getProperty("extendedRange", false);
@@ -767,7 +827,7 @@ void ConcertLink::applyState(const juce::String &xml)
     }
     for (int i = 0; i < numParams; ++i)
         if (!isLocalSetting(proc.getParamAt(i)->getParameterID()))
-            mirrored[(size_t)i] = proc.getParamAt(i)->getValue();
+            mirrored[(size_t)i] = forcedOff[(size_t)i] ? 0.0f : proc.getParamAt(i)->getValue();
 }
 
 // ---------------------------------------------------------------------------
@@ -820,7 +880,6 @@ void ConcertLink::timerCallback()
         }
     }
     // the player's controls are the player's: a local change goes back (twice a second)
-    static double lastAssert = 0.0;
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (isJoined.load() && now - lastAssert > 500.0)
     {

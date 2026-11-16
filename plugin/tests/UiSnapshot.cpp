@@ -4517,23 +4517,51 @@ private:
         };
         auto getN = [](RysumProcessor &p, const juce::String &id)
         { return p.apvts.getParameter(id)->getValue(); };
-        // both play in real time: one block each, then wait for the wall clock
+        // both play in real time: the player here (with the message thread), the listener on a
+        // thread of its own, as an audio device would drive it
         double wallStart = juce::Time::getMillisecondCounterHiRes();
         long long blocks = 0;
+        juce::SpinLock rmsLock;
         std::vector<double> rmsB;
+        struct ListenerAudio : juce::Thread
+        {
+            ListenerAudio(RysumProcessor &p, juce::AudioBuffer<float> &b, juce::SpinLock &l, std::vector<double> &r)
+                : juce::Thread("listener audio"), proc(p), buf(b), lock(l), rms(r)
+            {
+            }
+            void run() override
+            {
+                const double start = juce::Time::getMillisecondCounterHiRes();
+                for (long long k = 0; !threadShouldExit(); ++k)
+                {
+                    juce::MidiBuffer none;
+                    buf.clear();
+                    proc.processBlock(buf, none);
+                    {
+                        const juce::SpinLock::ScopedLockType sl(lock);
+                        rms.push_back(buf.getRMSLevel(0, 0, buf.getNumSamples()));
+                    }
+                    const double due = start + (double)(k + 1) * buf.getNumSamples() / 48000.0 * 1000.0;
+                    while (juce::Time::getMillisecondCounterHiRes() < due && !threadShouldExit())
+                        juce::Thread::sleep(1);
+                }
+            }
+            RysumProcessor &proc;
+            juce::AudioBuffer<float> &buf;
+            juce::SpinLock &lock;
+            std::vector<double> &rms;
+        } listenerAudio(*B, bb, rmsLock, rmsB);
+        listenerAudio.startThread(juce::Thread::Priority::highest);
         auto run = [&](double seconds, const std::function<void(long long, juce::MidiBuffer &)> &playA = {})
         {
             const long long n = (long long)std::ceil(seconds * sr / bs);
             for (long long k = 0; k < n; ++k, ++blocks)
             {
-                juce::MidiBuffer ma, mb;
+                juce::MidiBuffer ma;
                 if (playA)
                     playA(k, ma);
                 ba.clear();
                 A.processBlock(ba, ma);
-                bb.clear();
-                B->processBlock(bb, mb);
-                rmsB.push_back(bb.getRMSLevel(0, 0, bs));
                 const double due = wallStart + (double)(blocks + 1) * bs / sr * 1000.0;
                 while (juce::Time::getMillisecondCounterHiRes() < due)
                     juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
@@ -4541,6 +4569,7 @@ private:
         };
         auto rmsLast = [&](double seconds)
         {
+            const juce::SpinLock::ScopedLockType sl(rmsLock);
             const size_t n = juce::jmin(rmsB.size(), (size_t)(seconds * sr / bs));
             double e = 0.0;
             for (size_t i = rmsB.size() - n; i < rmsB.size(); ++i)
@@ -4621,6 +4650,55 @@ private:
             say("concert: the listener keeps its own output, place and samples",
                 std::abs(getN(*B, "output") - outOwn) < 1e-6f && B->walkPose[0].load() == 3.25f &&
                     B->getSamplesFolder() == folderBefore);
+            // saving while listening (a host, the standalone on quit) keeps the listener's own
+            juce::MemoryBlock saved;
+            B->getStateInformation(saved);
+            float airSaved = -1.0f;
+            if (auto xml = juce::AudioProcessor::getXmlFromBinary(saved.getData(), (int)saved.getSize()))
+                for (auto *e : xml->getChildWithTagNameIterator("PARAM"))
+                    if (e->getStringAttribute("id") == "air")
+                        airSaved = (float)e->getDoubleAttribute("value");
+            const float airOwnPlain = B->apvts.getParameter("air")->convertFrom0to1(airOwn);
+            say("concert: saving while listening keeps the listener's own setup (air " + juce::String(airSaved, 3) +
+                    ", own " + juce::String(airOwnPlain, 3) + ")",
+                std::abs(airSaved - airOwnPlain) < 1e-3f);
+            // what makes sound of its own on the player stays off at the listener
+            setN(A, "lvSelfPlay", 0.5f);
+            run(0.6);
+            say("concert: Selbstspiel stays off at the listener (" + juce::String(getN(*B, "lvSelfPlay"), 2) + ")",
+                getN(*B, "lvSelfPlay") == 0.0f);
+            setN(A, "lvSelfPlay", 0.0f);
+        }
+        // a built-in room on the player, the listener walks in it; a held note goes on sounding
+        // while the player changes things that travel as the whole state
+        {
+            juce::ValueTree s3("SAAL3D");
+            s3.setProperty("room", juce::String(rysum::builtInRooms()[0].file), nullptr);
+            A.applyPatchRoom(s3);
+            run(1.5);
+            const bool roomCame = B->walkModelFile.getFileName() == A.walkModelFile.getFileName() &&
+                                  A.walkModelFile.existsAsFile();
+            B->walkPose[0] = 2.5f; // (the listener walks)
+            const int seq0 = A.concert.stateSendsForTest();
+            run(0.6, [&](long long k, juce::MidiBuffer &m)
+                { if (k == 0) m.addEvent(juce::MidiMessage::noteOn(1, 62, (juce::uint8)100), 0); });
+            A.setPipePosition(0, 5, {30.0f, 10.0f, 6.0f});
+            run(1.2);
+            const auto afterState = rmsLast(0.4);
+            // dragging a pipe for a second: the state goes out at most twice a second
+            run(1.0, [&](long long k, juce::MidiBuffer &)
+                { A.setPipePosition(0, 6, {(float)k * 0.5f, 12.0f, 6.0f}); });
+            run(0.8);
+            const auto afterDrag = rmsLast(0.4);
+            const int sends = A.concert.stateSendsForTest() - seq0;
+            run(0.2, [&](long long k, juce::MidiBuffer &m)
+                { if (k == 0) m.addEvent(juce::MidiMessage::noteOff(1, 62), 0); });
+            say("concert: the player's built-in room comes (" + juce::String(roomCame ? "yes" : "no") +
+                    "), the listener stays where it walked (" + juce::String(B->walkPose[0].load(), 2) + ")",
+                roomCame && B->walkPose[0].load() == 2.5f);
+            say("concert: a held note sounds on through state changes (rms " + juce::String(afterState, 4) + ", " +
+                    juce::String(afterDrag, 4) + "), " + juce::String(sends) + " states sent",
+                afterState > 1e-3 && afterDrag > 1e-3 && sends >= 2 && sends <= 5);
         }
         // two notes 100 ms apart arrive 100 ms apart (despite the uneven network)
         {
@@ -4714,6 +4792,7 @@ private:
                 std::abs(getN(*B, "air") - airOwn) < 1e-4f && std::abs(getN(*B, "output") - outOwn) < 1e-6f);
         }
         setN(*B, "output", outBefore);
+        listenerAudio.stopThread(3000);
         B->releaseResources();
         B.reset();
     }

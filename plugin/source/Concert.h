@@ -107,6 +107,12 @@ public:
     {
         return stateSeq;
     }
+    /** the listener: their own setup, kept while they listen (saving now - the host, the
+        standalone on quit - keeps theirs, not the player's piece); invalid = not listening */
+    juce::ValueTree ownSetupWhileListening() const
+    {
+        return roleNow.load() == Role::listener ? ownSetup : juce::ValueTree();
+    }
 
 private:
     void run() override;
@@ -126,6 +132,7 @@ private:
         float value = 0.0f;
         std::array<double, kNumStops + kNumLfos + 1> clocks{}; // motion, LFOs, Verlauf beats
         bool running = false;
+        uint32_t session = 0; // the listener's connection it came on
     };
     static constexpr int kFifo = 8192;
     juce::AbstractFifo fifo{kFifo};
@@ -175,6 +182,7 @@ private:
     std::unique_ptr<juce::StreamingSocket> sock; // (the listener's)
     std::deque<std::pair<double, double>> offsets; // (wall ms, local - remote), last few seconds
     double lastTarget = 0.0;
+    double smoothOff = 0.0; // the offset in use (glides towards the smallest)
     double lastHeardMs = 0.0;
     juce::CriticalSection stateLock;
     std::map<int, juce::String> pendingStates; // number -> state, waiting for its time
@@ -188,6 +196,11 @@ private:
     std::array<double, 64> noteRing{};
     size_t noteRingPos = 0;
     double holdUntil = 0.0; // audio thread
+    std::atomic<uint32_t> session{0};
+    bool overflow = false, everJoined = false; // network thread
+    std::vector<char> forcedOff; // parameters kept off here (notes / sound of their own on the player)
+    double lastAssert = 0.0;
+    bool listenSession(); // true = lost (try again)
     void applyState(const juce::String &xml);
     void receiveFrame(char type, juce::MemoryInputStream &in);
     double scheduleAt(double remoteT);
