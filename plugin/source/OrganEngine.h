@@ -421,6 +421,13 @@ public:
     std::atomic<float> lucierLevel{0.0f}; // wet peak, for the display
     std::array<std::atomic<uint64_t>, kNumStops>
         soundingMask{}; // bit k = pipe k of that stop sounds
+    /** the wind a sounding pipe gets right now (0..1: its stop's draw, the bellows, its pallet;
+        only valid while its bit in soundingMask is set) - the displays light a pipe by it */
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> windNow{};
+    float windShown(int stop, int key) const noexcept
+    {
+        return juce::jlimit(0.0f, 1.0f, windNow[(size_t)stop][(size_t)key].load(std::memory_order_relaxed));
+    }
 
     // ---- "Lebendige Orgel", for the display and the project state
     std::atomic<float> bellowsNow{1.0f},

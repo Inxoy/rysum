@@ -288,7 +288,8 @@ void SaalPlan::paint(juce::Graphics &g)
             g.setOpacity(on ? (snd ? 1.0f : 0.55f) : 0.3f);
             if (snd)
             {
-                g.setColour(col::white.withAlpha(0.8f));
+                // (as bright as the wind it gets)
+                g.setColour(col::white.withAlpha(0.1f + 0.7f * proc.engine.windShown(s, k)));
                 g.drawEllipse(juce::Rectangle<float>(12.0f, 12.0f).withCentre(pt), 1.0f);
             }
             drawStopDot(g, s, pt, juce::jlimit(3.0f, 7.0f, 3.0f + q.z * 0.25f), false);

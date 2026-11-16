@@ -1722,7 +1722,14 @@ void WalkView::buildScene (float phys)
         {
             if (proc.engine.muted[(size_t) s][(size_t) k].load()) continue;
             auto& gl = glow[(size_t) s][(size_t) k];
-            gl = ((sounding >> k) & 1) ? juce::jmin (1.0f, gl + 0.35f) : gl * 0.9f;
+            // a sounding pipe shines as strongly as the wind it gets (a half-drawn stop, an empty
+            // bellows: dimmer); it rises quickly to that and fades as before
+            if ((sounding >> k) & 1)
+            {
+                const float tgt = proc.engine.windShown (s, k);
+                gl = gl < tgt ? juce::jmin (tgt, gl + 0.35f) : juce::jmax (tgt, gl * 0.9f);
+            }
+            else gl *= 0.9f;
             if (s == heldStop && k == heldKey) gl = juce::jmax (gl, 0.3f);        // (in your hand)
             const Pos pos = proc.engine.displayPosition (s, k, params);
             const V3 c = pipeAt (r, homeP, pos, s, k);

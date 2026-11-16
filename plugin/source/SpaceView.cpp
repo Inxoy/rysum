@@ -216,7 +216,8 @@ void SpaceCircle::paint(juce::Graphics &g)
                 const bool snd = (sounding >> k) & 1;
                 if (snd)
                 {
-                    g.setColour(col::white.withAlpha(0.8f));
+                    // (as bright as the wind it gets)
+                    g.setColour(col::white.withAlpha(0.1f + 0.7f * proc.engine.windShown(s, k)));
                     g.drawEllipse(juce::Rectangle<float>(11.0f, 11.0f).withCentre(p), 1.0f);
                 }
                 if (proc.isPipeMuted(s, k))

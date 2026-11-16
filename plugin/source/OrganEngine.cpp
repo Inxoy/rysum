@@ -5301,7 +5301,13 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         {
             ++count;
             frozen += v.frozen ? 1 : 0;
-            sounding[(size_t)v.stop] |= (uint64_t)1 << v.key;
+            // (the wind it gets, for the light; two voices of one pipe: the stronger)
+            const float w = v.windSm < 0.0f ? 1.0f : v.windSm;
+            auto &wn = windNow[(size_t)v.stop][(size_t)v.key];
+            const uint64_t bit = (uint64_t)1 << v.key;
+            if ((sounding[(size_t)v.stop] & bit) == 0 || w > wn.load(std::memory_order_relaxed))
+                wn.store(w, std::memory_order_relaxed);
+            sounding[(size_t)v.stop] |= bit;
         }
     for (int s = 0; s < kNumStops; ++s)
         soundingMask[(size_t)s] = sounding[(size_t)s];
