@@ -1,0 +1,847 @@
+// "Konzert": one standalone plays, the others listen and render it themselves (see Concert.h)
+#include "Concert.h"
+#include "PluginProcessor.h"
+
+namespace rysum
+{
+namespace
+{
+constexpr int kProtocol = 1;
+constexpr int kMaxListeners = 32;
+constexpr int kMaxStateBytes = 16 * 1024 * 1024;
+constexpr int kMaxFrameBytes = 4096;
+
+/** settings that belong to whoever listens: never sent, never taken over */
+bool isLocalSetting(const juce::String &id)
+{
+    static const juce::StringArray local{"output",      "master",   "binOrder", "binYaw",
+                                         "binDfEq",     "inpOn",    "spkOrder", "spkDistComp",
+                                         "trAngle",     "trAmount", "trBoost",  "trSideEq",
+                                         "audioThreads", "midiCC"};
+    return local.contains(id) || id.startsWith("dsf");
+}
+
+/** a frame: length (of what follows), type, payload */
+juce::MemoryBlock frame(char type, const std::function<void(juce::MemoryOutputStream &)> &fill)
+{
+    juce::MemoryOutputStream body;
+    body.writeByte(type);
+    fill(body);
+    juce::MemoryOutputStream out;
+    out.writeInt((int)body.getDataSize());
+    out.write(body.getData(), body.getDataSize());
+    return out.getMemoryBlock();
+}
+
+bool readAll(juce::StreamingSocket &s, void *dst, int n)
+{
+    auto *p = static_cast<char *>(dst);
+    while (n > 0)
+    {
+        const int r = s.read(p, n, true);
+        if (r <= 0)
+            return false;
+        p += r;
+        n -= r;
+    }
+    return true;
+}
+
+/** one frame from a socket; false = closed or not a frame of ours */
+bool readFrame(juce::StreamingSocket &s, char &type, juce::MemoryBlock &payload)
+{
+    int32_t len = 0;
+    if (!readAll(s, &len, 4))
+        return false;
+    len = (int32_t)juce::ByteOrder::swapIfBigEndian((uint32_t)len);
+    if (len < 1 || len > kMaxStateBytes)
+        return false;
+    juce::MemoryBlock b((size_t)len);
+    if (!readAll(s, b.getData(), len))
+        return false;
+    type = static_cast<const char *>(b.getData())[0];
+    if (type != 'J' && len > kMaxFrameBytes)
+        return false; // only the state is allowed to be long
+    payload = juce::MemoryBlock(static_cast<const char *>(b.getData()) + 1, (size_t)len - 1);
+    return true;
+}
+
+bool sendAll(juce::StreamingSocket &s, const juce::MemoryBlock &b)
+{
+    return s.write(b.getData(), (int)b.getSize()) == (int)b.getSize();
+}
+
+/** a MIDI message a listener may play: notes, controllers, pressure, pitch wheel (no SysEx) */
+bool playableMidi(const uint8_t *b, int n)
+{
+    if (n < 1 || n > 3 || b[0] < 0x80 || b[0] >= 0xf0)
+        return false;
+    const int need = (b[0] & 0xf0) == 0xc0 || (b[0] & 0xf0) == 0xd0 ? 2 : 3;
+    if (n != need)
+        return false;
+    for (int i = 1; i < n; ++i)
+        if (b[i] > 0x7f)
+            return false;
+    return true;
+}
+} // namespace
+
+ConcertLink::ConcertLink(RysumProcessor &p) : juce::Thread("Rysum Konzert"), proc(p)
+{
+    fifoData.resize((size_t)kFifo);
+    for (auto &v : heldVel)
+        v = 0;
+}
+
+ConcertLink::~ConcertLink()
+{
+    stopTimer();
+    signalThreadShouldExit();
+    if (listenerSocket != nullptr)
+        listenerSocket->close();
+    if (sock != nullptr)
+        sock->close();
+    stopThread(3000);
+}
+
+juce::StringArray ConcertLink::localAddresses()
+{
+    juce::StringArray out;
+    for (auto &a : juce::IPAddress::getAllAddresses(false))
+    {
+        // an address of this computer someone else can reach: not the loopback, not a link-local
+        // one, not a multicast group (224 and up)
+        const int first = (int)a.address[0];
+        if (a != juce::IPAddress::local() && first != 127 && first != 0 && first < 224 &&
+            !(first == 169 && a.address[1] == 254))
+            out.addIfNotAlreadyThere(a.toString());
+    }
+    return out;
+}
+
+void ConcertLink::setStatus(const juce::String &s)
+{
+    const juce::ScopedLock sl(statusLock);
+    statusText = s;
+}
+
+juce::String ConcertLink::status() const
+{
+    const juce::ScopedLock sl(statusLock);
+    return statusText;
+}
+
+double ConcertLink::audioTimeNow() const noexcept
+{
+    // the audio clock, carried on by the wall clock since the last block (at most 0.2 s)
+    const double since = (juce::Time::getMillisecondCounterHiRes() - audioWall.load()) * 0.001;
+    return audioTime.load() + juce::jlimit(0.0, 0.2, since);
+}
+
+bool ConcertLink::push(const Ev &e) noexcept
+{
+    int s1, n1, s2, n2;
+    fifo.prepareToWrite(1, s1, n1, s2, n2);
+    if (n1 + n2 < 1)
+        return false;
+    fifoData[(size_t)(n1 > 0 ? s1 : s2)] = e;
+    fifo.finishedWrite(1);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// starting and stopping
+// ---------------------------------------------------------------------------
+bool ConcertLink::startPerformer(int p, bool loopbackOnly)
+{
+    stop();
+    auto s = std::make_unique<juce::StreamingSocket>();
+    if (!s->createListener(p, loopbackOnly ? "127.0.0.1" : juce::String()))
+    {
+        setStatus("Port " + juce::String(p) + " ist belegt");
+        return false;
+    }
+    listenerSocket = std::move(s);
+    port = p;
+    numParams = proc.getNumParams();
+    lastSent.assign((size_t)numParams, 0.0f);
+    for (int i = 0; i < numParams; ++i)
+        lastSent[(size_t)i] = proc.getParamAt(i)->getValue();
+    lastStateKey = stateKey();
+    lastStateCheck = juce::Time::getMillisecondCounterHiRes();
+    stateSeq = 0;
+    joinsWanted = 0;
+    lastClockSent = -1.0;
+    {
+        const juce::ScopedLock sl(outLock);
+        outFrames.clear();
+        joinPackages.clear();
+    }
+    fifo.reset();
+    roleNow = Role::performer;
+    setStatus(juce::String::fromUTF8("Spielt \xe2\x80\x93 noch niemand h\xc3\xb6rt zu"));
+    startThread();
+    startTimerHz(50);
+    return true;
+}
+
+bool ConcertLink::startListener(const juce::String &h, int p)
+{
+    stop();
+    host = h.trim();
+    port = p;
+    numParams = proc.getNumParams();
+    mirrored.reset(new std::atomic<float>[(size_t)numParams]);
+    for (int i = 0; i < numParams; ++i)
+        mirrored[(size_t)i] = std::numeric_limits<float>::quiet_NaN();
+    ownSetup = proc.makeState(false); // (comes back when the concert ends)
+    {
+        const juce::ScopedLock sl(stateLock);
+        pendingStates.clear();
+    }
+    barrierWanted = barrierDone = -1;
+    offsets.clear();
+    lastTarget = 0.0;
+    playing.fill(0);
+    isJoined = false;
+    fifo.reset();
+    roleNow = Role::listener;
+    setStatus(juce::String::fromUTF8("Verbinde mit ") + host + juce::String::fromUTF8(" \xe2\x80\xa6"));
+    startThread();
+    startTimerHz(50);
+    return true;
+}
+
+void ConcertLink::stop()
+{
+    const auto was = roleNow.load();
+    if (was == Role::off)
+        return;
+    stopTimer();
+    signalThreadShouldExit();
+    if (listenerSocket != nullptr)
+        listenerSocket->close();
+    if (sock != nullptr)
+        sock->close();
+    stopThread(3000);
+    listenerSocket.reset();
+    sock.reset();
+    clients.clear();
+    numListeners = 0;
+    if (was == Role::listener)
+    {
+        // the notes stop; the listener's own setup comes back
+        releaseNow = true;
+        roleNow = Role::off;
+        if (ownSetup.isValid())
+            proc.applyState(ownSetup, false);
+        ownSetup = {};
+        isJoined = false;
+    }
+    roleNow = Role::off;
+    setStatus({});
+}
+
+// ---------------------------------------------------------------------------
+// the player
+// ---------------------------------------------------------------------------
+juce::String ConcertLink::stateKey()
+{
+    // the state without the parameters (those travel one by one): did something else change?
+    auto st = proc.makeState(true);
+    for (int i = st.getNumChildren(); --i >= 0;)
+        if (st.getChild(i).hasType("PARAM"))
+            st.removeChild(i, nullptr);
+    return st.toXmlString() + rysum::autoToTree(proc.getAuto()).toXmlString();
+}
+
+juce::MemoryBlock ConcertLink::makeStateFrame(double t, int seq)
+{
+    // the patch state (the sound) plus what a patch does not hold but the piece needs
+    auto st = proc.makeState(true);
+    juce::ValueTree extra("CONCERT");
+    extra.setProperty("extendedRange", proc.extendedRange.load(), nullptr);
+    for (auto *id : {"mpe", "mpeBend", "temperament"})
+        if (auto *prm = proc.apvts.getParameter(id))
+            extra.setProperty(id, prm->getValue(), nullptr);
+    extra.appendChild(rysum::autoToTree(proc.getAuto()), nullptr);
+    st.appendChild(extra, nullptr);
+    const auto xml = st.toXmlString();
+    return frame('J',
+                 [&](juce::MemoryOutputStream &o)
+                 {
+                     o.writeDouble(t);
+                     o.writeInt(seq);
+                     o.writeString(xml);
+                 });
+}
+
+juce::MemoryBlock ConcertLink::makeJoinPackage()
+{
+    // for a new listener: the time it starts from, the state, the notes held down now
+    const double t = audioTimeNow();
+    juce::MemoryOutputStream o;
+    o.writeDouble(t);
+    const auto st = makeStateFrame(t, stateSeq);
+    o.write(st.getData(), st.getSize());
+    for (int i = 0; i < 16 * 128; ++i)
+        if (const auto vel = heldVel[(size_t)i].load(); vel > 0)
+        {
+            const auto f = frame('M',
+                                 [&](juce::MemoryOutputStream &m)
+                                 {
+                                     m.writeDouble(t);
+                                     m.writeByte(3);
+                                     m.writeByte((char)(0x90 | (i / 128)));
+                                     m.writeByte((char)(i % 128));
+                                     m.writeByte((char)vel);
+                                 });
+            o.write(f.getData(), f.getSize());
+        }
+    return o.getMemoryBlock();
+}
+
+void ConcertLink::scanParameters()
+{
+    const double t = audioTimeNow();
+    std::vector<std::pair<double, juce::MemoryBlock>> out;
+    for (int i = 0; i < numParams; ++i)
+    {
+        auto *prm = proc.getParamAt(i);
+        const float v = prm->getValue();
+        if (std::abs(v - lastSent[(size_t)i]) <= 1.0e-7f || isLocalSetting(prm->getParameterID()))
+            continue;
+        lastSent[(size_t)i] = v;
+        out.push_back({t, frame('P',
+                                [&](juce::MemoryOutputStream &o)
+                                {
+                                    o.writeDouble(t);
+                                    o.writeInt(i);
+                                    o.writeFloat(v);
+                                })});
+    }
+    // a changed stop list, layout, path, Verlauf ...: the whole state again (twice a second at most)
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - lastStateCheck > 500.0)
+    {
+        lastStateCheck = now;
+        auto key = stateKey();
+        if (key != lastStateKey)
+        {
+            lastStateKey = std::move(key);
+            out.push_back({t, makeStateFrame(t, ++stateSeq)});
+        }
+    }
+    if (!out.empty())
+    {
+        const juce::ScopedLock sl(outLock);
+        for (auto &f : out)
+            outFrames.push_back(std::move(f));
+    }
+}
+
+void ConcertLink::captureMidi(const juce::MidiBuffer &midi, double blockTime, double sr) noexcept
+{
+    if (roleNow.load() != Role::performer)
+        return;
+    for (const auto meta : midi)
+    {
+        if (!playableMidi(meta.data, meta.numBytes))
+            continue;
+        Ev e;
+        e.type = 'M';
+        e.t = blockTime + meta.samplePosition / sr;
+        e.n = (uint8_t)meta.numBytes;
+        for (int i = 0; i < meta.numBytes; ++i)
+            e.b[i] = meta.data[i];
+        push(e);
+        // what is held down now (for listeners who come in later)
+        const int st = meta.data[0] & 0xf0, ch = meta.data[0] & 0x0f;
+        if (st == 0x90 || st == 0x80)
+            heldVel[(size_t)(ch * 128 + meta.data[1])] = st == 0x90 ? meta.data[2] : (uint8_t)0;
+        else if (st == 0xb0 && (meta.data[1] == 123 || meta.data[1] == 120))
+            for (int k = 0; k < 128; ++k)
+                heldVel[(size_t)(ch * 128 + k)] = 0;
+    }
+}
+
+void ConcertLink::captureClocks(double blockEndTime, const double *motion, const double *lfo,
+                                double beats, bool running) noexcept
+{
+    if (roleNow.load() != Role::performer || (lastClockSent >= 0.0 && blockEndTime - lastClockSent < 0.05))
+        return;
+    lastClockSent = blockEndTime;
+    Ev e;
+    e.type = 'S';
+    e.t = blockEndTime;
+    for (int s = 0; s < kNumStops; ++s)
+        e.clocks[(size_t)s] = motion[s];
+    for (int i = 0; i < kNumLfos; ++i)
+        e.clocks[(size_t)(kNumStops + i)] = lfo[i];
+    e.clocks[kNumStops + kNumLfos] = beats;
+    e.running = running;
+    push(e);
+}
+
+void ConcertLink::runPerformer()
+{
+    auto encode = [](const Ev &e)
+    {
+        if (e.type == 'M')
+            return frame('M',
+                         [&](juce::MemoryOutputStream &o)
+                         {
+                             o.writeDouble(e.t);
+                             o.writeByte((char)e.n);
+                             for (int i = 0; i < e.n; ++i)
+                                 o.writeByte((char)e.b[(size_t)i]);
+                         });
+        return frame('S',
+                     [&](juce::MemoryOutputStream &o)
+                     {
+                         o.writeDouble(e.t);
+                         for (auto c : e.clocks)
+                             o.writeDouble(c);
+                         o.writeBool(e.running);
+                     });
+    };
+    while (!threadShouldExit())
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        // someone new
+        if (listenerSocket->waitUntilReady(true, 3) == 1)
+            if (auto *c = listenerSocket->waitForNextConnection())
+            {
+                std::unique_ptr<juce::StreamingSocket> s(c);
+                if ((int)clients.size() < kMaxListeners)
+                {
+                    auto cl = std::make_unique<Client>();
+                    cl->sock = std::move(s);
+                    cl->connectedMs = now;
+                    clients.push_back(std::move(cl));
+                }
+            }
+        // hellos (and nothing else: a listener has nothing to say)
+        for (auto &c : clients)
+        {
+            if (c->sock == nullptr)
+                continue;
+            const int ready = c->sock->waitUntilReady(true, 0);
+            if (ready < 0)
+            {
+                c->sock.reset();
+                continue;
+            }
+            if (ready == 0)
+            {
+                if (!c->helloOk && now - c->connectedMs > 4000.0)
+                    c->sock.reset(); // no hello
+                continue;
+            }
+            char type = 0;
+            juce::MemoryBlock pl;
+            if (!readFrame(*c->sock, type, pl))
+            {
+                c->sock.reset();
+                continue;
+            }
+            if (!c->helloOk && type == 'H')
+            {
+                juce::MemoryInputStream in(pl, false);
+                const int version = in.readInt(), params = in.readInt();
+                if (version == kProtocol && params == numParams)
+                {
+                    c->helloOk = true;
+                    ++joinsWanted; // (the message thread makes the join package)
+                }
+                else
+                {
+                    sendAll(*c->sock, frame('X', [](juce::MemoryOutputStream &o) { o.writeString("version"); }));
+                    c->sock.reset();
+                }
+            }
+        }
+        // what was played and changed
+        std::vector<std::pair<double, juce::MemoryBlock>> frames;
+        {
+            int s1, n1, s2, n2;
+            const int ready = fifo.getNumReady();
+            fifo.prepareToRead(ready, s1, n1, s2, n2);
+            for (int i = 0; i < n1; ++i)
+                frames.push_back({fifoData[(size_t)(s1 + i)].t, encode(fifoData[(size_t)(s1 + i)])});
+            for (int i = 0; i < n2; ++i)
+                frames.push_back({fifoData[(size_t)(s2 + i)].t, encode(fifoData[(size_t)(s2 + i)])});
+            fifo.finishedRead(n1 + n2);
+        }
+        std::deque<juce::MemoryBlock> joins;
+        {
+            const juce::ScopedLock sl(outLock);
+            for (auto &f : outFrames)
+                frames.push_back(std::move(f));
+            outFrames.clear();
+            joins.swap(joinPackages);
+        }
+        std::stable_sort(frames.begin(), frames.end(),
+                         [](const auto &a, const auto &b) { return a.first < b.first; });
+        // join packages go to the waiting listeners in the order they came
+        for (auto &pk : joins)
+            for (auto &c : clients)
+                if (c->sock != nullptr && c->helloOk && !c->joined)
+                {
+                    juce::MemoryInputStream in(pk, false);
+                    c->since = in.readDouble();
+                    const auto rest = pk.getSize() - 8;
+                    juce::MemoryBlock body(static_cast<const char *>(pk.getData()) + 8, rest);
+                    c->joined = sendAll(*c->sock, body);
+                    for (auto &f : c->backlog)
+                        if (c->joined && f.first >= c->since)
+                            c->joined = sendAll(*c->sock, f.second);
+                    c->backlog.clear();
+                    if (!c->joined)
+                        c->sock.reset();
+                    break;
+                }
+        for (auto &c : clients)
+        {
+            if (c->sock == nullptr)
+                continue;
+            for (auto &f : frames)
+            {
+                if (!c->joined)
+                {
+                    if (c->helloOk && c->backlog.size() < 100000)
+                        c->backlog.push_back(f);
+                    continue;
+                }
+                if (f.first >= c->since && !sendAll(*c->sock, f.second))
+                {
+                    c->sock.reset();
+                    break;
+                }
+            }
+        }
+        clients.erase(std::remove_if(clients.begin(), clients.end(),
+                                     [](const auto &c) { return c->sock == nullptr; }),
+                      clients.end());
+        int n = 0;
+        for (auto &c : clients)
+            n += c->joined ? 1 : 0;
+        numListeners = n;
+        wait(2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// the listener
+// ---------------------------------------------------------------------------
+double ConcertLink::scheduleAt(double remoteT)
+{
+    // the player's time -> the local audio time it is due at: the smallest difference of the last
+    // few seconds is the fastest way here; the delay leaves room for the slower messages
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    double local = audioTimeNow();
+    if (testJitterMs > 0.0)
+        local += juce::Random::getSystemRandom().nextDouble() * testJitterMs * 0.001;
+    offsets.push_back({nowMs, local - remoteT});
+    while (offsets.size() > 1 && nowMs - offsets.front().first > 8000.0)
+        offsets.pop_front();
+    double off = offsets.front().second;
+    for (auto &o : offsets)
+        off = juce::jmin(off, o.second);
+    // (never earlier than what is queued: the order stays)
+    const double t = juce::jmax(lastTarget, remoteT + off + delayMs.load() * 0.001);
+    lastTarget = t;
+    return t;
+}
+
+void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
+{
+    lastHeardMs = juce::Time::getMillisecondCounterHiRes();
+    const double t = in.readDouble();
+    if (type == 'J')
+    {
+        const int seq = in.readInt();
+        const auto xml = in.readString();
+        const double at = scheduleAt(t);
+        {
+            const juce::ScopedLock sl(stateLock);
+            pendingStates[seq] = xml;
+        }
+        if (isJoined.load())
+        {
+            Ev e;
+            e.type = 'B';
+            e.t = at;
+            e.index = seq;
+            push(e);
+        }
+        else
+            barrierWanted = seq; // the first one: at once
+        return;
+    }
+    Ev e;
+    e.type = type;
+    if (type == 'M')
+    {
+        e.n = (uint8_t)juce::jlimit(0, 3, (int)in.readByte());
+        for (int i = 0; i < e.n; ++i)
+            e.b[(size_t)i] = (uint8_t)in.readByte();
+        if (!playableMidi(e.b, e.n))
+            return;
+    }
+    else if (type == 'P')
+    {
+        e.index = in.readInt();
+        e.value = juce::jlimit(0.0f, 1.0f, in.readFloat());
+        if (e.index < 0 || e.index >= numParams ||
+            isLocalSetting(proc.getParamAt(e.index)->getParameterID()))
+            return;
+    }
+    else if (type == 'S')
+    {
+        for (auto &c : e.clocks)
+            c = in.readDouble();
+        e.running = in.readBool();
+        for (auto c : e.clocks)
+            if (!std::isfinite(c))
+                return;
+    }
+    else
+        return;
+    e.t = scheduleAt(t);
+    push(e);
+}
+
+void ConcertLink::runListener()
+{
+    sock = std::make_unique<juce::StreamingSocket>();
+    if (!sock->connect(host, port, 4000))
+    {
+        setStatus(juce::String::fromUTF8("Keine Verbindung zu ") + host + ":" + juce::String(port));
+        return;
+    }
+    sendAll(*sock, frame('H',
+                         [&](juce::MemoryOutputStream &o)
+                         {
+                             o.writeInt(kProtocol);
+                             o.writeInt(numParams);
+                         }));
+    lastHeardMs = juce::Time::getMillisecondCounterHiRes();
+    bool stalled = false;
+    while (!threadShouldExit())
+    {
+        const int ready = sock->waitUntilReady(true, 20);
+        if (ready < 0)
+            break;
+        if (ready == 0)
+        {
+            // nothing for a while (the player sends its clocks 20 times a second): the notes stop
+            if (!stalled && isJoined.load() &&
+                juce::Time::getMillisecondCounterHiRes() - lastHeardMs > 1500.0)
+            {
+                stalled = true;
+                releaseNow = true;
+                setStatus(juce::String::fromUTF8("Verbindung stockt \xe2\x80\xa6"));
+            }
+            continue;
+        }
+        char type = 0;
+        juce::MemoryBlock pl;
+        if (!readFrame(*sock, type, pl))
+            break;
+        if (type == 'X')
+        {
+            setStatus(juce::String::fromUTF8("Der Spieler hat eine andere Version des Plugins"));
+            releaseNow = true;
+            return;
+        }
+        stalled = false;
+        juce::MemoryInputStream in(pl, false);
+        receiveFrame(type, in);
+    }
+    releaseNow = true;
+    isJoined = false;
+    if (!threadShouldExit())
+        setStatus(juce::String::fromUTF8("Der Spieler hat das Konzert beendet"));
+}
+
+void ConcertLink::playInto(juce::MidiBuffer &midi, double blockTime, int numSamples, double sr) noexcept
+{
+    if (roleNow.load() == Role::off && !releaseNow.load())
+        return;
+    if (releaseNow.exchange(false))
+    {
+        // the link is gone or stalls: nothing keeps sounding
+        for (int i = 0; i < 16 * 128; ++i)
+            if (playing[(size_t)i] != 0)
+            {
+                midi.addEvent(juce::MidiMessage::noteOff(i / 128 + 1, i % 128), 0);
+                playing[(size_t)i] = 0;
+            }
+        midi.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+    }
+    if (roleNow.load() != Role::listener || !isJoined.load())
+        return;
+    const double end = blockTime + numSamples / sr;
+    for (;;)
+    {
+        int s1, n1, s2, n2;
+        fifo.prepareToRead(1, s1, n1, s2, n2);
+        if (n1 + n2 < 1)
+            break;
+        const Ev &e = fifoData[(size_t)(n1 > 0 ? s1 : s2)];
+        if (e.t >= end)
+            break; // later
+        if (e.type == 'B' && barrierDone.load() < e.index)
+        {
+            barrierWanted = e.index; // a state change: what follows waits for it
+            break;
+        }
+        const int pos = juce::jlimit(0, juce::jmax(0, numSamples - 1), (int)((e.t - blockTime) * sr));
+        if (e.type == 'M')
+        {
+            midi.addEvent(e.b, e.n, pos);
+            const int st = e.b[0] & 0xf0, ch = e.b[0] & 0x0f;
+            if (st == 0x90 && e.b[2] > 0)
+            {
+                playing[(size_t)(ch * 128 + e.b[1])] = 1;
+                const juce::SpinLock::ScopedTryLockType tl(testSpin);
+                if (tl.isLocked())
+                {
+                    noteRing[(size_t)(noteRingPos++ % noteRing.size())] = blockTime + pos / sr;
+                }
+            }
+            else if (st == 0x80 || st == 0x90)
+                playing[(size_t)(ch * 128 + e.b[1])] = 0;
+        }
+        else if (e.type == 'P')
+        {
+            if (auto *prm = proc.getParamAt(e.index))
+                prm->setValueNotifyingHost(e.value);
+            mirrored[(size_t)e.index] = e.value;
+        }
+        else if (e.type == 'S')
+            proc.concertClocks(e.clocks.data(), e.clocks.data() + kNumStops,
+                               e.clocks[kNumStops + kNumLfos], e.running);
+        fifo.finishedRead(1);
+    }
+}
+
+std::vector<double> ConcertLink::testNoteTimes() const
+{
+    const juce::SpinLock::ScopedLockType sl(testSpin);
+    std::vector<double> out;
+    const size_t n = juce::jmin(noteRingPos, noteRing.size());
+    for (size_t i = noteRingPos - n; i < noteRingPos; ++i)
+        out.push_back(noteRing[i % noteRing.size()]);
+    return out;
+}
+
+void ConcertLink::applyState(const juce::String &xml)
+{
+    auto st = juce::ValueTree::fromXml(xml);
+    if (!st.isValid())
+        return;
+    auto extra = st.getChildWithName("CONCERT");
+    st.removeChild(extra, nullptr);
+    // the player's tuning comes with it, whatever the listener chose for their own patches
+    const bool tuning = proc.loadPresetTuning.load();
+    proc.loadPresetTuning = true;
+    proc.applyState(st, true);
+    proc.loadPresetTuning = tuning;
+    if (extra.isValid())
+    {
+        proc.extendedRange = (bool)extra.getProperty("extendedRange", false);
+        for (auto *id : {"mpe", "mpeBend", "temperament"})
+            if (auto *prm = proc.apvts.getParameter(id); prm != nullptr && extra.hasProperty(id))
+                prm->setValueNotifyingHost((float)(double)extra.getProperty(id));
+        // the Verlauf plays on the player's clock (and never records here)
+        auto set = rysum::autoFromTree(extra.getChildWithName("VERLAUF"));
+        set.clock = 1;
+        for (auto &l : set.lanes)
+            l.armed = false;
+        proc.getAuto() = set;
+        proc.setAutoRecord(false);
+        proc.autoChanged();
+        proc.autoPublish();
+    }
+    for (int i = 0; i < numParams; ++i)
+        if (!isLocalSetting(proc.getParamAt(i)->getParameterID()))
+            mirrored[(size_t)i] = proc.getParamAt(i)->getValue();
+}
+
+// ---------------------------------------------------------------------------
+// message thread
+// ---------------------------------------------------------------------------
+void ConcertLink::timerCallback()
+{
+    const auto r = roleNow.load();
+    if (r == Role::performer)
+    {
+        while (joinsWanted.load() > 0)
+        {
+            --joinsWanted;
+            auto pk = makeJoinPackage();
+            const juce::ScopedLock sl(outLock);
+            joinPackages.push_back(std::move(pk));
+        }
+        scanParameters();
+        const int n = numListeners.load();
+        setStatus(n == 0 ? juce::String::fromUTF8("Spielt \xe2\x80\x93 noch niemand h\xc3\xb6rt zu")
+                         : juce::String::fromUTF8("Spielt \xc2\xb7 ") + juce::String(n) +
+                               juce::String::fromUTF8(" Zuh\xc3\xb6rer"));
+        return;
+    }
+    if (r != Role::listener)
+        return;
+    // a state whose time has come (or the first one: at once)
+    const int want = barrierWanted.load();
+    if (want > barrierDone.load())
+    {
+        juce::String xml;
+        bool have = false;
+        {
+            const juce::ScopedLock sl(stateLock);
+            auto it = pendingStates.find(want);
+            if (it != pendingStates.end())
+            {
+                xml = it->second;
+                have = true;
+            }
+            pendingStates.erase(pendingStates.begin(), pendingStates.upper_bound(want));
+        }
+        if (have)
+            applyState(xml);
+        barrierDone = want;
+        if (!isJoined.load() && have)
+        {
+            isJoined = true;
+            setStatus(juce::String::fromUTF8("H\xc3\xb6rt zu bei ") + host);
+        }
+    }
+    // the player's controls are the player's: a local change goes back (twice a second)
+    static double lastAssert = 0.0;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (isJoined.load() && now - lastAssert > 500.0)
+    {
+        lastAssert = now;
+        for (int i = 0; i < numParams; ++i)
+        {
+            const float m = mirrored[(size_t)i].load();
+            if (std::isnan(m))
+                continue;
+            auto *prm = proc.getParamAt(i);
+            if (std::abs(prm->getValue() - m) > 1.0e-5f)
+                prm->setValueNotifyingHost(m);
+        }
+    }
+}
+
+void ConcertLink::run()
+{
+    if (roleNow.load() == Role::performer)
+        runPerformer();
+    else if (roleNow.load() == Role::listener)
+        runListener();
+}
+} // namespace rysum

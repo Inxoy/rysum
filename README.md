@@ -470,6 +470,36 @@ share them. On first start six example patches are written there (Init, Plenum, 
 die Pfeifen, Atmende Wolke, Verfall, Gläserne Sprünge); deleted ones are not re-created.
 The project in Reaper still remembers everything on its own, patches are extra.
 
+### Konzert – playing for listeners on other computers
+
+One person plays, others listen, each on their own computer with the plugin (best the standalone)
+and the samples. **No sound travels over the network, only the playing**: every listener's computer
+renders the organ itself, from wherever they stand and walk in the 3D Saal, with their own output
+(headphones, loudspeakers, AmbiX).
+
+- Open it from the patch list (the name at the top left) → *Konzert …*.
+- **The player** clicks *Spielen*. The window shows the address listeners use (this computer in
+  the home network, port 8790). The first time, Windows asks whether the program may use the
+  network: allow it for private networks.
+- **A listener** types that address and clicks *Zuhören bei*. Within a moment they have the
+  player's whole sound: stops, every slider, layouts, paths, modulation, the Verlauf, the tuning.
+  Then they hear what the player plays, *Verzögerung* later (250 ms by default; more if the network
+  is uneven, less to be closer). Notes held down when someone joins sound for them too.
+- What is mirrored: the MIDI the player plays (after *Halten* and the controller assignments, also
+  the computer keyboard and the on-screen keys), every parameter change, every other change of the
+  sound (a new patch, a moved pipe, a drawn path, a Verlauf edit), and 20 times a second the
+  clocks that move things – the motions of the stops, the LFOs and the Verlauf clock – so pipes
+  fly in the same places at the same moments.
+- What stays the listener's: output format, headphone and loudspeaker settings, the volume, the
+  samples folder and where they stand. A listener's own changes of the player's controls go back
+  to the player's within half a second. *Beenden* gives the listener their own setup back.
+- If the player stops or the connection breaks off, the listener's organ falls silent.
+- Not mirrored yet: the audio input (*Eingang*), Lucier, the Tonnetz-Wanderer, *Selbstspiel*,
+  the hands in the 3D Saal (knocking, throwing, carrying), *Publikum* and loaded room models other
+  than the six built-in ones. MIDI Tuning SysEx is not forwarded (Scala files are).
+- For now this is for one home network: a player on the internet needs a relay server (planned).
+  Both sides must have the same version of the plugin.
+
 ## 4. MIDI
 
 MIDI note = sounding pitch (C2 = 36 … a″ = 81). Velocity shapes the key clicks: a light touch

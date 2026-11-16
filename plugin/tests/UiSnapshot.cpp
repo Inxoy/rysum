@@ -1181,6 +1181,13 @@ public:
             quit();
             return;
         }
+        if (std::getenv("RYSUM_ONLY_CONCERT") != nullptr)
+        {
+            stopTimer();
+            testConcert();
+            quit();
+            return;
+        }
         if (std::getenv("RYSUM_ONLY_WALK") != nullptr)
         {
             stopTimer();
@@ -4476,6 +4483,239 @@ private:
               "normal Stimmton uses scientific A4 notation");
         proc->releaseResources();
         setApplicationReturnValue(passed ? 0 : 1);
+    }
+
+    /** RYSUM_ONLY_CONCERT: a player and a listener in this process, over 127.0.0.1, in real time,
+        with up to 80 ms of uneven arrival at the listener */
+    void testConcert()
+    {
+        auto say = [](const juce::String &what, bool ok)
+        { std::cout << what << (ok ? "  ok" : "  FAIL") << std::endl; };
+        auto &A = *proc;
+        auto B = std::make_unique<RysumProcessor>();
+        B->loadSamples(samples);
+        for (int i = 0; i < 400 && B->getLibrary() == nullptr; ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        if (B->getLibrary() == nullptr)
+        {
+            say("concert: the listener's samples load", false);
+            return;
+        }
+        constexpr int bs = 256;
+        constexpr double sr = 48000.0;
+        for (auto *p : {&A, B.get()})
+        {
+            p->setRateAndBufferSizeDetails(sr, bs);
+            p->prepareToPlay(sr, bs);
+        }
+        const int chans = juce::jmax(2, A.getTotalNumInputChannels(), A.getTotalNumOutputChannels());
+        juce::AudioBuffer<float> ba(chans, bs), bb(chans, bs);
+        auto setN = [](RysumProcessor &p, const juce::String &id, float n)
+        {
+            if (auto *q = p.apvts.getParameter(id))
+                q->setValueNotifyingHost(n);
+        };
+        auto getN = [](RysumProcessor &p, const juce::String &id)
+        { return p.apvts.getParameter(id)->getValue(); };
+        // both play in real time: one block each, then wait for the wall clock
+        double wallStart = juce::Time::getMillisecondCounterHiRes();
+        long long blocks = 0;
+        std::vector<double> rmsB;
+        auto run = [&](double seconds, const std::function<void(long long, juce::MidiBuffer &)> &playA = {})
+        {
+            const long long n = (long long)std::ceil(seconds * sr / bs);
+            for (long long k = 0; k < n; ++k, ++blocks)
+            {
+                juce::MidiBuffer ma, mb;
+                if (playA)
+                    playA(k, ma);
+                ba.clear();
+                A.processBlock(ba, ma);
+                bb.clear();
+                B->processBlock(bb, mb);
+                rmsB.push_back(bb.getRMSLevel(0, 0, bs));
+                const double due = wallStart + (double)(blocks + 1) * bs / sr * 1000.0;
+                while (juce::Time::getMillisecondCounterHiRes() < due)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            }
+        };
+        auto rmsLast = [&](double seconds)
+        {
+            const size_t n = juce::jmin(rmsB.size(), (size_t)(seconds * sr / bs));
+            double e = 0.0;
+            for (size_t i = rmsB.size() - n; i < rmsB.size(); ++i)
+                e = juce::jmax(e, (double)rmsB[i]);
+            return e;
+        };
+        // the listener's own setup, which must stay theirs
+        const float outBefore = getN(*B, "output");
+        setN(*B, "output", B->apvts.getParameter("output")->convertTo0to1(1.0f));
+        const float outOwn = getN(*B, "output");
+        B->walkPose[0] = 3.25f;
+        const auto folderBefore = B->getSamplesFolder();
+        const float airOwn = getN(*B, "air");
+        // the player's piece
+        for (int s = 0; s < rysum::kNumStops; ++s)
+            setN(A, RysumProcessor::stopParamId(s), s == 0 ? 1.0f : 0.0f);
+        setN(A, "air", 0.3f);
+        {
+            auto &S = A.getAuto();
+            S = rysum::AutoSet();
+            S.clock = 1;
+            rysum::AutoLane l;
+            l.paramId = "doppler";
+            l.pts = {{0.0, 0.0f}, {16.0, 1.0f}};
+            S.lanes = {l};
+            A.autoPublish();
+        }
+        setN(A, RysumProcessor::motionParamId(0),
+             A.apvts.getParameter(RysumProcessor::motionParamId(0))->convertTo0to1((float)rysum::Motion::Rotation));
+        setN(A, RysumProcessor::rateParamId(0), A.apvts.getParameter(RysumProcessor::rateParamId(0))->convertTo0to1(0.5f));
+
+        const bool started = A.concert.startPerformer(8791, true);
+        B->concert.setDelayMs(200.0);
+        B->concert.testJitterMs = 80.0;
+        B->concert.startListener("127.0.0.1", 8791);
+        run(1.5);
+        say("concert: the listener joins (player sees " + juce::String(A.concert.listenerCount()) + ")",
+            started && B->concert.joined() && A.concert.listenerCount() == 1);
+        {
+            // the panel, as the player sees it
+            juce::SharedResourcePointer<rysum::ui::Assets> assets;
+            juce::SharedResourcePointer<rysum::ui::LookAndFeel> lnf;
+            auto panel = rysum::ui::makeConcertPanel(A);
+            panel->setLookAndFeel(&*lnf);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+            auto img = panel->createComponentSnapshot(panel->getLocalBounds(), true, 2.0f);
+            auto f = outDir.getChildFile("ui_konzert.png");
+            f.deleteFile();
+            juce::FileOutputStream os(f);
+            juce::PNGImageFormat().writeImageToStream(img, os);
+            panel->setLookAndFeel(nullptr);
+            wallStart = juce::Time::getMillisecondCounterHiRes() - (double)blocks * bs / sr * 1000.0;
+        }
+        // the same sound: every parameter that is not the listener's own
+        {
+            setN(A, "air", 0.71f);
+            run(0.8);
+            int differ = 0;
+            juce::String first;
+            for (int i = 0; i < A.getNumParams(); ++i)
+            {
+                const auto id = A.getParamAt(i)->getParameterID();
+                if (id == "output" || id == "master" || id.startsWith("bin") || id.startsWith("spk") ||
+                    id.startsWith("dsf") || id == "audioThreads" || id == "midiCC" || id == "inpOn" ||
+                    id == "trAngle" || id == "trAmount" || id == "trBoost" || id == "trSideEq")
+                    continue;
+                if (std::abs(A.getParamAt(i)->getValue() - B->getParamAt(i)->getValue()) > 1e-4f)
+                {
+                    if (differ++ == 0)
+                        first = id + " " + juce::String(A.getParamAt(i)->getValue()) + " / " +
+                                juce::String(B->getParamAt(i)->getValue());
+                }
+            }
+            say("concert: the listener's controls are the player's (" + juce::String(differ) + " differ" +
+                    (differ > 0 ? ", e.g. " + first : juce::String()) + "), the Verlauf came with it (" +
+                    juce::String((int)B->getAuto().lanes.size()) + " lane)",
+                differ == 0 && B->getAuto().lanes.size() == 1);
+            say("concert: the listener keeps its own output, place and samples",
+                std::abs(getN(*B, "output") - outOwn) < 1e-6f && B->walkPose[0].load() == 3.25f &&
+                    B->getSamplesFolder() == folderBefore);
+        }
+        // two notes 100 ms apart arrive 100 ms apart (despite the uneven network)
+        {
+            const long long b0 = 3;
+            run(0.6,
+                [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == b0)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
+                    if (k == b0 + 18)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 64, (juce::uint8)100), 192); // +4800 samples
+                    if (k == b0 + 60)
+                    {
+                        m.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+                        m.addEvent(juce::MidiMessage::noteOff(1, 64), 0);
+                    }
+                });
+            run(0.3);
+            const auto t = B->concert.testNoteTimes();
+            const double gap = t.size() >= 2 ? t[t.size() - 1] - t[t.size() - 2] : -1.0;
+            say("concert: two notes 100 ms apart are " + juce::String(gap * 1000.0, 2) + " ms apart at the listener",
+                std::abs(gap - 0.1) <= (double)bs / sr + 1e-6);
+            say("concert: and they sounded (rms " + juce::String(rmsLast(0.6), 4) + ")", rmsLast(0.6) > 1e-3);
+        }
+        // the clocks: the Verlauf and the motion follow the player's, the delay later
+        {
+            A.autoPlay(true);
+            run(2.5);
+            const double lagBeats = A.getAutoNow() - B->getAutoNow(); // expected 0.2 s at 60 BPM
+            const double phA = A.engine.motionPhase[0].load(), phB = B->engine.motionPhase[0].load();
+            const double lagPhase = phA - phB; // expected 0.5 Hz * 0.2 s = 0.1
+            say("concert: the Verlauf clock trails by " + juce::String(lagBeats, 3) + " beats, the motion by " +
+                    juce::String(lagPhase, 3) + " cycles (expected 0.2 / 0.1)",
+                std::abs(lagBeats - 0.2) < 0.03 && std::abs(lagPhase - 0.1) < 0.02);
+            A.autoPlay(false);
+        }
+        // a stop pulled, a note 2 ms later: it sounds at the listener
+        {
+            setN(A, RysumProcessor::stopParamId(0), 0.0f);
+            run(0.5);
+            const auto before = rmsLast(0.2);
+            setN(A, RysumProcessor::stopParamId(2), 1.0f);
+            run(0.5,
+                [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == 0)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 67, (juce::uint8)100), 96);
+                });
+            const auto after = rmsLast(0.25);
+            say("concert: a stop pulled and a note 2 ms later sound (rms " + juce::String(before, 4) + " -> " +
+                    juce::String(after, 4) + ")",
+                after > 1e-3 && after > before * 4.0);
+            run(0.2, [&](long long k, juce::MidiBuffer &m)
+                { if (k == 0) m.addEvent(juce::MidiMessage::noteOff(1, 67), 0); });
+        }
+        // nothing changes: the state is not sent again and again
+        {
+            run(0.5);
+            const int seq0 = A.concert.stateSendsForTest();
+            run(3.0);
+            const int sends = A.concert.stateSendsForTest() - seq0;
+            say("concert: an unchanged piece sends no state (" + juce::String(sends) + " in 3 s)", sends == 0);
+        }
+        // someone joins late while a chord is held: they hear it
+        {
+            B->concert.stop();
+            run(1.2, [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == 0)
+                        for (int n : {60, 64, 67})
+                            m.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                });
+            const auto quiet = rmsLast(0.3);
+            B->concert.startListener("127.0.0.1", 8791);
+            run(1.5);
+            const auto heard = rmsLast(0.5);
+            say("concert: a late listener hears the held chord (rms " + juce::String(quiet, 4) + " -> " +
+                    juce::String(heard, 4) + ")",
+                B->concert.joined() && heard > 1e-3 && heard > quiet * 4.0);
+        }
+        // the player leaves: the listener falls silent and gets its own setup back
+        {
+            A.concert.stop();
+            run(3.0);
+            const auto silent = rmsLast(0.5);
+            say("concert: the player gone, the listener falls silent (rms " + juce::String(silent, 5) + ")",
+                silent < 2e-4);
+            B->concert.stop();
+            run(0.2);
+            say("concert: the listener's own setup is back (air " + juce::String(getN(*B, "air"), 3) + ")",
+                std::abs(getN(*B, "air") - airOwn) < 1e-4f && std::abs(getN(*B, "output") - outOwn) < 1e-6f);
+        }
+        setN(*B, "output", outBefore);
+        B->releaseResources();
+        B.reset();
     }
 
     void testMidiTuning()

@@ -2,6 +2,7 @@
 
 #include "Audience.h"
 #include "Automation.h"
+#include "Concert.h"
 #include "Binaural.h"
 #include "Convolver.h"
 #include "DsfReferenceInstrument.h"
@@ -1256,5 +1257,16 @@ private:
                        *degBits = nullptr, *degRate = nullptr, *degWobble = nullptr,
                        *degDropouts = nullptr, *degMode = nullptr;
 
+    friend class rysum::ConcertLink;
+    double concertAudioTime = 0.0; // audio thread: seconds of audio processed (the concert's clock)
+
+public:
+    /** "Konzert": play for listeners on other computers, or listen to a player (see Concert.h).
+        Declared last: it goes first, while everything it uses is still there. */
+    rysum::ConcertLink concert{*this};
+    /** the listener, audio thread: the player'"'"'s clocks (motion, LFOs, the Verlauf) */
+    void concertClocks(const double *motion, const double *lfo, double beats, bool running) noexcept;
+
+private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RysumProcessor)
 };

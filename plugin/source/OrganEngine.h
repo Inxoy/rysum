@@ -591,6 +591,9 @@ public:
         silent pipes the LFOs, key position, mod wheel and global envelopes. */
     Pos displayPosition(int stop, int key, const EngineParams &p) const noexcept;
 
+    /** Konzert, audio thread: pull the motion and LFO phases towards a player's (set outright when
+        more than a quarter cycle off) */
+    void syncPhases(const double *motion, const double *lfo) noexcept;
     /** integrated motion phase per stop (cycles); speed changes only change its slope */
     std::array<std::atomic<double>, kNumStops> motionPhase{};
 

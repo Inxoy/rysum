@@ -1997,6 +1997,15 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
             std::atomic_exchange(&pendingLibrary, std::shared_ptr<const SampleLibrary>()))
         engine.setLibrary(std::move(pending)); // the old one is still referenced by retiredLibrary
 
+    // Konzert: the audio clock everything is timed by; a listener plays only what the player plays
+    const double concertSr = getSampleRate() > 0 ? getSampleRate() : 48000.0;
+    const double concertBlockTime = concertAudioTime;
+    concertAudioTime += buffer.getNumSamples() / concertSr;
+    concert.setAudioTime(concertBlockTime);
+    const auto concertRole = concert.role();
+    if (concertRole == rysum::ConcertLink::Role::listener)
+        midi.clear();
+
     // notes that are MIDI buttons (pads mapped to a switch or to a button on screen) do not play
     if (noteMaps.load() || bmLearn.load() >= 0 || mmLearn.load() >= 0)
     {
@@ -2090,6 +2099,17 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         }
         if (any)
             triggerAsyncUpdate();
+    }
+
+    // Konzert: the player sends what it plays now (after Halten and the controller assignments);
+    // a listener plays what is due from the player instead of its own keys
+    if (concertRole == rysum::ConcertLink::Role::performer)
+        concert.captureMidi(midi, concertBlockTime, concertSr);
+    else
+    {
+        if (concertRole == rysum::ConcertLink::Role::listener)
+            midi.clear();
+        concert.playInto(midi, concertBlockTime, buffer.getNumSamples(), concertSr);
     }
 
     // free tuning: MIDI Tuning Standard SysEx (e.g. from Hexatone) goes to the MTS-ESP client (used
@@ -2283,6 +2303,19 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     }
     engine.process(work, midi, params);
     engine.setInput(nullptr, nullptr, 0);
+    if (concertRole == rysum::ConcertLink::Role::performer)
+    {
+        // the clocks that move things, as they are at the end of this block
+        std::array<double, rysum::kNumStops> mph{};
+        std::array<double, rysum::kNumLfos> lph{};
+        for (int s = 0; s < rysum::kNumStops; ++s)
+            mph[(size_t)s] = engine.motionPhase[(size_t)s].load();
+        for (int i = 0; i < rysum::kNumLfos; ++i)
+            lph[(size_t)i] = engine.lfoPhaseOut[(size_t)i].load();
+        concert.captureClocks(concertAudioTime, mph.data(), lph.data(),
+                              params.autoBeats + buffer.getNumSamples() / concertSr * params.autoBeatRate,
+                              params.autoBeatRate > 0.0);
+    }
 
     // ---- room: dry level + convolution with the loaded impulse response
 
