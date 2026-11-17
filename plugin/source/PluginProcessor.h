@@ -1271,7 +1271,7 @@ public:
     int voxTrackedNote(int v) const noexcept { return voxShown[(size_t)v].load(); }
 
     /** the Vox humana's level against the sample stops (the network's output is quiet) */
-    static constexpr float kVoxGain = 4.0f;
+    static constexpr float kVoxGain = 10.0f; // measured: then about as loud as one sample stop
     static constexpr std::array<const char *, 18> kVoxIds{
         "voxOn",   "voxVol",  "voxWind", "voxX",    "voxY",    "voxBright", "voxNoise",  "voxSpread", "voxFollow",
         "voxRoom", "voxAz",   "voxEl",   "voxDist", "voxSend", "inPlays",   "inThresh",  "inConfirm", "inVoices"};
