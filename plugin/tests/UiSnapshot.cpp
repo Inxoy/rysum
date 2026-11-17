@@ -3225,6 +3225,53 @@ public:
                     why = "page not found";
                 std::cout << "verlauf editing: " << why << (editOk ? "  ok" : "  FAIL") << std::endl;
             }
+            // pieces: every one that comes with Rysum loads, each lane drives something real; a
+            // piece saved to a file comes back the same; "Fahrt" brings its drawn path along
+            {
+                auto *m0 = proc->apvts.getParameter(RysumProcessor::motionParamId(0));
+                const float m0Before = m0->getValue(); // ("Fahrt" sets the Praestant to its drawn path)
+                bool factoryOk = true;
+                juce::String bad;
+                const auto names = RysumProcessor::factoryPieceNames();
+                for (int i = 0; i < names.size(); ++i)
+                {
+                    proc->loadFactoryPiece(i);
+                    bool ok = !S.lanes.empty() && proc->getPieceName() == names[i] && !proc->isPieceChanged();
+                    for (auto &l : S.lanes)
+                    {
+                        const int pi = proc->getParamIndex(l.paramId);
+                        const bool real = (pi >= 0 && proc->isAutoTarget(pi)) || autoPipeTarget(l.paramId) >= 0 ||
+                                          autoPathStop(l.paramId) >= 0;
+                        ok = ok && real && l.pts.size() >= 2;
+                        if (!real)
+                            bad << " " << l.paramId;
+                    }
+                    if (!ok)
+                        bad << " [" << names[i] << "]";
+                    factoryOk = factoryOk && ok;
+                    if (i == 0)
+                        shoot(9, "ui_verlauf_stueck.png");
+                }
+                const bool pathOk = proc->getDrawnPath(0).points.size() > 10;
+                const auto tmp = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                     .getChildFile("rysum-test-stueck")
+                                     .getChildFile(juce::String("Probe") + RysumProcessor::kPieceExtension);
+                juce::String err;
+                const auto before = rysum::autoToTree(S).toXmlString();
+                const bool saved = proc->savePiece(tmp, err) && tmp.existsAsFile() && proc->getPieceName() == "Probe";
+                proc->newPiece();
+                const bool emptied = S.lanes.empty() && proc->getPieceName().isEmpty();
+                const bool loaded = proc->loadPiece(tmp, err) && rysum::autoToTree(S).toXmlString() == before &&
+                                    !proc->isPieceChanged() && proc->getPieceFile() == tmp;
+                tmp.getParentDirectory().deleteRecursively();
+                std::cout << "verlauf pieces: the 6 that come with it " << (int)factoryOk << bad << ", its path "
+                          << (int)pathOk << ", saved " << (int)saved << ", new = empty " << (int)emptied
+                          << ", loaded back the same " << (int)loaded
+                          << ((factoryOk && pathOk && saved && emptied && loaded) ? "  ok" : "  FAIL") << std::endl;
+                proc->setDrawnPath(0, {});
+                m0->setValueNotifyingHost(m0Before);
+                proc->newPiece();
+            }
             S = AutoSet();
             proc->autoChanged();
             proc->autoPublish();

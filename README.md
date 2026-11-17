@@ -456,6 +456,21 @@ loops of different lengths running against each other.
 - Ctrl+Z / Ctrl+Y undo / redo, Ctrl + mouse wheel zooms, Shift + wheel scrolls in time, the
   middle mouse button drags the view; *Alles* shows all points.
 - The lanes are saved with the project, not in patches: loading a patch mid-piece keeps them.
+- **Pieces** (*Stück ▾*, left in the bar): a piece is the whole Verlauf – its lanes, the clock and
+  its tempo, and the drawn paths its timetables ride on – as a file of its own
+  (`Documents/Rysum/Stücke/<name>.rysumstueck`), so you can keep several and go back and forth.
+  *Neues Stück*, *Öffnen …* (any `.rysumstueck`, also one someone sent you), *Speichern* (Ctrl+S),
+  *Speichern unter …*, *Ordner zeigen*; below, *Meine Stücke* lists the folder. The title shows the
+  piece's name and *(geändert)* while it has unsaved changes; opening another one asks first
+  (*Speichern / Verwerfen / Abbrechen*). The project remembers which piece it was.
+- **Pieces that come with Rysum** (*Stück ▾ → Mitgeliefert*; they start with the first key):
+  *Atem* (three stops breathe at their own pace – 12, 16, 20 beats – and their light with them),
+  *Welle durch den Raum* (a swell of brightness runs from the front through the room every 8 beats,
+  a wave of loudness comes back from far away), *Registerkanon* (five stops come and go in loops of
+  12 to 36 beats), *Verfall* (over 64 beats the organ crumbles, detunes and gets unsteady wind),
+  *Schwebung* (the tremulant comes in, swells, drifts in speed, the pipes beat), *Fahrt* (the
+  Praestant rides an arc in front of you on a timetable, louder and brighter as it comes near).
+  *Speichern unter* makes one your own.
 - Only the slider rows follow their curves on screen; switches (stop knobs, buttons) sound as
   the lane says but do not move.
 

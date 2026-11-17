@@ -1358,6 +1358,12 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         b.setTooltip(tip);
         addAndMakeVisible(b);
     };
+    toggle(pieceButton, juce::String::fromUTF8("St\xc3\xbc"
+                                               "cke: neu, \xc3\xb6"
+                                               "ffnen, speichern (Strg+S), die mitgelieferten und "
+                                               "die eigenen (Dokumente/Rysum/St\xc3\xbc"
+                                               "cke)"));
+    pieceButton.onClick = [this] { showPieceMenu(); };
     toggle(onButton, juce::String::fromUTF8("Alle Spuren an / aus (aus: die Regler gelten wie von Hand gestellt)"));
     onButton.setClickingTogglesState(true);
     onButton.onClick = [this]
@@ -1775,6 +1781,11 @@ void VerlaufView::redo()
 
 bool VerlaufView::keyPressed(const juce::KeyPress &k)
 {
+    if (k == juce::KeyPress('s', juce::ModifierKeys::commandModifier, 0))
+    {
+        savePiece();
+        return true;
+    }
     if (k == juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0))
     {
         undo();
@@ -1912,6 +1923,209 @@ void VerlaufView::paste()
     selPoint = selPts.empty() ? -1 : selPts.front();
     changed();
     hintChanged();
+}
+
+// ---------------------------------------------------------------------------
+// pieces
+// ---------------------------------------------------------------------------
+void VerlaufView::pieceError(const juce::String &message)
+{
+    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                           juce::String::fromUTF8("St\xc3\xbc"
+                                                                  "ck"),
+                                           message, "OK", this);
+}
+
+void VerlaufView::pieceLoaded()
+{
+    undoStack.clear();
+    redoStack.clear();
+    selLane = set().lanes.empty() ? -1 : 0;
+    selPoint = -1;
+    selPts.clear();
+    timeline.scrollY = 0;
+    shownVersion = proc.getAutoVersion();
+    syncControls();
+    timeline.repaint();
+    repaint();
+}
+
+void VerlaufView::whenPieceSafe(std::function<void()> then)
+{
+    if (!proc.isPieceChanged() || set().lanes.empty())
+    {
+        then();
+        return;
+    }
+    const auto name = proc.getPieceName().isNotEmpty() ? proc.getPieceName()
+                                                       : juce::String::fromUTF8("Das unbenannte St\xc3\xbc"
+                                                                                "ck");
+    auto opts = juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                    .withTitle(juce::String::fromUTF8("St\xc3\xbc"
+                                                      "ck ge\xc3\xa4ndert"))
+                    .withMessage(name + juce::String::fromUTF8(" hat ungespeicherte \xc3\x84nderungen."))
+                    .withButton("Speichern")
+                    .withButton("Verwerfen")
+                    .withButton("Abbrechen")
+                    .withAssociatedComponent(this);
+    juce::Component::SafePointer<VerlaufView> safe(this);
+    juce::AlertWindow::showAsync(opts,
+                                 [safe, then](int r)
+                                 {
+                                     if (safe == nullptr)
+                                         return;
+                                     if (r == 1)
+                                         safe->savePiece(then); // (and on, once it is saved)
+                                     else if (r == 2)
+                                         then();
+                                 });
+}
+
+void VerlaufView::savePiece(std::function<void()> then)
+{
+    const auto f = proc.getPieceFile();
+    if (f == juce::File())
+    {
+        savePieceAs(std::move(then));
+        return;
+    }
+    juce::String err;
+    if (!proc.savePiece(f, err))
+    {
+        pieceError(err);
+        return;
+    }
+    repaint(titleBox);
+    if (then)
+        then();
+}
+
+void VerlaufView::savePieceAs(std::function<void()> then)
+{
+    auto folder = RysumProcessor::getPieceFolder();
+    folder.createDirectory();
+    const auto name = proc.getPieceName().isNotEmpty() ? proc.getPieceName() : juce::String::fromUTF8("Neues St\xc3\xbc"
+                                                                                                     "ck");
+    chooser = std::make_unique<juce::FileChooser>(juce::String::fromUTF8("St\xc3\xbc"
+                                                                         "ck speichern"),
+                                                  folder.getChildFile(name + RysumProcessor::kPieceExtension),
+                                                  juce::String("*") + RysumProcessor::kPieceExtension);
+    juce::Component::SafePointer<VerlaufView> safe(this);
+    chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+                             juce::FileBrowserComponent::warnAboutOverwriting,
+                         [safe, then](const juce::FileChooser &fc)
+                         {
+                             if (safe == nullptr || fc.getResult() == juce::File())
+                                 return;
+                             juce::String err;
+                             if (!safe->proc.savePiece(fc.getResult(), err))
+                             {
+                                 safe->pieceError(err);
+                                 return;
+                             }
+                             safe->repaint(safe->titleBox);
+                             if (then)
+                                 then();
+                         });
+}
+
+void VerlaufView::openPieceFile(const juce::File &f)
+{
+    juce::Component::SafePointer<VerlaufView> safe(this);
+    whenPieceSafe(
+        [safe, f]
+        {
+            if (safe == nullptr)
+                return;
+            juce::String err;
+            if (!safe->proc.loadPiece(f, err))
+                safe->pieceError(err);
+            else
+                safe->pieceLoaded();
+        });
+}
+
+void VerlaufView::showPieceMenu()
+{
+    juce::PopupMenu m;
+    m.addItem(1, juce::String::fromUTF8("Neues St\xc3\xbc"
+                                        "ck"));
+    m.addItem(2, juce::String::fromUTF8("\xc3\x96"
+                                        "ffnen \xe2\x80\xa6"));
+    m.addItem(3, juce::String::fromUTF8("Speichern  (Strg+S)"), !set().lanes.empty() || proc.getPieceFile() != juce::File());
+    m.addItem(4, juce::String::fromUTF8("Speichern unter \xe2\x80\xa6"));
+    m.addItem(5, juce::String::fromUTF8("Ordner zeigen"));
+    m.addSeparator();
+    const auto own = RysumProcessor::getPieceFiles();
+    m.addSectionHeader(juce::String::fromUTF8("Meine St\xc3\xbc"
+                                              "cke"));
+    if (own.isEmpty())
+        m.addItem(-1, juce::String::fromUTF8("(noch keine \xe2\x80\x93 \xe2\x80\x9eSpeichern unter\xe2\x80\x9c legt "
+                                             "sie hier ab)"),
+                  false);
+    for (int i = 0; i < own.size() && i < 200; ++i)
+        m.addItem(200 + i, own[i].getFileNameWithoutExtension(), true, own[i] == proc.getPieceFile());
+    m.addSectionHeader("Mitgeliefert");
+    const auto factory = RysumProcessor::factoryPieceNames();
+    for (int i = 0; i < factory.size(); ++i)
+        m.addItem(100 + i, factory[i], true,
+                  proc.getPieceFile() == juce::File() && proc.getPieceName() == factory[i]);
+    juce::Component::SafePointer<VerlaufView> safe(this);
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&pieceButton),
+                    [safe, own](int r)
+                    {
+                        if (safe == nullptr || r <= 0)
+                            return;
+                        auto &P = safe->proc;
+                        if (r == 1)
+                            safe->whenPieceSafe(
+                                [safe]
+                                {
+                                    if (safe == nullptr)
+                                        return;
+                                    safe->proc.newPiece();
+                                    safe->pieceLoaded();
+                                });
+                        else if (r == 2)
+                        {
+                            safe->chooser = std::make_unique<juce::FileChooser>(
+                                juce::String::fromUTF8("St\xc3\xbc"
+                                                       "ck \xc3\xb6"
+                                                       "ffnen"),
+                                RysumProcessor::getPieceFolder(),
+                                juce::String("*") + RysumProcessor::kPieceExtension);
+                            safe->chooser->launchAsync(juce::FileBrowserComponent::openMode |
+                                                           juce::FileBrowserComponent::canSelectFiles,
+                                                       [safe](const juce::FileChooser &fc)
+                                                       {
+                                                           if (safe != nullptr && fc.getResult().existsAsFile())
+                                                               safe->openPieceFile(fc.getResult());
+                                                       });
+                        }
+                        else if (r == 3)
+                            safe->savePiece();
+                        else if (r == 4)
+                            safe->savePieceAs();
+                        else if (r == 5)
+                        {
+                            auto folder = RysumProcessor::getPieceFolder();
+                            folder.createDirectory();
+                            folder.revealToUser();
+                        }
+                        else if (r >= 200 && r - 200 < own.size())
+                            safe->openPieceFile(own[r - 200]);
+                        else if (r >= 100 && r < 200)
+                            safe->whenPieceSafe(
+                                [safe, r]
+                                {
+                                    if (safe == nullptr)
+                                        return;
+                                    safe->proc.loadFactoryPiece(r - 100);
+                                    safe->pieceLoaded();
+                                });
+                        juce::ignoreUnused(P);
+                    });
 }
 
 void VerlaufView::addLaneFor(const juce::String &paramId)
@@ -2253,6 +2467,7 @@ void VerlaufView::timerCallback()
         // (recording rewrites the points: the indices of a selection no longer mean the same)
         if (timeline.drag == VerlaufTimeline::Drag::none)
             selPts.clear();
+        repaint(titleBox); // (the piece's name, changed or not)
         syncControls();
         timeline.repaint();
     }
@@ -2290,7 +2505,13 @@ void VerlaufView::paint(juce::Graphics &g)
     }
     const auto &s = set();
     const bool host = proc.isAutoHostClock();
-    juce::String right = timeText(proc.getAutoNow());
+    // the piece on the page (and whether it has changed since it was saved), then the clock
+    juce::String right = proc.getPieceName().isNotEmpty() ? proc.getPieceName()
+                                                          : juce::String::fromUTF8("Unbenanntes St\xc3\xbc"
+                                                                                   "ck");
+    if (proc.isPieceChanged() && !s.lanes.empty())
+        right << juce::String::fromUTF8(" (ge\xc3\xa4ndert)");
+    right << juce::String::fromUTF8("  \xc2\xb7  ") << timeText(proc.getAutoNow());
     right << (host ? juce::String::fromUTF8("  \xc2\xb7  folgt dem Host") : juce::String::fromUTF8("  \xc2\xb7  eigene Uhr"));
     if (proc.isAutoRecord())
         right << juce::String::fromUTF8("  \xc2\xb7  Aufnahme");
@@ -2354,6 +2575,7 @@ void VerlaufView::resized()
         barSeps.add(bar.getRight() - 7);
         bar.removeFromRight(13);
     };
+    place(pieceButton, 64, 6);
     place(onButton, 74, 0);
     sepL();
     place(clockHost, 54, 2);
@@ -2361,15 +2583,15 @@ void VerlaufView::resized()
     place(playButton, 28, 2);
     place(stopButton, 28, 2);
     place(homeButton, 28, 6);
-    place(keyStart, 100, 6);
-    tempoRow.setBounds(bar.removeFromLeft(120).withTrimmedTop(-4));
+    place(keyStart, 92, 6);
+    tempoRow.setBounds(bar.removeFromLeft(108).withTrimmedTop(-4));
     sepL();
     place(recButton, 86, 0);
     sepL();
     place(toolPts, 58, 2);
     place(toolPen, 46, 2);
     place(toolStair, 58, 6);
-    place(gridBox, 96, 0);
+    place(gridBox, 88, 0);
     // right end: view (zoom), then edit (undo, add)
     addButton.setBounds(bar.removeFromRight(66));
     bar.removeFromRight(6);

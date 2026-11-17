@@ -217,6 +217,27 @@ private:
     double shownNow = -1.0;
     bool updating = false;
 
+    // pieces: new, open, save, the ones that come with Rysum, one's own
+    juce::TextButton pieceButton{juce::String::fromUTF8("St\xc3\xbc"
+                                                        "ck \xe2\x96\xbe")};
+    std::unique_ptr<juce::FileChooser> chooser;
+    void showPieceMenu();
+    /** runs 'then' once unsaved changes of the piece are saved or let go (asks first) */
+    void whenPieceSafe(std::function<void()> then);
+    void savePiece(std::function<void()> then = {});
+    void savePieceAs(std::function<void()> then = {});
+    void openPieceFile(const juce::File &f);
+    void pieceLoaded(); // another piece is on the page: undo, selection, view start anew
+    void pieceError(const juce::String &message);
+
+public:
+    /** the page's test hook: the piece menu's actions without the menu */
+    void testPieceLoaded()
+    {
+        pieceLoaded();
+    }
+
+private:
     juce::Rectangle<int> titleBox, laneBox, segBox;
     juce::Array<int> barSeps; // x of the thin lines between the groups of the bar
     juce::TextButton onButton{"Verlauf an"}, clockHost{"Host"}, clockOwn{"Eigene Uhr"},

@@ -165,6 +165,30 @@ public:
     {
         autoSeekReq.store(beats);
     }
+    // ---- pieces ("Stücke"): the Verlauf of a piece as a file of its own (message thread). A piece
+    // holds the lanes, the clock and its tempo, and the drawn paths its timetables ride on
+    static juce::File getPieceFolder(); // Documents/Rysum/Stuecke
+    static juce::Array<juce::File> getPieceFiles();
+    static constexpr const char *kPieceExtension = ".rysumstueck";
+    juce::ValueTree pieceTree() const;
+    bool savePiece(const juce::File &f, juce::String &error);
+    bool loadPiece(const juce::File &f, juce::String &error);
+    void newPiece();
+    static juce::StringArray factoryPieceNames();
+    void loadFactoryPiece(int index);
+    juce::String getPieceName() const
+    {
+        return pieceName;
+    }
+    juce::File getPieceFile() const
+    {
+        return pieceFile;
+    }
+    /** changed since it was loaded or saved */
+    bool isPieceChanged() const
+    {
+        return autoVersion.load() != pieceSavedVersion;
+    }
     /** record: armed lanes write while their control is moved and the clock moves */
     void setAutoRecord(bool on)
     {
@@ -1062,6 +1086,10 @@ private:
     std::unique_ptr<std::atomic<float>[]> autoNorm;
     std::unique_ptr<std::atomic<uint8_t>[]> autoTouched;
     std::vector<char> autoLaneMade; // message thread: this touch has been looked at (record: new lane)
+    juce::String pieceName;         // the piece on the Verlauf page (empty: not named yet)
+    juce::File pieceFile;           // where it was loaded from / saved to (none: not saved yet)
+    int pieceSavedVersion = 0;      // autoVersion when it was loaded or saved
+    void applyPieceTree(const juce::ValueTree &t, const juce::String &name, const juce::File &file);
     std::vector<char> autoFlag;           // audio thread: automated in this slice
     std::vector<int> autoHits, prevAutoHits; // audio thread
     std::vector<int> hostToList;          // processor parameter index -> prmList index

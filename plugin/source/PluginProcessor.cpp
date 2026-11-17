@@ -3738,6 +3738,9 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
         }
         extra.appendChild(wk, nullptr);
         extra.appendChild(rysum::autoToTree(autoSet), nullptr);
+        extra.setProperty("pieceName", pieceName, nullptr);
+        extra.setProperty("pieceFile", pieceFile.getFullPathName(), nullptr);
+        extra.setProperty("pieceChanged", isPieceChanged(), nullptr);
     }
     else if (rysum::builtInRoomIndex(walkModelFile.getFileName()) >= 0 && getWalkMesh() != nullptr)
     {
@@ -4179,6 +4182,9 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
             // Verlauf: the project's piece (patches leave it as it is)
             autoSet = rysum::autoFromTree(extra.getChildWithName("VERLAUF"));
             ++autoVersion;
+            pieceName = extra["pieceName"].toString();
+            pieceFile = juce::File(extra["pieceFile"].toString());
+            pieceSavedVersion = (bool)extra.getProperty("pieceChanged", false) ? -1 : autoVersion.load();
             autoPublish();
             {
                 const juce::File lr(extra["lucRecording"].toString());
