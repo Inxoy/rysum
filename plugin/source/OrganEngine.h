@@ -493,9 +493,21 @@ public:
         Arrange, // the pipes marked in goMask fly to goX/goY/goZ and stay there (formations, layouts, undo)
         Whirl,   // a whirlwind at the place v for a few seconds: the pipes near it are spun around it (amount: strength)
         BowOn,   // the pipe (stop, key) sounds like a held key, for as long as the hand holds it
-        BowOff   // ... and is let go
+        BowOff,  // ... and is let go
+        ShockAt  // a shockwave from the place v (a listener's hands, Konzert)
     };
     void playerAct(Act a, int stop = -1, int key = -1, Vec3f v = {}, float amount = 1.0f) noexcept;
+    /** Konzert, the listener: the hands' acts go to the player instead (message thread; set while
+        listening) */
+    std::function<void(Act, int, int, Vec3f, float)> actRedirect;
+    /** Konzert, the player: pipes carried by listeners' hands (stop -1 = none) */
+    static constexpr int kGuestHands = 8;
+    struct GuestHand
+    {
+        std::atomic<int> stop{-1}, key{-1};
+        std::atomic<float> x{0.0f}, y{0.0f}, z{0.0f};
+    };
+    std::array<GuestHand, kGuestHands> guestHands;
     std::atomic<bool> actFreeze{false};      // held: everything that moves stands still
     std::atomic<int> grabStop{-1}, grabKey{-1}; // the pipe carried by the player (-1: none)
     std::atomic<float> grabX{0.0f}, grabY{0.0f}, grabZ{0.0f}; // where the hand holds it (m, in its room)
@@ -529,6 +541,33 @@ public:
     }
     std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> bodyX, bodyY, bodyZ;
     std::array<std::atomic<bool>, kNumStops> bodyOn{};
+
+    // ---- Konzert. The listener: the pipes that are bodies go where the player's are (no physics
+    // of their own, no knocks of their own: those come from the player too). Audio thread, set
+    // before process(): followOn[s] = this stop has places from the player, followPos the place
+    // of every pipe (m, in its room).
+    bool followPlayer = false;
+    std::array<bool, kNumStops> followOn{};
+    std::array<std::array<Vec3f, kNumKeys>, kNumStops> followPos{};
+    std::array<std::array<float, kNumKeys>, kNumStops> followLen{}; // Wachsen & Brechen: the lengths
+    bool followLenHave = false;                                     // (once they came)
+    /** the listener: a knock / a clap, a pipe sounded by the hand, as the player had it (audio
+        thread, before process()) */
+    struct RemoteSound
+    {
+        int kind = 0; // 0 knock, 1 clap, 2 shockwave burst, 3 bow on, 4 bow off
+        float x = 0, y = 0, z = 0, speed = 0, absorb = 0, high = 0, level = -1.0f, amount = 1.0f;
+        int stop = 0, key = 0, room = 0;
+        bool floor = false, struck = false;
+    };
+    void remoteSound(const RemoteSound &) noexcept;
+    /** the player: the sounds of this block that are not notes (knocks, claps, bows), for the
+        listeners; tapSounds on = collected, read and cleared after process() (audio thread) */
+    bool tapSounds = false;
+    std::array<RemoteSound, 64> tapped{};
+    int numTapped = 0;
+    /** the listener: every pipe sounded by a hand stops (the link went) */
+    void releaseBowed() noexcept;
     std::array<std::atomic<float>, kNumRooms> homeX{}, homeY{},
         homeZ{}; // the usual listening place per room
     /** the last impacts (a ring of 16; impactCount counts them all) */
@@ -600,6 +639,9 @@ public:
         silent pipes the LFOs, key position, mod wheel and global envelopes. */
     Pos displayPosition(int stop, int key, const EngineParams &p) const noexcept;
 
+    /** Konzert, audio thread: pull the motion and LFO phases towards a player's (set outright when
+        more than a quarter cycle off) */
+    void syncPhases(const double *motion, const double *lfo) noexcept;
     /** integrated motion phase per stop (cycles); speed changes only change its slope */
     std::array<std::atomic<double>, kNumStops> motionPhase{};
 
@@ -1191,6 +1233,9 @@ private:
     void renderBursts(float *const *outs, int n) noexcept;
     static constexpr int kMaxImpactEvents = 24, kNumImpactVoices = 32, kImpactModes = 5;
     std::array<ImpactEvent, kMaxImpactEvents> impactQueue{};
+    std::array<uint64_t, kNumStops> bowedMask{}; // Konzert, the listener: pipes sounded by the player's hand
+    std::array<ActCmd, 16> remoteActs{};          // Konzert, the listener: claps / bursts (audio thread)
+    int numRemoteActs = 0;
     int numImpacts = 0;
     struct ImpactVoice
     {

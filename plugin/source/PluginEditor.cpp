@@ -887,12 +887,21 @@ void RysumContent::showPatchMenu()
     m.addSeparator();
     m.addItem(10002, u8("Alles zur\xc3\xbc"
                         "cksetzen \xe2\x80\xa6"));
+    m.addSeparator();
+    m.addItem(10003, proc.concert.role() == rysum::ConcertLink::Role::off
+                         ? u8("Konzert \xe2\x80\xa6")
+                         : u8("Konzert \xe2\x80\x93 ") + proc.concert.status());
     juce::Component::SafePointer<RysumContent> safe(this);
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&patchName),
                     [safe, files](int r)
                     {
                         if (safe == nullptr || r == 0)
                             return;
+                        if (r == 10003)
+                        {
+                            safe->showConcertPanel();
+                            return;
+                        }
                         if (r == 10000)
                         {
                             safe->askSavePatch();
@@ -913,6 +922,154 @@ void RysumContent::showPatchMenu()
                         if (r >= 1 && r <= files.size())
                             safe->proc.loadPatch(files[r - 1]);
                     });
+}
+
+namespace rysum::ui
+{
+/** "Konzert": play for listeners on other computers, or listen to a player. Each listener renders
+    the organ themselves (their own samples), from where they walk in the 3D Saal. */
+class ConcertPanel : public juce::Component, private juce::Timer
+{
+public:
+    explicit ConcertPanel(RysumProcessor &p) : proc(p)
+    {
+        auto &link = proc.concert;
+        playButton.setTooltip(u8("Spielen: andere verbinden sich mit diesem Computer und h\xc3\xb6ren zu"));
+        playButton.onClick = [this]
+        {
+            if (!proc.concert.startPerformer())
+                refresh();
+            refresh();
+        };
+        listenButton.setTooltip(u8("Bei einem Spieler zuh\xc3\xb6ren (seine Adresse aus seinem Konzert-Fenster)"));
+        listenButton.onClick = [this]
+        {
+            lastHost() = hostField.getText().trim();
+            if (lastHost().isNotEmpty())
+                proc.concert.startListener(lastHost());
+            refresh();
+        };
+        stopButton.onClick = [this]
+        {
+            proc.concert.stop();
+            refresh();
+        };
+        hostField.setText(lastHost(), false);
+        hostField.setTextToShowWhenEmpty(u8("Adresse des Spielers, z. B. 192.168.1.20"), col::faint);
+        hostField.setFont(Assets::get().monoFont(12.0f));
+        hostField.onReturnKey = [this] { listenButton.triggerClick(); };
+        delayRow.format = [](double v) { return juce::String(juce::roundToInt(v)) + " ms"; };
+        delayRow.slider.setValue(link.getDelayMs(), juce::dontSendNotification);
+        delayRow.onChange = [this](double v) { proc.concert.setDelayMs(v); };
+        delayRow.slider.setTooltip(u8("Wie weit der Zuh\xc3\xb6rer hinter dem Spieler liegt: Platz f\xc3\xbcr ein "
+                                      "ungleichm\xc3\xa4\xc3\x9figes Netz. Mehr = sicherer, weniger = n\xc3\xa4her dran."));
+        for (juce::Component *c : {(juce::Component *)&playButton, (juce::Component *)&listenButton,
+                                   (juce::Component *)&stopButton, (juce::Component *)&hostField,
+                                   (juce::Component *)&delayRow})
+            addAndMakeVisible(c);
+        handsBox.addItem(u8("H\xc3\xa4nde der Zuh\xc3\xb6rer: keine"), 1);
+        handsBox.addItem(u8("H\xc3\xa4nde: anklopfen, Druckwelle, klatschen"), 2);
+        handsBox.addItem(u8("H\xc3\xa4nde: alles \xe2\x80\x93 auch tragen, werfen, zur\xc3\xbc" "ckrufen"), 3);
+        handsBox.setSelectedId(link.getGuestHands() + 1, juce::dontSendNotification);
+        handsBox.onChange = [this] { proc.concert.setGuestHands(handsBox.getSelectedId() - 1); };
+        handsBox.setTooltip(u8("Was die Zuh\xc3\xb6rer im 3D-Saal mit den Pfeifen tun d\xc3\xbc" "rfen. Was sie tun, geschieht bei dir "
+                               "und alle sehen und h\xc3\xb6ren es."));
+        addAndMakeVisible(handsBox);
+        setSize(460, 304);
+        refresh();
+        startTimerHz(4);
+    }
+
+    void paint(juce::Graphics &g) override
+    {
+        auto &A = Assets::get();
+        g.fillAll(col::bg);
+        auto r = getLocalBounds().reduced(16, 10);
+        const auto role = proc.concert.role();
+        drawSectionTitle(g, r.removeFromTop(34), "Konzert", proc.concert.status());
+        g.setFont(A.monoFont(10.5f));
+        g.setColour(col::dim);
+        g.drawFittedText(u8("Einer spielt, die anderen h\xc3\xb6ren zu \xe2\x80\x93 jeder auf seinem Computer, mit "
+                            "dem Plugin und den Samples, und h\xc3\xb6rt die Orgel von dort, wo er im 3D-Saal "
+                            "steht. Es reist kein Klang, nur das Spiel."),
+                         r.removeFromTop(44), juce::Justification::topLeft, 3);
+        if (role == rysum::ConcertLink::Role::performer)
+        {
+            auto addr = rysum::ConcertLink::localAddresses().joinIntoString("  oder  ");
+            g.setFont(A.monoFont(12.0f));
+            g.setColour(col::ink);
+            g.drawFittedText(u8("Zuh\xc3\xb6rer verbinden sich mit:  ") + addr + "   (Port " +
+                                 juce::String(rysum::ConcertLink::kDefaultPort) + ")",
+                             addrBox, juce::Justification::centredLeft, 2);
+        }
+        g.setFont(A.monoFont(9.5f));
+        g.setColour(col::faint);
+        g.drawFittedText(u8("Im Netz zu Hause. Nicht mitgespielt werden: Tonnetz-Wanderer, "
+                            "Selbstspiel, Publikum und eigene Raummodelle. Zuh\xc3\xb6rer brauchen nur die App \xe2\x80\x9eRysum Konzert\xe2\x80\x9c."),
+                         getLocalBounds().reduced(16, 8).removeFromBottom(26), juce::Justification::bottomLeft, 2);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced(16, 10).withTrimmedTop(34 + 46);
+        auto row1 = r.removeFromTop(26);
+        playButton.setBounds(row1.removeFromLeft(120));
+        row1.removeFromLeft(10);
+        addrBox = row1;
+        r.removeFromTop(10);
+        auto row2 = r.removeFromTop(26);
+        listenButton.setBounds(row2.removeFromLeft(120));
+        row2.removeFromLeft(10);
+        hostField.setBounds(row2);
+        r.removeFromTop(8);
+        auto row3 = r.removeFromTop(32);
+        stopButton.setBounds(row3.removeFromRight(100).withTrimmedTop(8));
+        row3.removeFromRight(16);
+        delayRow.setBounds(row3);
+        r.removeFromTop(8);
+        handsBox.setBounds(r.removeFromTop(26).withWidth(330));
+    }
+
+private:
+    static juce::String &lastHost()
+    {
+        static juce::String h;
+        return h;
+    }
+    void refresh()
+    {
+        const auto role = proc.concert.role();
+        playButton.setToggleState(role == rysum::ConcertLink::Role::performer, juce::dontSendNotification);
+        listenButton.setToggleState(role == rysum::ConcertLink::Role::listener, juce::dontSendNotification);
+        playButton.setEnabled(role == rysum::ConcertLink::Role::off);
+        listenButton.setEnabled(role == rysum::ConcertLink::Role::off);
+        hostField.setEnabled(role == rysum::ConcertLink::Role::off);
+        stopButton.setEnabled(role != rysum::ConcertLink::Role::off);
+        delayRow.setEnabled(role != rysum::ConcertLink::Role::performer);
+        repaint();
+    }
+    void timerCallback() override
+    {
+        refresh();
+    }
+    RysumProcessor &proc;
+    juce::TextButton playButton{"Spielen"}, listenButton{u8("Zuh\xc3\xb6ren bei")}, stopButton{"Beenden"};
+    juce::TextEditor hostField;
+    juce::ComboBox handsBox;
+    FreeRow delayRow{u8("Verz\xc3\xb6gerung (Zuh\xc3\xb6rer)"), 60.0, 1000.0, 250.0};
+    juce::Rectangle<int> addrBox;
+};
+} // namespace rysum::ui
+
+std::unique_ptr<juce::Component> rysum::ui::makeConcertPanel(RysumProcessor &p)
+{
+    return std::make_unique<ConcertPanel>(p);
+}
+
+void RysumContent::showConcertPanel()
+{
+    auto panel = rysum::ui::makeConcertPanel(proc);
+    juce::CallOutBox::launchAsynchronously(std::move(panel), patchName.getScreenBounds(), nullptr);
 }
 
 void RysumContent::askResetEverything()

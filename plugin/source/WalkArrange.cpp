@@ -276,7 +276,7 @@ int WalkView::sweepTo (juce::Point<float> from, juce::Point<float> to, float str
 
 void WalkView::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (! (e.mods.isCtrlDown() || e.mods.isCommandDown()) || e.mods.isPopupMenu()) return;
+    if (! (e.mods.isCtrlDown() || e.mods.isCommandDown()) || e.mods.isPopupMenu() || isSpectator()) return;
     int s = -1, k = -1;
     if (pickPipe (immersive ? getLocalBounds().getCentre().toFloat() : e.position, 40.0f, s, k)) selectRegister (s);
 }

@@ -125,6 +125,7 @@ bool WalkView::togglePin (int stop, int key)
 bool WalkView::bowStart (int stop, int key)
 {
     if (stop < 0 || stop >= kNumStops || key < 0 || key >= kNumKeys) return false;
+    if (! handsMay (2)) return false;      // (listening: only with the player's leave)
     bowStop();
     proc.engine.playerAct (OrganEngine::Act::BowOn, stop, key);
     bowStop_ = stop; bowKey_ = key;

@@ -165,6 +165,35 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
             }
         }
         bodyMode[(size_t) s] = mode;
+        if (followPlayer)
+        {
+            // Konzert, the listener: the pipes are where the player's are (eased over a few ms: the
+            // places come 50 times a second); no physics, no knocks of their own
+            if (followOn[(size_t) s])
+            {
+                const float kf = 1.0f - std::exp (-(float) blockSeconds / 0.012f);
+                for (int k = 0; k < kNumKeys; ++k)
+                {
+                    auto& b = bs[(size_t) k];
+                    // (the pipe in this listener's own hand: where the hand is, at once - the player's
+                    //  answer comes a delay later)
+                    const bool mine = grabStop.load() == s && grabKey.load() == k;
+                    const Vec3f q = mine ? Vec3f { grabX.load(), grabY.load(), grabZ.load() } : followPos[(size_t) s][(size_t) k];
+                    const float dx = q.x - b.x, dy = q.y - b.y, dz = q.z - b.z;
+                    // (far off - the first places, a pipe thrown across the Saal: there at once)
+                    const bool jump = dx * dx + dy * dy + dz * dz > 25.0f;
+                    b.x = jump ? q.x : b.x + kf * dx; b.y = jump ? q.y : b.y + kf * dy; b.z = jump ? q.z : b.z + kf * dz;
+                    b.vx = b.vy = b.vz = 0.0f;
+                }
+            }
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                const auto& b = bs[(size_t) k];
+                bodyX[(size_t) s][(size_t) k] = b.x; bodyY[(size_t) s][(size_t) k] = b.y; bodyZ[(size_t) s][(size_t) k] = b.z;
+            }
+            bodyOn[(size_t) s] = true;
+            continue;
+        }
         const MeshAcoustics* mesh = ri == 0 ? bm : nullptr;
         if (mesh != nullptr)
             for (auto& b : bs)
@@ -190,6 +219,20 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         const float whirlFade = juce::jlimit (0.0f, 1.0f, whirlLeft / 1.5f) * whirlAmt;
         const int heldKey = grabStop.load() == s ? grabKey.load() : -1;
         const Vec3f hand { grabX.load(), grabY.load(), grabZ.load() };
+        // (and the listeners' hands, Konzert: a pipe in one of them follows that hand)
+        std::array<int8_t, kNumKeys> heldBy;
+        heldBy.fill (-1);
+        std::array<Vec3f, kGuestHands + 1> hands;
+        hands[0] = hand;
+        if (heldKey >= 0 && heldKey < kNumKeys) heldBy[(size_t) heldKey] = 0;
+        for (int g = 0; g < kGuestHands; ++g)
+        {
+            const auto& gh = guestHands[(size_t) g];
+            const int gk = gh.key.load();
+            if (gh.stop.load() != s || gk < 0 || gk >= kNumKeys || heldBy[(size_t) gk] >= 0) continue;
+            heldBy[(size_t) gk] = (int8_t) (g + 1);
+            hands[(size_t) g + 1] = { gh.x.load(), gh.y.load(), gh.z.load() };
+        }
         const bool goHome = homing > 0.0f;
         const int magnet = magnetMode.load();
         const uint64_t magnetBits = magnetMask[(size_t) s].load();
@@ -247,7 +290,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 auto& b = bs[(size_t) k];
                 const float zMin = zLo[(size_t) k], zMax = zHi[(size_t) k];
                 if (b.pushed > 0.0f) b.pushed -= h;
-                const bool held = k == heldKey;
+                const bool held = heldBy[(size_t) k] >= 0;
                 if (frozen && ! held) continue;
                 if (! held && ((pinned >> k) & 1u) != 0u)
                 {
@@ -260,7 +303,8 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                 // ---- in the player's hand: it follows the hand (and keeps the hand's speed when let go)
                 if (held)
                 {
-                    float tx = (hand.x - b.x) * 14.0f, ty = (hand.y - b.y) * 14.0f, tz = (hand.z - b.z) * 14.0f;
+                    const Vec3f& hd = hands[(size_t) heldBy[(size_t) k]];
+                    float tx = (hd.x - b.x) * 14.0f, ty = (hd.y - b.y) * 14.0f, tz = (hd.z - b.z) * 14.0f;
                     const float tl = len3 (tx, ty, tz);
                     if (tl > 25.0f) { tx *= 25.0f / tl; ty *= 25.0f / tl; tz *= 25.0f / tl; }
                     const float k2 = juce::jmin (1.0f, 30.0f * h);
@@ -651,6 +695,7 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
 // ---------------------------------------------------------------------------
 void OrganEngine::playerAct (Act a, int stop, int key, Vec3f v, float amount) noexcept
 {
+    if (actRedirect) { actRedirect (a, stop, key, v, amount); return; }      // (Konzert: a listener's hands act at the player)
     const auto scope = actFifo.write (1);
     ActCmd c; c.act = a; c.stop = stop; c.key = key; c.v = v; c.amount = amount;
     if (scope.blockSize1 > 0) actQueue[(size_t) scope.startIndex1] = c;
@@ -660,8 +705,11 @@ void OrganEngine::playerAct (Act a, int stop, int key, Vec3f v, float amount) no
 void OrganEngine::handleActs (const EngineParams& p) noexcept
 {
     const int ready = actFifo.getNumReady();
-    if (ready <= 0) return;
-    const auto scope = actFifo.read (ready);
+    const int remote = numRemoteActs;   // (Konzert, the listener: the player's claps and bursts)
+    numRemoteActs = 0;
+    if (ready <= 0 && remote <= 0) return;
+    const auto scope = actFifo.read (juce::jmax (0, ready));
+    const int fromFifo = scope.blockSize1 + scope.blockSize2;
     auto startBurst = [this] (int type, float gain, float seconds)
     {
         Burst* use = &bursts[0];
@@ -671,15 +719,26 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
     };
     auto valid = [] (int s, int k) { return s >= 0 && s < kNumStops && k >= 0 && k < kNumKeys; };
     auto isBody = [this] (int s) { return bodyOn[(size_t) s].load() && isRoomMotion (bodyMode[(size_t) s]); };
-    for (int i = 0; i < scope.blockSize1 + scope.blockSize2; ++i)
+    for (int i = 0; i < fromFifo + remote; ++i)
     {
-        const ActCmd c = actQueue[(size_t) (i < scope.blockSize1 ? scope.startIndex1 + i : scope.startIndex2 + i - scope.blockSize1)];
+        const ActCmd c = i >= fromFifo ? remoteActs[(size_t) (i - fromFifo)]
+                                       : actQueue[(size_t) (i < scope.blockSize1 ? scope.startIndex1 + i : scope.startIndex2 + i - scope.blockSize1)];
+        if (tapSounds && i < fromFifo && numTapped < (int) tapped.size()
+            && (c.act == Act::Clap || c.act == Act::Shock || c.act == Act::BowOn || c.act == Act::BowOff))
+        {
+            // Konzert, the player: what the listeners hear of it (where the pipes go comes on its own)
+            RemoteSound r;
+            r.kind = c.act == Act::Clap ? 1 : (c.act == Act::Shock ? 2 : (c.act == Act::BowOn ? 3 : 4));
+            r.stop = c.stop; r.key = c.key; r.amount = c.amount;
+            tapped[(size_t) numTapped++] = r;
+        }
         switch (c.act)
         {
             case Act::Clap:
                 startBurst (0, 0.16f * juce::jlimit (0.1f, 2.0f, c.amount), 0.3f);
                 break;
             case Act::Shock:
+            case Act::ShockAt:
             {
                 // away from the player, strongest close by, fading over sixteen metres; a little upwards
                 const float amt = juce::jlimit (0.1f, 3.0f, c.amount);
@@ -687,7 +746,7 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                 {
                     if (! isBody (s)) continue;
                     const int ri = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) s]);
-                    const Vec3f P = erListener[(size_t) ri];
+                    const Vec3f P = c.act == Act::ShockAt ? c.v : erListener[(size_t) ri];
                     for (auto& b : bodies[(size_t) s])
                     {
                         float dx = b.x - P.x, dy = b.y - P.y, dz = b.z - P.z;
@@ -780,6 +839,49 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
     }
 }
 
+void OrganEngine::remoteSound (const RemoteSound& r) noexcept
+{
+    const bool valid = r.stop >= 0 && r.stop < kNumStops && r.key >= 0 && r.key < kNumKeys;
+    if (r.kind == 0)
+    {
+        if (! valid || ! std::isfinite (r.x + r.y + r.z + r.speed + r.absorb + r.high + r.level)) return;
+        ImpactEvent e;
+        e.x = r.x; e.y = r.y; e.z = r.z; e.speed = juce::jlimit (0.0f, 80.0f, r.speed);
+        e.absorb = juce::jlimit (0.0f, 1.0f, r.absorb); e.high = juce::jlimit (0.0f, 1.0f, r.high);
+        e.level = juce::jmin (4.0f, r.level);
+        e.stop = r.stop; e.key = r.key; e.room = juce::jlimit (0, kNumRooms - 1, r.room);
+        e.floor = r.floor; e.struck = r.struck;
+        queueImpact (e);
+        return;
+    }
+    if (r.kind == 3 || r.kind == 4)
+    {
+        if (! valid) return;
+        releaseStopKey (r.stop, r.key);
+        if (r.kind == 3) { startVoice (r.stop, r.key); bowedMask[(size_t) r.stop] |= (uint64_t) 1 << r.key; }
+        else bowedMask[(size_t) r.stop] &= ~((uint64_t) 1 << r.key);
+        return;
+    }
+    // a clap, the burst of a shockwave: as the player's hands make them (the push itself comes as places)
+    if ((r.kind == 1 || r.kind == 2) && numRemoteActs < (int) remoteActs.size() && std::isfinite (r.amount))
+    {
+        ActCmd c;
+        c.act = r.kind == 1 ? Act::Clap : Act::Shock;
+        c.amount = juce::jlimit (0.1f, 3.0f, r.amount);
+        remoteActs[(size_t) numRemoteActs++] = c;
+    }
+}
+
+void OrganEngine::releaseBowed() noexcept
+{
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        for (int k = 0; k < kNumKeys; ++k)
+            if (((bowedMask[(size_t) s] >> k) & 1u) != 0u) releaseStopKey (s, k);
+        bowedMask[(size_t) s] = 0;
+    }
+}
+
 void OrganEngine::renderBursts (float* const* outs, int n) noexcept
 {
     const float fsr = (float) sr;
@@ -860,6 +962,20 @@ void OrganEngine::startSelfVoices (const EngineParams& p, double blockSeconds) n
 
 void OrganEngine::stepGrowth (const EngineParams& p, double blockSeconds) noexcept
 {
+    if (followPlayer)
+    {
+        // Konzert, the listener: the lengths are the player's
+        pipeLenReset = false;
+        if (followLenHave)
+            for (int st = 0; st < kNumStops; ++st)
+                for (int k = 0; k < kNumKeys; ++k)
+                {
+                    const float l = juce::jlimit (0.25f, 4.0f, followLen[(size_t) st][(size_t) k]);
+                    pipeLen[(size_t) st][(size_t) k] = l;
+                    lenOff = lenOff || l != 1.0f;
+                }
+        return;
+    }
     if (pipeLenReset.exchange (false))
     {
         for (auto& st : pipeLen) for (auto& l : st) l = 1.0f;
@@ -1004,6 +1120,16 @@ void OrganEngine::startImpact (const ImpactEvent& e, const EngineParams& p) noex
 void OrganEngine::renderImpacts (float* const* outs, int n, const EngineParams& p) noexcept
 {
     handleActs (p);
+    if (tapSounds)
+        for (int i = 0; i < numImpacts && numTapped < (int) tapped.size(); ++i)
+        {
+            const auto& e = impactQueue[(size_t) i];
+            RemoteSound r;
+            r.kind = 0;
+            r.x = e.x; r.y = e.y; r.z = e.z; r.speed = e.speed; r.absorb = e.absorb; r.high = e.high; r.level = e.level;
+            r.stop = e.stop; r.key = e.key; r.room = e.room; r.floor = e.floor; r.struck = e.struck;
+            tapped[(size_t) numTapped++] = r;
+        }
     for (int i = 0; i < numImpacts; ++i) startImpact (impactQueue[(size_t) i], p);
     numImpacts = 0;
     if (n <= 0) return;

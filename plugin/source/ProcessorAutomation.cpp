@@ -486,3 +486,14 @@ void RysumProcessor::loadFactoryPiece(int index)
     // (a piece that comes with Rysum has no file yet: "Speichern" asks where to keep it)
     applyPieceTree(t, factoryPieceNames()[index], {});
 }
+
+// Konzert, the listener (audio thread): the player's clocks. Motion and LFO phases are pulled
+// towards the player's (set outright when far off); the Verlauf runs on the player's beats.
+void RysumProcessor::concertClocks(const double *motion, const double *lfo, double beats,
+                                   bool running) noexcept
+{
+    engine.syncPhases(motion, lfo);
+    const double err = beats - autoOwnBeats;
+    autoOwnBeats = std::abs(err) > 0.25 ? beats : autoOwnBeats + 0.3 * err;
+    autoRun.store(running);
+}

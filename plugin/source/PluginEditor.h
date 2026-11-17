@@ -60,6 +60,12 @@ public:
 /** fixed 1280 x 720 design, scaled as a whole when the window is resized */
 namespace rysum::ui
 {
+/** the "Konzert" panel (play for listeners elsewhere, or listen to a player) */
+std::unique_ptr<juce::Component> makeConcertPanel(RysumProcessor &);
+}
+
+namespace rysum::ui
+{
 /** where a button sits in the interface, as text: what a MIDI button mapped to it is saved with.
     Each step is the component's ID, else its name (the n-th of that name), else its place among
     the unnamed ones. */
@@ -201,6 +207,8 @@ public:
     void tick();
     void showPatchMenu();
     void askResetEverything();
+    /** "Konzert": play for listeners elsewhere, or listen to a player */
+    void showConcertPanel();
     void stepPatch(int delta);
     void askSavePatch();
     /** set by the editor: switches the full-screen view on / off */

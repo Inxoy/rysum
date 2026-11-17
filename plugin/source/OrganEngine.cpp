@@ -5337,3 +5337,22 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
     timeSeconds = timeSeconds.load() + blockSeconds;
 }
 } // namespace rysum
+
+namespace rysum
+{
+void OrganEngine::syncPhases(const double *motion, const double *lfo) noexcept
+{
+    auto pull = [](double cur, double target)
+    {
+        const double err = target - cur;
+        return std::abs(err) > 0.25 ? target : cur + 0.3 * err;
+    };
+    for (int s = 0; s < kNumStops; ++s)
+        motionPhase[(size_t)s] = pull(motionPhase[(size_t)s].load(), motion[s]);
+    for (int i = 0; i < kNumLfos; ++i)
+    {
+        lfoPhase[(size_t)i] = pull(lfoPhase[(size_t)i], lfo[i]);
+        lfoPhaseOut[(size_t)i] = lfoPhase[(size_t)i];
+    }
+}
+} // namespace rysum

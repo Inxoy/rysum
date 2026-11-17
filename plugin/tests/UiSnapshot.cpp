@@ -1182,6 +1182,20 @@ public:
             quit();
             return;
         }
+        if (std::getenv("RYSUM_ONLY_CONCERT") != nullptr)
+        {
+            stopTimer();
+            testConcert();
+            quit();
+            return;
+        }
+        if (std::getenv("RYSUM_CONCERT_SERVE") != nullptr)
+        {
+            stopTimer();
+            serveConcert();
+            quit();
+            return;
+        }
         if (std::getenv("RYSUM_ONLY_WALK") != nullptr)
         {
             stopTimer();
@@ -4696,6 +4710,556 @@ private:
               "normal Stimmton uses scientific A4 notation");
         proc->releaseResources();
         setApplicationReturnValue(passed ? 0 : 1);
+    }
+
+    /** RYSUM_ONLY_CONCERT: a player and a listener in this process, over 127.0.0.1, in real time,
+        with up to 80 ms of uneven arrival at the listener */
+    void testConcert()
+    {
+        auto say = [](const juce::String &what, bool ok)
+        { std::cout << what << (ok ? "  ok" : "  FAIL") << std::endl; };
+        auto &A = *proc;
+        auto B = std::make_unique<RysumProcessor>();
+        B->loadSamples(samples);
+        for (int i = 0; i < 400 && B->getLibrary() == nullptr; ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        if (B->getLibrary() == nullptr)
+        {
+            say("concert: the listener's samples load", false);
+            return;
+        }
+        constexpr int bs = 256;
+        constexpr double sr = 48000.0;
+        for (auto *p : {&A, B.get()})
+        {
+            p->setRateAndBufferSizeDetails(sr, bs);
+            p->prepareToPlay(sr, bs);
+        }
+        const int chans = juce::jmax(2, A.getTotalNumInputChannels(), A.getTotalNumOutputChannels());
+        juce::AudioBuffer<float> ba(chans, bs), bb(chans, bs);
+        auto setN = [](RysumProcessor &p, const juce::String &id, float n)
+        {
+            if (auto *q = p.apvts.getParameter(id))
+                q->setValueNotifyingHost(n);
+        };
+        auto getN = [](RysumProcessor &p, const juce::String &id)
+        { return p.apvts.getParameter(id)->getValue(); };
+        // both play in real time: the player here (with the message thread), the listener on a
+        // thread of its own, as an audio device would drive it
+        double wallStart = juce::Time::getMillisecondCounterHiRes();
+        long long blocks = 0;
+        juce::SpinLock rmsLock;
+        std::vector<double> rmsB;
+        struct ListenerAudio : juce::Thread
+        {
+            ListenerAudio(RysumProcessor &p, juce::AudioBuffer<float> &b, juce::SpinLock &l, std::vector<double> &r)
+                : juce::Thread("listener audio"), proc(p), buf(b), lock(l), rms(r)
+            {
+            }
+            void run() override
+            {
+                const double start = juce::Time::getMillisecondCounterHiRes();
+                for (long long k = 0; !threadShouldExit(); ++k)
+                {
+                    juce::MidiBuffer none;
+                    buf.clear();
+                    proc.processBlock(buf, none);
+                    {
+                        const juce::SpinLock::ScopedLockType sl(lock);
+                        rms.push_back(buf.getRMSLevel(0, 0, buf.getNumSamples()));
+                    }
+                    const double due = start + (double)(k + 1) * buf.getNumSamples() / 48000.0 * 1000.0;
+                    while (juce::Time::getMillisecondCounterHiRes() < due && !threadShouldExit())
+                        juce::Thread::sleep(1);
+                }
+            }
+            RysumProcessor &proc;
+            juce::AudioBuffer<float> &buf;
+            juce::SpinLock &lock;
+            std::vector<double> &rms;
+        } listenerAudio(*B, bb, rmsLock, rmsB);
+        listenerAudio.startThread(juce::Thread::Priority::highest);
+        std::function<void(long long)> feedA; // (the player's audio input, block by block)
+        auto run = [&](double seconds, const std::function<void(long long, juce::MidiBuffer &)> &playA = {})
+        {
+            const long long n = (long long)std::ceil(seconds * sr / bs);
+            for (long long k = 0; k < n; ++k, ++blocks)
+            {
+                juce::MidiBuffer ma;
+                if (playA)
+                    playA(k, ma);
+                ba.clear();
+                if (feedA)
+                    feedA(k);
+                A.processBlock(ba, ma);
+                const double due = wallStart + (double)(blocks + 1) * bs / sr * 1000.0;
+                while (juce::Time::getMillisecondCounterHiRes() < due)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            }
+        };
+        auto rmsLast = [&](double seconds)
+        {
+            const juce::SpinLock::ScopedLockType sl(rmsLock);
+            const size_t n = juce::jmin(rmsB.size(), (size_t)(seconds * sr / bs));
+            double e = 0.0;
+            for (size_t i = rmsB.size() - n; i < rmsB.size(); ++i)
+                e = juce::jmax(e, (double)rmsB[i]);
+            return e;
+        };
+        // the listener's own setup, which must stay theirs
+        const float outBefore = getN(*B, "output");
+        setN(*B, "output", B->apvts.getParameter("output")->convertTo0to1(1.0f));
+        const float outOwn = getN(*B, "output");
+        B->walkPose[0] = 3.25f;
+        const auto folderBefore = B->getSamplesFolder();
+        const float airOwn = getN(*B, "air");
+        // the player's piece
+        for (int s = 0; s < rysum::kNumStops; ++s)
+            setN(A, RysumProcessor::stopParamId(s), s == 0 ? 1.0f : 0.0f);
+        setN(A, "air", 0.3f);
+        {
+            auto &S = A.getAuto();
+            S = rysum::AutoSet();
+            S.clock = 1;
+            rysum::AutoLane l;
+            l.paramId = "doppler";
+            l.pts = {{0.0, 0.0f}, {16.0, 1.0f}};
+            S.lanes = {l};
+            A.autoPublish();
+        }
+        setN(A, RysumProcessor::motionParamId(0),
+             A.apvts.getParameter(RysumProcessor::motionParamId(0))->convertTo0to1((float)rysum::Motion::Rotation));
+        setN(A, RysumProcessor::rateParamId(0), A.apvts.getParameter(RysumProcessor::rateParamId(0))->convertTo0to1(0.5f));
+
+        const bool started = A.concert.startPerformer(8791, true);
+        B->concert.setDelayMs(200.0);
+        B->concert.testJitterMs = 80.0;
+        B->concert.startListener("127.0.0.1", 8791);
+        run(1.5);
+        say("concert: the listener joins (player sees " + juce::String(A.concert.listenerCount()) + ")",
+            started && B->concert.joined() && A.concert.listenerCount() == 1);
+        {
+            // the panel, as the player sees it
+            juce::SharedResourcePointer<rysum::ui::Assets> assets;
+            juce::SharedResourcePointer<rysum::ui::LookAndFeel> lnf;
+            auto panel = rysum::ui::makeConcertPanel(A);
+            panel->setLookAndFeel(&*lnf);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+            auto img = panel->createComponentSnapshot(panel->getLocalBounds(), true, 2.0f);
+            auto f = outDir.getChildFile("ui_konzert.png");
+            f.deleteFile();
+            juce::FileOutputStream os(f);
+            juce::PNGImageFormat().writeImageToStream(img, os);
+            panel->setLookAndFeel(nullptr);
+            wallStart = juce::Time::getMillisecondCounterHiRes() - (double)blocks * bs / sr * 1000.0;
+        }
+        // the same sound: every parameter that is not the listener's own
+        {
+            setN(A, "air", 0.71f);
+            run(0.8);
+            int differ = 0;
+            juce::String first;
+            for (int i = 0; i < A.getNumParams(); ++i)
+            {
+                const auto id = A.getParamAt(i)->getParameterID();
+                if (id == "output" || id == "master" || id.startsWith("bin") || id.startsWith("spk") ||
+                    id.startsWith("dsf") || id == "audioThreads" || id == "midiCC" || id == "inpOn" ||
+                    id == "trAngle" || id == "trAmount" || id == "trBoost" || id == "trSideEq")
+                    continue;
+                if (std::abs(A.getParamAt(i)->getValue() - B->getParamAt(i)->getValue()) > 1e-4f)
+                {
+                    if (differ++ == 0)
+                        first = id + " " + juce::String(A.getParamAt(i)->getValue()) + " / " +
+                                juce::String(B->getParamAt(i)->getValue());
+                }
+            }
+            say("concert: the listener's controls are the player's (" + juce::String(differ) + " differ" +
+                    (differ > 0 ? ", e.g. " + first : juce::String()) + "), the Verlauf came with it (" +
+                    juce::String((int)B->getAuto().lanes.size()) + " lane)",
+                differ == 0 && B->getAuto().lanes.size() == 1);
+            say("concert: the listener keeps its own output, place and samples",
+                std::abs(getN(*B, "output") - outOwn) < 1e-6f && B->walkPose[0].load() == 3.25f &&
+                    B->getSamplesFolder() == folderBefore);
+            // saving while listening (a host, the standalone on quit) keeps the listener's own
+            juce::MemoryBlock saved;
+            B->getStateInformation(saved);
+            float airSaved = -1.0f;
+            if (auto xml = juce::AudioProcessor::getXmlFromBinary(saved.getData(), (int)saved.getSize()))
+                for (auto *e : xml->getChildWithTagNameIterator("PARAM"))
+                    if (e->getStringAttribute("id") == "air")
+                        airSaved = (float)e->getDoubleAttribute("value");
+            const float airOwnPlain = B->apvts.getParameter("air")->convertFrom0to1(airOwn);
+            say("concert: saving while listening keeps the listener's own setup (air " + juce::String(airSaved, 3) +
+                    ", own " + juce::String(airOwnPlain, 3) + ")",
+                std::abs(airSaved - airOwnPlain) < 1e-3f);
+            // what makes sound of its own on the player stays off at the listener
+            setN(A, "lvSelfPlay", 0.5f);
+            run(0.6);
+            say("concert: Selbstspiel stays off at the listener (" + juce::String(getN(*B, "lvSelfPlay"), 2) + ")",
+                getN(*B, "lvSelfPlay") == 0.0f);
+            setN(A, "lvSelfPlay", 0.0f);
+        }
+        // a built-in room on the player, the listener walks in it; a held note goes on sounding
+        // while the player changes things that travel as the whole state
+        {
+            juce::ValueTree s3("SAAL3D");
+            s3.setProperty("room", juce::String(rysum::builtInRooms()[0].file), nullptr);
+            A.applyPatchRoom(s3);
+            run(1.5);
+            const bool roomCame = B->walkModelFile.getFileName() == A.walkModelFile.getFileName() &&
+                                  A.walkModelFile.existsAsFile();
+            B->walkPose[0] = 2.5f; // (the listener walks)
+            const int seq0 = A.concert.stateSendsForTest();
+            run(0.6, [&](long long k, juce::MidiBuffer &m)
+                { if (k == 0) m.addEvent(juce::MidiMessage::noteOn(1, 62, (juce::uint8)100), 0); });
+            A.setPipePosition(0, 5, {30.0f, 10.0f, 6.0f});
+            run(1.2);
+            const auto afterState = rmsLast(0.4);
+            // dragging a pipe for a second: the state goes out at most twice a second
+            run(1.0, [&](long long k, juce::MidiBuffer &)
+                { A.setPipePosition(0, 6, {(float)k * 0.5f, 12.0f, 6.0f}); });
+            run(0.8);
+            const auto afterDrag = rmsLast(0.4);
+            const int sends = A.concert.stateSendsForTest() - seq0;
+            run(0.2, [&](long long k, juce::MidiBuffer &m)
+                { if (k == 0) m.addEvent(juce::MidiMessage::noteOff(1, 62), 0); });
+            say("concert: the player's built-in room comes (" + juce::String(roomCame ? "yes" : "no") +
+                    "), the listener stays where it walked (" + juce::String(B->walkPose[0].load(), 2) + ")",
+                roomCame && B->walkPose[0].load() == 2.5f);
+            say("concert: a held note sounds on through state changes (rms " + juce::String(afterState, 4) + ", " +
+                    juce::String(afterDrag, 4) + "), " + juce::String(sends) + " states sent",
+                afterState > 1e-3 && afterDrag > 1e-3 && sends >= 2 && sends <= 5);
+        }
+        // two notes 100 ms apart arrive 100 ms apart (despite the uneven network)
+        {
+            const long long b0 = 3;
+            run(0.6,
+                [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == b0)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
+                    if (k == b0 + 18)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 64, (juce::uint8)100), 192); // +4800 samples
+                    if (k == b0 + 60)
+                    {
+                        m.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+                        m.addEvent(juce::MidiMessage::noteOff(1, 64), 0);
+                    }
+                });
+            run(0.3);
+            const auto t = B->concert.testNoteTimes();
+            const double gap = t.size() >= 2 ? t[t.size() - 1] - t[t.size() - 2] : -1.0;
+            say("concert: two notes 100 ms apart are " + juce::String(gap * 1000.0, 2) + " ms apart at the listener",
+                std::abs(gap - 0.1) <= (double)bs / sr + 1e-6);
+            say("concert: and they sounded (rms " + juce::String(rmsLast(0.6), 4) + ")", rmsLast(0.6) > 1e-3);
+        }
+        // the clocks: the Verlauf and the motion follow the player's, the delay later
+        {
+            A.autoPlay(true);
+            run(2.5);
+            const double lagBeats = A.getAutoNow() - B->getAutoNow(); // expected 0.2 s at 60 BPM
+            const double phA = A.engine.motionPhase[0].load(), phB = B->engine.motionPhase[0].load();
+            const double lagPhase = phA - phB; // expected 0.5 Hz * 0.2 s = 0.1
+            say("concert: the Verlauf clock trails by " + juce::String(lagBeats, 3) + " beats, the motion by " +
+                    juce::String(lagPhase, 3) + " cycles (expected 0.2 / 0.1)",
+                std::abs(lagBeats - 0.2) < 0.03 && std::abs(lagPhase - 0.1) < 0.02);
+            A.autoPlay(false);
+        }
+        // a stop pulled, a note 2 ms later: it sounds at the listener
+        {
+            setN(A, RysumProcessor::stopParamId(0), 0.0f);
+            run(0.5);
+            const auto before = rmsLast(0.2);
+            setN(A, RysumProcessor::stopParamId(2), 1.0f);
+            run(0.5,
+                [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == 0)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 67, (juce::uint8)100), 96);
+                });
+            const auto after = rmsLast(0.25);
+            say("concert: a stop pulled and a note 2 ms later sound (rms " + juce::String(before, 4) + " -> " +
+                    juce::String(after, 4) + ")",
+                after > 1e-3 && after > before * 4.0);
+            run(0.2, [&](long long k, juce::MidiBuffer &m)
+                { if (k == 0) m.addEvent(juce::MidiMessage::noteOff(1, 67), 0); });
+        }
+        // the pipes as bodies in the Saal: the player throws one and knocks on another - the
+        // listener (standing somewhere else) sees them fly the same way, the delay later, and
+        // hears the knock
+        {
+            setN(A, RysumProcessor::motionParamId(2),
+                 A.apvts.getParameter(RysumProcessor::motionParamId(2))->convertTo0to1((float)rysum::Motion::Hover));
+            B->engine.viewWalkOn = true;
+            B->engine.viewX = 3.0f; // (the listener elsewhere: its own physics would push differently)
+            run(1.0);
+            rysum::Vec3f a0{}, b0{};
+            const bool bodies = A.engine.bodyAt(2, 10, a0) && B->engine.bodyAt(2, 10, b0);
+            const int knocks0 = B->concert.knocksHeardForTest();
+            A.engine.playerAct(rysum::OrganEngine::Act::Throw, 2, 10, {5.0f, 3.0f, 2.0f});
+            A.engine.playerAct(rysum::OrganEngine::Act::Strike, 2, 12, {a0.x, a0.y, a0.z}, 1.0f);
+            std::vector<rysum::Vec3f> histA, histB;
+            run(1.5, [&](long long, juce::MidiBuffer &)
+                {
+                    rysum::Vec3f a{}, b{};
+                    A.engine.bodyAt(2, 10, a);
+                    B->engine.bodyAt(2, 10, b);
+                    histA.push_back(a);
+                    histB.push_back(b);
+                });
+            // while it flies: the listener's pipe is where the player's was 200 ms before
+            const int lag = (int)std::lround(0.2 * sr / bs);
+            float worst = 0.0f;
+            for (size_t i = (size_t)lag + 4; i < histB.size(); ++i)
+            {
+                float best = 1.0e9f;
+                for (int d = -4; d <= 4; ++d)
+                {
+                    const auto &a = histA[i - (size_t)lag + (size_t)d < histA.size() ? i - (size_t)lag + (size_t)d : i];
+                    const auto &b = histB[i];
+                    best = juce::jmin(best, std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) +
+                                                      (a.z - b.z) * (a.z - b.z)));
+                }
+                worst = juce::jmax(worst, best);
+            }
+            run(2.5);
+            rysum::Vec3f a1{}, b1{};
+            A.engine.bodyAt(2, 10, a1);
+            B->engine.bodyAt(2, 10, b1);
+            const float moved = std::sqrt((a1.x - a0.x) * (a1.x - a0.x) + (a1.y - a0.y) * (a1.y - a0.y));
+            const float apart = std::sqrt((a1.x - b1.x) * (a1.x - b1.x) + (a1.y - b1.y) * (a1.y - b1.y) +
+                                          (a1.z - b1.z) * (a1.z - b1.z));
+            say("concert: a pipe thrown by the player flies the same at the listener (moved " + juce::String(moved, 2) +
+                    " m, at most " + juce::String(worst, 3) + " m off in flight, " + juce::String(apart, 3) +
+                    " m apart at rest)",
+                bodies && moved > 1.0f && worst < 0.25f && apart < 0.05f);
+            say("concert: the player's knock is heard at the listener (" +
+                    juce::String(B->concert.knocksHeardForTest() - knocks0) + ")",
+                B->concert.knocksHeardForTest() > knocks0);
+            setN(A, RysumProcessor::motionParamId(2), 0.0f);
+            B->engine.viewWalkOn = false;
+            B->engine.viewX = 0.0f;
+            run(0.5);
+        }
+        // the player's audio input: a click with a note at the same moment arrive together, a tone
+        // goes on into the listener's input
+        {
+            setN(A, "inpOn", 1.0f);
+            run(0.5);
+            const bool switchCame = getN(*B, "inpOn") > 0.5f;
+            B->concert.testResetLoud();
+            float peakB = 0.0f;
+            feedA = [&](long long k)
+            {
+                if (k == 10)
+                    for (int c = 0; c < juce::jmin(2, A.getTotalNumInputChannels()); ++c)
+                        ba.setSample(c, 100, 0.9f);
+                if (k >= 40)
+                    for (int c = 0; c < juce::jmin(2, A.getTotalNumInputChannels()); ++c)
+                        for (int i = 0; i < bs; ++i)
+                            ba.setSample(c, i, 0.3f * (float)std::sin(2.0 * juce::MathConstants<double>::pi * 440.0 * (double)(k * bs + i) / sr));
+            };
+            run(1.6,
+                [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == 10)
+                        m.addEvent(juce::MidiMessage::noteOn(1, 72, (juce::uint8)100), 100);
+                    if (k == 30)
+                        m.addEvent(juce::MidiMessage::noteOff(1, 72), 0);
+                    if (k > 200)
+                        peakB = juce::jmax(peakB, B->engine.inPeak.load());
+                });
+            feedA = {};
+            const auto notes = B->concert.testNoteTimes();
+            const double apart = notes.empty() ? 1.0 : B->concert.testLoudAt() - notes.back();
+            say("concert: the player's input comes (switch " + juce::String(switchCame ? "on" : "off") +
+                    "), a click and a note played together are " + juce::String(apart * 1000.0, 2) +
+                    " ms apart at the listener, a tone reaches its input (peak " + juce::String(peakB, 3) + ")",
+                A.getTotalNumInputChannels() > 0 && switchCame && B->concert.testLoudAt() > 0.0 &&
+                    std::abs(apart) < 0.002 && peakB > 0.2f && peakB < 0.4f);
+            setN(A, "inpOn", 0.0f);
+            run(0.5);
+        }
+        // the others in the Saal: the player sees the listener where it stands, the listener the player
+        {
+            B->concert.setName("Anna");
+            B->walkPose[0] = 2.0f;
+            B->walkPose[1] = 3.0f;
+            B->walkPose[2] = 45.0f;
+            A.walkPose[0] = -1.0f;
+            A.walkPose[1] = 4.0f;
+            A.walkPose[2] = 180.0f;
+            run(0.6);
+            const auto fa = A.concert.figures(), fb = B->concert.figures();
+            const bool seesListener = fa.size() == 1 && fa[0].name == "Anna" && std::abs(fa[0].x - 2.0f) < 1e-4f &&
+                                      std::abs(fa[0].y - 3.0f) < 1e-4f && std::abs(fa[0].yaw - 45.0f) < 1e-4f;
+            const bool seesPlayer = fb.size() == 1 && fb[0].id == 0 && std::abs(fb[0].x + 1.0f) < 1e-4f &&
+                                    std::abs(fb[0].y - 4.0f) < 1e-4f && std::abs(fb[0].yaw - 180.0f) < 1e-4f;
+            say("concert: the player sees the listener in the Saal (" + juce::String((int)fa.size()) + " figure" +
+                    (fa.empty() ? juce::String() : ", " + fa[0].name) + "), the listener sees the player (" +
+                    juce::String((int)fb.size()) + ", not itself)",
+                seesListener && seesPlayer);
+            A.walkPose[0] = A.walkPose[1] = A.walkPose[2] = 0.0f;
+        }
+        // the listeners' hands: only as far as the player allows, and they act at the player
+        {
+            using Act = rysum::OrganEngine::Act;
+            setN(A, RysumProcessor::motionParamId(2),
+                 A.apvts.getParameter(RysumProcessor::motionParamId(2))->convertTo0to1((float)rysum::Motion::Hover));
+            A.concert.setGuestHands(0);
+            run(1.0);
+            auto at = [&](RysumProcessor &p) { rysum::Vec3f v{}; p.engine.bodyAt(2, 5, v); return v; };
+            auto dist = [](rysum::Vec3f a, rysum::Vec3f b)
+            { return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z)); };
+            const auto p0 = at(A);
+            const auto knocks0 = A.engine.impactCount.load();
+            B->engine.playerAct(Act::Throw, 2, 5, {0.0f, 6.0f, 2.0f});
+            B->engine.playerAct(Act::Strike, 2, 6, p0, 1.0f);
+            run(1.0);
+            const bool refused = dist(at(A), p0) < 0.05f && A.engine.impactCount.load() == knocks0;
+            A.concert.setGuestHands(1);
+            run(0.3);
+            const int levelSeen1 = B->concert.allowedHands();
+            B->engine.playerAct(Act::Throw, 2, 5, {0.0f, 6.0f, 2.0f});
+            B->engine.playerAct(Act::Strike, 2, 6, p0, 1.0f);
+            run(1.0);
+            const bool knockOnly = dist(at(A), p0) < 0.05f && A.engine.impactCount.load() > knocks0;
+            A.concert.setGuestHands(2);
+            run(0.3);
+            const int levelSeen2 = B->concert.allowedHands();
+            // the listener takes the pipe: it follows the listener's hand at the player
+            const rysum::Vec3f hand{p0.x + 1.5f, p0.y, p0.z + 0.5f};
+            B->engine.grabX = hand.x;
+            B->engine.grabY = hand.y;
+            B->engine.grabZ = hand.z;
+            B->engine.grabKey = 5;
+            B->engine.grabStop = 2;
+            run(0.8);
+            const float carried = dist(at(A), hand), ownHand = dist(at(*B), hand);
+            // and throws it
+            B->engine.grabStop = -1;
+            B->engine.grabKey = -1;
+            B->engine.playerAct(Act::Throw, 2, 5, {0.0f, 6.0f, 2.0f});
+            run(4.5);
+            const float thrown = dist(at(A), hand), apart = dist(at(A), at(*B));
+            say("concert: a listener's hands - nothing without leave (" + juce::String(refused ? "yes" : "no") +
+                    "), knocking only with the first (" + juce::String(knockOnly ? "yes" : "no") + ", leave seen " +
+                    juce::String(levelSeen1) + "/" + juce::String(levelSeen2) + "), the carried pipe follows its hand at the player (" +
+                    juce::String(carried, 2) + " m off, " + juce::String(ownHand, 2) + " m in its own view), thrown " +
+                    juce::String(thrown, 1) + " m, both see it at the same place (" + juce::String(apart, 2) + " m)",
+                refused && knockOnly && levelSeen1 == 1 && levelSeen2 == 2 && carried < 0.3f && ownHand < 0.05f &&
+                    thrown > 1.0f && apart < 0.1f);
+            A.concert.setGuestHands(0);
+            setN(A, RysumProcessor::motionParamId(2), 0.0f);
+            run(0.5);
+        }
+        // nothing changes: the state is not sent again and again
+        {
+            run(0.5);
+            const int seq0 = A.concert.stateSendsForTest();
+            run(3.0);
+            const int sends = A.concert.stateSendsForTest() - seq0;
+            say("concert: an unchanged piece sends no state (" + juce::String(sends) + " in 3 s)", sends == 0);
+        }
+        // someone joins late while a chord is held: they hear it
+        {
+            B->concert.stop();
+            run(1.2, [&](long long k, juce::MidiBuffer &m)
+                {
+                    if (k == 0)
+                        for (int n : {60, 64, 67})
+                            m.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                });
+            const auto quiet = rmsLast(0.3);
+            B->concert.startListener("127.0.0.1", 8791);
+            run(1.5);
+            const auto heard = rmsLast(0.5);
+            say("concert: a late listener hears the held chord (rms " + juce::String(quiet, 4) + " -> " +
+                    juce::String(heard, 4) + ")",
+                B->concert.joined() && heard > 1e-3 && heard > quiet * 4.0);
+        }
+        // the player leaves: the listener falls silent and gets its own setup back
+        {
+            A.concert.stop();
+            run(3.0);
+            const auto silent = rmsLast(0.5);
+            say("concert: the player gone, the listener falls silent (rms " + juce::String(silent, 5) + ")",
+                silent < 2e-4);
+            B->concert.stop();
+            run(0.2);
+            say("concert: the listener's own setup is back (air " + juce::String(getN(*B, "air"), 3) + ")",
+                std::abs(getN(*B, "air") - airOwn) < 1e-4f && std::abs(getN(*B, "output") - outOwn) < 1e-6f);
+        }
+        setN(*B, "output", outBefore);
+        listenerAudio.stopThread(3000);
+        B->releaseResources();
+        B.reset();
+    }
+
+    /** a player for the listener app (RYSUM_CONCERT_SERVE=port): waits for a listener on this
+        computer, then plays a chord and throws a pipe for a few seconds, in real time */
+    void serveConcert()
+    {
+        auto &A = *proc;
+        const int port = juce::String(std::getenv("RYSUM_CONCERT_SERVE")).getIntValue();
+        constexpr int bs = 256;
+        constexpr double sr = 48000.0;
+        A.setRateAndBufferSizeDetails(sr, bs);
+        A.prepareToPlay(sr, bs);
+        juce::AudioBuffer<float> buf(juce::jmax(2, A.getTotalNumOutputChannels()), bs);
+        auto setN = [&](const juce::String &id, float plain)
+        {
+            if (auto *q = A.apvts.getParameter(id))
+                q->setValueNotifyingHost(q->convertTo0to1(plain));
+        };
+        for (int s = 0; s < rysum::kNumStops; ++s)
+            setN(RysumProcessor::stopParamId(s), s == 0 ? 1.0f : 0.0f);
+        setN(RysumProcessor::motionParamId(0), (float)rysum::Motion::Hover);
+        // (the player stands five metres ahead of the listening place, facing it)
+        A.walkPose[0] = 0.0f;
+        A.walkPose[1] = 5.0f;
+        A.walkPose[2] = 180.0f;
+        const bool ok = A.concert.startPerformer(port, true);
+        A.concert.setGuestHands(2); // (the listener app shows its hands)
+        std::cout << "serve: playing on port " << port << (ok ? "" : " FAILED") << std::endl;
+        double start = juce::Time::getMillisecondCounterHiRes();
+        long long k = 0;
+        int joinedAt = -1;
+        for (; k < (long long)(40.0 * sr / bs); ++k)
+        {
+            juce::MidiBuffer m;
+            if (joinedAt < 0 && A.concert.listenerCount() > 0)
+                joinedAt = (int)k;
+            if (joinedAt >= 0)
+            {
+                const long long j = k - joinedAt;
+                if (j == (long long)(1.0 * sr / bs))
+                    for (int n : {48, 55, 60, 64})
+                        m.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                if (j == (long long)(2.0 * sr / bs))
+                {
+                    A.engine.playerAct(rysum::OrganEngine::Act::Throw, 0, 12, {4.0f, 6.0f, 3.0f});
+                    rysum::Vec3f p{};
+                    A.engine.bodyAt(0, 14, p);
+                    A.engine.playerAct(rysum::OrganEngine::Act::Strike, 0, 14, {p.x, p.y, p.z}, 1.2f);
+                }
+                if (j == (long long)(7.0 * sr / bs))
+                    for (int n : {48, 55, 60, 64})
+                        m.addEvent(juce::MidiMessage::noteOff(1, n), 0);
+                if (j > (long long)(16.0 * sr / bs))
+                    break;
+            }
+            buf.clear();
+            A.processBlock(buf, m);
+            const double due = start + (double)(k + 1) * bs / sr * 1000.0;
+            while (juce::Time::getMillisecondCounterHiRes() < due)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+        }
+        rysum::Vec3f p{};
+        A.engine.bodyAt(0, 12, p);
+        std::cout << "serve: listener came " << (joinedAt >= 0 ? "yes" : "no") << ", thrown pipe at " << p.x << " "
+                  << p.y << " " << p.z << std::endl;
+        A.concert.stop();
     }
 
     void testMidiTuning()

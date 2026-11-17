@@ -503,6 +503,71 @@ share them. On first start six example patches are written there (Init, Plenum, 
 die Pfeifen, Atmende Wolke, Verfall, Gläserne Sprünge); deleted ones are not re-created.
 The project in Reaper still remembers everything on its own, patches are extra.
 
+### Konzert – playing for listeners on other computers
+
+One person plays, others listen, each on their own computer with the plugin (best the standalone)
+and the samples. **No sound travels over the network, only the playing**: every listener's computer
+renders the organ itself, from wherever they stand and walk in the 3D Saal, with their own output
+(headphones, loudspeakers, AmbiX).
+
+- Open it from the patch list (the name at the top left) → *Konzert …*.
+- **The player** clicks *Spielen*. The window shows the address listeners use (this computer in
+  the home network, port 8790). The first time, Windows asks whether the program may use the
+  network: allow it for private networks.
+- **A listener** types that address and clicks *Zuhören bei*. Within a moment they have the
+  player's whole sound: stops, every slider, layouts, paths, modulation, the Verlauf, the tuning.
+  Then they hear what the player plays, *Verzögerung* later (250 ms by default; more if the network
+  is uneven, less to be closer). Notes held down when someone joins sound for them too.
+- What is mirrored: the MIDI the player plays (after *Halten* and the controller assignments, also
+  the computer keyboard and the on-screen keys), every parameter change, every other change of the
+  sound (a new patch, a moved pipe, a drawn path, a Verlauf edit), and 20 times a second the
+  clocks that move things – the motions of the stops, the LFOs and the Verlauf clock – so pipes
+  fly in the same places at the same moments.
+- The player's hands in the 3D Saal come along too: pipes that are bodies in the Saal (*Schweben*,
+  *Flug*, *Fall*, *Schwarm*, *Strömung*) are where the player's are – thrown, carried, pushed by a
+  shockwave, called home, arranged – sent 50 times a second while they move. Their knocks, claps,
+  bowed pipes and the lengths of *Wachsen & Brechen* are heard at the listener as well, from the
+  listener's own place.
+- Everyone in the Saal is a figure the others see: the player and every listener, with their names
+  over their heads (red dots on the map). A listener sets their name in the listener app.
+- The player's audio input (*Eingang*) travels too: while it is on, the input goes out as plain
+  16-bit audio (about 1.5 Mbit/s per listener) on the player's clock, and every listener places and
+  processes it themselves, in time with the notes. Lucier works at the listener on that input.
+- **The listeners' hands**: in the Konzert window the player chooses what listeners may do in the
+  3D Saal - nothing (the default), knock, push with the shockwave and clap, or everything: also
+  carry and throw pipes, call them home, whirl and sound pipes by holding them. What a listener
+  does happens at the player (who stays in charge), so everyone sees and hears the same; a pipe in
+  a listener's own hand follows that hand at once on their screen. Otherwise, while listening the
+  3D Saal only walks and looks: the room model buttons and the Saal's settings are the player's.
+- What stays the listener's: output format, headphone and loudspeaker settings, the volume, the
+  samples folder and where they stand. A listener's own changes of the player's controls go back
+  to the player's within half a second. *Beenden* gives the listener their own setup back.
+- If the player stops or the connection breaks off, the listener's organ falls silent; the
+  listener keeps trying to reconnect and joins again (with the notes held down at that moment).
+- While someone listens, saving (the standalone on quit, a host's project) keeps their own setup,
+  not the player's piece.
+- Not mirrored yet (the Tonnetz-Wanderer and *Selbstspiel* stay off at listeners): the
+  Tonnetz-Wanderer, *Selbstspiel*, *Publikum* and loaded room models other than the six built-in
+  ones. MIDI Tuning SysEx is not forwarded (Scala files are).
+- For now this is for one home network: a player on the internet needs a relay server (planned).
+  Both sides must have the same version of the plugin.
+
+#### Rysum Konzert – the app for listeners
+
+Listeners do not need the organ itself: *Rysum Konzert* is a program of its own that is only the
+3D Saal and a line to join a player – nothing in it plays the organ (it opens no MIDI). The
+samples come with it: hand out the zip (build the target `RysumKonzertZip`; it holds the program
+and the folder `rysum-samples` next to it), unpack it anywhere and start the program.
+
+- At the top: the player's address, *Zuhören* / *Verlassen*, the delay (more = safer on an
+  uneven network), how one hears (*Binaural* for headphones by default, stereo, loudspeakers …),
+  the volume and *Audio …* (output device, sample rate, buffer).
+- Below, the Saal: W A S D to walk, drag the mouse to look, space to jump, I for the immersive
+  view, L for the light, H to leave the ears where one stands.
+- The address, delay, output and volume are remembered (in AppData, folder Rysum).
+- The player still uses the organ (standalone or plugin) and *Konzert … → Spielen*; player and
+  listener app must come from the same version.
+
 ## 4. MIDI
 
 MIDI note = sounding pitch (C2 = 36 … a″ = 81). Velocity shapes the key clicks: a light touch
