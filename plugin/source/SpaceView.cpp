@@ -261,6 +261,34 @@ void SpaceCircle::paint(juce::Graphics &g)
         }
     }
 
+    // the Vox humana
+    {
+        auto raw = [this](const char *id) { return proc.apvts.getRawParameterValue(id)->load(); };
+        const bool on = raw("voxOn") > 0.5f;
+        if (on || voxSel)
+        {
+            const Pos vp{raw("voxAz"), raw("voxEl"), raw("voxDist")};
+            const float near = juce::jlimit(0.6f, 1.7f, std::sqrt(6.0f / juce::jmax(0.5f, vp.dist)));
+            const float lvl = juce::jlimit(0.0f, 1.0f, proc.engine.voxPeak.load() * 6.0f);
+            if (lvl > 0.01f)
+            {
+                g.setColour(col::ink.withAlpha(0.25f * lvl));
+                const float s = (voxSel ? 30.0f : 22.0f) * near * (1.0f + 0.4f * lvl);
+                g.fillEllipse(juce::Rectangle<float>(s, s).withCentre(toScreen(vp)));
+            }
+            drawVoxGlyph(g, toScreen(vp), (voxSel ? 18.0f : 13.0f) * near, on);
+            if (voxSel)
+            {
+                g.setFont(A.monoFont(11.0f));
+                g.setColour(col::ink);
+                g.drawText(on ? juce::String::fromUTF8("Vox humana: ziehen = Richtung und H\xc3\xb6he")
+                              : juce::String::fromUTF8("Vox humana ist abgesto\xc3\x9f" "en \xe2\x80\x93 links in der Liste ziehen"),
+                           juce::Rectangle<float>(c.x - R, c.y + R + 22.0f, 2.0f * R, 14.0f),
+                           juce::Justification::centred);
+            }
+        }
+    }
+
     // listener in the centre
     g.setColour(col::ink);
     g.drawEllipse(juce::Rectangle<float>(16.0f, 16.0f).withCentre(c), 1.0f);
@@ -299,7 +327,7 @@ float SpaceCircle::nearestU(juce::Point<float> s, float &distPx) const
 void SpaceCircle::mouseDown(const juce::MouseEvent &e)
 {
     dragMark = -1;
-    if (auto *tl = timetable(); tl != nullptr && !drawMode && !inputSel &&
+    if (auto *tl = timetable(); tl != nullptr && !drawMode && !inputSel && !voxSel &&
                                 proc.readParams().motionMode[(size_t)selected] == (int)Motion::Drawn)
     {
         // a timetable mark: drag it along the path
@@ -357,6 +385,15 @@ void SpaceCircle::mouseDown(const juce::MouseEvent &e)
         stroke.push_back({q.az, q.el, 0.0f});
         lastStrokePos = e.position;
         repaint();
+        return;
+    }
+    if (voxSel)
+    {
+        draggingVox = true;
+        for (auto *id : {"voxAz", "voxEl"})
+            if (auto *pr = proc.apvts.getParameter(id))
+                pr->beginChangeGesture();
+        mouseDrag(e);
         return;
     }
     if (inputSel)
@@ -440,6 +477,16 @@ void SpaceCircle::mouseDrag(const juce::MouseEvent &e)
         }
         return;
     }
+    if (draggingVox)
+    {
+        const auto np = fromScreen(e.position);
+        for (auto [id, v] : {std::pair<const char *, float>{"voxAz", wrapAz(np.az)}, {"voxEl", np.el}})
+            if (auto *pr = proc.apvts.getParameter(id))
+                pr->setValueNotifyingHost(pr->convertTo0to1(
+                    juce::jlimit(pr->getNormalisableRange().start, pr->getNormalisableRange().end, v)));
+        repaint();
+        return;
+    }
     if (draggingInput)
     {
         const bool follows = proc.apvts.getRawParameterValue("inpFollow")->load() > 0.5f;
@@ -505,6 +552,13 @@ void SpaceCircle::mouseUp(const juce::MouseEvent &)
             if (auto *pr = proc.apvts.getParameter(id))
                 pr->endChangeGesture();
         draggingInput = false;
+    }
+    if (draggingVox)
+    {
+        for (auto *id : {"voxAz", "voxEl"})
+            if (auto *pr = proc.apvts.getParameter(id))
+                pr->endChangeGesture();
+        draggingVox = false;
     }
     dragKey = -1;
     rotating = false;
@@ -624,10 +678,32 @@ void PipeStrip::mouseDrag(const juce::MouseEvent &e)
 }
 
 // ---------------------------------------------------------------------------
-SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
+SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel, voxSel)
 {
     addAndMakeVisible(circle);
     addAndMakeVisible(pipeStrip);
+
+    // the Vox humana: a row under the input, its own panel (place, level, room)
+    voxRow.onClick = [this] { selectVox(); };
+    addAndMakeVisible(voxRow);
+    voxPull.setTooltip(juce::String::fromUTF8("Vox humana ziehen / absto\xc3\x9f" "en"));
+    addAndMakeVisible(voxPull);
+    voxPullAttachment = rysum::ui::attachButton(proc.apvts, "voxOn", voxPull);
+    voxVolRow = std::make_unique<ParamRow>(proc.apvts, "voxVol", juce::String::fromUTF8("Lautst\xc3\xa4rke"), true);
+    voxSendRow = std::make_unique<ParamRow>(proc.apvts, "voxSend", "Hall-Anteil", true);
+    voxAzRow = std::make_unique<ParamRow>(proc.apvts, "voxAz", "Richtung", true);
+    voxElRow = std::make_unique<ParamRow>(proc.apvts, "voxEl", juce::String::fromUTF8("H\xc3\xb6he"), true);
+    voxDistRow = std::make_unique<ParamRow>(proc.apvts, "voxDist", "Abstand", true);
+    voxRoomRow = std::make_unique<ParamRow>(proc.apvts, "voxRoom", "eigener Raum", true);
+    voxAzRow->setTooltip(juce::String::fromUTF8("0\xc2\xb0 = vorn, +90\xc2\xb0 = links"));
+    voxDistRow->setTooltip(juce::String::fromUTF8("Leiser und dumpfer mit der Entfernung, wie eine Pfeife"));
+    voxSendRow->setTooltip(juce::String::fromUTF8("Wie viel in den Hall / Saal geht, verglichen mit einer Pfeife"));
+    voxRoomRow->setTooltip(juce::String::fromUTF8(
+        "Der Raum, den das Netz mitgelernt hat (die Kirche in Rysum). 0 = trocken: dann klingt nur der "
+        "Raum des Plugins."));
+    for (auto *r : {voxVolRow.get(), voxSendRow.get(), voxAzRow.get(), voxElRow.get(), voxDistRow.get(),
+                    voxRoomRow.get()})
+        addChildComponent(*r);
 
     // the audio input: a row under the stops, its own panel
     inputRow.onClick = [this] { selectInput(); };
@@ -1049,7 +1125,12 @@ void SpaceView::showTab(int tab)
 
 void SpaceView::updateVisibility()
 {
-    const bool stopPanel = !inputSel;
+    const bool stopPanel = !inputSel && !voxSel;
+    for (auto *r : {voxVolRow.get(), voxSendRow.get(), voxAzRow.get(), voxElRow.get(), voxDistRow.get(),
+                    voxRoomRow.get()})
+        if (r)
+            r->setVisible(voxSel);
+    voxRow.setToggleState(voxSel, juce::dontSendNotification);
     const bool motion = stopPanel && !hallTab && !cloudTab && !pipeTab, hall = stopPanel && hallTab,
                cloud = stopPanel && cloudTab;
     for (auto &r : pipeRows)
@@ -1092,7 +1173,7 @@ void SpaceView::updateVisibility()
         if (c)
             c->setVisible(inputSel);
     inputRow.setToggleState(inputSel, juce::dontSendNotification);
-    if (inputSel)
+    if (inputSel || voxSel)
         for (auto &b : stopButtons)
             b->setToggleState(false, juce::dontSendNotification);
     drawButton.setToggleState(false, juce::dontSendNotification);
@@ -1104,6 +1185,14 @@ void SpaceView::updateVisibility()
 void SpaceView::selectInput()
 {
     inputSel = true;
+    voxSel = false;
+    updateVisibility();
+}
+
+void SpaceView::selectVox()
+{
+    voxSel = true;
+    inputSel = false;
     updateVisibility();
 }
 
@@ -1111,6 +1200,7 @@ void SpaceView::selectStop(int s)
 {
     selected = s;
     inputSel = false;
+    voxSel = false;
     for (int i = 0; i < kNumStops; ++i)
         stopButtons[(size_t)i]->setToggleState(i == s, juce::dontSendNotification);
     rateRow =
@@ -1270,7 +1360,7 @@ void SpaceView::resized()
     circle.setBounds(left.reduced(20, 34).withTrimmedTop(10));
 
     auto rr = right;
-    stopsBox = rr.removeFromTop(20 + (kNumStops + 1) * 18 + 4);
+    stopsBox = rr.removeFromTop(20 + (kNumStops + 2) * 18 + 8);
     auto sb = stopsBox.withTrimmedTop(20);
     for (int slot = 0; slot < kNumStops; ++slot)
     {
@@ -1286,8 +1376,29 @@ void SpaceView::resized()
         inputPull.setBounds(row.removeFromLeft(16));
         row.removeFromLeft(4);
         inputRow.setBounds(row.reduced(0, 1));
+        auto vrow = sb.removeFromTop(18);
+        voxPull.setBounds(vrow.removeFromLeft(16));
+        vrow.removeFromLeft(4);
+        voxRow.setBounds(vrow.reduced(0, 1));
     }
     rr.removeFromTop(4);
+    // the Vox humana's panel: the same place as the input's
+    {
+        auto vb = rr.withTrimmedTop(34);
+        const int half = (vb.getWidth() - 16) / 2;
+        ParamRow *rows[][2]{{voxVolRow.get(), voxSendRow.get()},
+                            {voxAzRow.get(), voxElRow.get()},
+                            {voxDistRow.get(), voxRoomRow.get()}};
+        for (auto &pr : rows)
+        {
+            auto line = vb.removeFromTop(26);
+            pr[0]->setBounds(line.getX(), line.getY(), half, 26);
+            pr[1]->setBounds(line.getX() + half + 16, line.getY(), half, 26);
+            vb.removeFromTop(6);
+        }
+        vb.removeFromTop(8);
+        voxHelp = vb.withHeight(juce::jmin(vb.getHeight(), 140));
+    }
 
     // the input's panel takes the place of "Anordnung" and "Bewegung"
     {
@@ -1523,6 +1634,17 @@ void SpaceView::refresh()
         }
         const float pk = proc.engine.inPeak.load();
         inMeterShown = juce::jmax(pk, inMeterShown * 0.85f);
+        // the Vox humana
+        const bool von = raw("voxOn") > 0.5f;
+        juce::String vs = von ? juce::String("gezogen") : juce::String("ab");
+        if (raw("inPlays") > 0.5f)
+            vs << juce::String::fromUTF8(" \xc2\xb7 Eingang spielt");
+        if (voxRow.status != vs || voxRow.on != von)
+        {
+            voxRow.status = vs;
+            voxRow.on = von;
+            voxRow.repaint();
+        }
     }
     circle.repaint();
     pipeStrip.repaint();
@@ -1562,6 +1684,11 @@ void SpaceView::paint(juce::Graphics &g)
     if (inputSel)
     {
         paintInput(g);
+        return;
+    }
+    if (voxSel)
+    {
+        paintVox(g);
         return;
     }
     drawSectionTitle(g, layoutBox,
@@ -1678,6 +1805,26 @@ void SpaceView::paint(juce::Graphics &g)
 
 namespace rysum::ui
 {
+void SpaceView::paintVox(juce::Graphics &g)
+{
+    auto &A = Assets::get();
+    const bool on = proc.apvts.getRawParameterValue("voxOn")->load() > 0.5f;
+    drawSectionTitle(g, inputBox, juce::String::fromUTF8("Vox humana 8\xe2\x80\xb2 \xc2\xb7 neuronal"),
+                     on ? juce::String() : juce::String("ab"));
+    g.setFont(A.romanFont(13.0f));
+    g.setColour(col::dim);
+    g.drawFittedText(
+        juce::String::fromUTF8(
+            "Ein Register ohne Pfeifen: ein Netz (NeuralRysum), das die Rysumer Orgel spielen gelernt hat, "
+            "erzeugt jeden Ton. Es steht als eine Quelle im Raum \xe2\x80\x93 in der Draufsicht ziehen = "
+            "Richtung und H\xc3\xb6he \xe2\x80\x93 und klingt in Hall, Saal und Effekten wie die anderen "
+            "Register. Im Saal (3D) sind seine acht Stimmen gl\xc3\xa4serne Pfeifen, die so lang werden, "
+            "wie der Ton ist, den sie gerade singen.\n"
+            "Klangfarbe und \xe2\x80\x9e" "Eingang spielt die Orgel\xe2\x80\x9c: auf dem Spieltisch "
+            "(Vox \xe2\x80\xa6). Alle Regler sind auch Modulationsziele (Gruppe Vox humana)."),
+        voxHelp, juce::Justification::topLeft, 9);
+}
+
 void SpaceView::paintInput(juce::Graphics &g)
 {
     auto &A = Assets::get();

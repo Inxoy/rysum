@@ -164,7 +164,14 @@ public:
     juce::String renderStats() const { return "raster + shade " + juce::String (rast.rasterMs, 1) + " ms, " + juce::String (rast.workerCount()) + " workers, " + juce::String (rast.trianglesDrawn) + " triangles"; }
 
 private:
-    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWood, kSlotWall0 = 8 };   // (kSlotWall0 + i: wall i, each with its own material)
+    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWood, kSlotGlass, kSlotWall0 = 8 };   // (kSlotWall0 + i: wall i, each with its own material; glass: the Vox humana)
+    /** the Vox humana: a glass pipe as long as the note it sings, wrapped in rings - its harmonics */
+    void addVoxPipe (V3 bottom, float len, float rad, float faceAngle, float glowAmt, const float* rings);
+    /** its eight voices at its place in the Saal (and their glows, as lamps) */
+    void addVoxHumana (const RoomParams& r, V3 homeP, bool dark);
+    struct VoxShown { float len = 0.6f, glow = 0.0f; std::array<float, 8> rings {}; };
+    std::array<VoxShown, 8> voxShown {};
+    float voxLevelMax = 1.0e-3f;
     struct RTri { Raster::Vert a, b, c; int slot; float tone; };
     void addPipe (V3 bottom, float len, float rad, float faceAngle, float tone, float glowAmt, int stop);
     void addFigure (V3 feet, float height, float yawDeg);      // Konzert: someone else in the Saal

@@ -28,6 +28,8 @@ juce::String ModView::paramGroup(const juce::String &id)
         return "Saal";
     if (id.startsWith("inp"))
         return "Eingang";
+    if (id.startsWith("vox") || id == "inThresh")
+        return "Vox humana";
     if (id.startsWith("lfo") || id.startsWith("env") || id.startsWith("mod"))
         return "Modulation";
     return "Klang";
@@ -72,7 +74,7 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
     const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
                                    "Verfall",   "Klang",
                                    "Hall",      "Saal",
-                                   "Eingang",   "Effekte",
+                                   "Eingang",   "Vox humana", "Effekte",
                                    "Modulation", "Summe"};
     for (auto &grp : groups)
     {

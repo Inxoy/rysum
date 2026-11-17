@@ -1043,4 +1043,17 @@ inline void drawStopDot(juce::Graphics &g, int stop, juce::Point<float> c, float
             g.fillEllipse(r);
     }
 }
+
+/** the symbol of the Vox humana (Raum, Saal): rings in rings - its harmonics */
+inline void drawVoxGlyph(juce::Graphics &g, juce::Point<float> c, float size, bool on)
+{
+    g.setColour(on ? col::ink : col::faint);
+    for (int i = 0; i < 3; ++i)
+    {
+        const float s = size * (1.0f - 0.3f * (float)i);
+        g.drawEllipse(juce::Rectangle<float>(s, s * 0.62f).withCentre(c.translated(0.0f, -size * 0.12f * (float)i)),
+                      i == 0 ? 1.4f : 1.0f);
+    }
+    g.fillEllipse(juce::Rectangle<float>(size * 0.22f, size * 0.22f).withCentre(c.translated(0.0f, -size * 0.3f)));
+}
 } // namespace rysum::ui

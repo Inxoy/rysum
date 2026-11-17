@@ -296,6 +296,23 @@ void SaalPlan::paint(juce::Graphics &g)
         }
     }
 
+    // the Vox humana: one source, in the room of the audio input (it shares the input's room)
+    if (proc.apvts.getRawParameterValue("voxOn")->load() > 0.5f && params.inputRoom == shownRoom)
+    {
+        auto raw = [this](const char *id) { return proc.apvts.getRawParameterValue(id)->load(); };
+        const auto q = roomPoint(now, Pos{raw("voxAz"), raw("voxEl"), raw("voxDist")});
+        const auto pt = P(q.x, q.y);
+        const float lvl = juce::jlimit(0.0f, 1.0f, proc.engine.voxPeak.load() * 6.0f);
+        juce::Graphics::ScopedSaveState ss(g);
+        g.setOpacity(on ? 1.0f : 0.3f);
+        if (lvl > 0.01f)
+        {
+            g.setColour(col::white.withAlpha(0.1f + 0.7f * lvl));
+            g.drawEllipse(juce::Rectangle<float>(18.0f, 18.0f).withCentre(pt), 1.0f);
+        }
+        drawVoxGlyph(g, pt, 13.0f, true);
+    }
+
     // reflections of the last struck pipe: mirror images and the paths over the walls
     const int ls_ = proc.engine.lastStruckStop.load(), lk = proc.engine.lastStruckKey.load();
     if (on && ls_ >= 0 && lk >= 0 && params.stopRoom[(size_t)ls_] == shownRoom)
@@ -946,7 +963,7 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
                          ? prettyLabel(kStops[(size_t)kDisplayOrder[(size_t)slot]].label) +
                                U(": in welchem Saal (Klick: n\xc3\xa4"
                                  "chster, Rechtsklick: w\xc3\xa4hlen)")
-                         : U("Eingang (Audio): in welchem Saal"));
+                         : U("Eingang (Audio) und Vox humana: in welchem Saal"));
         b.onClick = [this, slot]
         {
             if (juce::ModifierKeys::currentModifiers.isPopupMenu())

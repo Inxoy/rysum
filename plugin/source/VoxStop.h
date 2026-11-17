@@ -267,6 +267,8 @@ public:
     }
 
     const float *output() const noexcept { return out.data(); }
+    /** voice v (0..7 tracked, 8..15 played) for displays: key, level, harmonic bands */
+    const vox::OrganSynth::Display &display(int v) const noexcept { return eng.voiceDisplay(v); }
     /** the tracker's notes right now (for displays): MIDI key or -1 */
     int trackedNote(int v) const noexcept { return heldTracked[(size_t)v]; }
 

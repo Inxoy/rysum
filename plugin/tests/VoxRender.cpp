@@ -6,7 +6,11 @@
 //   organ_input.wav    the input plays the organ: Gedackt 8' + Octave 4' (samples), no Vox humana
 //   both_input.wav     the input plays Gedackt 8' and the Vox humana
 // and prints the CPU load of each.
+#include "ConsoleView.h"
+#include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "SpaceView.h"
+#include "WalkView.h"
 
 #include <chrono>
 
@@ -197,7 +201,106 @@ private:
         set("voxFollow", 1.0f);
         render("both_input", &in, noMidi);
 
+        shots();
         quit();
+    }
+
+    void writePng(const juce::Image &img, const juce::String &name)
+    {
+        auto f = outDir.getChildFile(name);
+        f.deleteFile();
+        juce::FileOutputStream os(f);
+        juce::PNGImageFormat().writeImageToStream(img, os);
+        std::cout << "wrote " << f.getFileName() << std::endl;
+    }
+
+    /** the pages with the Vox humana: Spieltisch, its panel, Raum (selected), Saal, the 3D view */
+    void shots()
+    {
+        resetParams();
+        set("voxOn", 1.0f);
+        set(RysumProcessor::stopParamId(1).toRawUTF8(), 1.0f);
+        set("simOn", 1.0f);
+        juce::AudioProcessor::BusesLayout lay;
+        lay.inputBuses.add(juce::AudioChannelSet::stereo());
+        lay.inputBuses.add(juce::AudioChannelSet::stereo());
+        lay.outputBuses.add(juce::AudioChannelSet::stereo());
+        proc->setBusesLayout(lay);
+        proc->setRateAndBufferSizeDetails(48000.0, block);
+        proc->prepareToPlay(48000.0, block);
+        juce::AudioBuffer<float> buf(juce::jmax(proc->getTotalNumInputChannels(), proc->getTotalNumOutputChannels()),
+                                     block);
+        auto run = [&](int blocks, std::initializer_list<int> on)
+        {
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer mb;
+                if (b == 0)
+                    for (int m : on)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)100), 0);
+                buf.clear();
+                proc->processBlock(buf, mb);
+            }
+        };
+        run(40, {43, 55, 62, 67, 71, 76});
+
+        juce::SharedResourcePointer<rysum::ui::Assets> assets;
+        juce::SharedResourcePointer<rysum::ui::LookAndFeel> lnf;
+        std::unique_ptr<juce::AudioProcessorEditor> editor(proc->createEditor());
+        editor->setSize(1280, 720);
+        auto *content = dynamic_cast<RysumContent *>(editor->getChildComponent(0));
+        auto shoot = [&](int view, const juce::String &name, std::function<void()> before = {})
+        {
+            if (content != nullptr)
+            {
+                content->showView(view);
+                content->tick();
+            }
+            if (before)
+                before();
+            run(4, {});
+            pump(150);
+            writePng(editor->createComponentSnapshot(editor->getLocalBounds(), true, 1.0f), name);
+        };
+        std::function<rysum::ui::SpaceView *(juce::Component *)> findSpace = [&](juce::Component *c) -> rysum::ui::SpaceView *
+        {
+            if (auto *s = dynamic_cast<rysum::ui::SpaceView *>(c))
+                return s;
+            for (auto *ch : c->getChildren())
+                if (auto *f = findSpace(ch))
+                    return f;
+            return nullptr;
+        };
+        shoot(0, "ui_spieltisch.png");
+        shoot(1, "ui_raum_vox.png", [&] { if (auto *s = findSpace(editor.get())) s->selectVox(); });
+        shoot(2, "ui_saal.png");
+        {
+            rysum::ui::VoxPanel panel(*proc);
+            panel.setLookAndFeel(&lnf.get());
+            writePng(panel.createComponentSnapshot(panel.getLocalBounds(), true, 1.0f), "ui_vox_panel.png");
+            panel.setLookAndFeel(nullptr);
+        }
+        editor.reset();
+
+        // the 3D Saal: the Vox humana ahead (6 m, slightly up), its voices singing a chord
+        rysum::ui::WalkView wv(*proc);
+        wv.setLookAndFeel(&lnf.get());
+        wv.setSize(1280, 760);
+        wv.setTestMode(true);
+        wv.setVisible(true);
+        run(20, {});
+        for (int i = 0; i < 3; ++i)
+        {
+            const float poses[][3]{{0.0f, 0.0f, 0.0f}, {1.5f, 3.0f, 0.0f}, {-2.0f, 4.0f, -30.0f}};
+            wv.setPoseForTest(poses[i][0], poses[i][1], poses[i][2]);
+            wv.setPitchForTest(5.0f);
+            run(8, {});
+            writePng(wv.createComponentSnapshot(wv.getLocalBounds(), true, 1.0f), "walk_vox_" + juce::String(i) + ".png");
+        }
+        wv.setDarkForTest(true);
+        run(8, {});
+        writePng(wv.createComponentSnapshot(wv.getLocalBounds(), true, 1.0f), "walk_vox_dark.png");
+        wv.setLookAndFeel(nullptr);
     }
 
     std::unique_ptr<RysumProcessor> proc;

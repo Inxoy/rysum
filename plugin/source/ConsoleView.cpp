@@ -121,7 +121,7 @@ void VoxTile::paintButton(juce::Graphics &g, bool over, bool)
     auto cap = caption.withTrimmedTop(6.0f).reduced(3.0f, 0.0f);
     g.setFont(A.monoFont(11.0f));
     g.setColour(error.isEmpty() ? col::dim : col::faint);
-    g.drawText(error.isEmpty() ? juce::String::fromUTF8("8\xe2\x80\xb2 neuronal") : juce::String("kein Modell"), cap,
+    g.drawText(error.isEmpty() ? juce::String::fromUTF8("8\xe2\x80\xb2") : juce::String("kein Modell"), cap,
                juce::Justification::centredLeft);
     auto stateR = cap.removeFromRight(80.0f);
     g.setColour(on ? col::ink : col::faint);
@@ -150,9 +150,8 @@ VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
         addAndMakeVisible(*b);
     const std::pair<const char *, const char *> spec[]{
         {"voxX", "Klangfarbe X"},  {"voxY", "Klangfarbe Y"},     {"voxBright", "Helligkeit"},
-        {"voxNoise", "Hauch"},     {"voxSpread", "Breite"},      {"voxRoom", "eigener Raum"},
-        {"voxAz", "Richtung"},     {"voxEl", "H\xc3\xb6he"},     {"voxDist", "Abstand"},
-        {"voxSend", "Hall-Anteil"}, {"inThresh", "Erkennungsschwelle"}, {"inConfirm", "Best\xc3\xa4tigung"},
+        {"voxNoise", "Hauch"},     {"voxSpread", "Breite"},
+        {"inThresh", "Erkennungsschwelle"}, {"inConfirm", "Best\xc3\xa4tigung"},
         {"inVoices", "Stimmen"}};
     const char *tips[]{
         "Die Hauptrichtung, in der sich die Register der Rysumer Orgel unterscheiden (in "
@@ -161,9 +160,6 @@ VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
         "Spektraler Schwerpunkt: dunkler \xe2\x80\x93 heller.",
         "Rauschanteil: reiner Ton \xe2\x80\x93 Wind und Hauch.",
         "Wie breit das Spektrum ist.",
-        "Der Raum, den das Netz mitgelernt hat (die Kirche in Rysum). 0 = trocken, dann klingt nur der "
-        "Raum des Plugins.",
-        "", "", "", "Wie viel in den Hall (Raum, Saal) geht.",
         "Wie sicher ein Ton erkannt sein muss, bevor er spielt: h\xc3\xb6her = weniger, sicherere T\xc3\xb6ne.",
         "Wie lange ein Ton zu h\xc3\xb6ren sein muss, bevor er spielt: l\xc3\xa4nger = ruhiger, sp\xc3\xa4ter.",
         "Wie viele T\xc3\xb6ne der Eingang h\xc3\xb6"
@@ -177,7 +173,7 @@ VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
         ++i;
         addAndMakeVisible(*rows.back());
     }
-    setSize(380, 40 + 2 * 26 + 3 * 22 + (int)rows.size() * 30 + 10);
+    setSize(380, 40 + 2 * 26 + 2 * 22 + (int)rows.size() * 30 + 30);
 }
 
 void VoxPanel::paint(juce::Graphics &g)
@@ -189,9 +185,11 @@ void VoxPanel::paint(juce::Graphics &g)
     g.drawText("Vox humana", getLocalBounds().removeFromTop(34).reduced(12, 0), juce::Justification::centredLeft);
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::dim);
-    static const char *names[]{"Klang", "Ort", "Eingang"};
+    static const char *names[]{"Klang", "Eingang"};
     for (size_t k = 0; k < heads.size(); ++k)
         g.drawText(names[k], heads[k], juce::Justification::bottomLeft);
+    g.drawText(juce::String::fromUTF8("Ort, Lautst\xc3\xa4rke, Raum: Seite Raum \xc2\xb7 Vox humana"),
+               getLocalBounds().removeFromBottom(24).reduced(12, 0), juce::Justification::centredLeft);
     if (proc.voxError.isNotEmpty())
     {
         g.setColour(col::ink);
@@ -206,7 +204,7 @@ void VoxPanel::resized()
     plays.setBounds(r.removeFromTop(26));
     follow.setBounds(r.removeFromTop(26));
     heads.clear();
-    const int groups[]{6, 4, 3};
+    const int groups[]{5, 3};
     size_t ri = 0;
     for (int gsize : groups)
     {

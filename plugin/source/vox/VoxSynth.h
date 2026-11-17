@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -267,6 +268,7 @@ public:
         std::fill(gPrev.begin(), gPrev.end(), 0.0f);
         noise.reset();
         conv.reset();
+        clearDisplay();
         first = true;
     }
 
@@ -274,6 +276,21 @@ public:
     int sampleRate() const noexcept { return sr; }
     float releaseHoldSeconds() const noexcept { return releaseHold; }
     int conditioningSize() const noexcept { return condDim; }
+
+    /** what each voice does now, for displays (written per frame on the audio thread, read anywhere):
+        its key, its level, and the strength of eight bands of its harmonics on key/2 - 16', 8',
+        5 1/3', 4', 3 1/5'-2 2/3', 2 2/7'-2', 1 7/9'-1', higher - each 0..1 relative to the strongest */
+    struct Display
+    {
+        std::atomic<float> key{0.0f}, level{0.0f};
+        std::array<std::atomic<float>, 8> rings{};
+    };
+    const Display &display(int v) const noexcept { return disp[(size_t)v]; }
+    void clearDisplay() noexcept
+    {
+        for (auto &d : disp)
+            d.level.store(0.0f, std::memory_order_relaxed);
+    }
 
     bool noiseOn = true;   // band noise (off for exact tests)
     float roomMix = 1.0f;  // learned room: 0 = dry, 1 = as trained (dry + convolution)
@@ -312,11 +329,25 @@ public:
             if (row[(size_t)v] >= 0)
             {
                 const float *ov = oM.data() + (size_t)row[(size_t)v] * lo.outP;
-                buildTable(fBase, ov, cur);
+                std::array<float, 8> bands{};
+                buildTable(fBase, ov, cur, bands.data());
                 curOn = true;
                 for (int b = 0; b < nNoise; ++b)
                     gNow[(size_t)b] += std::exp(std::min(4.0f, std::max(-30.0f, ov[nh + b])));
+                float total = 0.0f, top = 1.0e-20f;
+                for (float e : bands)
+                {
+                    total += e;
+                    top = std::max(top, e);
+                }
+                auto &d = disp[(size_t)v];
+                d.key.store(key, std::memory_order_relaxed);
+                d.level.store(std::sqrt(total), std::memory_order_relaxed);
+                for (size_t j = 0; j < bands.size(); ++j)
+                    d.rings[j].store(std::sqrt(bands[j] / top), std::memory_order_relaxed);
             }
+            else
+                disp[(size_t)v].level.store(0.0f, std::memory_order_relaxed);
             oscillate(st, fBase, st.prevOn ? prevTables[(size_t)v].data() : nullptr, curOn ? cur : nullptr);
             if (curOn)
                 std::memcpy(prevTables[(size_t)v].data(), cur, (size_t)N * sizeof(float));
@@ -402,7 +433,13 @@ private:
         lo.applyBatch(h1.data(), n, oM.data());
     }
 
-    void buildTable(float fBase, const float *o, float *table) noexcept
+    /** harmonic k (1 = 16') -> display band 0..7 */
+    static int bandOf(int k) noexcept
+    {
+        return k <= 4 ? k - 1 : (k <= 6 ? 4 : (k <= 8 ? 5 : (k <= 16 ? 6 : 7)));
+    }
+
+    void buildTable(float fBase, const float *o, float *table, float *bands) noexcept
     {
         spec.clear();
         const float lim = 0.45f * (float)sr, fade = 0.05f * (float)sr;
@@ -413,6 +450,7 @@ private:
                 break;
             const float a = std::exp(std::min(4.0f, std::max(-30.0f, o[k - 1]))) *
                             std::min(1.0f, std::max(0.0f, (lim - fk) / fade));
+            bands[bandOf(k)] += a * a;
             if (k < N / 2)
             {
                 spec[(size_t)(2 * k)] = a * cr[(size_t)(k - 1)];
@@ -458,6 +496,7 @@ private:
     Floats spec;
     std::array<Floats, kMaxVoices> tables, prevTables;
     std::array<Voice, kMaxVoices> vs{};
+    std::array<Display, kMaxVoices> disp{};
     std::vector<float> featM, h1, h2, oM, gNow, gPrev, dry, wet, zeros;
     NoiseBank noise;
     FrameConvolver conv;

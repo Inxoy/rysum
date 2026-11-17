@@ -1269,6 +1269,8 @@ public:
     juce::String voxError;
     /** what the input plays right now (for the console): MIDI keys, -1 = none */
     int voxTrackedNote(int v) const noexcept { return voxShown[(size_t)v].load(); }
+    /** the Vox humana's voices for the 3D Saal (0..7 tracked, 8..15 played) */
+    const vox::OrganSynth::Display &voxVoice(int v) const noexcept { return voxStop.display(v); }
 
     /** the Vox humana's level against the sample stops (the network's output is quiet) */
     static constexpr float kVoxGain = 10.0f; // measured: then about as loud as one sample stop
@@ -1279,6 +1281,7 @@ public:
 private:
     std::array<std::atomic<int>, 8> voxShown{};
     std::array<std::atomic<float> *, 18> voxRaw{}; // kVoxIds, read on the audio thread
+    std::array<int, 18> voxIdx{};                  // their index in prmList (modulated values: modVals)
     juce::AudioBuffer<float> binBuf; // Ambisonics render buffer in binaural mode
     juce::String binStatus{juce::String::fromUTF8("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e"
                                                   "Binaural\xe2\x80\x9c stellen")};

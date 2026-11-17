@@ -176,6 +176,8 @@ public:
     float trackedKey(int v) const noexcept { return trk[(size_t)v].lastMidi; }
     bool trackedGate(int v) const noexcept { return trk[(size_t)v].lastGate; }
     const std::vector<float> &conditioning() const noexcept { return cond; }
+    /** voice v (0..7 tracked, 8..15 played) as it sounds now: key, level, harmonic bands */
+    const OrganSynth::Display &voiceDisplay(int v) const noexcept { return synth.display(v); }
 
 private:
     struct Tracked
@@ -359,7 +361,10 @@ private:
         if (synthOn)
             synth.renderFrame(voices.data(), nv, cond.data(), outBuf.data());
         else
+        {
             std::fill(outBuf.begin(), outBuf.end(), 0.0f);
+            synth.clearDisplay();
+        }
 
         // now this frame's input: estimator (+ tracker, events) and timbre encoder
         for (auto &s : trk)

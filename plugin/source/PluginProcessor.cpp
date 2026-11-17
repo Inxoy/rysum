@@ -1672,6 +1672,8 @@ void RysumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     lucRecScratch.assign((size_t)juce::jmax(512, samplesPerBlock), 0.0f);
     inBuf.setSize(2, juce::jmax(512, samplesPerBlock), false, true, false);
     voxStop.prepare(sampleRate, juce::jmax(8192, samplesPerBlock));
+    for (size_t i = 0; i < kVoxIds.size(); ++i)
+        voxIdx[i] = getParamIndex(kVoxIds[i]);
     voxMidi.ensureSize(4096);
     if (binActive != nullptr)
         binActive->reset();
@@ -2135,7 +2137,14 @@ void RysumProcessor::clearRoute(int r)
 
 void RysumProcessor::runVox(juce::MidiBuffer &midi, int n, EngineParams &params) noexcept
 {
-    auto v = [this](int i) { return voxRaw[(size_t)i]->load(); };
+    // modulated values where the modulation page (or the Verlauf) moves them, else the parameter
+    auto v = [this](int i)
+    {
+        const int k = voxIdx[(size_t)i];
+        if (haveModVals && k >= 0 && k < (int)modVals.size())
+            return modVals[(size_t)k];
+        return voxRaw[(size_t)i]->load();
+    };
     VoxStop::Settings s;
     s.stopOn = v(0) > 0.5f;
     s.wind = v(2);

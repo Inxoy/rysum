@@ -9,8 +9,8 @@ namespace rysum::ui
 class SpaceCircle : public juce::Component
 {
 public:
-    SpaceCircle(RysumProcessor &p, int &selectedStop, bool &inputSelected)
-        : proc(p), selected(selectedStop), inputSel(inputSelected)
+    SpaceCircle(RysumProcessor &p, int &selectedStop, bool &inputSelected, bool &voxSelected)
+        : proc(p), selected(selectedStop), inputSel(inputSelected), voxSel(voxSelected)
     {
     }
     void paint(juce::Graphics &) override;
@@ -48,6 +48,8 @@ private:
     RysumProcessor &proc;
     int &selected;
     bool &inputSel;
+    bool &voxSel;
+    bool draggingVox = false;
     int dragKey = -1;
     // the audio input: where its sources are drawn, dragging them
     int inputPositions(std::array<Pos, 2> &out) const;
@@ -75,6 +77,39 @@ inline void drawInputGlyph(juce::Graphics &g, juce::Point<float> c, float size, 
                    juce::Justification::centred);
     }
 }
+
+/** the Vox humana's row in the list (under the input) */
+class VoxRow : public juce::Button
+{
+public:
+    VoxRow() : juce::Button("Vox humana") {}
+    void paintButton(juce::Graphics &g, bool over, bool) override
+    {
+        auto &A = Assets::get();
+        auto r = getLocalBounds();
+        const bool sel = getToggleState();
+        if (sel)
+        {
+            g.setColour(col::ink);
+            g.fillRect(r.withTrimmedLeft(18));
+        }
+        else if (over)
+        {
+            g.setColour(col::line);
+            g.fillRect(r.withTrimmedLeft(18));
+        }
+        drawVoxGlyph(g, {6.0f, (float)r.getCentreY() + 1.0f}, 11.0f, on);
+        g.setColour(sel ? col::bg : (on ? col::ink : col::faint));
+        g.setFont(A.sansFont(14.0f));
+        g.drawText(juce::String::fromUTF8("Vox humana 8\xe2\x80\xb2"), r.withTrimmedLeft(28),
+                   juce::Justification::centredLeft);
+        g.setColour(sel ? col::bg : col::mute);
+        g.setFont(A.monoFont(11.0f));
+        g.drawText(status, r.withTrimmedRight(8), juce::Justification::centredRight);
+    }
+    juce::String status;
+    bool on = false;
+};
 
 /** the input's row in the list (under the stops) */
 class InputRow : public juce::Button
@@ -200,6 +235,7 @@ public:
     void refresh();
     void selectStop(int s);
     void selectInput();
+    void selectVox();
     /** Verlauf: the stop's timetable lane is wanted (created by the Verlauf page; exists = it is
         about to be switched on / off - an undo step) */
     std::function<void(int stop, bool exists)> onTimetable;
@@ -212,13 +248,20 @@ public:
 private:
     void updateVisibility();
     void paintInput(juce::Graphics &);
+    void paintVox(juce::Graphics &);
     void layoutChanged();
     void syncLayoutControls();
 
     RysumProcessor &proc;
     int selected = 6;
-    bool inputSel = false;
+    bool inputSel = false, voxSel = false;
     SpaceCircle circle;
+    // the Vox humana: a row under the input, its own panel
+    VoxRow voxRow;
+    PullToggle voxPull;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> voxPullAttachment;
+    std::unique_ptr<ParamRow> voxVolRow, voxSendRow, voxAzRow, voxElRow, voxDistRow, voxRoomRow;
+    juce::Rectangle<int> voxHelp;
     PipeStrip pipeStrip{proc, selected};
     // the audio input
     InputRow inputRow;

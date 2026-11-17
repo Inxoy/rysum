@@ -1697,6 +1697,127 @@ void WalkView::addReedPipe (V3 bottom, float len, float rad, float faceAngle, fl
     }
 }
 
+void WalkView::addVoxPipe (V3 bottom, float len, float rad, float faceAngle, float glowAmt, const float* rings)
+{
+    // a smooth glass pipe without foot or mouth; around it, at eight heights, a flat ring each - as wide as
+    // that band of its harmonics is strong (16' lowest, the highest partials at the top), lit while it sings
+    const float depth = rast.viewDepth (bottom + V3 { 0, 0, 0.5f * len });
+    if (depth < -len) return;
+    const float px = rad / juce::jmax (0.1f, depth) * 0.5f * (float) rast.width();
+    const int segs = px < 1.5f ? 6 : (px < 5.0f ? 8 : (px < 14.0f ? 12 : 18));
+    const float em = 0.05f + 0.45f * glowAmt;     // glass holds a little light of its own (the rings carry the rest)
+    Raster::Vert ring[2][20];
+    for (int i = 0; i <= segs; ++i)
+    {
+        const float a = faceAngle + juce::MathConstants<float>::twoPi * (float) i / (float) segs;
+        const float ca = std::cos (a), sa = std::sin (a);
+        const float u = (float) i / (float) segs;
+        auto& r0 = ring[0][i]; r0.p = bottom + V3 { ca * rad, sa * rad, 0.0f }; r0.n = { ca, sa, 0.0f }; r0.u = u; r0.v = 0.0f;
+        auto& r1 = ring[1][i]; r1.p = bottom + V3 { ca * rad, sa * rad, len }; r1.n = { ca, sa, 0.0f }; r1.u = u; r1.v = 1.0f;
+    }
+    for (int i = 0; i < segs; ++i)
+    {
+        rast.triangle (ring[0][i], ring[0][i + 1], ring[1][i + 1], kSlotGlass, 0.95f, em);
+        rast.triangle (ring[0][i], ring[1][i + 1], ring[1][i], kSlotGlass, 0.95f, em);
+    }
+    // the closed, rounded-off top: a flat cap (glass is not open)
+    {
+        Raster::Vert c; c.p = bottom + V3 { 0, 0, len }; c.n = { 0, 0, 1 };
+        for (int i = 0; i < segs; ++i)
+        {
+            Raster::Vert a = ring[1][i], b = ring[1][i + 1];
+            a.n = b.n = c.n;
+            rast.triangle (a, b, c, kSlotGlass, 0.95f, em);
+        }
+    }
+    // the rings of the harmonics: a collar each - the stronger that band, the wider and brighter it is
+    // (a collar, not a flat ring, so it is seen from the side as well)
+    for (int j = 0; j < 8; ++j)
+    {
+        const float amt = juce::jlimit (0.0f, 1.0f, rings[j]);
+        if (amt < 0.04f) continue;
+        const float z0 = len * (0.1f + 0.105f * (float) j), h = juce::jmax (0.02f, 0.045f * len);
+        const float rOut = rad * (1.15f + 1.7f * amt);
+        const float rem = (0.08f + 0.95f * glowAmt) * amt;
+        auto vtx = [&] (float a, float rr, float z, V3 n) { Raster::Vert q; q.p = bottom + V3 { std::cos (a) * rr, std::sin (a) * rr, z }; q.n = n; q.u = a; q.v = z; return q; };
+        for (int i = 0; i < segs; ++i)
+        {
+            const float a0 = faceAngle + juce::MathConstants<float>::twoPi * (float) i / (float) segs;
+            const float a1 = faceAngle + juce::MathConstants<float>::twoPi * (float) (i + 1) / (float) segs;
+            const V3 n0 { std::cos (a0), std::sin (a0), 0.0f }, n1 { std::cos (a1), std::sin (a1), 0.0f };
+            // the outside
+            const auto o00 = vtx (a0, rOut, z0, n0), o10 = vtx (a1, rOut, z0, n1), o01 = vtx (a0, rOut, z0 + h, n0), o11 = vtx (a1, rOut, z0 + h, n1);
+            rast.triangle (o00, o10, o11, kSlotGlass, 1.5f, rem);
+            rast.triangle (o00, o11, o01, kSlotGlass, 1.5f, rem);
+            // its top and its underside (seen from above / below)
+            for (int side = 0; side < 2; ++side)
+            {
+                const float z = side == 0 ? z0 + h : z0;
+                const V3 n { 0, 0, side == 0 ? 1.0f : -1.0f };
+                const auto p0 = vtx (a0, rad, z, n), p1 = vtx (a1, rad, z, n), p2 = vtx (a1, rOut, z, n), p3 = vtx (a0, rOut, z, n);
+                if (side == 0) { rast.triangle (p0, p1, p2, kSlotGlass, 1.5f, rem); rast.triangle (p0, p2, p3, kSlotGlass, 1.5f, rem); }
+                else           { rast.triangle (p0, p2, p1, kSlotGlass, 1.5f, rem); rast.triangle (p0, p3, p2, kSlotGlass, 1.5f, rem); }
+            }
+        }
+    }
+}
+
+void WalkView::addVoxHumana (const RoomParams& r, V3 homeP, bool dark)
+{
+    auto raw = [this] (const char* id) { return proc.apvts.getRawParameterValue (id)->load(); };
+    if (raw ("voxOn") < 0.5f)
+    {
+        for (auto& v : voxShown) v.glow = 0.0f;
+        return;
+    }
+    // its place, as heard (in a shaped Saal: inside the walls, like the pipes)
+    const Pos pos { raw ("voxAz"), raw ("voxEl"), raw ("voxDist") };
+    V3 c;
+    if (pipesInRoom) { const auto q = roomPoint (r, pos); c = { q.x, q.y, q.z }; }
+    else
+    {
+        const float a = juce::degreesToRadians (pos.az), e = juce::degreesToRadians (pos.el);
+        c = { homeP.x - std::sin (a) * std::cos (e) * pos.dist, homeP.y + std::cos (a) * std::cos (e) * pos.dist, homeP.z + std::sin (e) * pos.dist };
+    }
+    // the eight voices in a row across the line to the listener, all standing on one foot line
+    const float dx = homeP.x - c.x, dy = homeP.y - c.y, dl = juce::jmax (1.0e-3f, std::sqrt (dx * dx + dy * dy));
+    const V3 across { -dy / dl, dx / dl, 0.0f };
+    const float face = std::atan2 (dy, dx);
+    float levelTop = 0.0f;
+    for (int i = 0; i < 8; ++i)
+    {
+        // a pipe shows the louder of its tracked voice (the input) and its played voice (the keys)
+        const auto& a = proc.voxVoice (i);
+        const auto& b = proc.voxVoice (i + 8);
+        const auto& d = a.level.load() >= b.level.load() ? a : b;
+        const float level = d.level.load();
+        levelTop = juce::jmax (levelTop, level);
+        auto& sh = voxShown[(size_t) i];
+        if (level > 1.0e-6f)
+        {
+            // as long as an open 8' pipe of the pitch it sings - it glides with the voice
+            const float tgt = juce::jlimit (0.12f, 4.0f, 2.44f * std::exp2 (-(d.key.load() - 36.0f) / 12.0f));
+            sh.len += 0.35f * (tgt - sh.len);
+            const float g = juce::jlimit (0.15f, 1.0f, std::sqrt (level / voxLevelMax));
+            sh.glow = sh.glow < g ? juce::jmin (g, sh.glow + 0.35f) : juce::jmax (g, sh.glow * 0.9f);
+            for (size_t j = 0; j < 8; ++j)
+                sh.rings[j] += 0.4f * (d.rings[j].load() - sh.rings[j]);
+        }
+        else
+        {
+            sh.glow *= 0.9f;
+            for (auto& v : sh.rings) v *= 0.95f;
+        }
+        const float rad = juce::jlimit (0.035f, 0.1f, sh.len * 0.05f);
+        const V3 at = c + across * (0.5f * ((float) i - 3.5f));
+        const V3 bottom { at.x, at.y, c.z - 0.8f };
+        addVoxPipe (bottom, sh.len, rad, face, dark ? sh.glow + 0.025f : sh.glow, sh.rings.data());
+        if (sh.glow > 0.02f) scene.glows.push_back ({ { at.x, at.y, bottom.z + 0.5f * sh.len }, sh.glow, sh.len });
+    }
+    // (the brightest voice of the last seconds sets what "full" is)
+    voxLevelMax = juce::jmax (1.0e-4f, juce::jmax (levelTop, voxLevelMax * 0.995f));
+}
+
 V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const
 {
     // a pipe flying in the room (Flug, Fall, Schwarm, Strömung) is where its body is
@@ -1809,6 +1930,7 @@ void WalkView::buildScene (float phys)
     { Material m; m.kind = Material::metal; m.tone = 1.0f; m.gloss = 1.0f; m.rough = 0.1f; rast.setMaterial (kSlotMetal, m); }
     { Material m; m.kind = Material::dark; m.tone = 1.0f; m.gloss = 0.0f; rast.setMaterial (kSlotDark, m); }
     { Material m; m.kind = Material::wood; m.tone = 0.62f; m.gloss = 0.12f; m.rough = 0.35f; rast.setMaterial (kSlotWood, m); }      // (the Gedackt)
+    { Material m; m.kind = Material::plain; m.tone = 1.3f; m.gloss = 1.0f; m.rough = 0.0f; rast.setMaterial (kSlotGlass, m); }      // (the Vox humana: smooth, light, no mouth)
     wallLook = wm.kind;
 
     scene.mesh = proc.getWalkMesh();
@@ -1905,6 +2027,7 @@ void WalkView::buildScene (float phys)
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });
         }
     }
+    addVoxHumana (r, homeP, dark);
     // Konzert: the others in the Saal (the player, the other listeners), eased between their places (they come
     // ten times a second)
     {
