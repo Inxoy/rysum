@@ -77,6 +77,146 @@ void StopTile::paintButton(juce::Graphics &g, bool over, bool)
 }
 
 // ---------------------------------------------------------------------------
+void VoxTile::paintButton(juce::Graphics &g, bool over, bool)
+{
+    auto &A = Assets::get();
+    const bool on = getToggleState();
+    auto r = getLocalBounds().toFloat();
+    auto tile = r.removeFromTop(r.getHeight() - 22.0f).reduced(3.0f);
+    auto caption = r;
+    g.setColour(juce::Colour(0xff5f5e5b));
+    g.fillRect(tile);
+    {
+        // a typeset label above the bare knob, like the Praestant's
+        auto t = tile.reduced(8.0f, 10.0f);
+        auto label = t.removeFromTop(34.0f);
+        const auto txt = juce::String("Vox humana");
+        auto f = A.frakturFont(22.0f);
+        const float w = juce::GlyphArrangement::getStringWidth(f, txt) + 16.0f;
+        auto lb = label.withSizeKeepingCentre(juce::jmin(w, label.getWidth()), 32.0f);
+        g.setColour(juce::Colour(0xffe2e0da));
+        g.fillRect(lb);
+        g.setColour(juce::Colour(0xff151514));
+        g.setFont(f);
+        g.drawFittedText(txt, lb.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        auto knob = t.withSizeKeepingCentre(58.0f, 58.0f).translated(0.0f, 4.0f);
+        juce::Path clip;
+        clip.addEllipse(knob.reduced(2.0f));
+        juce::Graphics::ScopedSaveState ss(g);
+        if (!(dbg::skip & dbg::skipClipPath))
+            g.reduceClipRegion(clip);
+        drawCover(g, A.knobBare, knob.expanded(12.0f).translated(0.0f, -3.0f));
+    }
+    drawGrain(g, tile.toNearestInt(), 0.35f);
+    if (!on)
+    {
+        g.setColour(juce::Colours::black.withAlpha(over ? 0.5f : 0.64f));
+        g.fillRect(tile);
+    }
+    else
+    {
+        g.setColour(col::ink);
+        g.drawRect(tile.expanded(3.0f), 1.0f);
+    }
+    auto cap = caption.withTrimmedTop(6.0f).reduced(3.0f, 0.0f);
+    g.setFont(A.monoFont(11.0f));
+    g.setColour(error.isEmpty() ? col::dim : col::faint);
+    g.drawText(error.isEmpty() ? juce::String::fromUTF8("8\xe2\x80\xb2 neuronal") : juce::String("kein Modell"), cap,
+               juce::Justification::centredLeft);
+    auto stateR = cap.removeFromRight(80.0f);
+    g.setColour(on ? col::ink : col::faint);
+    g.drawText(on ? "gezogen" : "ab", stateR, juce::Justification::centredRight);
+    auto sq = juce::Rectangle<float>(7.0f, 7.0f).withCentre({stateR.getRight() - (on ? 58.0f : 22.0f), stateR.getCentreY()});
+    g.setColour(col::ink);
+    if (on)
+        g.fillRect(sq);
+    else
+        g.drawRect(sq, 1.0f);
+}
+
+// ---------------------------------------------------------------------------
+VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
+{
+    playsAtt = attachButton(proc.apvts, "inPlays", plays);
+    followAtt = attachButton(proc.apvts, "voxFollow", follow);
+    plays.setTooltip(juce::String::fromUTF8(
+        "Was am Eingang erklingt (Stimme, Instrument, eine Aufnahme), wird erkannt und spielt die Orgel: "
+        "alle gezogenen Register, die Vox humana gleitend mit der Tonh\xc3\xb6he, die anderen auf den "
+        "n\xc3\xa4" "chsten Tasten. Der Eingang selbst muss daf\xc3\xbcr nicht an sein."));
+    follow.setTooltip(juce::String::fromUTF8(
+        "Die Klangfarbe der Vox humana folgt dem Eingang: ein heller Eingang zieht hellere Register. "
+        "Die Regler unten verschieben sie dann von dort aus."));
+    for (auto *b : {&plays, &follow})
+        addAndMakeVisible(*b);
+    const std::pair<const char *, const char *> spec[]{
+        {"voxX", "Klangfarbe X"},  {"voxY", "Klangfarbe Y"},     {"voxBright", "Helligkeit"},
+        {"voxNoise", "Hauch"},     {"voxSpread", "Breite"},      {"voxRoom", "eigener Raum"},
+        {"voxAz", "Richtung"},     {"voxEl", "H\xc3\xb6he"},     {"voxDist", "Abstand"},
+        {"voxSend", "Hall-Anteil"}, {"inThresh", "Erkennungsschwelle"}, {"inConfirm", "Best\xc3\xa4tigung"},
+        {"inVoices", "Stimmen"}};
+    const char *tips[]{
+        "Die Hauptrichtung, in der sich die Register der Rysumer Orgel unterscheiden (in "
+        "Standardabweichungen): durch die Registrierungen gleiten.",
+        "Die zweite Richtung.",
+        "Spektraler Schwerpunkt: dunkler \xe2\x80\x93 heller.",
+        "Rauschanteil: reiner Ton \xe2\x80\x93 Wind und Hauch.",
+        "Wie breit das Spektrum ist.",
+        "Der Raum, den das Netz mitgelernt hat (die Kirche in Rysum). 0 = trocken, dann klingt nur der "
+        "Raum des Plugins.",
+        "", "", "", "Wie viel in den Hall (Raum, Saal) geht.",
+        "Wie sicher ein Ton erkannt sein muss, bevor er spielt: h\xc3\xb6her = weniger, sicherere T\xc3\xb6ne.",
+        "Wie lange ein Ton zu h\xc3\xb6ren sein muss, bevor er spielt: l\xc3\xa4nger = ruhiger, sp\xc3\xa4ter.",
+        "Wie viele T\xc3\xb6ne der Eingang h\xc3\xb6"
+        "chstens zugleich spielt (1 = einstimmig)."};
+    int i = 0;
+    for (auto &sp : spec)
+    {
+        rows.push_back(std::make_unique<ParamRow>(proc.apvts, sp.first, juce::String::fromUTF8(sp.second)));
+        if (*tips[i] != 0)
+            rows.back()->setTooltip(juce::String::fromUTF8(tips[i]));
+        ++i;
+        addAndMakeVisible(*rows.back());
+    }
+    setSize(380, 40 + 2 * 26 + 3 * 22 + (int)rows.size() * 30 + 10);
+}
+
+void VoxPanel::paint(juce::Graphics &g)
+{
+    auto &A = Assets::get();
+    g.fillAll(col::panel);
+    g.setColour(col::ink);
+    g.setFont(A.romanFont(19.0f));
+    g.drawText("Vox humana", getLocalBounds().removeFromTop(34).reduced(12, 0), juce::Justification::centredLeft);
+    g.setFont(A.monoFont(10.0f));
+    g.setColour(col::dim);
+    static const char *names[]{"Klang", "Ort", "Eingang"};
+    for (size_t k = 0; k < heads.size(); ++k)
+        g.drawText(names[k], heads[k], juce::Justification::bottomLeft);
+    if (proc.voxError.isNotEmpty())
+    {
+        g.setColour(col::ink);
+        g.drawText(proc.voxError, getLocalBounds().removeFromTop(34).reduced(12, 0), juce::Justification::centredRight);
+    }
+}
+
+void VoxPanel::resized()
+{
+    auto r = getLocalBounds().reduced(12, 0);
+    r.removeFromTop(36);
+    plays.setBounds(r.removeFromTop(26));
+    follow.setBounds(r.removeFromTop(26));
+    heads.clear();
+    const int groups[]{6, 4, 3};
+    size_t ri = 0;
+    for (int gsize : groups)
+    {
+        heads.push_back(r.removeFromTop(22));
+        for (int k = 0; k < gsize && ri < rows.size(); ++k)
+            rows[ri++]->setBounds(r.removeFromTop(30));
+    }
+}
+
+// ---------------------------------------------------------------------------
 void SceneButton::paintButton(juce::Graphics &g, bool over, bool)
 {
     auto &A = Assets::get();
@@ -276,6 +416,23 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         addAndMakeVisible(*stopVol.back());
         addAndMakeVisible(*stopWind.back());
     }
+
+    // Vox humana: the neural stop
+    voxTile.error = proc.voxError;
+    addAndMakeVisible(voxTile);
+    voxAtt = rysum::ui::attachButton(proc.apvts, "voxOn", voxTile);
+    voxVol = std::make_unique<ParamRow>(proc.apvts, "voxVol", u8("Lautst."), true);
+    voxWind = std::make_unique<ParamRow>(proc.apvts, "voxWind", "Wind", true);
+    addAndMakeVisible(*voxVol);
+    addAndMakeVisible(*voxWind);
+    voxMore.setTooltip(juce::String::fromUTF8(
+        "Einstellungen der Vox humana: Klangfarbe, Ort im Raum, und \xe2\x80\x9e" "Eingang spielt die Orgel\xe2\x80\x9c."));
+    addAndMakeVisible(voxMore);
+    voxMore.onClick = [this]
+    {
+        auto panel = std::make_unique<VoxPanel>(proc);
+        juce::CallOutBox::launchAsynchronously(std::move(panel), voxMore.getScreenBounds(), nullptr);
+    };
 
     testToneButton.setClickingTogglesState(true);
     testToneButton.setTooltip("DSF-Referenzton. Stimmung und Frequenz auf der Seite Klang.");
@@ -498,7 +655,7 @@ void ConsoleView::resized()
     {
         auto t = stopsArea.withTrimmedTop(26);
         const int gap = 12;
-        const int columns = kNumStops + 1;
+        const int columns = kNumStops + 2; // the stops, the Vox humana, the test tone
         const int w = (t.getWidth() - gap * (columns - 1)) / columns;
         for (int s = 0; s < kNumStops; ++s)
         {
@@ -507,7 +664,14 @@ void ConsoleView::resized()
             stopVol[(size_t)s]->setBounds(x, t.getY() + 150, w, 28);
             stopWind[(size_t)s]->setBounds(x, t.getY() + 177, w, 28);
         }
-        const int testX = t.getX() + kNumStops * (w + gap);
+        {
+            const int x = t.getX() + kNumStops * (w + gap);
+            voxTile.setBounds(x - 3, t.getY() - 3, w + 6, 124 + 22 + 3);
+            voxVol->setBounds(x, t.getY() + 150, w, 28);
+            voxWind->setBounds(x, t.getY() + 177, w, 28);
+            voxMore.setBounds(x + w - 44, t.getY() - 25, 44, 18);
+        }
+        const int testX = t.getX() + (kNumStops + 1) * (w + gap);
         testToneButton.setBounds(testX, t.getY() + 44, w, 38);
         testToneLevel->setBounds(testX, t.getY() + 150, w, 28);
         testToneColour->setBounds(testX, t.getY() + 177, w, 28);
@@ -688,8 +852,9 @@ void ConsoleView::paint(juce::Graphics &g)
     int on = 0;
     for (int s = 0; s < kNumStops; ++s)
         on += proc.apvts.getRawParameterValue(RysumProcessor::stopParamId(s))->load() > 0.5f;
+    on += proc.apvts.getRawParameterValue("voxOn")->load() > 0.5f; // the Vox humana
     g.setFont(A.monoFont(11.0f));
-    g.drawText(juce::String(on) + " von " + juce::String(kNumStops) + " gezogen", head,
+    g.drawText(juce::String(on) + " von " + juce::String(kNumStops + 1) + " gezogen", head,
                juce::Justification::centredRight);
 
     drawSectionTitle(g, noiseArea, "Traktur");

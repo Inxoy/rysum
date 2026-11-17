@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "RoomModels.h"
+#include "RysumBinaryData.h"
 #include "libMTSClient.h"
 
 using namespace rysum;
@@ -1198,6 +1199,56 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                         name + "Tempo-Streuung", NormalisableRange<float>(0, 1), 0.0f, pct));
         }
     }
+    // Vox humana: the neural stop (NeuralRysum v2), and the input playing the organ. Appended last:
+    // older projects keep their parameter indices.
+    {
+        auto vpct = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(juce::roundToInt(v * 100)) + " %"; });
+        auto signedVal = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return (v > 0.005f ? "+" : "") + String(v, 2); });
+        auto vdeg = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(juce::roundToInt(v)) + String::fromUTF8("\xc2\xb0"); });
+        l.add(std::make_unique<AudioParameterBool>(ParameterID{"voxOn", 1}, "Vox humana", false));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"voxVol", 1}, String::fromUTF8("Vox humana Lautst\xc3\xa4rke"),
+            NormalisableRange<float>(-48.0f, 12.0f, 0.1f), 0.0f,
+            AudioParameterFloatAttributes().withLabel("dB")));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxWind", 1}, "Vox humana Wind",
+                                                    NormalisableRange<float>(0.0f, 1.0f, 0.001f), 1.0f, vpct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxX", 1}, "Vox humana Klangfarbe X",
+                                                    NormalisableRange<float>(-3.0f, 3.0f, 0.001f), 0.0f, signedVal));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxY", 1}, "Vox humana Klangfarbe Y",
+                                                    NormalisableRange<float>(-3.0f, 3.0f, 0.001f), 0.0f, signedVal));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxBright", 1}, "Vox humana Helligkeit",
+                                                    NormalisableRange<float>(-1.0f, 1.0f, 0.001f), 0.0f, signedVal));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxNoise", 1}, "Vox humana Hauch",
+                                                    NormalisableRange<float>(-1.0f, 1.0f, 0.001f), 0.0f, signedVal));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxSpread", 1}, "Vox humana Breite",
+                                                    NormalisableRange<float>(-1.0f, 1.0f, 0.001f), 0.0f, signedVal));
+        l.add(std::make_unique<AudioParameterBool>(ParameterID{"voxFollow", 1},
+                                                   "Vox humana Klang folgt Eingang", false));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxRoom", 1}, "Vox humana eigener Raum",
+                                                    NormalisableRange<float>(0.0f, 1.0f, 0.001f), 1.0f, vpct));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxAz", 1}, "Vox humana Richtung",
+                                                    NormalisableRange<float>(-180.0f, 180.0f, 0.1f), 0.0f, vdeg));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxEl", 1}, String::fromUTF8("Vox humana H\xc3\xb6he"),
+                                                    NormalisableRange<float>(-30.0f, 90.0f, 0.1f), 12.0f, vdeg));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"voxDist", 1}, "Vox humana Abstand", NormalisableRange<float>(1.0f, 40.0f, 0.01f, 0.5f), 6.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, 1) + " m"; })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxSend", 1}, "Vox humana Hall-Anteil",
+                                                    NormalisableRange<float>(0.0f, 2.0f, 0.001f), 0.6f, vpct));
+        l.add(std::make_unique<AudioParameterBool>(ParameterID{"inPlays", 1}, "Eingang spielt die Orgel", false));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"inThresh", 1}, "Eingang Erkennungsschwelle", NormalisableRange<float>(0.3f, 0.95f, 0.001f), 0.6f,
+            vpct));
+        l.add(std::make_unique<AudioParameterInt>(ParameterID{"inConfirm", 1}, String::fromUTF8("Eingang Best\xc3\xa4tigung"),
+                                                  1, 16, 4,
+                                                  AudioParameterIntAttributes().withStringFromValueFunction(
+                                                      [](int v, int) { return String(v * 4 / 3.0f, 1) + " ms"; })));
+        l.add(std::make_unique<AudioParameterInt>(ParameterID{"inVoices", 1}, "Eingang Stimmen", 1, 8, 8));
+    }
     return l;
 }
 
@@ -1249,6 +1300,14 @@ juce::AudioProcessor::BusesProperties RysumProcessor::makeBuses()
 RysumProcessor::RysumProcessor()
     : AudioProcessor(makeBuses()), apvts(*this, nullptr, "RYSUM", createLayout())
 {
+    // the Vox humana's network is built in (resources/vox_humana.nrv2, NeuralRysum v2)
+    if (!voxStop.load(RysumData::vox_humana_nrv2, (size_t)RysumData::vox_humana_nrv2Size, voxError) &&
+        voxError.isEmpty())
+        voxError = "Vox humana: Modell fehlt";
+    for (auto &v : voxShown)
+        v = -1;
+    for (size_t i = 0; i < kVoxIds.size(); ++i)
+        voxRaw[i] = apvts.getRawParameterValue(kVoxIds[i]);
     for (int s = 0; s < kNumStops; ++s)
     {
         stopParams[(size_t)s] = apvts.getRawParameterValue(stopParamId(s));
@@ -1612,6 +1671,8 @@ void RysumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     lucPiece.prepare(sampleRate);
     lucRecScratch.assign((size_t)juce::jmax(512, samplesPerBlock), 0.0f);
     inBuf.setSize(2, juce::jmax(512, samplesPerBlock), false, true, false);
+    voxStop.prepare(sampleRate, juce::jmax(8192, samplesPerBlock));
+    voxMidi.ensureSize(4096);
     if (binActive != nullptr)
         binActive->reset();
     if (rateChanged && irFile.existsAsFile())
@@ -2072,6 +2133,44 @@ void RysumProcessor::clearRoute(int r)
     }
 }
 
+void RysumProcessor::runVox(juce::MidiBuffer &midi, int n, EngineParams &params) noexcept
+{
+    auto v = [this](int i) { return voxRaw[(size_t)i]->load(); };
+    VoxStop::Settings s;
+    s.stopOn = v(0) > 0.5f;
+    s.wind = v(2);
+    s.x = v(3);
+    s.y = v(4);
+    s.bright = v(5);
+    s.noisy = v(6);
+    s.spread = v(7);
+    s.follow = v(8) > 0.5f;
+    s.room = v(9);
+    s.inputPlays = v(14) > 0.5f;
+    s.thresh = v(15);
+    s.confirm = juce::roundToInt(v(16));
+    s.voices = juce::roundToInt(v(17));
+    const bool haveIn = inputThisBlock;
+    voxMidi.clear();
+    voxStop.process(haveIn ? inBuf.getReadPointer(0) : nullptr, haveIn ? inBuf.getReadPointer(1) : nullptr, n,
+                    midi, voxMidi, s, params);
+    if (!voxMidi.isEmpty())
+        midi.addEvents(voxMidi, 0, n, 0);
+    for (int i = 0; i < (int)voxShown.size(); ++i)
+        voxShown[(size_t)i] = s.inputPlays ? voxStop.trackedNote(i) : -1;
+
+    // the stop's level: a half-drawn stop is quieter too (at 0 % silent, like the others)
+    const float wnd = juce::jlimit(0.0f, 1.0f, s.wind);
+    auto &vp = params.vox;
+    vp.on = s.stopOn && voxStop.isLoaded();
+    vp.level = (v(1) <= -47.9f ? 0.0f : dbToGain(v(1))) * wnd * std::sqrt(wnd) * kVoxGain;
+    vp.az = v(10);
+    vp.el = v(11);
+    vp.dist = v(12);
+    vp.send = v(13);
+    engine.setVox(voxStop.output(), n);
+}
+
 void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midi)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -2423,8 +2522,10 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         engine.headYaw = yaw;
         engine.nearHeard = buffer.getNumChannels() > 1 && (binaural || (params.outputMode == 0 && !speakers));
     }
+    runVox(midi, n, params); // the Vox humana, and the notes the input plays (into `midi`)
     engine.process(work, midi, params);
     engine.setInput(nullptr, nullptr, 0);
+    engine.setVox(nullptr, 0);
     if (concertRole == rysum::ConcertLink::Role::performer)
     {
         // the clocks that move things, as they are at the end of this block

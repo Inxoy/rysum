@@ -14,6 +14,7 @@
 #include "Speakers.h"
 #include "TimeDistance.h"
 #include "Transaural.h"
+#include "VoxStop.h"
 #include "Walk3D.h"
 #include <map>
 
@@ -1258,6 +1259,26 @@ private:
     rysum::DsfReferenceInstrument referenceTone;
     juce::AudioBuffer<float> inBuf;
     bool inputThisBlock = false;     // the audio input of the block (main input + side chain)
+    // Vox humana (the neural stop) and "Eingang spielt die Orgel"
+    rysum::VoxStop voxStop;
+    juce::MidiBuffer voxMidi; // the notes the input plays, added to the block's MIDI
+    void runVox(juce::MidiBuffer &midi, int n, rysum::EngineParams &params) noexcept;
+
+public:
+    /** the Vox humana's model could not be loaded: why (empty = fine) */
+    juce::String voxError;
+    /** what the input plays right now (for the console): MIDI keys, -1 = none */
+    int voxTrackedNote(int v) const noexcept { return voxShown[(size_t)v].load(); }
+
+    /** the Vox humana's level against the sample stops (the network's output is quiet) */
+    static constexpr float kVoxGain = 4.0f;
+    static constexpr std::array<const char *, 18> kVoxIds{
+        "voxOn",   "voxVol",  "voxWind", "voxX",    "voxY",    "voxBright", "voxNoise",  "voxSpread", "voxFollow",
+        "voxRoom", "voxAz",   "voxEl",   "voxDist", "voxSend", "inPlays",   "inThresh",  "inConfirm", "inVoices"};
+
+private:
+    std::array<std::atomic<int>, 8> voxShown{};
+    std::array<std::atomic<float> *, 18> voxRaw{}; // kVoxIds, read on the audio thread
     juce::AudioBuffer<float> binBuf; // Ambisonics render buffer in binaural mode
     juce::String binStatus{juce::String::fromUTF8("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e"
                                                   "Binaural\xe2\x80\x9c stellen")};

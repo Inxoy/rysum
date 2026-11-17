@@ -88,7 +88,8 @@ juce_add_binary_data(RysumData
         resources/orgel.txt
         resources/wall.jpg
         resources/grain.png
-        resources/fabian_hrir.bin)
+        resources/fabian_hrir.bin
+        resources/vox_humana.nrv2)
 
 # libmysofa (BSD-3): reads SOFA files (HRTFs) for the binaural mode. Its one zlib call goes to JUCE's zlib
 # (hdf/gunzip_rysum.c -> source/SofaGunzip.cpp), so nothing else is needed.
@@ -295,6 +296,17 @@ if(RYSUM_BUILD_TESTS)
     target_link_libraries(RysumPitchTest PRIVATE juce::juce_recommended_warning_flags)
     add_test(NAME sample_pitch COMMAND RysumPitchTest)
 
+    # Vox humana: the C++ engine against the PyTorch reference (files from NeuralRysum's
+    # scripts/make_v2_reference.py; the test only runs when RYSUM_VOX_REFERENCE names one)
+    add_executable(RysumVoxTest tests/VoxTest.cpp)
+    target_include_directories(RysumVoxTest PRIVATE source)
+    target_link_libraries(RysumVoxTest PRIVATE rysum_pffft)
+    set(RYSUM_VOX_REFERENCE "" CACHE FILEPATH "reference vectors for the Vox humana test (.nrv2)")
+    if(RYSUM_VOX_REFERENCE)
+        add_test(NAME vox_humana COMMAND RysumVoxTest ${CMAKE_CURRENT_SOURCE_DIR}/resources/vox_humana.nrv2
+                 ${RYSUM_VOX_REFERENCE})
+    endif()
+
     add_executable(RysumDsfTest tests/DsfIntegratorTest.cpp)
     target_include_directories(RysumDsfTest PRIVATE source)
     target_link_libraries(RysumDsfTest PRIVATE juce::juce_recommended_warning_flags)
@@ -350,6 +362,20 @@ if(RYSUM_BUILD_TESTS)
     target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
         juce::juce_audio_utils juce::juce_opengl juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+    # the Vox humana through the whole plugin: RysumVoxRender <samples> <input.wav> <out folder> [seconds]
+    juce_add_gui_app(RysumVoxRender PRODUCT_NAME "RysumVoxRender")
+    target_sources(RysumVoxRender PRIVATE tests/VoxRender.cpp ${RYSUM_PLUGIN_SOURCES})
+    target_include_directories(RysumVoxRender PRIVATE source)
+    target_compile_definitions(RysumVoxRender PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
+        JucePlugin_Name="Rysum" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
+        JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
+    target_link_libraries(RysumVoxRender PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
+        juce::juce_audio_utils juce::juce_opengl juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
+        juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+    if(MSVC)
+        target_compile_options(RysumVoxRender PRIVATE /MP /utf-8)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

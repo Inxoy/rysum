@@ -97,6 +97,17 @@ struct InputParams
     float send = 1.0f;    // room send, linear (1 = like a pipe)
 };
 
+/** Vox humana: the neural stop (NeuralRysum v2). The processor renders it (source/vox) and hands
+    the mono signal to the engine, which places it like the audio input: one source at its own place,
+    into the room, the early reflections and everything after the pipes. */
+struct VoxParams
+{
+    bool on = false;
+    float level = 1.0f;                        // linear
+    float az = 0.0f, el = 12.0f, dist = 6.0f;  // deg, deg, m
+    float send = 1.0f;                         // room send, linear (1 = like a pipe)
+};
+
 /** free tuning (Scala file, MTS-ESP / MIDI Tuning Standard): the frequency of every MIDI note on
  * every channel */
 struct NoteTable
@@ -285,6 +296,7 @@ struct EngineParams
     LiveParams live;
 
     InputParams input;
+    VoxParams vox;
 
     // simulated room ("Saal"): early reflections per pipe + late reverb. Up to four rooms: every
     // stop and the input sound in one of them (room 0 = "Saal 1", everything else - clicks, effects
@@ -620,6 +632,14 @@ public:
         inPtr[1] = r;
         inLen = numSamples;
     }
+    /** audio thread, before process(): the Vox humana of this block (mono, host rate; null =
+       silence). The pointer must stay valid until process() returns. */
+    void setVox(const float *mono, int numSamples) noexcept
+    {
+        voxPtr = mono;
+        voxLen = numSamples;
+    }
+    std::atomic<float> voxPeak{0.0f}; // for the console
     // the input as placed right now, for the UI
     std::array<std::atomic<float>, 2> inShowAz{}, inShowEl{}, inShowDist{};
     std::atomic<int> inShowCount{0};
@@ -995,6 +1015,7 @@ private:
                             const Vec3f *fixedSrc) noexcept;
     void renderEchoes(juce::AudioBuffer<float> &out, int n, const EngineParams &p);
     void renderInput(juce::AudioBuffer<float> &out, int n, const EngineParams &p) noexcept;
+    void renderVox(juce::AudioBuffer<float> &out, int n, const EngineParams &p) noexcept;
     void followInput(int start, int len, const EngineParams &p) noexcept;
     const std::vector<NoiseSample> &customPool() const noexcept;
     static float clickCurve(float v) noexcept
@@ -1064,6 +1085,13 @@ private:
         bool fresh = true;
     };
     std::array<InSrc, 2> inSrc{};
+    // Vox humana: one more source like the input (early-reflection slots mark it as input kVoxInput)
+    static constexpr int kVoxInput = 2;
+    const float *voxPtr = nullptr;
+    int voxLen = 0;
+    InSrc voxSrc;
+    bool voxRunning = false;
+    float voxLevelSm = 0.0f;
     float inGate = 0.0f, inLevelSm = 0.0f, inEnv = 0.0f, inFollowVal = 0.0f;
     double inSpin = 0.0;
     bool inRunning = false;

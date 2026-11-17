@@ -21,6 +21,38 @@ private:
     int stop;
 };
 
+/** the Vox humana's knob: the neural stop (no photo - a typeset label on the bare knob) */
+class VoxTile : public juce::Button
+{
+public:
+    VoxTile() : juce::Button("Vox humana")
+    {
+        setClickingTogglesState(true);
+        setTooltip(juce::String::fromUTF8(
+            "Vox humana 8\xe2\x80\xb2 \xe2\x80\x93 ein neuronales Register (NeuralRysum): ein Netz, das die "
+            "Rysumer Orgel spielen gelernt hat, synthetisiert jeden Ton. Spielt mit den Tasten und, mit "
+            "\xe2\x80\x9e" "Eingang spielt die Orgel\xe2\x80\x9c, mit dem, was am Eingang erklingt."));
+    }
+    void paintButton(juce::Graphics &, bool over, bool down) override;
+    juce::String error; // the model could not be loaded
+};
+
+/** the Vox humana's settings (opens from the console) */
+class VoxPanel : public juce::Component
+{
+public:
+    explicit VoxPanel(RysumProcessor &);
+    void paint(juce::Graphics &) override;
+    void resized() override;
+
+private:
+    RysumProcessor &proc;
+    juce::ToggleButton plays{"Eingang spielt die Orgel"}, follow{"Klangfarbe folgt dem Eingang"};
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> playsAtt, followAtt;
+    std::vector<std::unique_ptr<ParamRow>> rows;
+    std::vector<juce::Rectangle<int>> heads;
+};
+
 /** the 46 semitones C..a'' with the short-octave gaps; shows held keys, can be played with the
  * mouse */
 class KeyStrip : public juce::Component
@@ -82,6 +114,11 @@ private:
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>
         tileAttachments;
     std::vector<std::unique_ptr<ParamRow>> noiseRows, decayRows, stopVol, stopWind;
+    // Vox humana
+    VoxTile voxTile;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> voxAtt;
+    std::unique_ptr<ParamRow> voxVol, voxWind;
+    juce::TextButton voxMore{juce::String::fromUTF8("Vox \xe2\x80\xa6")};
     juce::TextButton testToneButton{"Testton"};
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> testToneAttachment;
     std::unique_ptr<ParamRow> testToneLevel, testToneColour;
