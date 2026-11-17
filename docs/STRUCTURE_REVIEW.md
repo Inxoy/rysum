@@ -135,3 +135,4 @@ focused suites into CTest would make future failures easier to isolate.
 - [Release velocity plan](to-do/RELEASE_VELOCITY.md)
 - [Other sample-library plan](to-do/SAMPLE_LIBRARY_IMPLEMENTATION.md)
 - [Stereo signal-path plan](to-do/STEREO_SIGNAL_PATH.md)
+- [Vox humana: NeuralRysum v2, the neural stop](NeuralRysum_v2_paper.md)
