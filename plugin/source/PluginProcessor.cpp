@@ -2204,8 +2204,20 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         else
         {
             params.autoBeats = autoOwnBeats;
-            params.autoBeatRate = autoRun.load() ? (ac != nullptr ? ac->tempo : 60.0) / 60.0 : 0.0;
+            // the tempo: the tempo lane where there is one, else the page's
+            double bpm = ac != nullptr ? ac->tempo : 60.0;
+            if (ac != nullptr && ac->hasTempo)
+                if (const float tv = rysum::autoValue(ac->tempoLane, autoOwnBeats); !std::isnan(tv))
+                    bpm = rysum::autoTempoBpm(tv);
+            params.autoBeatRate = autoRun.load() ? bpm / 60.0 : 0.0;
+            const double before = autoOwnBeats;
             autoOwnBeats += buffer.getNumSamples() / sr * params.autoBeatRate;
+            // a repeated section: at its end the clock goes back to its start (only when it runs
+            // into the end from inside - a jump past it stays there)
+            if (ac != nullptr && ac->cycle && before < ac->cycleEnd && before >= ac->cycleStart - 1.0e-6 &&
+                autoOwnBeats >= ac->cycleEnd)
+                autoOwnBeats = ac->cycleStart + std::fmod(autoOwnBeats - ac->cycleEnd,
+                                                          ac->cycleEnd - ac->cycleStart);
         }
         params.autoView = ac != nullptr && ac->on ? &ac->view : nullptr;
         autoNow = params.autoBeats;

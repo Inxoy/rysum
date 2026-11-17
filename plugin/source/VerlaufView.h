@@ -59,7 +59,8 @@ public:
     void mouseDoubleClick(const juce::MouseEvent &) override;
     void mouseWheelMove(const juce::MouseEvent &, const juce::MouseWheelDetails &) override;
 
-    static constexpr int kHeaderW = 214, kRulerH = 26;
+    // the ruler: a band for markers and the repeated section on top, the bars below
+    static constexpr int kHeaderW = 214, kMarkH = 15, kRulerH = 41;
     int scrollY = 0;
 
     // geometry
@@ -85,8 +86,17 @@ private:
         pan,
         box,    // pressed on empty space: a click sets a point, a drag draws a frame
         line,   // pressed on the line: a click chooses the section, a drag bends it
-        resize  // the lane's lower edge
+        resize, // the lane's lower edge
+        marker, // a marker: a click jumps there, a drag moves it
+        cycleA, // an end of the repeated section
+        cycleB,
+        cycleNew // pressed in the marker band: a click sets the clock, a drag the section
     } drag = Drag::none;
+    int dragMarker = -1;
+    double markerStart = 0.0;
+    /** the marker whose flag is at x (in the band), -1 = none */
+    int markerAt(float x) const;
+    juce::Rectangle<float> markerFlag(int i) const;
     int dragLane = -1, dragPoint = -1;
     float bendStart = 0.0f;
     bool dragMoved = false, undoPushed = false;
@@ -103,6 +113,9 @@ private:
     {
         none,
         ruler,
+        band,
+        marker,
+        cycleEdge,
         header,
         headerButton,
         edge,
@@ -203,6 +216,25 @@ private:
     {
         selPts.clear();
     }
+    // markers and the repeated section
+    void addMarkerAt(double beat);
+    void renameMarker(int i);
+    void showMarkerMenu(int i, double beat);
+    void jumpMarker(int direction); // to the previous (-1) / next (+1) marker
+    void sortMarkers();
+    juce::TextButton cycleButton{juce::String::fromUTF8("A\xe2\x80\x93"
+                                                        "B")};
+    // the tempo lane: seconds at a clock time (the ruler's second line), cached per version
+    double secondsAt(double beats) const;
+    juce::String secondsText(double beats) const;
+    const AutoLane *tempoLane() const;
+    mutable std::vector<double> secCache;
+    mutable int secCacheVersion = -1;
+    // editing tools
+    juce::PopupMenu paramMenu(int base) const; // every control a lane can drive
+    void transformPoints(int kind);            // the selection (or all points of the lane)
+    void fillLane(int kind);                   // a pattern into the loop / the visible range
+    void copyLaneTo(const juce::String &paramId);
     std::vector<AutoPoint> clip; // copied points, times from the first one
     void copySelection(bool cut);
     void paste();
@@ -236,6 +268,14 @@ public:
     {
         pieceLoaded();
     }
+    void testFill(int kind)
+    {
+        fillLane(kind);
+    }
+    void testTransform(int kind)
+    {
+        transformPoints(kind);
+    }
 
 private:
     juce::Rectangle<int> titleBox, laneBox, segBox;
@@ -267,6 +307,9 @@ private:
     std::array<juce::TextButton, kNumAutoShapes> shapeButtons;
     FreeRow bendRow{"Biegung", -1.0, 1.0}, rateRow{"Tempo", 0.05, 32.0, 2.0},
         depthRow{"Tiefe", 0.0, 1.0};
+    // variation from pass to pass
+    FreeRow chanceRow{"Chance", 0.0, 1.0}, everyRow{juce::String::fromUTF8("Nur jedes n-te Mal"), 1.0, 8.0},
+        varyRow{"Streuung", 0.0, 0.5};
     VerlaufTimeline timeline{*this};
 };
 } // namespace rysum::ui

@@ -141,6 +141,27 @@ bool VerlaufTimeline::onLowerEdge(int lane, int y) const
     return y >= b - 4 && y < b + 1;
 }
 
+juce::Rectangle<float> VerlaufTimeline::markerFlag(int i) const
+{
+    const auto &m = owner.proc.getAuto().markers[(size_t)i];
+    const float x = xOfBeat(m.beat);
+    const float w = juce::GlyphArrangement::getStringWidth(Assets::get().monoFont(9.5f), m.name) + 9.0f;
+    return {x, 1.0f, juce::jmax(10.0f, w), (float)kMarkH - 3.0f};
+}
+
+int VerlaufTimeline::markerAt(float x) const
+{
+    const auto &ms = owner.proc.getAuto().markers;
+    // the latest flag under x wins (flags overlap to the right)
+    for (int i = (int)ms.size() - 1; i >= 0; --i)
+    {
+        const auto f = markerFlag(i);
+        if (x >= f.getX() - 3.0f && x <= f.getRight())
+            return i;
+    }
+    return -1;
+}
+
 int VerlaufTimeline::lineAt(int lane, juce::Point<float> p) const
 {
     if (!owner.validLane(lane) || p.x < (float)kHeaderW)
@@ -293,6 +314,19 @@ void VerlaufTimeline::paint(juce::Graphics &g)
         }
     }
 
+    // the markers: a thin line down through the lanes
+    {
+        const auto &s2 = owner.proc.getAuto();
+        const float dash[]{2.0f, 4.0f};
+        g.setColour(col::rubric.withAlpha(0.45f));
+        for (const auto &m : s2.markers)
+        {
+            const float x = xOfBeat(m.beat);
+            if (x > (float)kHeaderW && x < (float)getWidth())
+                g.drawDashedLine({x, (float)kRulerH, x, (float)getHeight()}, dash, 2, 1.0f);
+        }
+    }
+
     paintRuler(g, {0, 0, getWidth(), kRulerH});
 
     // playhead
@@ -320,6 +354,36 @@ void VerlaufTimeline::paintRuler(juce::Graphics &g, juce::Rectangle<int> r)
     g.fillRect(r);
     g.setColour(col::border);
     g.fillRect(r.getX(), r.getBottom() - 1, r.getWidth(), 1);
+    // the band on top: the repeated section (A-B) and the markers
+    {
+        auto band = juce::Rectangle<float>((float)kHeaderW, (float)r.getY(), (float)(getWidth() - kHeaderW), (float)kMarkH);
+        g.setColour(col::panel.withAlpha(0.6f));
+        g.fillRect(band);
+        g.setColour(col::line);
+        g.fillRect(band.getX(), band.getBottom() - 1.0f, band.getWidth(), 1.0f);
+        juce::Graphics::ScopedSaveState ss(g);
+        g.reduceClipRegion(band.toNearestInt());
+        {
+            const float xa = xOfBeat(s.cycleStart), xb = xOfBeat(s.cycleEnd);
+            const auto cr = juce::Rectangle<float>(xa, band.getY() + 2.0f, juce::jmax(2.0f, xb - xa), band.getHeight() - 4.0f);
+            g.setColour(s.cycle ? col::rubric.withAlpha(0.45f) : col::faint.withAlpha(0.18f));
+            g.fillRect(cr);
+            g.setColour(s.cycle ? col::rubric.brighter(0.3f) : col::faint.withAlpha(0.5f));
+            g.fillRect(xa, band.getY() + 1.0f, 2.0f, band.getHeight() - 2.0f);
+            g.fillRect(xb - 2.0f, band.getY() + 1.0f, 2.0f, band.getHeight() - 2.0f);
+        }
+        g.setFont(A.monoFont(9.5f));
+        for (int i = 0; i < (int)s.markers.size(); ++i)
+        {
+            const auto f = markerFlag(i);
+            const bool hot = (drag == Drag::marker && dragMarker == i) ||
+                             (drag == Drag::none && hover.y >= 0.0f && hover.y < (float)kMarkH && markerAt(hover.x) == i);
+            g.setColour(hot ? col::rubric.brighter(0.4f) : col::rubric.withAlpha(0.85f));
+            g.fillRect(f);
+            g.setColour(col::white);
+            g.drawText(s.markers[(size_t)i].name, f.withTrimmedLeft(4.0f), juce::Justification::centredLeft, false);
+        }
+    }
     // labels: bars and beats (the unit of every lane setting: 4 beats = 1 bar), at least ~70 px
     // apart; with the own clock the seconds as well, smaller
     const bool host = owner.proc.isAutoHostClock();
@@ -341,24 +405,30 @@ void VerlaufTimeline::paintRuler(juce::Graphics &g, juce::Rectangle<int> r)
         g.setColour(bar ? col::ink.withAlpha(0.8f) : col::dim);
         g.setFont(A.monoFont(10.0f));
         const auto lbl = barText(b);
-        g.drawText(lbl, juce::Rectangle<float>(x + 3.0f, (float)r.getY() + 2.0f, 60.0f, 13.0f),
+        const float y0 = (float)r.getY() + (float)kMarkH;
+        g.drawText(lbl, juce::Rectangle<float>(x + 3.0f, y0 + 2.0f, 60.0f, 13.0f),
                    juce::Justification::centredLeft);
         if (!host)
         {
             g.setColour(col::faint);
             g.setFont(A.monoFont(8.5f));
-            g.drawText(VerlaufView::clockText(owner.proc, b),
-                       juce::Rectangle<float>(x + 3.0f, (float)r.getY() + 13.0f, 60.0f, 10.0f),
+            g.drawText(owner.secondsText(b), juce::Rectangle<float>(x + 3.0f, y0 + 13.0f, 60.0f, 10.0f),
                        juce::Justification::centredLeft);
         }
     }
-    // left: what the clock is
+    // left: what the clock is (and what the band is)
     g.setColour(col::faint);
+    g.setFont(A.monoFont(9.0f));
+    g.drawText(juce::String::fromUTF8("Marken \xc2\xb7 A\xe2\x80\x93"
+                                      "B"),
+               juce::Rectangle<int>(10, r.getY(), kHeaderW - 20, kMarkH), juce::Justification::centredLeft);
     g.setFont(A.romanFont(11.0f));
     g.drawText(host ? juce::String::fromUTF8("Takt.Schlag \xc2\xb7 Host")
                     : juce::String::fromUTF8("Takt.Schlag \xc2\xb7 eigene Uhr ") +
-                          juce::String(s.tempo, 0) + " BPM",
-               r.withWidth(kHeaderW).reduced(10, 0), juce::Justification::centredLeft);
+                          (owner.tempoLane() != nullptr ? juce::String("(Tempo-Spur)")
+                                                        : juce::String(s.tempo, 0) + " BPM"),
+               juce::Rectangle<int>(10, r.getY() + kMarkH, kHeaderW - 20, kRulerH - kMarkH),
+               juce::Justification::centredLeft);
 }
 
 void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> r)
@@ -371,7 +441,11 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
     const int param = owner.laneParam(li);
     const int steps = P.autoSteps(param);
     const int pipeT = autoPipeTarget(l.paramId), pathS = autoPathStop(l.paramId);
-    const bool live = s.on && l.on && (param >= 0 || pipeT >= 0 || pathS >= 0);
+    const bool tempoL = l.paramId == kAutoTempoId;
+    const bool anySolo = std::any_of(s.lanes.begin(), s.lanes.end(), [](const AutoLane &x) { return x.on && x.solo; });
+    // (a solo elsewhere silences this lane; the tempo lane always counts)
+    const bool live = s.on && l.on && (param >= 0 || pipeT >= 0 || pathS >= 0 || tempoL) &&
+                      (!anySolo || l.solo || tempoL);
 
     // header
     auto h = r.withWidth(kHeaderW);
@@ -400,7 +474,13 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
                               juce::String(l.waveSpeed, l.waveSpeed < 10.0f ? 1 : 0) + " m/S."
                         : juce::String("je Pfeife"))
         : pathS >= 0 ? juce::String("Fahrplan der Bahn")
+        : tempoL     ? (P.isAutoHostClock() ? juce::String::fromUTF8("ruht \xe2\x80\x93 die Uhr ist die des Hosts")
+                                            : juce::String::fromUTF8("eigene Uhr \xc2\xb7 20 bis 300 BPM"))
                      : juce::String::fromUTF8("(unbekannter Regler)");
+    if (l.solo)
+        info = juce::String::fromUTF8("SOLO \xc2\xb7 ") + info;
+    else if (anySolo && !tempoL)
+        info = juce::String::fromUTF8("stumm (Solo) \xc2\xb7 ") + info;
     if (l.loop)
         info << juce::String::fromUTF8(" \xc2\xb7 Schleife ") << beatsText(l.length);
     if (l.reverse)
@@ -624,11 +704,20 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
             const bool selected = sel && (i == owner.selPoint || owner.isSelected(i));
             g.setColour(selected ? col::rubric.brighter(0.3f) : (hot ? col::white : col::ink));
             drawLozenge(g, {x, y}, hot || selected ? 4.5f : 3.5f, hot || selected ? 6.0f : 5.0f);
-            if (pt.shape != asCurve && sel)
+            // the section's shape and its variation, beside its first point
+            juce::String tag = pt.shape != asCurve ? autoShapeNames()[pt.shape] : juce::String();
+            if (pt.chance < 1.0f)
+                tag << (tag.isEmpty() ? "" : " ") << juce::roundToInt(pt.chance * 100.0f) << " %";
+            if (pt.every > 1)
+                tag << (tag.isEmpty() ? "" : " ") << "jedes " << pt.every << ".";
+            if (pt.vary > 0.0f)
+                tag << (tag.isEmpty() ? "" : " ") << juce::String::fromUTF8("\xc2\xb1") << juce::roundToInt(pt.vary * 100.0f) << " %";
+            if (tag.isNotEmpty() && (sel || pt.chance < 1.0f || pt.every > 1 || pt.vary > 0.0f) && r.getHeight() >= 40)
             {
-                g.setColour(col::faint);
+                g.setColour(pt.chance < 1.0f || pt.every > 1 || pt.vary > 0.0f ? col::rubric.brighter(0.3f).withAlpha(0.8f)
+                                                                                 : col::faint);
                 g.setFont(A.monoFont(9.0f));
-                g.drawText(autoShapeNames()[pt.shape], juce::Rectangle<float>(x + 6.0f, (float)c.getY(), 60.0f, 12.0f),
+                g.drawText(tag, juce::Rectangle<float>(x + 6.0f, (float)c.getY(), 140.0f, 12.0f),
                            juce::Justification::centredLeft);
             }
         }
@@ -733,6 +822,15 @@ VerlaufTimeline::Hover VerlaufTimeline::hoverKind() const
 {
     if (hover.x < 0.0f)
         return Hover::none;
+    if (hover.y < (float)kMarkH && hover.x > (float)kHeaderW)
+    {
+        if (markerAt(hover.x) >= 0)
+            return Hover::marker;
+        const auto &s = owner.proc.getAuto();
+        if (std::abs(hover.x - xOfBeat(s.cycleStart)) < 5.0f || std::abs(hover.x - xOfBeat(s.cycleEnd)) < 5.0f)
+            return Hover::cycleEdge;
+        return Hover::band;
+    }
     if (hover.y < (float)kRulerH)
         return hover.x > (float)kHeaderW ? Hover::ruler : Hover::none;
     const int li = hoverLane;
@@ -777,6 +875,13 @@ juce::String VerlaufTimeline::hintText() const
         return U("Ziehen: die H\xc3\xb6he der Spur");
     case Drag::seek:
         return U("Ziehen: die Uhr stellen");
+    case Drag::marker:
+        return U("Ziehen: die Marke verschieben") + sep + U("Umschalt: ohne Raster");
+    case Drag::cycleA:
+    case Drag::cycleB:
+    case Drag::cycleNew:
+        return U("Ziehen: den wiederholten Abschnitt (A\xe2\x80\x93"
+                 "B) legen");
     case Drag::pan:
         return U("Ziehen: die Ansicht verschieben");
     default:
@@ -793,6 +898,20 @@ juce::String VerlaufTimeline::hintText() const
         return U("Klicken w\xc3\xa4hlt diese Spur") + sep + U("dann: Punkte setzen, ziehen, zeichnen");
     switch (hk)
     {
+    case Hover::band:
+        return U("Marken: Doppelklick setzt eine (M: an der Uhr)") + sep +
+               U("ziehen legt den wiederholten Abschnitt A\xe2\x80\x93"
+                 "B") +
+               sep + U("Bild auf / ab: zur vorigen / n\xc3\xa4"
+                       "chsten Marke") +
+               sep + U("Rechtsklick: Men\xc3\xbc");
+    case Hover::marker:
+        return U("Marke: klicken springt dorthin") + sep + U("ziehen verschiebt") + sep +
+               U("Doppelklick: umbenennen") + sep + U("Rechtsklick: Men\xc3\xbc");
+    case Hover::cycleEdge:
+        return U("Ziehen: Anfang oder Ende des wiederholten Abschnitts") + sep +
+               U("A\xe2\x80\x93"
+                 "B oben in der Leiste schaltet ihn an / aus");
     case Hover::ruler:
         return owner.proc.isAutoHostClock()
                    ? U("Lineal: Takt.Schlag des Hosts \xe2\x80\x93 die Uhr stellt der Host")
@@ -853,7 +972,9 @@ void VerlaufTimeline::mouseMove(const juce::MouseEvent &e)
     hoverLane = laneAt(e.y);
     hoverPoint = hoverLane >= 0 && e.x > kHeaderW && !onLowerEdge(hoverLane, e.y) ? pointAt(hoverLane, e.position) : -1;
     const auto k = hoverKind();
-    setMouseCursor(k == Hover::edge                                                ? juce::MouseCursor::UpDownResizeCursor
+    setMouseCursor(k == Hover::cycleEdge                                           ? juce::MouseCursor::LeftRightResizeCursor
+                   : k == Hover::marker                                            ? juce::MouseCursor::PointingHandCursor
+                   : k == Hover::edge                                              ? juce::MouseCursor::UpDownResizeCursor
                    : k == Hover::point                                             ? juce::MouseCursor::DraggingHandCursor
                    : k == Hover::line || k == Hover::headerButton                  ? juce::MouseCursor::PointingHandCursor
                    : k == Hover::empty && owner.tool != VerlaufView::toolPoints    ? juce::MouseCursor::CrosshairCursor
@@ -911,6 +1032,30 @@ void VerlaufTimeline::mouseDown(const juce::MouseEvent &e)
     dragMoved = undoPushed = false;
     downPos = hover = e.position;
     owner.grabKeyboardFocus();
+    if (e.y < kMarkH && e.x > kHeaderW)
+    {
+        // the band: markers and the repeated section
+        const int mi = markerAt((float)e.x);
+        if (e.mods.isPopupMenu())
+        {
+            owner.showMarkerMenu(mi, snap(beatOfX((float)e.x), e.mods.isShiftDown()));
+            return;
+        }
+        if (mi >= 0)
+        {
+            drag = Drag::marker;
+            dragMarker = mi;
+            markerStart = s.markers[(size_t)mi].beat;
+        }
+        else if (std::abs((float)e.x - xOfBeat(s.cycleStart)) < 5.0f)
+            drag = Drag::cycleA;
+        else if (std::abs((float)e.x - xOfBeat(s.cycleEnd)) < 5.0f)
+            drag = Drag::cycleB;
+        else
+            drag = Drag::cycleNew;
+        owner.hintChanged();
+        return;
+    }
     if (e.y < kRulerH)
     {
         if (e.x > kHeaderW)
@@ -1115,6 +1260,29 @@ void VerlaufTimeline::mouseDrag(const juce::MouseEvent &e)
         owner.proc.autoSeek(juce::jmax(0.0, snap(beatOfX((float)e.x), e.mods.isAltDown())));
         return;
     }
+    if (drag == Drag::marker || drag == Drag::cycleA || drag == Drag::cycleB || drag == Drag::cycleNew)
+    {
+        if (!dragMoved)
+            return;
+        ensureUndo();
+        const double b = juce::jmax(0.0, snap(beatOfX(e.position.x), e.mods.isShiftDown()));
+        const double minLen = s.grid > 0.0 ? s.grid : 0.25;
+        if (drag == Drag::marker && dragMarker >= 0 && dragMarker < (int)s.markers.size())
+            s.markers[(size_t)dragMarker].beat = b;
+        else if (drag == Drag::cycleA)
+            s.cycleStart = juce::jmin(b, s.cycleEnd - minLen);
+        else if (drag == Drag::cycleB)
+            s.cycleEnd = juce::jmax(b, s.cycleStart + minLen);
+        else
+        {
+            const double a = juce::jmax(0.0, snap(beatOfX(downPos.x), e.mods.isShiftDown()));
+            s.cycleStart = juce::jmin(a, b);
+            s.cycleEnd = juce::jmax(juce::jmax(a, b), s.cycleStart + minLen);
+            s.cycle = true;
+        }
+        owner.changed();
+        return;
+    }
     if (drag == Drag::pan)
     {
         const double perPx = s.viewLen / juce::jmax(1, getWidth() - kHeaderW);
@@ -1266,6 +1434,12 @@ void VerlaufTimeline::mouseDrag(const juce::MouseEvent &e)
 void VerlaufTimeline::mouseUp(const juce::MouseEvent &e)
 {
     auto &s = owner.set();
+    if (drag == Drag::marker && !dragMoved && dragMarker >= 0 && dragMarker < (int)s.markers.size())
+        owner.proc.autoSeek(s.markers[(size_t)dragMarker].beat); // a click on a marker: there
+    else if (drag == Drag::cycleNew && !dragMoved)
+        owner.proc.autoSeek(juce::jmax(0.0, snap(beatOfX(downPos.x), e.mods.isShiftDown())));
+    if (drag == Drag::marker && dragMoved)
+        owner.sortMarkers();
     if (drag == Drag::pencil && owner.validLane(dragLane) && stroke.size() >= 1)
     {
         auto &l = s.lanes[(size_t)dragLane];
@@ -1299,6 +1473,16 @@ void VerlaufTimeline::mouseUp(const juce::MouseEvent &e)
 
 void VerlaufTimeline::mouseDoubleClick(const juce::MouseEvent &e)
 {
+    if (e.y < kMarkH && e.x > kHeaderW)
+    {
+        // the band: a marker renamed, or a new one
+        const int mi = markerAt((float)e.x);
+        if (mi >= 0)
+            owner.renameMarker(mi);
+        else
+            owner.addMarkerAt(juce::jmax(0.0, snap(beatOfX((float)e.x), e.mods.isShiftDown())));
+        return;
+    }
     const int li = laneAt(e.y);
     if (li < 0 || e.y < kRulerH)
         return;
@@ -1400,6 +1584,18 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         proc.autoPlay(false);
     };
     homeButton.onClick = [this] { proc.autoSeek(0.0); };
+    toggle(cycleButton, juce::String::fromUTF8("A\xe2\x80\x93"
+                                               "B: die eigene Uhr wiederholt den Abschnitt im Band \xc3\xbc"
+                                               "ber dem Lineal (dort ziehen, oder Rechtsklick auf eine Marke: "
+                                               "bis zur n\xc3\xa4"
+                                               "chsten wiederholen)"));
+    cycleButton.setClickingTogglesState(true);
+    cycleButton.onClick = [this]
+    {
+        pushUndo();
+        set().cycle = cycleButton.getToggleState();
+        changed();
+    };
     toggle(keyStart, juce::String::fromUTF8("Die eigene Uhr startet von selbst mit der ersten gespielten Taste "
                                             "(statt mit \xe2\x96\xb6)"));
     keyStart.setClickingTogglesState(true);
@@ -1642,6 +1838,26 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
     segEdit(bendRow, [](AutoPoint &p, double v) { p.bend = (float)v; });
     segEdit(rateRow, [](AutoPoint &p, double v) { p.rate = (float)v; });
     segEdit(depthRow, [](AutoPoint &p, double v) { p.depth = (float)v; });
+    // variation from pass to pass
+    everyRow.slider.setRange(1.0, 8.0, 1.0);
+    chanceRow.format = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+    everyRow.format = [](double v)
+    {
+        const int n = juce::roundToInt(v);
+        return n <= 1 ? juce::String("jedes Mal") : juce::String("jedes ") + juce::String(n) + ".";
+    };
+    varyRow.format = [](double v) { return juce::String::fromUTF8("\xc2\xb1 ") + juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+    segEdit(chanceRow, [](AutoPoint &p, double v) { p.chance = (float)v; });
+    segEdit(everyRow, [](AutoPoint &p, double v) { p.every = juce::jlimit(1, 8, juce::roundToInt(v)); });
+    segEdit(varyRow, [](AutoPoint &p, double v) { p.vary = (float)v; });
+    chanceRow.slider.setTooltip(juce::String::fromUTF8(
+        "Wie wahrscheinlich der Abschnitt sich bei einem Durchgang bewegt \xe2\x80\x93 sonst bleibt der Wert "
+        "stehen. Jeder Durchgang einer Schleife w\xc3\xbcrfelt neu (und beim n\xc3\xa4"
+        "chsten Mal an derselben Stelle gleich)."));
+    everyRow.slider.setTooltip(juce::String::fromUTF8("Der Abschnitt bewegt sich nur bei jedem n-ten Durchgang der "
+                                                      "Schleife, sonst bleibt der Wert stehen."));
+    varyRow.slider.setTooltip(juce::String::fromUTF8("Der Wert dieses Punkts wandert von Durchgang zu Durchgang um "
+                                                     "bis zu so viel."));
 
     addAndMakeVisible(timeline);
     syncControls();
@@ -1666,6 +1882,8 @@ juce::String VerlaufView::laneName(int lane) const
         if (!validLane(lane))
             return {};
         const auto &id = proc.getAuto().lanes[(size_t)lane].paramId;
+        if (id == kAutoTempoId)
+            return juce::String::fromUTF8("Tempo der eigenen Uhr");
         if (const int t = autoPipeTarget(id); t >= 0)
             return pipeTargetNames()[t];
         if (const int s = autoPathStop(id); s >= 0)
@@ -1681,6 +1899,8 @@ juce::String VerlaufView::valueText(int lane, float v) const
     if (p < 0 && validLane(lane))
     {
         const auto &id = proc.getAuto().lanes[(size_t)lane].paramId;
+        if (id == kAutoTempoId)
+            return juce::String(autoTempoBpm(v), 1) + " BPM";
         if (autoPipeTarget(id) >= 0)
         {
             // the offset the pipes get (like a routing: 100 % = the target's full swing)
@@ -1701,7 +1921,7 @@ juce::String VerlaufView::timeText(double beats) const
     // bar.beat (the unit of the lane settings); with the own clock also the time in seconds
     if (proc.isAutoHostClock())
         return clockText(proc, beats);
-    return barText(beats) + juce::String::fromUTF8(" \xc2\xb7 ") + clockText(proc, beats);
+    return barText(beats) + juce::String::fromUTF8(" \xc2\xb7 ") + secondsText(beats);
 }
 
 juce::String VerlaufView::clockText(const RysumProcessor &proc, double beats)
@@ -1784,6 +2004,22 @@ bool VerlaufView::keyPressed(const juce::KeyPress &k)
     if (k == juce::KeyPress('s', juce::ModifierKeys::commandModifier, 0))
     {
         savePiece();
+        return true;
+    }
+    // markers: M sets one at the clock, Bild auf / ab jump to the previous / next one
+    if (k == juce::KeyPress('m') || k == juce::KeyPress('M'))
+    {
+        addMarkerAt(juce::jmax(0.0, proc.getAutoNow()));
+        return true;
+    }
+    if (k == juce::KeyPress::pageUpKey)
+    {
+        jumpMarker(-1);
+        return true;
+    }
+    if (k == juce::KeyPress::pageDownKey)
+    {
+        jumpMarker(+1);
         return true;
     }
     if (k == juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0))
@@ -1923,6 +2159,429 @@ void VerlaufView::paste()
     selPoint = selPts.empty() ? -1 : selPts.front();
     changed();
     hintChanged();
+}
+
+// ---------------------------------------------------------------------------
+// markers and the repeated section
+// ---------------------------------------------------------------------------
+void VerlaufView::sortMarkers()
+{
+    auto &m = set().markers;
+    std::stable_sort(m.begin(), m.end(), [](const AutoMarker &a, const AutoMarker &b) { return a.beat < b.beat; });
+    changed();
+}
+
+void VerlaufView::addMarkerAt(double beat)
+{
+    auto &s = set();
+    // the next free letter: A, B, C ... (then A2, B2 ...)
+    juce::String name;
+    for (int round = 1; name.isEmpty(); ++round)
+        for (char c = 'A'; c <= 'Z' && name.isEmpty(); ++c)
+        {
+            const juce::String n = juce::String::charToString((juce::juce_wchar)c) + (round > 1 ? juce::String(round) : juce::String());
+            if (std::none_of(s.markers.begin(), s.markers.end(), [&](const AutoMarker &m) { return m.name == n; }))
+                name = n;
+        }
+    pushUndo();
+    s.markers.push_back({beat, name});
+    sortMarkers();
+    hintChanged();
+}
+
+void VerlaufView::renameMarker(int i)
+{
+    if (i < 0 || i >= (int)set().markers.size())
+        return;
+    auto *w = new juce::AlertWindow("Marke", juce::String::fromUTF8("Name der Marke"), juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor("name", set().markers[(size_t)i].name);
+    w->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton("Abbrechen", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<VerlaufView> safe(this);
+    w->enterModalState(true,
+                       juce::ModalCallbackFunction::create(
+                           [safe, w, i](int r)
+                           {
+                               if (safe == nullptr || r != 1 || i >= (int)safe->set().markers.size())
+                                   return;
+                               const auto name = w->getTextEditorContents("name").trim();
+                               if (name.isEmpty())
+                                   return;
+                               safe->pushUndo();
+                               safe->set().markers[(size_t)i].name = name.substring(0, 24);
+                               safe->changed();
+                           }),
+                       true);
+}
+
+void VerlaufView::showMarkerMenu(int i, double beat)
+{
+    juce::PopupMenu m;
+    const auto &s = set();
+    if (i >= 0)
+    {
+        m.addSectionHeader("Marke " + s.markers[(size_t)i].name);
+        m.addItem(1, "Hierhin springen");
+        m.addItem(2, "Umbenennen");
+        m.addItem(3, juce::String::fromUTF8("Bis zur n\xc3\xa4"
+                                            "chsten Marke wiederholen"),
+                  i + 1 < (int)s.markers.size());
+        m.addItem(4, juce::String::fromUTF8("L\xc3\xb6schen"));
+    }
+    else
+    {
+        m.addItem(10, "Marke hier setzen");
+        m.addItem(11, "Marke an der Uhr setzen  (M)");
+        m.addSeparator();
+        m.addItem(12, juce::String::fromUTF8("Wiederholung beginnt hier (A)"));
+        m.addItem(13, juce::String::fromUTF8("Wiederholung endet hier (B)"));
+        m.addItem(14, juce::String::fromUTF8("Wiederholung an"), true, s.cycle);
+    }
+    juce::Component::SafePointer<VerlaufView> safe(this);
+    m.showMenuAsync(juce::PopupMenu::Options(),
+                    [safe, i, beat](int r)
+                    {
+                        if (safe == nullptr || r <= 0)
+                            return;
+                        auto &S = safe->set();
+                        const double minLen = S.grid > 0.0 ? S.grid : 0.25;
+                        if (i >= 0 && i < (int)S.markers.size())
+                        {
+                            if (r == 1)
+                                safe->proc.autoSeek(S.markers[(size_t)i].beat);
+                            else if (r == 2)
+                                safe->renameMarker(i);
+                            else if (r == 3 && i + 1 < (int)S.markers.size())
+                            {
+                                safe->pushUndo();
+                                S.cycleStart = S.markers[(size_t)i].beat;
+                                S.cycleEnd = juce::jmax(S.cycleStart + minLen, S.markers[(size_t)i + 1].beat);
+                                S.cycle = true;
+                                safe->changed();
+                            }
+                            else if (r == 4)
+                            {
+                                safe->pushUndo();
+                                S.markers.erase(S.markers.begin() + i);
+                                safe->changed();
+                            }
+                            return;
+                        }
+                        if (r == 10)
+                            safe->addMarkerAt(beat);
+                        else if (r == 11)
+                            safe->addMarkerAt(juce::jmax(0.0, safe->proc.getAutoNow()));
+                        else
+                        {
+                            safe->pushUndo();
+                            if (r == 12)
+                                S.cycleStart = juce::jmin(beat, S.cycleEnd - minLen);
+                            else if (r == 13)
+                                S.cycleEnd = juce::jmax(beat, S.cycleStart + minLen);
+                            else if (r == 14)
+                                S.cycle = !S.cycle;
+                            safe->changed();
+                        }
+                    });
+}
+
+void VerlaufView::jumpMarker(int direction)
+{
+    const auto &ms = set().markers;
+    if (ms.empty())
+        return;
+    const double now = proc.getAutoNow();
+    // (a marker just passed counts as "here": the previous one is the one before it)
+    if (direction < 0)
+    {
+        for (int i = (int)ms.size() - 1; i >= 0; --i)
+            if (ms[(size_t)i].beat < now - 0.5)
+            {
+                proc.autoSeek(ms[(size_t)i].beat);
+                return;
+            }
+        proc.autoSeek(ms.front().beat);
+    }
+    else
+        for (const auto &m : ms)
+            if (m.beat > now + 1.0e-3)
+            {
+                proc.autoSeek(m.beat);
+                return;
+            }
+}
+
+// ---------------------------------------------------------------------------
+// the tempo lane: seconds along the clock
+// ---------------------------------------------------------------------------
+const AutoLane *VerlaufView::tempoLane() const
+{
+    for (const auto &l : proc.getAuto().lanes)
+        if (l.on && l.paramId == kAutoTempoId && !l.pts.empty())
+            return &l;
+    return nullptr;
+}
+
+double VerlaufView::secondsAt(double beats) const
+{
+    const auto &s = proc.getAuto();
+    const auto *tl = tempoLane();
+    beats = juce::jmax(0.0, beats);
+    if (tl == nullptr)
+        return beats * 60.0 / juce::jmax(1.0, s.tempo);
+    // the seconds every quarter beat, summed (rebuilt when the piece changes)
+    constexpr double step = 0.25;
+    constexpr int n = 16384;
+    if (secCacheVersion != proc.getAutoVersion() || (int)secCache.size() != n + 1)
+    {
+        secCache.assign((size_t)n + 1, 0.0);
+        for (int i = 0; i < n; ++i)
+        {
+            const float v = autoValue(*tl, ((double)i + 0.5) * step);
+            const double bpm = std::isnan(v) ? s.tempo : autoTempoBpm(v);
+            secCache[(size_t)i + 1] = secCache[(size_t)i] + step * 60.0 / bpm;
+        }
+        secCacheVersion = proc.getAutoVersion();
+    }
+    const double x = beats / step;
+    const int i = juce::jmin(n - 1, (int)std::floor(x));
+    const double f = x - (double)i;
+    return secCache[(size_t)i] + f * (secCache[(size_t)i + 1] - secCache[(size_t)i]);
+}
+
+juce::String VerlaufView::secondsText(double beats) const
+{
+    const double sec = secondsAt(beats);
+    const int m = (int)(sec / 60.0);
+    const double r = sec - m * 60.0;
+    const bool whole = std::abs(r - std::round(r)) < 1.0e-3;
+    return juce::String(m) + ":" + (r < 9.995 ? "0" : "") + juce::String(r, whole ? 0 : 2);
+}
+
+// ---------------------------------------------------------------------------
+// editing tools
+// ---------------------------------------------------------------------------
+juce::PopupMenu VerlaufView::paramMenu(int base) const
+{
+    juce::PopupMenu menu;
+    const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
+                                   "Verfall",   "Klang",
+                                   "Hall",      "Saal",
+                                   "Eingang",   "Effekte",
+                                   "Modulation"};
+    std::set<int> taken;
+    for (auto &l : proc.getAuto().lanes)
+        taken.insert(proc.getParamIndex(l.paramId));
+    juce::PopupMenu switches;
+    for (int i = 0; i < proc.getNumParams(); ++i)
+        if (proc.isAutoTarget(i) && !proc.isModTarget(i))
+            switches.addItem(base + i, proc.getParamAt(i)->getName(64), true, taken.count(i) > 0);
+    if (switches.getNumItems() > 0)
+        menu.addSubMenu(juce::String::fromUTF8("Schalter (Register, Bewegung, Freeze \xe2\x80\xa6)"), switches);
+    for (auto &grp : groups)
+    {
+        juce::PopupMenu sub;
+        for (int i = 0; i < proc.getNumParams(); ++i)
+            if (proc.isModTarget(i) && proc.isAutoTarget(i) &&
+                ModView::paramGroup(proc.getParamAt(i)->getParameterID()) == grp)
+                sub.addItem(base + i, proc.getParamAt(i)->getName(64), true, taken.count(i) > 0);
+        if (sub.getNumItems() > 0)
+            menu.addSubMenu(grp, sub);
+    }
+    return menu;
+}
+
+void VerlaufView::copyLaneTo(const juce::String &paramId)
+{
+    if (!validLane(selLane) || (int)set().lanes.size() >= kMaxAutoLanes)
+        return;
+    const int p = proc.getParamIndex(paramId);
+    if (!proc.isAutoTarget(p))
+        return;
+    pushUndo();
+    auto &s = set();
+    AutoLane l = s.lanes[(size_t)selLane];
+    l.paramId = paramId;
+    l.armed = false;
+    l.solo = false;
+    l.height = 0;
+    l.spread = false;
+    if (const int steps = proc.autoSteps(p); steps >= 2)
+        for (auto &pt : l.pts)
+        {
+            pt.v = autoQuantise(pt.v, steps);
+            pt.shape = asStep;
+        }
+    // (an existing lane on that control gives way: one lane per control)
+    s.lanes.erase(std::remove_if(s.lanes.begin(), s.lanes.end(), [&](const AutoLane &x) { return x.paramId == paramId; }),
+                  s.lanes.end());
+    s.lanes.push_back(std::move(l));
+    selLane = (int)s.lanes.size() - 1;
+    selPoint = -1;
+    selPts.clear();
+    changed();
+}
+
+void VerlaufView::transformPoints(int kind)
+{
+    if (!validLane(selLane))
+        return;
+    auto &l = set().lanes[(size_t)selLane];
+    if (l.pts.empty())
+        return;
+    // the chosen points (or all of them), kept marked through the sort
+    std::vector<std::pair<AutoPoint, bool>> all;
+    std::vector<int> which = selPts.size() >= 2 ? selPts : std::vector<int>{};
+    for (int i = 0; i < (int)l.pts.size(); ++i)
+        all.push_back({l.pts[(size_t)i], which.empty() || isSelected(i)});
+    double t0 = 1.0e18, t1 = -1.0e18;
+    for (auto &[p, on] : all)
+        if (on)
+        {
+            t0 = juce::jmin(t0, p.t);
+            t1 = juce::jmax(t1, p.t);
+        }
+    const int steps = proc.autoSteps(laneParam(selLane));
+    const double g = set().grid > 0.0 ? set().grid : 0.25;
+    juce::Random rnd;
+    pushUndo();
+    for (auto &[p, on] : all)
+    {
+        if (!on)
+            continue;
+        switch (kind)
+        {
+        case 1: p.t = t0 + (p.t - t0) * 2.0; break;          // twice as long
+        case 2: p.t = t0 + (p.t - t0) * 0.5; break;          // half as long
+        case 3: p.v = 1.0f - p.v; p.bend = -p.bend; break;   // upside down
+        case 4: p.t = t0 + t1 - p.t; break;                   // backwards
+        case 5: p.v = 0.5f + (p.v - 0.5f) * 0.5f; break;     // towards the middle
+        case 6: p.v = 0.5f + (p.v - 0.5f) * 1.5f; break;     // apart
+        case 7: p.t = std::round(p.t / g) * g; break;        // onto the grid
+        case 8:                                              // a little off
+            p.v += 0.1f * (rnd.nextFloat() - 0.5f);
+            p.t += g * 0.25 * (rnd.nextDouble() - 0.5);
+            break;
+        default: break;
+        }
+        p.v = juce::jlimit(0.0f, 1.0f, p.v);
+        if (steps >= 2)
+            p.v = autoQuantise(p.v, steps);
+    }
+    std::stable_sort(all.begin(), all.end(), [](const auto &a, const auto &b) { return a.first.t < b.first.t; });
+    // two points at one time (onto the grid): the later one goes
+    std::vector<std::pair<AutoPoint, bool>> kept;
+    for (auto &x : all)
+        if (kept.empty() || std::abs(kept.back().first.t - x.first.t) > 1.0e-6)
+            kept.push_back(x);
+        else
+            kept.back() = x;
+    l.pts.clear();
+    selPts.clear();
+    for (int i = 0; i < (int)kept.size(); ++i)
+    {
+        l.pts.push_back(kept[(size_t)i].first);
+        if (kept[(size_t)i].second && !which.empty())
+            selPts.push_back(i);
+    }
+    selPoint = selPts.empty() ? -1 : selPts.front();
+    changed();
+}
+
+void VerlaufView::fillLane(int kind)
+{
+    if (!validLane(selLane))
+        return;
+    auto &s = set();
+    auto &l = s.lanes[(size_t)selLane];
+    // where: the loop of a looping lane, else what is in view
+    double t0, t1;
+    if (l.loop)
+    {
+        t0 = 0.0;
+        t1 = l.length;
+    }
+    else
+    {
+        t0 = localOf(l, s.viewStart);
+        t1 = localOf(l, s.viewStart + s.viewLen);
+        if (t1 < t0)
+            std::swap(t0, t1);
+        t0 = juce::jmax(0.0, t0);
+    }
+    const double g = s.grid > 0.0 ? s.grid : 1.0;
+    const int steps = proc.autoSteps(laneParam(selLane));
+    std::vector<AutoPoint> pts;
+    auto add = [&](double t, float v, int shape = asCurve)
+    {
+        AutoPoint p;
+        p.t = t;
+        p.v = juce::jlimit(0.0f, 1.0f, v);
+        p.shape = shape;
+        if (steps >= 2)
+        {
+            p.v = autoQuantise(p.v, steps);
+            p.shape = asStep;
+        }
+        pts.push_back(p);
+    };
+    juce::Random rnd;
+    switch (kind)
+    {
+    case 1: // a wave: one per bar
+    {
+        add(t0, 0.5f, asWave);
+        pts.back().rate = 0.25f;
+        pts.back().depth = 0.8f;
+        add(t1, 0.5f);
+        break;
+    }
+    case 2: // a random walk, one step per grid cell
+    {
+        float v = 0.5f;
+        for (double t = t0; t <= t1 + 1.0e-9; t += g)
+        {
+            add(t, v);
+            v = juce::jlimit(0.05f, 0.95f, v + 0.3f * (rnd.nextFloat() - 0.5f));
+        }
+        break;
+    }
+    case 3: // random steps
+        for (double t = t0; t < t1 - 1.0e-9; t += g)
+            add(t, rnd.nextFloat(), asStep);
+        add(t1, pts.empty() ? 0.5f : pts.back().v, asStep);
+        break;
+    case 4: // up
+        add(t0, 0.0f);
+        add(t1, 1.0f);
+        break;
+    case 5: // down
+        add(t0, 1.0f);
+        add(t1, 0.0f);
+        break;
+    default:
+    {
+        // Euclidean rhythms: k hits spread as evenly as possible over n grid cells
+        static const int ks[]{3, 5, 5, 7, 9}, ns[]{8, 8, 16, 16, 16};
+        const int idx = juce::jlimit(0, 4, kind - 10);
+        const int k = ks[idx], n = ns[idx];
+        for (int i = 0; i < n; ++i)
+        {
+            const bool hit = ((i * k) % n) < k;
+            add(t0 + i * g, hit ? 1.0f : 0.0f, asStep);
+        }
+        add(t0 + n * g, 0.0f, asStep);
+        t1 = juce::jmax(t1, t0 + n * g);
+        break;
+    }
+    }
+    if (pts.empty())
+        return;
+    pushUndo();
+    autoReplaceRange(l, t0, t1, pts);
+    selPoint = -1;
+    selPts.clear();
+    changed();
 }
 
 // ---------------------------------------------------------------------------
@@ -2141,12 +2800,18 @@ void VerlaufView::addLaneFor(const juce::String &paramId)
         }
     if ((int)s.lanes.size() >= kMaxAutoLanes)
         return;
-    if (autoPipeTarget(paramId) >= 0 || autoPathStop(paramId) >= 0)
+    if (autoPipeTarget(paramId) >= 0 || autoPathStop(paramId) >= 0 || paramId == kAutoTempoId)
     {
         pushUndo();
         AutoLane l;
         l.paramId = paramId;
-        if (autoPipeTarget(paramId) >= 0)
+        if (paramId == kAutoTempoId)
+        {
+            // the tempo as it is now, at the start (the own clock follows the lane from here on)
+            l.pts = {{0.0, autoTempoNorm(s.tempo)}};
+            s.clock = 1;
+        }
+        else if (autoPipeTarget(paramId) >= 0)
         {
             // a gesture that spreads from in front of the listener: nothing at first, a swell
             // and back (0.5 = no change)
@@ -2191,18 +2856,8 @@ void VerlaufView::showAddMenu()
 {
     juce::PopupMenu menu;
     const int base = 1;
-    const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
-                                   "Verfall",   "Klang",
-                                   "Hall",      "Saal",
-                                   "Eingang",   "Effekte",
-                                   "Modulation"};
-    std::set<int> taken;
-    for (auto &l : set().lanes)
-        taken.insert(proc.getParamIndex(l.paramId));
-    juce::PopupMenu switches;
-    for (int i = 0; i < proc.getNumParams(); ++i)
-        if (proc.isAutoTarget(i) && !proc.isModTarget(i))
-            switches.addItem(base + i, proc.getParamAt(i)->getName(64), true, taken.count(i) > 0);
+    menu.addSectionHeader("Uhr");
+    menu.addItem(7000, juce::String::fromUTF8("Tempo der eigenen Uhr"), true, tempoLane() != nullptr);
     menu.addSectionHeader(juce::String::fromUTF8("Im Raum"));
     {
         // per-pipe targets: the gesture spreads through the room from an origin
@@ -2229,17 +2884,10 @@ void VerlaufView::showAddMenu()
         menu.addSubMenu(juce::String::fromUTF8("Fahrplan einer gezeichneten Bahn"), paths);
     }
     menu.addSectionHeader(juce::String::fromUTF8("Regler"));
-    if (switches.getNumItems() > 0)
-        menu.addSubMenu(juce::String::fromUTF8("Schalter (Register, Bewegung, Freeze \xe2\x80\xa6)"), switches);
-    for (auto &grp : groups)
     {
-        juce::PopupMenu sub;
-        for (int i = 0; i < proc.getNumParams(); ++i)
-            if (proc.isModTarget(i) && proc.isAutoTarget(i) &&
-                ModView::paramGroup(proc.getParamAt(i)->getParameterID()) == grp)
-                sub.addItem(base + i, proc.getParamAt(i)->getName(64), true, taken.count(i) > 0);
-        if (sub.getNumItems() > 0)
-            menu.addSubMenu(grp, sub);
+        const auto pm = paramMenu(base);
+        for (juce::PopupMenu::MenuItemIterator it(pm); it.next();)
+            menu.addItem(it.getItem());
     }
     if ((int)set().lanes.size() >= kMaxAutoLanes)
     {
@@ -2251,7 +2899,9 @@ void VerlaufView::showAddMenu()
                        {
                            if (safe == nullptr || r < base)
                                return;
-                           if (r >= 6000 && r < 6000 + kNumStops)
+                           if (r == 7000)
+                               safe->addLaneFor(kAutoTempoId);
+                           else if (r >= 6000 && r < 6000 + kNumStops)
                                safe->addLaneFor(autoPathLaneId(r - 6000));
                            else if (r >= 5000 && r < 5000 + kNumPipeTargets)
                                safe->addLaneFor(pipeTargetId(r - 5000));
@@ -2278,6 +2928,44 @@ void VerlaufView::showLaneMenu(int lane)
     m.addItem(10, juce::String::fromUTF8("H\xc3\xb6he automatisch"), l.height > 0);
     m.addItem(7, "Spur nach oben", lane > 0);
     m.addItem(8, "Spur nach unten", lane + 1 < (int)set().lanes.size());
+    m.addItem(11, juce::String::fromUTF8("Solo (nur Solo-Spuren wirken)"), true, l.solo);
+    m.addSeparator();
+    // editing tools
+    {
+        const bool several = lane == selLane && selPts.size() >= 2;
+        juce::PopupMenu tr;
+        tr.addSectionHeader(several ? juce::String((int)selPts.size()) + juce::String::fromUTF8(" gew\xc3\xa4hlte Punkte")
+                                    : juce::String("alle Punkte der Spur"));
+        tr.addItem(101, juce::String::fromUTF8("Zeitlich dehnen (\xc3\x97 2)"));
+        tr.addItem(102, juce::String::fromUTF8("Zeitlich stauchen (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(104, juce::String::fromUTF8("Zeitlich umkehren"));
+        tr.addItem(103, juce::String::fromUTF8("Werte spiegeln (oben \xe2\x86\x94 unten)"));
+        tr.addItem(105, juce::String::fromUTF8("Werte zur Mitte (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(106, juce::String::fromUTF8("Werte auseinander (\xc3\x97 1,5)"));
+        tr.addItem(107, juce::String::fromUTF8("Aufs Raster"));
+        tr.addItem(108, juce::String::fromUTF8("Ein wenig daneben (Zufall)"));
+        m.addSubMenu(several ? juce::String::fromUTF8("Auswahl bearbeiten") : juce::String::fromUTF8("Punkte bearbeiten"),
+                     tr, lane == selLane && !l.pts.empty());
+        juce::PopupMenu fill;
+        fill.addSectionHeader(l.loop ? juce::String::fromUTF8("in die Schleife") : juce::String::fromUTF8("in den sichtbaren Bereich"));
+        fill.addItem(201, juce::String::fromUTF8("Welle (eine je Takt)"));
+        fill.addItem(202, juce::String::fromUTF8("Zufallsweg"));
+        fill.addItem(203, juce::String::fromUTF8("Zufallsstufen"));
+        fill.addItem(204, juce::String::fromUTF8("Rampe hinauf"));
+        fill.addItem(205, juce::String::fromUTF8("Rampe hinab"));
+        juce::PopupMenu eu;
+        const char *eus[]{"3 aus 8", "5 aus 8", "5 aus 16", "7 aus 16", "9 aus 16"};
+        for (int i = 0; i < 5; ++i)
+            eu.addItem(210 + i, eus[i]);
+        fill.addSubMenu(juce::String::fromUTF8("Euklidischer Rhythmus (je Rasterfeld)"), eu);
+        m.addSubMenu(juce::String::fromUTF8("F\xc3\xbcllen"), fill, lane == selLane);
+        m.addSubMenu(juce::String::fromUTF8("Kopie f\xc3\xbcr einen anderen Regler"), paramMenu(1000),
+                     lane == selLane && (int)set().lanes.size() < kMaxAutoLanes);
+        bool varies = false;
+        for (auto &p : l.pts)
+            varies = varies || p.chance < 1.0f || p.every > 1 || p.vary > 0.0f;
+        m.addItem(12, juce::String::fromUTF8("Variationen neu w\xc3\xbcrfeln"), varies);
+    }
     m.addSeparator();
     m.addItem(5, "Punkte leeren", !l.pts.empty());
     m.addItem(6, juce::String::fromUTF8("Spur l\xc3\xb6schen (Strg+Z holt sie zur\xc3\xbc"
@@ -2287,6 +2975,23 @@ void VerlaufView::showLaneMenu(int lane)
                     {
                         if (safe == nullptr || r <= 0 || !safe->validLane(lane))
                             return;
+                        // (the tools keep their own undo step)
+                        if (r >= 1000)
+                        {
+                            if (auto *prm = safe->proc.getParamAt(r - 1000))
+                                safe->copyLaneTo(prm->getParameterID());
+                            return;
+                        }
+                        if (r >= 200)
+                        {
+                            safe->fillLane(r >= 210 ? 10 + (r - 210) : r - 200);
+                            return;
+                        }
+                        if (r >= 100)
+                        {
+                            safe->transformPoints(r - 100);
+                            return;
+                        }
                         auto &s = safe->set();
                         safe->pushUndo();
                         auto &l = s.lanes[(size_t)lane];
@@ -2306,6 +3011,8 @@ void VerlaufView::showLaneMenu(int lane)
                             l.height = l.height > 0 && l.height <= VerlaufTimeline::kMinLaneH ? 0 : VerlaufTimeline::kMinLaneH;
                             break;
                         case 10: l.height = 0; break;
+                        case 11: l.solo = !l.solo; break;
+                        case 12: l.seed = (uint32_t)juce::Random::getSystemRandom().nextInt(1 << 30) + 2u; break;
                         case 7:
                             std::swap(s.lanes[(size_t)lane], s.lanes[(size_t)lane - 1]);
                             safe->selLane = lane - 1;
@@ -2338,6 +3045,19 @@ void VerlaufView::showPointMenu(int lane, int point)
     for (int k = 0; k < kNumAutoShapes; ++k)
         m.addItem(10 + k, autoShapeNames()[k], true, l.pts[(size_t)point].shape == k);
     m.addItem(20, "Biegung aufheben", std::abs(l.pts[(size_t)point].bend) > 1.0e-4f);
+    if (lane == selLane && selPts.size() >= 2)
+    {
+        juce::PopupMenu tr;
+        tr.addItem(101, juce::String::fromUTF8("Zeitlich dehnen (\xc3\x97 2)"));
+        tr.addItem(102, juce::String::fromUTF8("Zeitlich stauchen (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(104, juce::String::fromUTF8("Zeitlich umkehren"));
+        tr.addItem(103, juce::String::fromUTF8("Werte spiegeln (oben \xe2\x86\x94 unten)"));
+        tr.addItem(105, juce::String::fromUTF8("Werte zur Mitte (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(106, juce::String::fromUTF8("Werte auseinander (\xc3\x97 1,5)"));
+        tr.addItem(107, juce::String::fromUTF8("Aufs Raster"));
+        tr.addItem(108, juce::String::fromUTF8("Ein wenig daneben (Zufall)"));
+        m.addSubMenu(juce::String((int)selPts.size()) + juce::String::fromUTF8(" gew\xc3\xa4hlte Punkte"), tr);
+    }
     m.addSeparator();
     m.addItem(1, juce::String::fromUTF8("Punkt l\xc3\xb6schen"));
     m.showMenuAsync(juce::PopupMenu::Options(),
@@ -2345,6 +3065,11 @@ void VerlaufView::showPointMenu(int lane, int point)
                     {
                         if (safe == nullptr || r <= 0 || !safe->validLane(lane))
                             return;
+                        if (r >= 100)
+                        {
+                            safe->transformPoints(r - 100);
+                            return;
+                        }
                         auto &l = safe->set().lanes[(size_t)lane];
                         if (point >= (int)l.pts.size())
                             return;
@@ -2421,6 +3146,13 @@ void VerlaufView::syncControls()
             bendRow.slider.setValue(p.bend, juce::dontSendNotification);
             rateRow.slider.setValue(p.rate, juce::dontSendNotification);
             depthRow.slider.setValue(p.depth, juce::dontSendNotification);
+            chanceRow.slider.setValue(p.chance, juce::dontSendNotification);
+            everyRow.slider.setValue(p.every, juce::dontSendNotification);
+            varyRow.slider.setValue(p.vary, juce::dontSendNotification);
+            const bool hasNext = selPoint + 1 < (int)l.pts.size();
+            chanceRow.setEnabled(hasNext);
+            everyRow.setEnabled(hasNext && l.loop);
+            varyRow.setEnabled(true);
             const bool texture = p.shape == asWave || p.shape == asJitter || p.shape == asStairs;
             rateRow.setEnabled(texture);
             depthRow.setEnabled(p.shape == asWave || p.shape == asJitter);
@@ -2434,10 +3166,11 @@ void VerlaufView::syncControls()
             b.setToggleState(false, juce::dontSendNotification);
     }
     if (!seg)
-        for (auto *r : {&bendRow, &rateRow, &depthRow})
+        for (auto *r : {&bendRow, &rateRow, &depthRow, &chanceRow, &everyRow, &varyRow})
             r->setEnabled(false);
-    for (auto *r : {&lenRow, &speedRow, &offsetRow, &bendRow, &rateRow, &depthRow})
+    for (auto *r : {&lenRow, &speedRow, &offsetRow, &bendRow, &rateRow, &depthRow, &chanceRow, &everyRow, &varyRow})
         r->repaint();
+    cycleButton.setToggleState(s.cycle, juce::dontSendNotification);
     repaint(laneBox.getUnion(segBox));
 }
 
@@ -2579,19 +3312,20 @@ void VerlaufView::resized()
     place(onButton, 74, 0);
     sepL();
     place(clockHost, 54, 2);
-    place(clockOwn, 76, 6);
+    place(clockOwn, 70, 6);
     place(playButton, 28, 2);
     place(stopButton, 28, 2);
-    place(homeButton, 28, 6);
-    place(keyStart, 92, 6);
-    tempoRow.setBounds(bar.removeFromLeft(108).withTrimmedTop(-4));
+    place(homeButton, 28, 4);
+    place(cycleButton, 38, 6);
+    place(keyStart, 88, 6);
+    tempoRow.setBounds(bar.removeFromLeft(92).withTrimmedTop(-4));
     sepL();
     place(recButton, 86, 0);
     sepL();
-    place(toolPts, 58, 2);
-    place(toolPen, 46, 2);
-    place(toolStair, 58, 6);
-    place(gridBox, 88, 0);
+    place(toolPts, 54, 2);
+    place(toolPen, 44, 2);
+    place(toolStair, 54, 6);
+    place(gridBox, 84, 0);
     // right end: view (zoom), then edit (undo, add)
     addButton.setBounds(bar.removeFromRight(66));
     bar.removeFromRight(6);
@@ -2659,6 +3393,14 @@ void VerlaufView::resized()
         rateRow.setBounds(row2.removeFromLeft(w));
         row2.removeFromLeft(18);
         depthRow.setBounds(row2);
+        // variation from pass to pass
+        b.removeFromTop(6);
+        auto row3 = b.removeFromTop(34);
+        chanceRow.setBounds(row3.removeFromLeft(w));
+        row3.removeFromLeft(18);
+        everyRow.setBounds(row3.removeFromLeft(w));
+        row3.removeFromLeft(18);
+        varyRow.setBounds(row3);
     }
 }
 bool VerlaufView::selectedIsPipeLane() const

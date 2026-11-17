@@ -1068,6 +1068,10 @@ private:
         int clock = 0;
         double tempo = 60.0;
         bool startOnKey = false;
+        bool cycle = false; // the own clock repeats cycleStart .. cycleEnd
+        double cycleStart = 0.0, cycleEnd = 16.0;
+        bool hasTempo = false; // a tempo lane drives the own clock
+        rysum::AutoLane tempoLane;
         struct Lane
         {
             int param = -1, steps = 0, index = 0; // index: in AutoSet::lanes

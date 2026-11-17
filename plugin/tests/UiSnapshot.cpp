@@ -1964,6 +1964,89 @@ public:
             const double t1 = proc->getAutoNow();
             std::cout << "verlauf clock: one second = " << (t1 - t0) << " beats"
                       << (std::abs(t1 - t0 - 1.0) < 0.02 ? "  ok" : "  FAIL") << std::endl;
+            // the tempo lane drives the own clock (120 BPM: two beats a second); a repeated section
+            // (A-B) keeps the clock inside it; solo: only the solo lane acts
+            {
+                AutoLane tl;
+                tl.paramId = kAutoTempoId;
+                tl.pts = {{0.0, autoTempoNorm(120.0)}};
+                S.lanes.push_back(tl);
+                proc->autoPublish();
+                proc->autoSeek(0.0);
+                block();
+                const double u0 = proc->getAutoNow();
+                for (int i = 0; i < nb; ++i)
+                    block();
+                const double tempoBeats = proc->getAutoNow() - u0;
+                S.lanes.pop_back();
+                S.cycle = true;
+                S.cycleStart = 1.0;
+                S.cycleEnd = 3.0;
+                proc->autoPublish();
+                proc->autoSeek(1.0);
+                double lo = 1.0e9, hi = -1.0e9;
+                for (int i = 0; i < nb * 5; ++i)
+                {
+                    block();
+                    lo = std::min(lo, proc->getAutoNow());
+                    hi = std::max(hi, proc->getAutoNow());
+                }
+                S.cycle = false;
+                S.lanes[1].solo = true; // stop 2 solo: air is not driven
+                proc->autoPublish();
+                block();
+                block();
+                const bool soloOk = std::isnan(proc->getAutomatedNorm(air)) && !std::isnan(proc->getAutomatedNorm(stop));
+                S.lanes[1].solo = false;
+                proc->autoPublish();
+                block();
+                const bool tempoOk = std::abs(tempoBeats - 2.0) < 0.05, cycleOk = lo >= 1.0 && hi < 3.0 && hi > 2.8;
+                std::cout << "verlauf tempo lane: one second at 120 BPM = " << tempoBeats << " beats; A-B 1..3: clock "
+                          << lo << " .. " << hi << "; solo " << (int)soloOk
+                          << ((tempoOk && cycleOk && soloOk) ? "  ok" : "  FAIL") << std::endl;
+            }
+            // variation from pass to pass of a looping lane: chance 50 % moves in about half the
+            // passes, "every 3rd" in exactly passes 2, 5, 8 ..., "Streuung" changes the value per
+            // pass, and the same pass is always the same
+            {
+                AutoLane v;
+                v.paramId = "air";
+                v.loop = true;
+                v.length = 4.0;
+                v.pts = {{0.0, 0.2f}, {4.0, 0.8f}};
+                v.pts[0].chance = 0.5f;
+                int moved = 0;
+                for (int p = 0; p < 200; ++p)
+                    moved += autoValue(v, p * 4.0 + 2.0) > 0.3f ? 1 : 0;
+                v.pts[0].chance = 1.0f;
+                v.pts[0].every = 3;
+                bool everyOk = true;
+                for (int p = 0; p < 12; ++p)
+                    everyOk = everyOk && ((autoValue(v, p * 4.0 + 2.0) > 0.3f) == (p % 3 == 2));
+                v.pts[0].every = 1;
+                v.pts[0].vary = 0.2f;
+                const float va = autoValue(v, 0.0), vb = autoValue(v, 4.0), vc = autoValue(v, 8.0);
+                const bool varyOk = (std::abs(va - vb) > 1e-3f || std::abs(vb - vc) > 1e-3f) &&
+                                    autoValue(v, 4.0) == vb && va >= 0.0f && va <= 0.4f;
+                // saved and loaded: the variations, the markers, the section
+                AutoSet vs;
+                v.pts[0].chance = 0.7f;
+                v.pts[0].every = 2;
+                vs.lanes = {v};
+                vs.markers = {{4.0, "A"}, {12.0, "Schluss"}};
+                vs.cycle = true;
+                vs.cycleStart = 4.0;
+                vs.cycleEnd = 12.0;
+                const auto back = autoFromTree(autoToTree(vs));
+                const bool savedOk = back.markers.size() == 2 && back.markers[1].name == "Schluss" && back.cycle &&
+                                     back.cycleEnd == 12.0 && back.lanes.size() == 1 &&
+                                     std::abs(back.lanes[0].pts[0].chance - 0.7f) < 1e-3f &&
+                                     back.lanes[0].pts[0].every == 2 && std::abs(back.lanes[0].pts[0].vary - 0.2f) < 1e-3f;
+                std::cout << "verlauf variation: chance 50 % moved in " << moved << " of 200 passes, every 3rd "
+                          << (int)everyOk << ", Streuung " << (int)varyOk << ", saved " << (int)savedOk
+                          << ((moved > 70 && moved < 130 && everyOk && varyOk && savedOk) ? "  ok" : "  FAIL")
+                          << std::endl;
+            }
             // loop, stretch, reverse: pure functions of the time
             {
                 AutoLane l = la;
@@ -3204,6 +3287,25 @@ public:
                     tl->mouseMove(ev({60.0f, (float)tl->laneRect(li).getCentreY() - 10.0f}, {}, 1, false, {}));
                     const auto hintHeader = tl->hintText();
                     const bool hints = hintPoint.contains("Punkt") && hintHeader.contains("Spurkopf");
+                    // markers and the repeated section, in the band over the ruler
+                    {
+                        const float by = (float)TL::kMarkH * 0.5f;
+                        const auto mp = juce::Point<float>(tl->xOfBeat(4.0), by);
+                        tl->mouseDoubleClick(ev(mp, mp, 2, false, left));
+                        const bool markerOk = S.markers.size() == 1 && S.markers[0].name == "A" &&
+                                              std::abs(S.markers[0].beat - 4.0) < 1e-6;
+                        dragTo({tl->xOfBeat(8.0), by}, {tl->xOfBeat(16.0), by});
+                        const bool cycleOk = S.cycle && std::abs(S.cycleStart - 8.0) < 1e-6 &&
+                                             std::abs(S.cycleEnd - 16.0) < 1e-6;
+                        // a Euclidean rhythm (5 of 8, one per beat) into the visible range
+                        vv->testFill(11);
+                        int hits = 0;
+                        for (auto &p : S.lanes[(size_t)li].pts)
+                            hits += p.shape == asStep && p.v > 0.5f && p.t >= 0.0 && p.t < 8.0 ? 1 : 0;
+                        std::cout << "verlauf markers: double-click sets A " << (int)markerOk
+                                  << ", A-B by dragging " << (int)cycleOk << ", 5 of 8 = " << hits << " hits"
+                                  << ((markerOk && cycleOk && hits == 5) ? "  ok" : "  FAIL") << std::endl;
+                    }
                     shoot(9, "ui_verlauf_edit.png");
                     // 7: recording: a control without a lane gets one when touched
                     int free = -1;

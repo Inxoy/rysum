@@ -43,7 +43,33 @@ struct AutoPoint
     int shape = asCurve;
     float rate = 4.0f;  // waves / changes / steps per beat
     float depth = 0.2f; // share of the range (wave, jitter)
+    // variation from pass to pass of a looping lane (each pass decides anew, the same every time
+    // the same pass comes round: seeking and bouncing give the same result)
+    float chance = 1.0f; // how likely the segment moves in a pass; else it holds its start value
+    int every = 1;       // the segment moves only in every n-th pass (1 = every pass)
+    float vary = 0.0f;   // the point's value wanders by up to this much (0..0.5) from pass to pass
 };
+
+/** a named place on the clock (beats) */
+struct AutoMarker
+{
+    double beat = 0.0;
+    juce::String name;
+};
+
+/** the lane that drives the own clock's tempo */
+inline const char *const kAutoTempoId = "tempo";
+constexpr double kAutoTempoMin = 20.0, kAutoTempoMax = 300.0;
+inline double autoTempoBpm(float v) noexcept
+{
+    return kAutoTempoMin * std::pow(kAutoTempoMax / kAutoTempoMin, (double)juce::jlimit(0.0f, 1.0f, v));
+}
+inline float autoTempoNorm(double bpm) noexcept
+{
+    return (float)juce::jlimit(0.0, 1.0,
+                               std::log(juce::jlimit(kAutoTempoMin, kAutoTempoMax, bpm) / kAutoTempoMin) /
+                                   std::log(kAutoTempoMax / kAutoTempoMin));
+}
 
 struct AutoLane
 {
@@ -63,6 +89,8 @@ struct AutoLane
     float waveSpeed = 4.0f;                // metres per beat
     bool inward = false;                   // the front runs from far away towards the origin
     int height = 0; // the editor: the lane's height in pixels, 0 = automatic (taller when chosen)
+    bool solo = false;  // while any lane is solo, only solo lanes act
+    uint32_t seed = 1;  // the dice of its variations ("neu würfeln" changes it)
 };
 
 /** the whole automation of a project (message thread) */
@@ -75,26 +103,47 @@ struct AutoSet
     double viewStart = 0.0, viewLen = 32.0; // the editor's window (beats)
     double grid = 1.0;     // beats per grid step, 0 = off
     std::vector<AutoLane> lanes;
+    std::vector<AutoMarker> markers; // sorted by beat
+    // the own clock repeats a section: from cycleStart it runs to cycleEnd and back
+    bool cycle = false;
+    double cycleStart = 0.0, cycleEnd = 16.0;
 };
 
 // ---------------------------------------------------------------------------
 // evaluation: a pure function of the time (seeking, host loops and bounces give the same result)
 // ---------------------------------------------------------------------------
 
-/** clock time (beats) -> the lane's own time: offset, stretch, loop, reverse */
-inline double autoLocalTime(const AutoLane &l, double beats) noexcept
+/** clock time (beats) -> the lane's own time: offset, stretch, loop, reverse; 'pass' = which
+    repeat of a looping lane it is (0 without a loop) */
+inline double autoLocalTime(const AutoLane &l, double beats, int &pass) noexcept
 {
     double tau = (beats - l.offset) * (double)l.speed;
     const double len = juce::jmax(1.0e-6, l.length);
+    pass = 0;
     if (l.loop)
     {
-        tau = std::fmod(tau, len);
+        const double n = std::floor(tau / len);
+        pass = (int)juce::jlimit(-1.0e6, 1.0e6, n);
+        tau -= n * len;
         if (tau < 0.0)
             tau += len;
+        if (tau >= len)
+            tau -= len;
     }
     if (l.reverse)
         tau = len - juce::jlimit(0.0, len, tau);
     return tau;
+}
+inline double autoLocalTime(const AutoLane &l, double beats) noexcept
+{
+    int pass = 0;
+    return autoLocalTime(l, beats, pass);
+}
+
+/** a number 0..1 that stays the same for the same lane, pass and point */
+inline float autoDice(const AutoLane &l, int pass, int point, uint32_t salt) noexcept
+{
+    return hash01((uint32_t)pass * 2654435761u ^ (uint32_t)point * 40503u ^ l.seed * 97u ^ salt);
 }
 
 /** smooth value noise -1..1 (cosine between hashed steps) */
@@ -171,16 +220,52 @@ inline int autoFindSegment(const std::vector<AutoPoint> &pts, double tau) noexce
     return found;
 }
 
-/** the lane's value 0..1 at its own time tau; NaN if it has no points */
-inline float autoValueAtLocal(const AutoLane &l, double tau) noexcept
+/** a point's value in a pass (its "Streuung" wanders it), pass < 0: as drawn */
+inline float autoPointValue(const AutoLane &l, int i, int pass) noexcept
+{
+    const auto &p = l.pts[(size_t)i];
+    if (pass < -999999 || p.vary <= 0.0f)
+        return p.v;
+    return juce::jlimit(0.0f, 1.0f, p.v + p.vary * (2.0f * autoDice(l, pass, i, 0x51a7u) - 1.0f));
+}
+
+/** does the segment from point i move in this pass (its chance, every n-th pass)? */
+inline bool autoSegmentMoves(const AutoLane &l, int i, int pass) noexcept
+{
+    const auto &p = l.pts[(size_t)i];
+    if (p.every > 1)
+    {
+        const int m = ((pass % p.every) + p.every) % p.every;
+        if (m != p.every - 1)
+            return false;
+    }
+    return p.chance >= 1.0f || autoDice(l, pass, i, 0xc4a2u) < p.chance;
+}
+
+constexpr int kAutoNoPass = -1000000; // "as drawn": no variation
+
+/** the lane's value 0..1 at its own time tau in a pass (kAutoNoPass: as drawn, without
+    variation); NaN if it has no points */
+inline float autoValueAtLocal(const AutoLane &l, double tau, int pass = kAutoNoPass) noexcept
 {
     if (l.pts.empty())
         return std::numeric_limits<float>::quiet_NaN();
     const int i = autoFindSegment(l.pts, tau);
     if (i < 0)
-        return l.pts.front().v;
+        return pass == kAutoNoPass ? l.pts.front().v : autoPointValue(l, 0, pass);
     const auto *next = i + 1 < (int)l.pts.size() ? &l.pts[(size_t)i + 1] : nullptr;
-    return juce::jlimit(0.0f, 1.0f, autoSegment(l.pts[(size_t)i], next, tau, i));
+    if (pass == kAutoNoPass)
+        return juce::jlimit(0.0f, 1.0f, autoSegment(l.pts[(size_t)i], next, tau, i));
+    // the variations of this pass
+    AutoPoint a = l.pts[(size_t)i];
+    a.v = autoPointValue(l, i, pass);
+    if (next == nullptr)
+        return a.v;
+    if (!autoSegmentMoves(l, i, pass))
+        return a.v; // this time it holds
+    AutoPoint b = *next;
+    b.v = autoPointValue(l, i + 1, pass);
+    return juce::jlimit(0.0f, 1.0f, autoSegment(a, &b, tau, i));
 }
 
 /** quantise to a parameter with steps (switches, choices); steps < 2 = continuous */
@@ -195,7 +280,9 @@ inline float autoQuantise(float v, int steps) noexcept
 /** the lane's value at the clock time (beats) */
 inline float autoValue(const AutoLane &l, double beats, int steps = 0) noexcept
 {
-    const float v = autoValueAtLocal(l, autoLocalTime(l, beats));
+    int pass = 0;
+    const double tau = autoLocalTime(l, beats, pass);
+    const float v = autoValueAtLocal(l, tau, pass);
     return std::isnan(v) ? v : autoQuantise(v, steps);
 }
 
@@ -368,6 +455,16 @@ inline juce::ValueTree autoToTree(const AutoSet &s)
     t.setProperty("viewStart", s.viewStart, nullptr);
     t.setProperty("viewLen", s.viewLen, nullptr);
     t.setProperty("grid", s.grid, nullptr);
+    t.setProperty("cycle", s.cycle, nullptr);
+    t.setProperty("cycleStart", s.cycleStart, nullptr);
+    t.setProperty("cycleEnd", s.cycleEnd, nullptr);
+    for (auto &m : s.markers)
+    {
+        juce::ValueTree mt("MARKER");
+        mt.setProperty("beat", m.beat, nullptr);
+        mt.setProperty("name", m.name, nullptr);
+        t.appendChild(mt, nullptr);
+    }
     for (auto &l : s.lanes)
     {
         juce::ValueTree lt("LANE");
@@ -386,12 +483,21 @@ inline juce::ValueTree autoToTree(const AutoSet &s)
         lt.setProperty("inward", l.inward, nullptr);
         if (l.height > 0)
             lt.setProperty("height", l.height, nullptr);
-        // points as text: t v bend shape rate depth; ...
+        if (l.solo)
+            lt.setProperty("solo", true, nullptr);
+        if (l.seed != 1u)
+            lt.setProperty("seed", (int)l.seed, nullptr);
+        // points as text: t v bend shape rate depth [chance every vary]; ...
         juce::String pts;
         for (auto &p : l.pts)
+        {
             pts << juce::String(p.t, 5) << ' ' << juce::String(p.v, 5) << ' '
                 << juce::String(p.bend, 3) << ' ' << p.shape << ' ' << juce::String(p.rate, 3)
-                << ' ' << juce::String(p.depth, 3) << ';';
+                << ' ' << juce::String(p.depth, 3);
+            if (p.chance < 1.0f || p.every > 1 || p.vary > 0.0f)
+                pts << ' ' << juce::String(p.chance, 3) << ' ' << p.every << ' ' << juce::String(p.vary, 3);
+            pts << ';';
+        }
         lt.setProperty("pts", pts, nullptr);
         t.appendChild(lt, nullptr);
     }
@@ -410,6 +516,14 @@ inline AutoSet autoFromTree(const juce::ValueTree &t)
     s.viewStart = juce::jmax(0.0, (double)t.getProperty("viewStart", 0.0));
     s.viewLen = juce::jlimit(1.0, 4096.0, (double)t.getProperty("viewLen", 32.0));
     s.grid = juce::jmax(0.0, (double)t.getProperty("grid", 1.0));
+    s.cycle = (bool)t.getProperty("cycle", false);
+    s.cycleStart = juce::jmax(0.0, (double)t.getProperty("cycleStart", 0.0));
+    s.cycleEnd = juce::jmax(s.cycleStart + 0.25, (double)t.getProperty("cycleEnd", 16.0));
+    for (const auto &mt : t)
+        if (mt.hasType("MARKER"))
+            s.markers.push_back({juce::jmax(0.0, (double)mt.getProperty("beat", 0.0)), mt["name"].toString()});
+    std::sort(s.markers.begin(), s.markers.end(),
+              [](const AutoMarker &a, const AutoMarker &b) { return a.beat < b.beat; });
     for (const auto &lt : t)
     {
         if (!lt.hasType("LANE") || (int)s.lanes.size() >= kMaxAutoLanes)
@@ -429,6 +543,8 @@ inline AutoSet autoFromTree(const juce::ValueTree &t)
         l.waveSpeed = juce::jlimit(0.1f, 400.0f, (float)(double)lt.getProperty("waveSpeed", 4.0));
         l.inward = (bool)lt.getProperty("inward", false);
         l.height = juce::jlimit(0, 400, (int)lt.getProperty("height", 0));
+        l.solo = (bool)lt.getProperty("solo", false);
+        l.seed = (uint32_t)(int)lt.getProperty("seed", 1);
         juce::StringArray items;
         items.addTokens(lt.getProperty("pts").toString(), ";", "");
         for (auto &it : items)
@@ -447,6 +563,12 @@ inline AutoSet autoFromTree(const juce::ValueTree &t)
                 p.shape = juce::jlimit(0, kNumAutoShapes - 1, f[3].getIntValue());
                 p.rate = juce::jlimit(0.01f, 64.0f, f[4].getFloatValue());
                 p.depth = juce::jlimit(0.0f, 1.0f, f[5].getFloatValue());
+            }
+            if (f.size() >= 9)
+            {
+                p.chance = juce::jlimit(0.0f, 1.0f, f[6].getFloatValue());
+                p.every = juce::jlimit(1, 64, f[7].getIntValue());
+                p.vary = juce::jlimit(0.0f, 0.5f, f[8].getFloatValue());
             }
             l.pts.push_back(p);
         }

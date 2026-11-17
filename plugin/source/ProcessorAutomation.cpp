@@ -42,10 +42,24 @@ void RysumProcessor::autoPublish()
     c->clock = autoSet.clock;
     c->tempo = autoSet.tempo;
     c->startOnKey = autoSet.startOnKey;
+    c->cycle = autoSet.cycle && autoSet.cycleEnd > autoSet.cycleStart + 0.2;
+    c->cycleStart = autoSet.cycleStart;
+    c->cycleEnd = autoSet.cycleEnd;
+    // solo: while any lane is solo, only the solo lanes act (the tempo lane always does)
+    const bool anySolo = std::any_of(autoSet.lanes.begin(), autoSet.lanes.end(),
+                                     [](const AutoLane &l) { return l.on && l.solo; });
+    auto acts = [anySolo](const AutoLane &l) { return l.on && (!anySolo || l.solo); };
+    for (const auto &l : autoSet.lanes)
+        if (l.on && l.paramId == kAutoTempoId && !l.pts.empty())
+        {
+            c->hasTempo = true;
+            c->tempoLane = l;
+            break;
+        }
     // per-pipe and path lanes: copied first, then the engine's view points into the copies
     c->spatial.reserve((size_t)kMaxAutoLanes);
     for (const auto &l : autoSet.lanes)
-        if (l.on && (autoPipeTarget(l.paramId) >= 0 || autoPathStop(l.paramId) >= 0) &&
+        if (acts(l) && (autoPipeTarget(l.paramId) >= 0 || autoPathStop(l.paramId) >= 0) &&
             !l.pts.empty() && (int)c->spatial.size() < kMaxAutoLanes)
             c->spatial.push_back(l);
     for (const auto &l : c->spatial)
@@ -59,7 +73,7 @@ void RysumProcessor::autoPublish()
     {
         const auto &l = autoSet.lanes[(size_t)li];
         const int p = getParamIndex(l.paramId);
-        if (p < 0 || !isAutoTarget(p))
+        if (p < 0 || !isAutoTarget(p) || (anySolo && !l.solo))
             continue;
         AutoCompiled::Lane cl;
         cl.param = p;
