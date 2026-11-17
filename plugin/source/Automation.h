@@ -62,6 +62,7 @@ struct AutoLane
     float ox = 0.0f, oy = 4.0f, oz = 0.0f; // origin, metres: x = right, y = front, z = up
     float waveSpeed = 4.0f;                // metres per beat
     bool inward = false;                   // the front runs from far away towards the origin
+    int height = 0; // the editor: the lane's height in pixels, 0 = automatic (taller when chosen)
 };
 
 /** the whole automation of a project (message thread) */
@@ -383,6 +384,8 @@ inline juce::ValueTree autoToTree(const AutoSet &s)
         lt.setProperty("oz", l.oz, nullptr);
         lt.setProperty("waveSpeed", l.waveSpeed, nullptr);
         lt.setProperty("inward", l.inward, nullptr);
+        if (l.height > 0)
+            lt.setProperty("height", l.height, nullptr);
         // points as text: t v bend shape rate depth; ...
         juce::String pts;
         for (auto &p : l.pts)
@@ -425,6 +428,7 @@ inline AutoSet autoFromTree(const juce::ValueTree &t)
         l.oz = (float)(double)lt.getProperty("oz", 0.0);
         l.waveSpeed = juce::jlimit(0.1f, 400.0f, (float)(double)lt.getProperty("waveSpeed", 4.0));
         l.inward = (bool)lt.getProperty("inward", false);
+        l.height = juce::jlimit(0, 400, (int)lt.getProperty("height", 0));
         juce::StringArray items;
         items.addTokens(lt.getProperty("pts").toString(), ";", "");
         for (auto &it : items)

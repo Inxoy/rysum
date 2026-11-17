@@ -120,6 +120,44 @@ void RysumProcessor::applyAutomation(const EngineParams &p)
 void RysumProcessor::autoTick()
 {
     const auto now = juce::Time::getMillisecondCounter();
+    // recording: a control that is touched and has no lane yet gets one (armed, starting where the
+    // control stood) - so recording is: press Aufnahme, start the clock, move what should move
+    if (autoRec.load())
+    {
+        if (autoLaneMade.size() != prmList.size())
+            autoLaneMade.assign(prmList.size(), 0);
+        bool added = false;
+        for (int i = 0; i < (int)prmList.size(); ++i)
+        {
+            if (autoTouched[(size_t)i].load(std::memory_order_relaxed) == 0)
+            {
+                autoLaneMade[(size_t)i] = 0;
+                continue;
+            }
+            if (autoLaneMade[(size_t)i] != 0)
+                continue;
+            autoLaneMade[(size_t)i] = 1;
+            if (!isAutoTarget(i) || (int)autoSet.lanes.size() >= kMaxAutoLanes)
+                continue;
+            const auto id = prmList[(size_t)i]->getParameterID();
+            if (std::any_of(autoSet.lanes.begin(), autoSet.lanes.end(),
+                            [&](const AutoLane &l) { return l.paramId == id; }))
+                continue;
+            AutoLane l;
+            l.paramId = id;
+            l.armed = true;
+            AutoPoint a;
+            a.t = 0.0;
+            a.v = prmList[(size_t)i]->getValue();
+            if (autoSteps(i) >= 2)
+                a.shape = asStep;
+            l.pts.push_back(a);
+            autoSet.lanes.push_back(std::move(l));
+            added = true;
+        }
+        if (added)
+            autoChanged();
+    }
     std::array<bool, kMaxAutoLanes> changed{};
     const int ready = autoFifo.getNumReady();
     if (ready > 0)

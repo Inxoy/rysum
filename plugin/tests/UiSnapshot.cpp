@@ -7,6 +7,7 @@
 #include "PluginProcessor.h"
 #include "SpaceView.h"
 #include "WalkView.h"
+#include "VerlaufView.h"
 #include "RoomModels.h"
 
 class SnapshotApp : public juce::JUCEApplication, private juce::Timer
@@ -3051,6 +3052,178 @@ public:
                 std::cout << "verlauf: the wind slider follows its curve " << followOk << " ("
                           << follows << "), back to the parameter after " << backOk
                           << ((followOk && backOk) ? "  ok" : "  FAIL") << std::endl;
+            }
+            // editing on the page with the mouse and the keys: a click sets a point, a click on the
+            // line chooses its section and a drag bends it, a frame chooses points that then move
+            // together, Entf deletes them, Strg+Z brings them back, a lane's lower edge sets its
+            // height, the hint line names what is under the mouse, and while recording a touched
+            // control gets its own lane
+            {
+                S = AutoSet();
+                S.clock = 1;
+                S.grid = 1.0;
+                S.lanes = {e, a, b, c, d, f};
+                proc->autoChanged();
+                proc->autoPublish();
+                shoot(9, "ui_verlauf.png");
+                std::function<rysum::ui::VerlaufView *(juce::Component &)> findView;
+                findView = [&](juce::Component &parent) -> rysum::ui::VerlaufView *
+                {
+                    for (auto *ch : parent.getChildren())
+                    {
+                        if (auto *v = dynamic_cast<rysum::ui::VerlaufView *>(ch))
+                            return v;
+                        if (auto *v = findView(*ch))
+                            return v;
+                    }
+                    return nullptr;
+                };
+                auto *vv = findView(*content);
+                rysum::ui::VerlaufTimeline *tl = nullptr;
+                if (vv != nullptr)
+                    for (auto *ch : vv->getChildren())
+                        if (auto *t = dynamic_cast<rysum::ui::VerlaufTimeline *>(ch))
+                            tl = t;
+                bool editOk = false;
+                juce::String why;
+                if (tl != nullptr && tl->getWidth() > 400)
+                {
+                    using TL = rysum::ui::VerlaufTimeline;
+                    const auto left = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+                    auto ev = [&](juce::Point<float> p, juce::Point<float> down, int clicks, bool dragged,
+                                  juce::ModifierKeys mods)
+                    {
+                        const auto now = juce::Time::getCurrentTime();
+                        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), p, mods,
+                                                juce::MouseInputSource::defaultPressure,
+                                                juce::MouseInputSource::defaultOrientation,
+                                                juce::MouseInputSource::defaultRotation,
+                                                juce::MouseInputSource::defaultTiltX,
+                                                juce::MouseInputSource::defaultTiltY, tl, tl, now, down, now, clicks,
+                                                dragged);
+                    };
+                    auto click = [&](juce::Point<float> p, juce::ModifierKeys mods = {})
+                    {
+                        tl->mouseDown(ev(p, p, 1, false, mods.withFlags(juce::ModifierKeys::leftButtonModifier)));
+                        tl->mouseUp(ev(p, p, 1, false, mods));
+                    };
+                    auto dragTo = [&](juce::Point<float> from, juce::Point<float> to, juce::ModifierKeys mods = {})
+                    {
+                        const auto m = mods.withFlags(juce::ModifierKeys::leftButtonModifier);
+                        tl->mouseDown(ev(from, from, 1, false, m));
+                        for (int i = 1; i <= 8; ++i)
+                            tl->mouseDrag(ev(from + (to - from) * ((float)i / 8.0f), from, 1, true, m));
+                        tl->mouseUp(ev(to, from, 1, true, mods));
+                    };
+                    juce::ignoreUnused(left);
+                    const int li = 1; // the wind lane
+                    auto curve = [&]
+                    {
+                        return tl->laneRect(li).withTrimmedLeft(TL::kHeaderW).reduced(0, 7);
+                    };
+                    auto at = [&](double beat, float v)
+                    {
+                        const auto c = curve();
+                        return juce::Point<float>(tl->xOfBeat(beat), (float)c.getBottom() - v * (float)c.getHeight());
+                    };
+                    // (the lane chosen first: a click into a lane that is not chosen only chooses it)
+                    click({60.0f, (float)tl->laneRect(li).getY() + 10.0f});
+                    auto &W = S.lanes[(size_t)li];
+                    const size_t n0 = W.pts.size();
+                    // 1: a click on empty space sets a point (on the grid)
+                    click(at(18.2, 0.08f));
+                    const bool added = W.pts.size() == n0 + 1 &&
+                                       std::any_of(W.pts.begin(), W.pts.end(),
+                                                   [](const AutoPoint &p) { return std::abs(p.t - 18.0) < 1e-6; });
+                    // 2: on the line: a click adds nothing, a drag bends that section
+                    const float onLine = rysum::autoValue(W, 10.0);
+                    click(at(10.0, onLine));
+                    const bool lineNoPoint = W.pts.size() == n0 + 1;
+                    W.pts[1].bend = 0.0f;
+                    dragTo(at(10.0, onLine), at(10.0, onLine) + juce::Point<float>(0.0f, 40.0f));
+                    const bool bent = std::abs(W.pts[1].bend) > 0.1f && W.pts.size() == n0 + 1;
+                    // 3: a frame around the points at 6 and 14, then both moved by two beats
+                    dragTo(at(5.3, 0.98f), at(14.7, 0.02f));
+                    const bool frameNoPoint = W.pts.size() == n0 + 1;
+                    const float v6 = W.pts[1].v, v14 = W.pts[2].v;
+                    dragTo(at(6.0, v6), at(8.0, v6));
+                    auto has = [&](double t, float v)
+                    {
+                        // (the lane looked up anew: undo replaces the lanes)
+                        const auto &P = S.lanes[(size_t)li].pts;
+                        return std::any_of(P.begin(), P.end(), [&](const AutoPoint &p)
+                                           { return std::abs(p.t - t) < 1e-6 && std::abs(p.v - v) < 1e-4f; });
+                    };
+                    const bool movedBoth = has(8.0, v6) && has(16.0, v14) && W.pts.size() == n0 + 1;
+                    if (!movedBoth)
+                    {
+                        std::cout << "  verlauf move: wanted 8 / " << v6 << " and 16 / " << v14 << ", have";
+                        for (auto &p : W.pts)
+                            std::cout << "  " << p.t << " / " << p.v;
+                        std::cout << std::endl;
+                    }
+                    // 4: Entf deletes both, Strg+Z brings them back; Strg+C / Strg+V copies them
+                    vv->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey));
+                    const bool deleted = S.lanes[(size_t)li].pts.size() == n0 - 1;
+                    vv->keyPressed(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0));
+                    const bool undone = S.lanes[(size_t)li].pts.size() == n0 + 1 && has(8.0, v6);
+                    dragTo(at(7.3, 0.98f), at(16.7, 0.02f));
+                    vv->keyPressed(juce::KeyPress('c', juce::ModifierKeys::commandModifier, 0));
+                    proc->autoSeek(40.0);
+                    {
+                        juce::AudioBuffer<float> abuf(proc->getTotalNumOutputChannels(), 64);
+                        juce::MidiBuffer none;
+                        proc->processBlock(abuf, none);
+                    }
+                    const size_t before = S.lanes[(size_t)li].pts.size();
+                    vv->keyPressed(juce::KeyPress('v', juce::ModifierKeys::commandModifier, 0));
+                    const auto &W3 = S.lanes[(size_t)li];
+                    const bool pasted = W3.pts.size() == before + 2;
+                    // 5: the lane's lower edge sets its height; a double-click there makes it automatic
+                    const auto r = tl->laneRect(li);
+                    const int h0 = r.getHeight();
+                    dragTo({60.0f, (float)r.getBottom() - 2.0f}, {60.0f, (float)r.getBottom() + 38.0f});
+                    const bool resized = std::abs(S.lanes[(size_t)li].height - (h0 + 40)) <= 1;
+                    // 6: the hint line follows the mouse
+                    tl->mouseMove(ev(at(8.0, v6), at(8.0, v6), 1, false, {}));
+                    const auto hintPoint = tl->hintText();
+                    tl->mouseMove(ev({60.0f, (float)tl->laneRect(li).getCentreY() - 10.0f}, {}, 1, false, {}));
+                    const auto hintHeader = tl->hintText();
+                    const bool hints = hintPoint.contains("Punkt") && hintHeader.contains("Spurkopf");
+                    shoot(9, "ui_verlauf_edit.png");
+                    // 7: recording: a control without a lane gets one when touched
+                    int free = -1;
+                    for (int i = 0; i < proc->getNumParams() && free < 0; ++i)
+                        if (proc->isAutoTarget(i) && proc->isModTarget(i))
+                        {
+                            const auto id = proc->getParamAt(i)->getParameterID();
+                            if (std::none_of(S.lanes.begin(), S.lanes.end(),
+                                             [&](const AutoLane &l) { return l.paramId == id; }))
+                                free = i;
+                        }
+                    bool recLane = false;
+                    if (free >= 0)
+                    {
+                        const size_t lanes0 = S.lanes.size();
+                        auto *fp = proc->getParamAt(free);
+                        proc->setAutoRecord(true);
+                        fp->beginChangeGesture();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(150);
+                        fp->endChangeGesture();
+                        proc->setAutoRecord(false);
+                        recLane = S.lanes.size() == lanes0 + 1 && S.lanes.back().armed &&
+                                  S.lanes.back().paramId == fp->getParameterID();
+                    }
+                    editOk = added && lineNoPoint && bent && frameNoPoint && movedBoth && deleted && undone &&
+                             pasted && resized && hints && recLane;
+                    why << "click " << (int)added << ", line " << (int)lineNoPoint << (int)bent << ", frame "
+                        << (int)frameNoPoint << ", move " << (int)movedBoth << ", delete/undo " << (int)deleted
+                        << (int)undone << ", paste " << (int)pasted << ", height " << (int)resized << ", hints "
+                        << (int)hints << ", lane by recording " << (int)recLane;
+                }
+                else
+                    why = "page not found";
+                std::cout << "verlauf editing: " << why << (editOk ? "  ok" : "  FAIL") << std::endl;
             }
             S = AutoSet();
             proc->autoChanged();

@@ -1061,6 +1061,7 @@ private:
     double autoOwnBeats = 0.0; // audio thread
     std::unique_ptr<std::atomic<float>[]> autoNorm;
     std::unique_ptr<std::atomic<uint8_t>[]> autoTouched;
+    std::vector<char> autoLaneMade; // message thread: this touch has been looked at (record: new lane)
     std::vector<char> autoFlag;           // audio thread: automated in this slice
     std::vector<int> autoHits, prevAutoHits; // audio thread
     std::vector<int> hostToList;          // processor parameter index -> prmList index

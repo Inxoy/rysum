@@ -397,13 +397,30 @@ loops of different lengths running against each other.
 - **Clock**: *Host* follows the song position of the DAW in beats, also when it is stopped (the
   value at the cursor). Without a host (standalone) the own clock runs instead. *Eigene Uhr* is the
   plugin's own clock: ▶ / ■ (a second ■ goes back to the start) / ⏮, the space bar, or
-  *Erste Taste* (the first key starts it). *Tempo* sets its speed (60 BPM = one beat per second).
-  Click into the ruler to move the own clock there.
-- **Tools**: *Punkte* – click sets a point (on the *Raster*; Shift: off the grid), drag moves it
-  (Ctrl: only its value), double-click or Delete removes it, Alt + drag on a segment bends it,
-  right-click chooses the segment's shape. *Stift* – draw freehand; the line is thinned to
-  the points that matter and replaces the points under it. *Treppe* – draw one step per grid cell.
-- **Segment shapes** (*Abschnitt*, for the segment from the selected point to the next):
+  *Start mit Taste* (the first key starts it). *Tempo* sets its speed (60 BPM = one beat per
+  second). Click into the ruler to move the own clock there. The ruler counts **bars.beats** with
+  either clock (4 beats = 1 bar, the unit of every lane setting); with the own clock the seconds
+  stand under it.
+- **The hint line** under the lanes always says what the mouse can do where it is (on a point, on
+  the line, in empty space, in a lane's head, on its lower edge, in the ruler), and a small box
+  next to the mouse shows the time and value of the point under it, or what a click would set.
+  Each lane shows what its top and bottom mean.
+- **Tools**: *Punkte* – click into empty space sets a point (on the *Raster*; Shift: off the
+  grid), drag a point to move it (Ctrl: only its value), double-click or Delete removes it,
+  right-click chooses a shape. **Click on the line** to choose that section (it lights up; its shape
+  is set in *Abschnitt*), drag the line up or down to bend it; Alt + click on the line sets a point
+  there. In a lane that is not chosen yet, the first click only chooses it. *Stift* – draw
+  freehand; the line is thinned to the points that matter and replaces the points under it.
+  *Treppe* – draw one step per grid cell.
+- **Several points**: drag a frame in empty space (Shift: add to the selection), Shift + click a
+  point, or Ctrl+A for all points of the lane. Dragging one of them moves them all (they stay
+  between the points that are not chosen); Delete removes them; Ctrl+C / Ctrl+X copy / cut, Ctrl+V
+  pastes them under the mouse or at the clock; Esc lets them go.
+- **Lane heads**: *an / aus*, ● (armed for recording) and *…* (the lane's menu: loop, reverse,
+  collapse, height, move up / down, clear, delete). Drag a lane's lower edge to give it a height of
+  its own (double-click the edge: automatic again). A looping lane marks each repeat (×2, ×3 …)
+  and shows its points faintly where they come again.
+- **Segment shapes** (*Abschnitt*, for the section from the chosen point to the next):
   *Kurve* (straight or bent), *Stufe* (holds, then jumps), *Welle* (the line plus a sine wave:
   *Tempo* = waves per beat, *Tiefe*), *Zittern* (the line plus smooth random wandering – the same
   every time, so a bounce sounds like the playback), *Treppe* (the line in steps).
@@ -434,7 +451,8 @@ loops of different lengths running against each other.
   off (the stop runs at its *Geschwindigkeit* again).
 - **Recording**: switch on *● Aufnahme*, arm a lane (● in its head) and move its slider while the
   clock runs: the movement is written into the lane (only where you moved it), thinned to a few
-  points you can edit afterwards.
+  points you can edit afterwards. A control that has no lane yet gets one, armed, the moment you
+  touch it while *Aufnahme* is on – so recording can be just: *Aufnahme*, ▶, move what should move.
 - Ctrl+Z / Ctrl+Y undo / redo, Ctrl + mouse wheel zooms, Shift + wheel scrolls in time, the
   middle mouse button drags the view; *Alles* shows all points.
 - The lanes are saved with the project, not in patches: loading a patch mid-piece keeps them.

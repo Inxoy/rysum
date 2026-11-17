@@ -43,10 +43,13 @@ private:
 };
 
 /** the lanes over time: ruler on top, a header per lane on the left, the curves on the right */
-class VerlaufTimeline : public juce::Component
+class VerlaufTimeline : public juce::Component, public juce::TooltipClient
 {
 public:
     explicit VerlaufTimeline(VerlaufView &o) : owner(o) {}
+    juce::String getTooltip() override;
+    /** what the mouse can do where it is now (the hint line under the lanes) */
+    juce::String hintText() const;
     void paint(juce::Graphics &) override;
     void mouseDown(const juce::MouseEvent &) override;
     void mouseDrag(const juce::MouseEvent &) override;
@@ -65,6 +68,8 @@ public:
     juce::Rectangle<int> laneRect(int lane) const; // in this component, scrolled
     int laneAt(int y) const;
     int contentHeight() const;
+    int laneHeight(int lane) const;
+    static constexpr int kMinLaneH = 30, kMaxLaneH = 400;
 
 private:
     friend class VerlaufView;
@@ -77,10 +82,35 @@ private:
         pencil,
         stairs,
         seek,
-        pan
+        pan,
+        box,    // pressed on empty space: a click sets a point, a drag draws a frame
+        line,   // pressed on the line: a click chooses the section, a drag bends it
+        resize  // the lane's lower edge
     } drag = Drag::none;
     int dragLane = -1, dragPoint = -1;
     float bendStart = 0.0f;
+    bool dragMoved = false, undoPushed = false;
+    juce::Point<float> downPos;
+    std::vector<AutoPoint> dragOrig; // the lane's points when a move began
+    std::vector<int> boxBase;        // selection before the frame (Shift: the frame adds to it)
+    int resizeStart = 0;
+    void ensureUndo();               // the undo step of a drag, at its first change
+    void addPointAt(int lane, juce::Point<float> p, bool fine);
+    /** the section (index of its first point) whose drawn line passes near p, -1 = none */
+    int lineAt(int lane, juce::Point<float> p) const;
+    bool onLowerEdge(int lane, int y) const;
+    enum class Hover
+    {
+        none,
+        ruler,
+        header,
+        headerButton,
+        edge,
+        point,
+        line,
+        empty
+    };
+    Hover hoverKind() const;
     std::vector<AutoPoint> stroke; // pencil
     double lastStairCell = std::numeric_limits<double>::quiet_NaN();
     double panStart = 0.0;
@@ -89,7 +119,7 @@ private:
 
     void paintRuler(juce::Graphics &, juce::Rectangle<int>);
     void paintLane(juce::Graphics &, int lane, juce::Rectangle<int>);
-    // header buttons of a lane: on, armed, delete
+    // header buttons of a lane: on, armed, menu
     juce::Rectangle<int> headerButton(juce::Rectangle<int> lane, int which) const;
     juce::Rectangle<int> curveArea(juce::Rectangle<int> lane) const;
     float yOfValue(juce::Rectangle<int> curve, float v) const;
@@ -162,16 +192,37 @@ private:
     };
     int tool = toolPoints;
     int selLane = -1, selPoint = -1;
+    // several points of the chosen lane (frame, Shift + click, Ctrl + A): moved, copied, deleted
+    // together
+    std::vector<int> selPts;
+    bool isSelected(int point) const
+    {
+        return std::find(selPts.begin(), selPts.end(), point) != selPts.end();
+    }
+    void clearSelection()
+    {
+        selPts.clear();
+    }
+    std::vector<AutoPoint> clip; // copied points, times from the first one
+    void copySelection(bool cut);
+    void paste();
+    void deleteSelection();
+    juce::Rectangle<int> hintBox;
+    void hintChanged()
+    {
+        repaint(hintBox);
+    }
     std::vector<AutoSet> undoStack, redoStack;
     int shownVersion = -1;
     double shownNow = -1.0;
     bool updating = false;
 
     juce::Rectangle<int> titleBox, laneBox, segBox;
+    juce::Array<int> barSeps; // x of the thin lines between the groups of the bar
     juce::TextButton onButton{"Verlauf an"}, clockHost{"Host"}, clockOwn{"Eigene Uhr"},
         playButton{juce::String::fromUTF8("\xe2\x96\xb6")},
         stopButton{juce::String::fromUTF8("\xe2\x96\xa0")},
-        homeButton{juce::String::fromUTF8("|\xe2\x97\x80")}, keyStart{"Erste Taste"},
+        homeButton{juce::String::fromUTF8("|\xe2\x97\x80")}, keyStart{"Start mit Taste"},
         recButton{juce::String::fromUTF8("\xe2\x97\x8f Aufnahme")}, toolPts{"Punkte"},
         toolPen{"Stift"}, toolStair{"Treppe"}, zoomIn{"+"}, zoomOut{juce::String::fromUTF8("\xe2\x88\x92")},
         zoomAll{"Alles"}, undoButton{juce::String::fromUTF8("Zur\xc3\xbc"
