@@ -27,3 +27,8 @@ scripts/output_notes*/
 # raw recordings (large; prepared versions live in rysum-samples/)
 raw_unprocessed_files/
 october30_samples/
+
+# PaperDoc: only the paper itself is tracked; work files, old versions, the test runs and the
+# browser profile used for screenshots stay local
+PaperDoc/*
+!PaperDoc/rysum_paper/
