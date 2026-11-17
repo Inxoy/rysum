@@ -3599,7 +3599,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
                     geo, sp.x, sp.y,
                     0.3f); // (the room changed under the listener: a nudge, not a restart)
             planSlide(geo, sp.x, sp.y, home.x + walkX, home.y + walkY, 0.3f,
-                      juce::jmax(0.02f, 6.0f * (float)n / (float)sr)); // (at most 6 m/s)
+                      juce::jmax(0.02f, 40.0f * (float)n / (float)sr)); // (at most 40 m/s: a sprint stays with its sound)
             roomsEr[(size_t)ri].listenerX = juce::jlimit(0.0f, 1.0f, sp.x / rr.W());
             roomsEr[(size_t)ri].listenerY = juce::jlimit(0.0f, 1.0f, sp.y / rr.L());
         }

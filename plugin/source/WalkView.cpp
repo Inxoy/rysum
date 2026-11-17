@@ -1246,7 +1246,7 @@ void WalkView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDe
         if (mods.isShiftDown())
         {
             auto cs = controls();
-            cs.walk = juce::jlimit (0.4f, 2.5f, cs.walk * std::exp (dw * 0.8f));
+            cs.walk = juce::jlimit (0.4f, 8.0f, cs.walk * std::exp (dw * 0.8f));
             setControls (cs);
             say (U ("Gehtempo \xc3\x97 ") + juce::String (cs.walk, 2));
             return;

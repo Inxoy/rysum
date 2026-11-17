@@ -21,7 +21,7 @@ WalkView::Controls& controlsNow()
         if (auto xml = juce::parseXML (controlsFile()))
         {
             c.mouse = juce::jlimit (0.25f, 3.0f, (float) xml->getDoubleAttribute ("maus", 1.0));
-            c.walk = juce::jlimit (0.4f, 2.5f, (float) xml->getDoubleAttribute ("gehen", 1.0));
+            c.walk = juce::jlimit (0.4f, 8.0f, (float) xml->getDoubleAttribute ("gehen", 1.0));
             c.invertY = xml->getBoolAttribute ("umgekehrt", false);
         }
     }
@@ -36,7 +36,7 @@ void WalkView::setControls (const Controls& c)
 {
     auto& now = controlsNow();
     now.mouse = juce::jlimit (0.25f, 3.0f, c.mouse);
-    now.walk = juce::jlimit (0.4f, 2.5f, c.walk);
+    now.walk = juce::jlimit (0.4f, 8.0f, c.walk);
     now.invertY = c.invertY;
     juce::XmlElement xml ("STEUERUNG");
     xml.setAttribute ("maus", now.mouse);
@@ -49,13 +49,13 @@ void WalkView::showControlsMenu()
 {
     const auto c = controls();
     juce::PopupMenu m, mouse, walk;
-    const float speeds[] { 0.5f, 0.75f, 1.0f, 1.5f, 2.0f };
-    const char* names[] { "sehr langsam", "langsam", "normal", "schnell", "sehr schnell" };
+    const float speeds[] { 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.5f, 6.0f };
+    const char* names[] { "sehr langsam", "langsam", "normal", "schnell", "sehr schnell", "rasend", "wie der Wind" };
     for (int i = 0; i < 5; ++i)
-    {
         mouse.addItem (10 + i, U (names[i]), true, std::abs (c.mouse - speeds[i]) < 0.01f);
+    // (walking: Shift runs 2.6 times as fast - "wie der Wind" runs at about 25 m/s)
+    for (int i = 0; i < 7; ++i)
         walk.addItem (20 + i, U (names[i]), true, std::abs (c.walk - speeds[i]) < 0.01f);
-    }
     m.addSectionHeader (U ("Steuerung (auf diesem Computer)"));
     m.addSubMenu (U ("Maus: Tempo des Schauens"), mouse);
     m.addItem (1, U ("Maus umgekehrt (hoch = nach unten schauen)"), true, c.invertY);
@@ -67,7 +67,7 @@ void WalkView::showControlsMenu()
                          auto c2 = controls();
                          if (r == 1) c2.invertY = ! c2.invertY;
                          else if (r >= 10 && r < 15) c2.mouse = speeds[r - 10];
-                         else if (r >= 20 && r < 25) c2.walk = speeds[r - 20];
+                         else if (r >= 20 && r < 27) c2.walk = speeds[r - 20];
                          setControls (c2);
                          safe->grabKeyboardFocus();
                      });
