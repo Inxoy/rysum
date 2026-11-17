@@ -1700,6 +1700,123 @@ static void testSpeakers()
 // ---------------------------------------------------------------------------
 /** per-pipe modulation: "Pfeife: Wind" driven by the key position / a per-pipe envelope / an LFO
    with "Versatz" must give every pipe its own value (two notes, rendered on their own, compared) */
+/** a stop's own effects (Raum page, "Pfeife" tab): tremulant, crackle and wind leaks of that stop
+    alone, and its pipes turning at their own speeds - without jumping when that is changed */
+static void testStopEffects(std::shared_ptr<const SampleLibrary> lib)
+{
+    std::cout << "a stop's own effects" << std::endl;
+    const double sr = 48000.0;
+    const int B = 256;
+    // one held note of stop 1 (2 s): the spread of its level in 10 ms windows (dB), the energy
+    // above 6 kHz relative to all, and the level of the silence without a note
+    struct Out
+    {
+        double wobbleDb = 0, highShare = 0, idleDb = -200;
+    };
+    auto run = [&](std::function<void(EngineParams &)> setup, bool note)
+    {
+        OrganEngine e;
+        e.prepare(sr, B);
+        e.setLibrary(lib);
+        EngineParams p;
+        p.stopOn = {};
+        p.stopOn[1] = true;
+        p.clickLevel = 0;
+        p.releaseClick = 0;
+        p.wind = 0;
+        p.stopPull = 0;
+        p.doppler = 0;
+        setup(p);
+        juce::AudioBuffer<float> b(2, B);
+        std::vector<float> x;
+        for (int k = 0; k < (int)(2.0 * sr / B); ++k)
+        {
+            juce::MidiBuffer mb;
+            if (k == 1 && note)
+                mb.addEvent(juce::MidiMessage::noteOn(1, 57, (juce::uint8)100), 0);
+            e.process(b, mb, p);
+            for (int i = 0; i < B; ++i)
+                x.push_back(b.getSample(0, i));
+        }
+        Out o;
+        // level in 10 ms windows after 0.8 s
+        std::vector<double> db;
+        const int W = 480;
+        double all = 0, hi = 0, lp = 0;
+        for (size_t i = (size_t)(0.8 * sr); i + W <= x.size(); i += W)
+        {
+            double e2 = 0;
+            for (int j = 0; j < W; ++j)
+                e2 += (double)x[i + (size_t)j] * x[i + (size_t)j];
+            db.push_back(10.0 * std::log10(e2 / W + 1e-20));
+        }
+        for (size_t i = (size_t)(0.8 * sr); i < x.size(); ++i)
+        {
+            lp += 0.55 * (x[i] - lp); // (a one-pole low pass around 6 kHz: what is left is high)
+            all += (double)x[i] * x[i];
+            hi += (double)(x[i] - lp) * (x[i] - lp);
+        }
+        std::sort(db.begin(), db.end());
+        o.wobbleDb = db[(size_t)(0.95 * (db.size() - 1))] - db[(size_t)(0.05 * (db.size() - 1))];
+        o.highShare = hi / (all + 1e-20);
+        o.idleDb = 10.0 * std::log10(all / (double)(x.size() - (size_t)(0.8 * sr)) + 1e-20);
+        return o;
+    };
+    const auto plain = run([](EngineParams &) {}, true);
+    const auto trem = run([](EngineParams &p) { p.stopTrem[1] = 1.0f; }, true);
+    const auto tremOther = run([](EngineParams &p) { p.stopTrem[2] = 1.0f; }, true);
+    const auto crack = run([](EngineParams &p) { p.stopCrack[1] = 1.0f; }, true);
+    const auto quiet = run([](EngineParams &) {}, false);
+    const auto leak = run([](EngineParams &p) { p.stopLeak[1] = 1.0f; }, false);
+    const auto leakOff = run([](EngineParams &p) { p.stopLeak[1] = 1.0f; p.stopOn[1] = false; }, false);
+    std::cout << "  level spread (5..95 %): plain " << plain.wobbleDb << " dB, own tremulant " << trem.wobbleDb
+              << " dB, another stop's " << tremOther.wobbleDb << " dB" << std::endl;
+    std::cout << "  share above ~6 kHz: plain " << plain.highShare << ", own crackle " << crack.highShare << std::endl;
+    std::cout << "  no note: " << quiet.idleDb << " dB, own leaks " << leak.idleDb << " dB, stop pushed in "
+              << leakOff.idleDb << " dB" << std::endl;
+    check(trem.wobbleDb > plain.wobbleDb + 2.0 && std::abs(tremOther.wobbleDb - plain.wobbleDb) < 1.0,
+          "a stop's own tremulant moves only that stop");
+    check(crack.highShare > plain.highShare * 1.5, "a stop's own crackle");
+    check(leak.idleDb > quiet.idleDb + 30.0 && leakOff.idleDb < quiet.idleDb + 3.0,
+          "a stop's own wind leaks hiss while it is drawn");
+
+    // speed spread: the pipes of a turning stop drift apart; changing it makes no pipe jump
+    {
+        OrganEngine e;
+        e.prepare(sr, B);
+        e.setLibrary(lib);
+        EngineParams p;
+        p.stopOn = {};
+        p.stopOn[1] = true;
+        p.motionMode[1] = (int)Motion::Rotation;
+        p.motionRate[1] = 0.25f;
+        juce::AudioBuffer<float> b(2, B);
+        juce::MidiBuffer none;
+        auto runFor = [&](double secs)
+        {
+            for (int k = 0; k < (int)(secs * sr / B); ++k)
+                e.process(b, none, p);
+        };
+        auto gapDeg = [&]
+        {
+            const float a = e.currentPosition(1, 10, p).az, c = e.currentPosition(1, 30, p).az;
+            return std::abs(wrapAz(a - c));
+        };
+        runFor(3.0);
+        const float gap0 = gapDeg();
+        const auto before = e.currentPosition(1, 10, p);
+        p.rateSpread[1] = 1.0f;
+        e.process(b, none, p);
+        const auto after = e.currentPosition(1, 10, p);
+        const float jump = std::abs(wrapAz(after.az - before.az)); // one block of turning: ~0.5 deg
+        runFor(4.0);
+        const float gap1 = gapDeg();
+        std::cout << "  speed spread: two pipes " << gap0 << " deg apart, after 4 s of spread " << gap1
+                  << " deg; when it was switched on a pipe moved " << jump << " deg" << std::endl;
+        check(std::abs(gap1 - gap0) > 5.0f && jump < 2.0f, "a stop's pipes turn at their own speeds, without jumping");
+    }
+}
+
 static void testPipeTargets(std::shared_ptr<const SampleLibrary> lib)
 {
     std::cout << "per-pipe modulation" << std::endl;
@@ -2152,6 +2269,7 @@ int main(int argc, char **argv)
     if (std::getenv("RYSUM_ONLY_PIPEMOD") != nullptr)
     {
         testPipeTargets(lib);
+        testStopEffects(lib);
         std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string(failures))
                   << std::endl;
         return failures;
@@ -3153,6 +3271,7 @@ int main(int argc, char **argv)
         testInput(lib);
         testRoomsAndSpread(lib);
         testPipeTargets(lib);
+        testStopEffects(lib);
 
         // ---------------- motion: ellipse shape, drawn paths, hard jumps ----------------
         {

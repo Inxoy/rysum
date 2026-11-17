@@ -230,6 +230,9 @@ struct EngineParams
     // key
     float resClick = 0.0f, resDecay = 0.4f /* s */, resBright = 0.5f;
     std::array<PipeSoundParams, kNumStops> pipeSnd{};
+    // each stop's own effects ("Pfeife" tab), on top of the global ones: tremulant depth,
+    // crackle, its own wind leaks, and how differently fast its pipes move (0 = all alike)
+    std::array<float, kNumStops> stopTrem{}, stopCrack{}, stopLeak{}, rateSpread{};
     GlitchParams glitch;
     // tuning made audible in space: beats ("Schwebung", motion mode and modulation source) and
     // difference tones
@@ -644,6 +647,22 @@ public:
     void syncPhases(const double *motion, const double *lfo) noexcept;
     /** integrated motion phase per stop (cycles); speed changes only change its slope */
     std::array<std::atomic<double>, kNumStops> motionPhase{};
+    // "Tempo-Streuung" (Pfeife tab): every pipe of a stop moves a little faster or slower than
+    // the stop - its phase is the stop's times (1 + spread * factor), plus an offset that keeps it
+    // where it is when the spread is changed
+    std::array<std::atomic<float>, kNumStops> spreadNow{};
+    std::array<std::array<std::atomic<double>, kNumKeys>, kNumStops> pipePhaseOff{};
+    static float pipeRateFactor(int stop, int key) noexcept
+    {
+        return 2.0f * hash01((uint32_t)stop * 977u + (uint32_t)key * 131u + 7u) - 1.0f;
+    }
+    double pipePhase(int stop, int key) const noexcept
+    {
+        const double ph = motionPhase[(size_t)stop].load();
+        const float sp = spreadNow[(size_t)stop].load(std::memory_order_relaxed);
+        return ph * (1.0 + (double)(sp * pipeRateFactor(stop, key))) +
+               pipePhaseOff[(size_t)stop][(size_t)key].load(std::memory_order_relaxed);
+    }
 
     /** drawn trajectory of a stop (message thread; the engine and the UI read it without locking)
      */
@@ -1082,6 +1101,7 @@ private:
     std::array<Scheduled, 512> scheduled{};
     int numScheduled = 0;
     std::array<Leak, 8> leaks{};
+    std::array<Leak, kNumStops * 2> stopLeaks{}; // each stop's own two, at its pipes
     std::vector<float> echoBuf, fxScratch;
     int echoWrite = 0;
     double echoDelay = -1.0; // smoothed delay (samples)

@@ -280,7 +280,27 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     for (int i = before2; i < getNumChildComponents(); ++i)
         page2.push_back(getChildComponent(i));
 
-    for (auto *b : {&tabSounds, &tabLight, &tabLive})
+    // ---- fourth tab: the "Summe"
+    {
+        const int before3 = getNumChildComponents();
+        eqOn = &toggle("mstEqOn", "EQ an");
+        eqOn->setTooltip(U("Drei B\xc3\xa4nder auf allem, was hinausgeht: Tiefen (Kuhschwanz), Mitten "
+                           "(Glocke mit G\xc3\xbcte), H\xc3\xb6hen (Kuhschwanz)."));
+        eqRows = {&row("mstLowHz", "Tiefen bei"),       &row("mstLowDb", "Tiefen"),
+                  &row("mstMidHz", "Mitten bei"),       &row("mstMidDb", "Mitten"),
+                  &row("mstMidQ", U("G\xc3\xbcte")),     &row("mstHighHz", U("H\xc3\xb6hen bei")),
+                  &row("mstHighDb", U("H\xc3\xb6hen"))};
+        compOn = &toggle("mstCompOn", "Kompressor an");
+        compOn->setTooltip(U("Ein Kompressor auf allem, was hinausgeht: der lauteste Kanal entscheidet, "
+                             "alle Kan\xc3\xa4le werden gleich leiser (das Raumbild bleibt stehen)."));
+        compRows = {&row("mstThresh", "Schwelle"), &row("mstRatio", U("Verh\xc3\xa4ltnis")),
+                    &row("mstAttack", "Ansprache"), &row("mstRelease", "Ausklang"),
+                    &row("mstMakeup", "Aufholen")};
+        for (int i = before3; i < getNumChildComponents(); ++i)
+            page3.push_back(getChildComponent(i));
+    }
+
+    for (auto *b : {&tabSounds, &tabLight, &tabLive, &tabMaster})
     {
         b->setClickingTogglesState(false);
         addAndMakeVisible(*b);
@@ -288,6 +308,8 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     tabSounds.onClick = [this] { showTab(0); };
     tabLight.onClick = [this] { showTab(1); };
     tabLive.onClick = [this] { showTab(2); };
+    tabMaster.onClick = [this] { showTab(3); };
+    tabMaster.setTooltip(U("Die Summe: EQ und Kompressor auf allem, was hinausgeht (Mischen, Mastern)"));
     tabLive.setTooltip(U("Die Orgel als ein K\xc3\xb6rper: gemeinsamer Wind, Ventile, ein "
                          "H\xc3\xb6rer, der geht, Pfeifen, die altern und mitklingen, "
                          "eine Stimmung, die sich rein zieht, ein Wanderer im Tonnetz"));
@@ -304,18 +326,46 @@ void EffectsView::showTab(int t)
         c->setVisible(t == 1);
     for (auto *c : page2)
         c->setVisible(t == 2);
+    for (auto *c : page3)
+        c->setVisible(t == 3);
     if (t == 0)
         resetFolder.setVisible(proc.hasOwnCustomFolder());
     tabSounds.setToggleState(t == 0, juce::dontSendNotification);
     tabLight.setToggleState(t == 1, juce::dontSendNotification);
     tabLive.setToggleState(t == 2, juce::dontSendNotification);
+    tabMaster.setToggleState(t == 3, juce::dontSendNotification);
     repaint();
 }
 
 void EffectsView::resized()
 {
-    tabLive.setBounds(getWidth() - 28 - 130, 4, 130, 18);
+    tabMaster.setBounds(getWidth() - 28 - 70, 4, 70, 18);
+    tabLive.setBounds(tabMaster.getX() - 4 - 130, 4, 130, 18);
     tabLight.setBounds(tabLive.getX() - 4 - 170, 4, 170, 18);
+    {
+        // the "Summe": the EQ on the left, the compressor on the right
+        auto r = getLocalBounds().reduced(28, 0).withTrimmedTop(22).withTrimmedBottom(18);
+        const int gap = 40;
+        eqBox = r.removeFromLeft((r.getWidth() - gap) / 2);
+        r.removeFromLeft(gap);
+        compBox = r;
+        auto b = eqBox.withTrimmedTop(38);
+        eqOn->setBounds(b.removeFromTop(24).removeFromLeft(110));
+        b.removeFromTop(8);
+        eqCurve = b.removeFromTop(juce::jmin(220, b.getHeight() / 2));
+        b.removeFromTop(10);
+        for (auto *x : eqRows)
+            x->setBounds(b.removeFromTop(30).withTrimmedBottom(2));
+        eqNote = b;
+        auto c = compBox.withTrimmedTop(38);
+        compOn->setBounds(c.removeFromTop(24).removeFromLeft(130));
+        c.removeFromTop(8);
+        compMeter = c.removeFromTop(juce::jmin(220, c.getHeight() / 2));
+        c.removeFromTop(10);
+        for (auto *x : compRows)
+            x->setBounds(c.removeFromTop(30).withTrimmedBottom(2));
+        compNote = c;
+    }
     tabSounds.setBounds(tabLight.getX() - 4 - 80, 4, 80, 18);
     auto r = getLocalBounds().reduced(28, 0).withTrimmedTop(22).withTrimmedBottom(18);
     const int gap = 28;
@@ -545,6 +595,17 @@ void EffectsView::refresh()
     }
     repaint(echoCompass.expanded(14));
     repaint(partCompass.expanded(14));
+    if (tab == 3)
+    {
+        // the compressor's meter, and the EQ curve when a lane moves it
+        const float red = proc.masterBus.reductionDb.load();
+        if (std::abs(red - shownReduction) > 0.05f)
+        {
+            shownReduction = red;
+            repaint(compMeter.expanded(4));
+        }
+        repaint(eqCurve.expanded(4));
+    }
     if (tab == 2)
     {
         // the Kalkant treads freely (slider) or in tempo (note value); the walker steps freely or
@@ -860,6 +921,11 @@ void EffectsView::paint(juce::Graphics &g)
         paintLive(g);
         return;
     }
+    if (tab == 3)
+    {
+        paintMaster(g);
+        return;
+    }
     if (tab == 1)
     {
         auto tonnetzBox = juce::Rectangle<int>(ghostBox.getRight() + 28, ghostBox.getY(),
@@ -956,5 +1022,133 @@ void EffectsView::paint(juce::Graphics &g)
 
     drawCompass(g, partCompass, 0);
     drawCompass(g, echoCompass, 1);
+}
+
+/** the fourth tab: the EQ's curve, the compressor's line and how much it turns down now */
+void EffectsView::paintMaster(juce::Graphics &g)
+{
+    auto &A = Assets::get();
+    MasterSettings s;
+    s.eqOn = value("mstEqOn") > 0.5f;
+    s.lowHz = value("mstLowHz");
+    s.lowDb = value("mstLowDb");
+    s.midHz = value("mstMidHz");
+    s.midDb = value("mstMidDb");
+    s.midQ = value("mstMidQ");
+    s.highHz = value("mstHighHz");
+    s.highDb = value("mstHighDb");
+    s.compOn = value("mstCompOn") > 0.5f;
+    s.threshDb = value("mstThresh");
+    s.ratio = value("mstRatio");
+    s.makeupDb = value("mstMakeup");
+    const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
+    drawSectionTitle(g, eqBox, "EQ", s.eqOn ? U("drei B\xc3\xa4nder auf der Summe") : juce::String("aus"));
+    drawSectionTitle(g, compBox, "Kompressor",
+                     s.compOn ? U("zieht ") + juce::String(proc.masterBus.reductionDb.load(), 1) + " dB ab"
+                              : juce::String("aus"));
+    // ---- the EQ: 20 Hz .. 20 kHz on a log axis, +-15 dB
+    {
+        const auto r = eqCurve.toFloat();
+        g.setColour(col::panel.withAlpha(0.6f));
+        g.fillRect(r);
+        auto xOf = [&](double hz) { return r.getX() + (float)(std::log(hz / 20.0) / std::log(1000.0)) * r.getWidth(); };
+        auto yOf = [&](float db) { return r.getCentreY() - db / 15.0f * r.getHeight() * 0.5f; };
+        g.setFont(A.monoFont(9.0f));
+        for (double hz : {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0})
+        {
+            g.setColour(col::line);
+            g.fillRect(xOf(hz), r.getY(), 1.0f, r.getHeight());
+            g.setColour(col::faint);
+            g.drawText(hz >= 1000.0 ? juce::String((int)(hz / 1000.0)) + "k" : juce::String((int)hz),
+                       juce::Rectangle<float>(xOf(hz) + 2.0f, r.getBottom() - 12.0f, 30.0f, 11.0f),
+                       juce::Justification::centredLeft);
+        }
+        for (float db : {-12.0f, -6.0f, 0.0f, 6.0f, 12.0f})
+        {
+            g.setColour(db == 0.0f ? col::dim.withAlpha(0.6f) : col::line);
+            g.fillRect(r.getX(), yOf(db), r.getWidth(), 1.0f);
+            g.setColour(col::faint);
+            g.drawText((db > 0 ? "+" : "") + juce::String((int)db), juce::Rectangle<float>(r.getX() + 2.0f, yOf(db) - 11.0f, 30.0f, 10.0f),
+                       juce::Justification::centredLeft);
+        }
+        juce::Path p;
+        for (int i = 0; i <= 200; ++i)
+        {
+            const double hz = 20.0 * std::pow(1000.0, i / 200.0);
+            const float db = juce::jlimit(-15.0f, 15.0f, MasterBus::responseDb(s, sr, (float)hz));
+            if (i == 0)
+                p.startNewSubPath(xOf(hz), yOf(db));
+            else
+                p.lineTo(xOf(hz), yOf(db));
+        }
+        g.setColour(s.eqOn ? col::rubric.brighter(0.3f) : col::faint);
+        g.strokePath(p, juce::PathStrokeType(1.8f));
+        if (s.eqOn)
+            for (auto [hz, db] : {std::pair<float, float>{s.lowHz, s.lowDb}, {s.midHz, s.midDb}, {s.highHz, s.highDb}})
+                drawLozenge(g, {xOf(hz), yOf(juce::jlimit(-15.0f, 15.0f, db))}, 4.0f, 5.0f);
+    }
+    // ---- the compressor: what goes in (dB) against what comes out, and the turning down now
+    {
+        auto area = compMeter.toFloat();
+        const float side = juce::jmin(area.getHeight(), area.getWidth() - 40.0f);
+        // the square of the curve, the meter right beside it
+        auto r = area.withWidth(side).withHeight(side);
+        const auto bar = juce::Rectangle<float>(r.getRight() + 12.0f, r.getY(), 22.0f, side);
+        g.setColour(col::panel.withAlpha(0.6f));
+        g.fillRect(r);
+        auto xOf = [&](float db) { return r.getX() + (db + 48.0f) / 48.0f * r.getWidth(); };
+        auto yOf = [&](float db) { return r.getBottom() - (db + 48.0f) / 48.0f * r.getHeight(); };
+        g.setFont(A.monoFont(9.0f));
+        for (float db : {-36.0f, -24.0f, -12.0f})
+        {
+            g.setColour(col::line);
+            g.fillRect(xOf(db), r.getY(), 1.0f, r.getHeight());
+            g.fillRect(r.getX(), yOf(db), r.getWidth(), 1.0f);
+            g.setColour(col::faint);
+            g.drawText(juce::String((int)db), juce::Rectangle<float>(xOf(db) + 2.0f, r.getBottom() - 12.0f, 30.0f, 11.0f),
+                       juce::Justification::centredLeft);
+        }
+        g.setColour(col::line);
+        g.drawLine(r.getX(), r.getBottom(), r.getRight(), r.getY(), 1.0f);
+        juce::Path p;
+        const float W = 6.0f, slope = 1.0f / juce::jmax(1.0f, s.ratio) - 1.0f;
+        for (int i = 0; i <= 96; ++i)
+        {
+            const float in = -48.0f + 0.5f * (float)i, over = in - s.threshDb;
+            float gr = 0.0f;
+            if (2.0f * over > W)
+                gr = slope * over;
+            else if (2.0f * over > -W)
+                gr = slope * (over + W * 0.5f) * (over + W * 0.5f) / (2.0f * W);
+            const float out = juce::jlimit(-48.0f, 0.0f, in + gr + s.makeupDb);
+            if (i == 0)
+                p.startNewSubPath(xOf(in), yOf(out));
+            else
+                p.lineTo(xOf(in), yOf(out));
+        }
+        g.setColour(s.compOn ? col::rubric.brighter(0.3f) : col::faint);
+        g.strokePath(p, juce::PathStrokeType(1.8f));
+        g.setColour(col::dim.withAlpha(0.5f));
+        g.fillRect(xOf(s.threshDb), r.getY(), 1.0f, r.getHeight());
+        // the meter: how much it turns down now (0 .. 24 dB, from the top)
+        g.setColour(col::panel.withAlpha(0.6f));
+        g.fillRect(bar);
+        const float red = juce::jlimit(0.0f, 24.0f, proc.masterBus.reductionDb.load());
+        g.setColour(col::rubric.brighter(0.2f));
+        g.fillRect(bar.withHeight(bar.getHeight() * red / 24.0f));
+        g.setColour(col::faint);
+        for (float db : {6.0f, 12.0f, 18.0f})
+            g.fillRect(bar.getX(), bar.getY() + bar.getHeight() * db / 24.0f, bar.getWidth(), 1.0f);
+    }
+    g.setFont(A.sansFont(12.5f));
+    g.setColour(col::mute);
+    if (eqNote.getHeight() > 14)
+        g.drawFittedText(U("Wirkt auf alles, was hinausgeht \xe2\x80\x93 Stereo, Kopfh\xc3\xb6rer, Ambisonics oder "
+                           "Lautsprecher \xe2\x80\x93 als letzter Schritt. Jeder Regler kann eine Spur im Verlauf haben."),
+                         eqNote, juce::Justification::topLeft, juce::jmax(1, eqNote.getHeight() / 15));
+    if (compNote.getHeight() > 14)
+        g.drawFittedText(U("Der lauteste Kanal entscheidet, alle werden gleich leiser: das Raumbild bleibt stehen. "
+                           "Schwelle, Verh\xc3\xa4ltnis (mit weichem Knie), Ansprache, Ausklang, Aufholen."),
+                         compNote, juce::Justification::topLeft, juce::jmax(1, compNote.getHeight() / 15));
 }
 } // namespace rysum::ui

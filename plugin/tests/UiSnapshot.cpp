@@ -3576,6 +3576,66 @@ public:
                         std::cout << "Lebendige Orgel tab button not found  FAIL" << std::endl;
                     juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
                     shoot(4, "ui_effekte_lebendige_orgel.png");
+                    // the "Summe": EQ and compressor on the output
+                    {
+                        using rysum::MasterBus;
+                        rysum::MasterSettings ms;
+                        ms.eqOn = true;
+                        ms.midDb = 6.0f;
+                        ms.lowDb = -6.0f;
+                        const float atMid = MasterBus::responseDb(ms, 48000.0, 1000.0f),
+                                    atLow = MasterBus::responseDb(ms, 48000.0, 30.0f),
+                                    atHigh = MasterBus::responseDb(ms, 48000.0, 15000.0f);
+                        // a 1 kHz tone at 0.25 through it: twice as loud; then the compressor on a
+                        // loud tone (0 dBFS, threshold -20 dB, 4:1): about -15 dB
+                        auto peakAfter = [](rysum::MasterBus &mb, const rysum::MasterSettings &st, float amp)
+                        {
+                            mb.prepare(48000.0);
+                            std::vector<float> a(48000), b2(48000);
+                            for (int i = 0; i < 48000; ++i)
+                                a[(size_t)i] = b2[(size_t)i] = amp * std::sin(juce::MathConstants<float>::twoPi * 1000.0f * (float)i / 48000.0f);
+                            float *ch[2]{a.data(), b2.data()};
+                            for (int i = 0; i < 48000; i += 480)
+                            {
+                                float *c2[2]{ch[0] + i, ch[1] + i};
+                                mb.process(c2, 2, 480, st);
+                            }
+                            float p = 0.0f;
+                            for (int i = 24000; i < 48000; ++i)
+                                p = juce::jmax(p, std::abs(a[(size_t)i]));
+                            return p;
+                        };
+                        rysum::MasterBus mb;
+                        const float eqPeak = peakAfter(mb, ms, 0.25f);
+                        rysum::MasterSettings cs;
+                        cs.compOn = true;
+                        cs.threshDb = -20.0f;
+                        cs.ratio = 4.0f;
+                        cs.attackMs = 0.1f; // (the static curve: the detector on every crest)
+                        const float compDb = 20.0f * std::log10(peakAfter(mb, cs, 1.0f));
+                        const bool ok = std::abs(atMid - 6.0f) < 0.2f && std::abs(atLow + 6.0f) < 0.5f &&
+                                        std::abs(atHigh) < 0.3f && std::abs(eqPeak - 0.5f) < 0.03f &&
+                                        std::abs(compDb + 15.0f) < 1.0f;
+                        std::cout << "Summe: EQ +6 dB at 1 kHz = " << atMid << ", -6 dB low shelf at 30 Hz = " << atLow
+                                  << ", 15 kHz = " << atHigh << ", tone 0.25 -> " << eqPeak
+                                  << "; compressor 0 dBFS at -20 dB, 4:1 -> " << compDb << " dB"
+                                  << (ok ? "  ok" : "  FAIL") << std::endl;
+                        proc->apvts.getParameter("mstEqOn")->setValueNotifyingHost(1.0f);
+                        proc->apvts.getParameter("mstMidDb")->setValueNotifyingHost(
+                            proc->apvts.getParameter("mstMidDb")->convertTo0to1(4.0f));
+                        proc->apvts.getParameter("mstCompOn")->setValueNotifyingHost(1.0f);
+                        if (auto *b = fb(content, "Summe"))
+                            b->triggerClick();
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+                        shoot(4, "ui_effekte_summe.png");
+                        for (auto *id : {"mstEqOn", "mstMidDb", "mstCompOn"})
+                        {
+                            auto *pp = proc->apvts.getParameter(id);
+                            pp->setValueNotifyingHost(pp->getDefaultValue());
+                        }
+                        if (auto *b = fb(content, "Lebendige Orgel"))
+                            b->triggerClick();
+                    }
                     std::cout << "living organ in the plugin: bellows pressure down to "
                               << lowest << ", listener at "
                               << proc->engine.listenerXNow.load() << " / "

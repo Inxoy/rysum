@@ -318,6 +318,14 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
             L.rng = XorShift((uint32_t)(i * 7919 + 13));
             L.s1 = L.s2 = L.amp = 0.0f;
         }
+        for (size_t i = 0; i < stopLeaks.size(); ++i)
+        {
+            auto &L = stopLeaks[i];
+            L.freqMul = 0.7f + 0.7f * r.uni();
+            L.rng = XorShift((uint32_t)(i * 6151 + 101));
+            L.s1 = L.s2 = L.amp = 0.0f;
+            L.g1.fill(0.0f);
+        }
     }
     keyHeld.fill(false);
     keySustained.fill(false);
@@ -568,7 +576,11 @@ Pos OrganEngine::currentPosition(int stop, int key, const EngineParams &p) const
                            (double)beatTurn[(size_t)stop][(size_t)key].load() / 360.0,
                            p.motionDepth[(size_t)stop], (uint32_t)(stop * 101 + key * 7 + 1),
                            shapeFor(stop, key, p));
-    return applyMotion(base, (Motion)p.motionMode[(size_t)stop], motionPhase[(size_t)stop].load(),
+    // (the turning motions: every pipe at its own speed when the stop's pipes are spread)
+    const auto mode = (Motion)p.motionMode[(size_t)stop];
+    const bool own = mode == Motion::Rotation || mode == Motion::Vertical || mode == Motion::Pendulum ||
+                     mode == Motion::Drift;
+    return applyMotion(base, mode, own ? pipePhase(stop, key) : motionPhase[(size_t)stop].load(),
                        p.motionDepth[(size_t)stop], (uint32_t)(stop * 101 + key * 7 + 1),
                        shapeFor(stop, key, p));
 }
@@ -1742,8 +1754,12 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
     const double dt = 1.0 / sr;
     const float twoPiOverSr = (float)(juce::MathConstants<double>::twoPi / sr);
     const float freezeStep = (float)(1.0 / (0.15 * sr));
-    const float tremCents = p.tremOn ? 16.0f * p.tremDepth : 0.0f;
-    const float tremAmp = p.tremOn ? 0.32f * p.tremDepth : 0.0f;
+    // (the tremulant: the global one, plus each stop's own amount on top - "Pfeife" tab)
+    const float tremGlobal = p.tremOn ? p.tremDepth : 0.0f;
+    bool anyStopTrem = false;
+    for (float x : p.stopTrem)
+        anyStopTrem = anyStopTrem || x > 0.0001f;
+    const bool tremRuns = p.tremOn || anyStopTrem;
 
     // shared curves for this range (one value per 16 samples): wind gusts and tremulant
     const int steps = n / 16 + 2;
@@ -1760,7 +1776,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
         const double tp =
             juce::MathConstants<double>::twoPi * (tremPhase + j * 16.0 * dt * p.tremRate);
         trem[(size_t)j] =
-            p.tremOn ? (float)(std::sin(tp) + 0.25 * std::sin(2.0 * tp + 0.7)) / 1.2f : 0.0f;
+            tremRuns ? (float)(std::sin(tp) + 0.25 * std::sin(2.0 * tp + 0.7)) / 1.2f : 0.0f;
     }
     gustPhase += n * dt * (0.5 + 6.0 * turb);
     tremPhase = std::fmod(tremPhase + n * dt * p.tremRate, 1.0);
@@ -1832,7 +1848,11 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                                                            (float)juce::jmax(20.0, pipe.nominalHz) *
                                                                p.fx.partSplit))
                   : 1.0f;
-        const float crkLevel = juce::jlimit(0.0f, 1.0f, p.fx.crackLevel + v.pmCrk);
+        // crackle and tremulant: the global amount plus this stop's own ("Pfeife" tab)
+        const float crkLevel =
+            juce::jlimit(0.0f, 1.0f, p.fx.crackLevel + p.stopCrack[(size_t)v.stop] + v.pmCrk);
+        const float tremD = juce::jlimit(0.0f, 2.0f, tremGlobal + p.stopTrem[(size_t)v.stop]);
+        const float tremCents = 16.0f * tremD, tremAmp = 0.32f * tremD;
         const bool crackle = crkLevel > 0.0001f && v.crkEnv > 0.001f;
         const float crkDecay =
             std::exp(-1.0f / juce::jmax(1.0f, p.fx.crackLen * 0.001f * (float)sr));
@@ -3978,32 +3998,19 @@ void OrganEngine::renderFdn(RoomTail &R, float *const *o, int K, const float *in
 void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const EngineParams &p)
 {
     const auto &fx = p.fx;
-    const int count = juce::jlimit(1, (int)leaks.size(), fx.leakCount);
-    if (fx.leakLevel <= 0.0001f)
-    {
-        for (auto &L : leaks)
-        {
-            L.amp = 0.0f;
-            L.s1 = L.s2 = 0.0f;
-            L.g1.fill(0.0f);
-        }
-        return;
-    }
     const float inv = 1.0f / (float)n;
     float *buf = fxScratch.data();
     float *ramp = fxScratch.data() + maxBlock;
     const float ampK = 1.0f - std::exp(-1.0f / (0.02f * (float)sr)); // 20 ms smoothing
-    for (int li = 0; li < (int)leaks.size(); ++li)
+    auto silence = [](Leak &L)
     {
-        auto &L = leaks[(size_t)li];
-        if (li >= count)
-        {
-            L.amp = 0.0f;
-            L.g1.fill(0.0f);
-            continue;
-        }
-        L.pos.az =
-            wrapAz(L.pos.az + L.dir * fx.leakWander * chunkSeconds * (0.6f + 0.4f * L.freqMul));
+        L.amp = 0.0f;
+        L.s1 = L.s2 = 0.0f;
+        L.g1.fill(0.0f);
+    };
+    // one hissing spot at L.pos (already placed for this block), at a level
+    auto render = [&](Leak &L, float level)
+    {
         L.g0 = L.g1;
         gainsFor(L.pos, L.g1.data());
         const float dg = distanceGain(L.pos.dist, distAmountNow);
@@ -4014,7 +4021,7 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
         const float g = std::tan(juce::MathConstants<float>::pi * fc / (float)sr);
         const float k = 1.0f / 3.0f; // Q 3
         const float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
-        const float lvl = 0.9f * fx.leakLevel;
+        const float lvl = 0.9f * level;
         for (int i = 0; i < n; ++i)
         {
             if (--L.ampCount <= 0)
@@ -4051,7 +4058,38 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
             juce::FloatVectorOperations::addWithMultiply(roomSend[(size_t)kk].data() + roomOffset,
                                                          buf, 0.3f * w, n);
         }
+    };
+
+    // the organ's leaks: spots of their own, wandering slowly
+    const int count = juce::jlimit(1, (int)leaks.size(), fx.leakCount);
+    for (int li = 0; li < (int)leaks.size(); ++li)
+    {
+        auto &L = leaks[(size_t)li];
+        if (fx.leakLevel <= 0.0001f || li >= count)
+        {
+            silence(L);
+            continue;
+        }
+        L.pos.az =
+            wrapAz(L.pos.az + L.dir * fx.leakWander * chunkSeconds * (0.6f + 0.4f * L.freqMul));
+        render(L, fx.leakLevel);
     }
+    // a stop's own leaks ("Pfeife" tab): two spots at its pipes, moving with them, hissing while
+    // the stop is drawn and has wind
+    for (int s = 0; s < kNumStops; ++s)
+        for (int j = 0; j < 2; ++j)
+        {
+            auto &L = stopLeaks[(size_t)(s * 2 + j)];
+            const float level = p.stopOn[(size_t)s] ? p.stopLeak[(size_t)s] * p.stopWind[(size_t)s] : 0.0f;
+            if (level <= 0.0001f)
+            {
+                silence(L);
+                continue;
+            }
+            const int key = (s * 17 + j * 23 + 5) % kNumKeys;
+            L.pos = currentPosition(s, key, p);
+            render(L, level);
+        }
 }
 
 void OrganEngine::renderEchoes(juce::AudioBuffer<float> &out, int n, const EngineParams &p)
@@ -5114,6 +5152,19 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
             phasePrev[(size_t)s] = ph;
         phaseNow[(size_t)s] = ph;
         motionPhase[(size_t)s] = ph;
+        // the pipes' own speeds: a new spread keeps every pipe where it is (only its speed changes)
+        const float spNew = juce::jlimit(0.0f, 1.0f, p.rateSpread[(size_t)s]),
+                    spOld = spreadNow[(size_t)s].load(std::memory_order_relaxed);
+        if (spNew != spOld)
+        {
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                auto &off = pipePhaseOff[(size_t)s][(size_t)k];
+                off.store(off.load(std::memory_order_relaxed) + ph * (double)(pipeRateFactor(s, k) * (spOld - spNew)),
+                          std::memory_order_relaxed);
+            }
+            spreadNow[(size_t)s].store(spNew, std::memory_order_relaxed);
+        }
     }
 
     // ---- effects: due events (delayed sounds, pipes waiting for the tracker path), moving sounds

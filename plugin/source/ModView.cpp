@@ -4,6 +4,8 @@ namespace rysum::ui
 {
 juce::String ModView::paramGroup(const juce::String &id)
 {
+    if (id.startsWith("mst"))
+        return "Summe";
     if (id.startsWith("vol") || id.startsWith("swind") || id.startsWith("rate") ||
         id.startsWith("depth") || id.startsWith("ellipse"))
         return "Register";
@@ -71,7 +73,7 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
                                    "Verfall",   "Klang",
                                    "Hall",      "Saal",
                                    "Eingang",   "Effekte",
-                                   "Modulation"};
+                                   "Modulation", "Summe"};
     for (auto &grp : groups)
     {
         juce::PopupMenu sub;

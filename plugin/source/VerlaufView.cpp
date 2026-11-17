@@ -2368,7 +2368,7 @@ juce::PopupMenu VerlaufView::paramMenu(int base) const
                                    "Verfall",   "Klang",
                                    "Hall",      "Saal",
                                    "Eingang",   "Effekte",
-                                   "Modulation"};
+                                   "Modulation", "Summe"};
     std::set<int> taken;
     for (auto &l : proc.getAuto().lanes)
         taken.insert(proc.getParamIndex(l.paramId));

@@ -8,6 +8,7 @@
 #include "DsfReferenceInstrument.h"
 #include "Lucier.h"
 #include "LucierPiece.h"
+#include "MasterBus.h"
 #include "OrganEngine.h"
 #include "Scala.h"
 #include "Speakers.h"
@@ -98,6 +99,14 @@ public:
     // ------------------------------------------------------------------
     juce::AudioProcessorValueTreeState apvts;
     rysum::OrganEngine engine;
+    /** "Summe": EQ and compressor on the output (reductionDb for the meter) */
+    rysum::MasterBus masterBus;
+    /** the settings of the "Summe" as they act now (audio thread: with the Verlauf and modulation) */
+    rysum::MasterSettings masterSettingsNow() const;
+    static constexpr std::array<const char *, 14> kMasterIds{
+        "mstEqOn", "mstLowHz",  "mstLowDb", "mstMidHz",  "mstMidDb",   "mstMidQ",   "mstHighHz",
+        "mstHighDb", "mstCompOn", "mstThresh", "mstRatio", "mstAttack", "mstRelease", "mstMakeup"};
+    std::array<int, 14> masterIdx{};
     juce::MidiKeyboardState keyboardState;
 
     /** current parameters as the engine sees them (also used by the UI for positions) */
@@ -783,6 +792,9 @@ public:
     /** camera: offset from the listener's place (m), yaw (degrees, + = left), pitch (degrees, + =
      * up) */
     std::array<std::atomic<float>, 4> walkPose{};
+    /** a stop's own effects (Raum page, tab "Pfeife"): tremulant, crackle, wind leaks, how
+        differently fast its pipes move - ids "pipeTrem<s>" ... */
+    static constexpr const char *kStopFxKeys[4]{"Trem", "Crack", "Leak", "Spread"};
     static constexpr const char *kPipeSndKeys[8]{"Att",  "Sharp",  "Iso",    "Rep",
                                                  "Puff", "HiFreq", "HiGain", "HiShape"};
     static constexpr const char *kSpcIds[7]{"spcErode", "spcWeather", "spcGrid", "spcBits",
@@ -853,6 +865,7 @@ private:
         std::array<int, 7> spc{};
         std::array<std::array<int, 5>, rysum::kNumStops> cloud{};
         std::array<std::array<int, 8>, rysum::kNumStops> pipeSnd{};
+        std::array<std::array<int, 4>, rysum::kNumStops> stopFx{}; // Trem, Crack, Leak, Spread
         int airInvert = -1, clickRes = -1, clickResDecay = -1, clickResBright = -1;
         std::array<int, 4> glitch{};
         std::array<int, 15> space2{};

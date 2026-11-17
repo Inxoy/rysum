@@ -76,5 +76,15 @@ private:
     uint32_t impCountShown = 0; double impTime = 0.0; float impRate = 0.0f;      // knocks per second, for the title
     juce::Rectangle<int> bellowsBox, palletBox, walkBox, sympBox, wearBox, pureBox, netBox;
     juce::Rectangle<int> bellowsMeter, walkMap, wearMap, bellowsNote, palletNote, sympNote, wearNote, pureNote, netNote;
+
+    // fourth tab "Summe": EQ and compressor on the output
+    void paintMaster(juce::Graphics &);
+    juce::TextButton tabMaster{"Summe"};
+    std::vector<juce::Component *> page3;
+    juce::TextButton *eqOn = nullptr, *compOn = nullptr;
+    std::array<ParamRow *, 7> eqRows{};
+    std::array<ParamRow *, 5> compRows{};
+    juce::Rectangle<int> eqBox, compBox, eqCurve, compMeter, eqNote, compNote;
+    float shownReduction = -1.0f;
 };
 } // namespace rysum::ui

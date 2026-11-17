@@ -880,7 +880,9 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     pipeAll.setTooltip(u8("Diese acht Werte f\xc3\xbcr alle Register setzen"));
     pipeAll.onClick = [this]
     {
-        for (const char *k : RysumProcessor::kPipeSndKeys)
+        std::vector<const char *> keys(std::begin(RysumProcessor::kPipeSndKeys), std::end(RysumProcessor::kPipeSndKeys));
+        keys.insert(keys.end(), std::begin(RysumProcessor::kStopFxKeys), std::end(RysumProcessor::kStopFxKeys));
+        for (const char *k : keys)
         {
             auto *src = proc.apvts.getParameter(RysumProcessor::pipeSndParamId(k, selected));
             if (src == nullptr)
@@ -1012,7 +1014,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel)
     {
         s.setSliderStyle(juce::Slider::LinearHorizontal);
         s.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-        s.setRange(lo, hi, 0.5);
+        s.setRange(lo, hi, 0.0); // (continuous: no steps)
         s.setTextValueSuffix(suffix);
         s.onValueChange = [this]
         {
@@ -1054,6 +1056,7 @@ void SpaceView::updateVisibility()
         if (r)
             r->setVisible(stopPanel && pipeTab);
     pipeAll.setVisible(stopPanel && pipeTab);
+    timetableButton.setVisible(motion); // (it belongs to the motion; it lay over the other tabs)
     for (auto &r : cloudRows)
         if (r)
             r->setVisible(cloud);
@@ -1190,6 +1193,26 @@ void SpaceView::selectStop(int s)
             pipeRows[(size_t)k]->setTooltip(juce::String::fromUTF8(tips[k]));
             addAndMakeVisible(*pipeRows[(size_t)k]);
         }
+        // the stop's own effects, on top of the global ones
+        const char *fxNames[]{"Tremulant", "Knistern", "Windleck", "Tempo-Streuung"};
+        const char *fxTips[]{
+            "Ein Tremulant nur f\xc3\xbcr dieses Register (mit Tempo des Tremulanten auf der "
+            "Klang-Seite) \xe2\x80\x93 zus\xc3\xa4tzlich zum allgemeinen.",
+            "Knistern nur an den klingenden Pfeifen dieses Registers \xe2\x80\x93 zus\xc3\xa4tzlich zum "
+            "allgemeinen (Effekte-Seite: Tempo und L\xc3\xa4nge).",
+            "Zwei undichte Stellen an Pfeifen dieses Registers: sie zischen, solange das Register "
+            "gezogen ist und Wind hat, und wandern mit den Pfeifen mit.",
+            "Jede Pfeife bewegt sich etwas schneller oder langsamer als das Register (Drehung, "
+            "Kippen, Pendel, Treiben): aus einem Kreis wird ein Schwarm, der auseinanderzieht."};
+        for (int k = 0; k < 4; ++k)
+        {
+            auto &row = pipeRows[(size_t)(8 + k)];
+            row = std::make_unique<ParamRow>(proc.apvts,
+                                             RysumProcessor::pipeSndParamId(RysumProcessor::kStopFxKeys[k], s),
+                                             juce::String::fromUTF8(fxNames[k]));
+            row->setTooltip(juce::String::fromUTF8(fxTips[k]));
+            addAndMakeVisible(*row);
+        }
     }
     jumpHardAttachment = rysum::ui::attachButton(
         proc.apvts, RysumProcessor::jumpHardParamId(s), jumpHard);
@@ -1319,14 +1342,16 @@ void SpaceView::resized()
     tabHall.setBounds(tabCloud.getX() - 4 - 56, tabBox.getY() + 9, 56, 20);
     {
         auto pb = tabBox.withTrimmedTop(36);
-        // two columns: the attack on the left, release puff and upper partials on the right
-        const int rh = juce::jmin(36, (pb.getHeight() - 30) / 4);
-        auto colL = pb.removeFromTop(rh * 4), colR = colL.removeFromRight(colL.getWidth() / 2);
+        // two columns: the attack on the left, release puff and upper partials on the right; below,
+        // the stop's own effects (tremulant, crackle | leaks, speed spread)
+        const int rh = juce::jmin(34, (pb.getHeight() - 30) / 6);
+        auto colL = pb.removeFromTop(rh * 6), colR = colL.removeFromRight(colL.getWidth() / 2);
         colL.removeFromRight(10);
         colR.removeFromLeft(10);
-        for (int k = 0; k < 8; ++k)
+        static const int column[12]{0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1};
+        for (int k = 0; k < 12; ++k)
             if (pipeRows[(size_t)k])
-                pipeRows[(size_t)k]->setBounds((k < 4 ? colL : colR).removeFromTop(rh));
+                pipeRows[(size_t)k]->setBounds((column[k] == 0 ? colL : colR).removeFromTop(rh));
         pb.removeFromTop(6);
         pipeAll.setBounds(pb.removeFromTop(22).withWidth(220));
     }
@@ -1553,7 +1578,7 @@ void SpaceView::paint(juce::Graphics &g)
                    b.withX(right.getX()).withWidth(96), juce::Justification::centredLeft);
         g.setFont(A.monoFont(11.0f));
         g.setColour(col::dim);
-        g.drawText(i == 4 ? juce::String(sl[i]->getValue(), 1) + " m"
+        g.drawText(i == 4 ? juce::String(sl[i]->getValue(), sl[i]->getValue() < 10.0 ? 2 : 1) + " m"
                           : juce::String(juce::roundToInt(sl[i]->getValue())) +
                                 juce::String(juce::CharPointer_UTF8("\xc2\xb0")),
                    b.withX(b.getRight()).withWidth(52), juce::Justification::centredRight);

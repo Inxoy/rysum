@@ -1141,7 +1141,94 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add(std::make_unique<AudioParameterChoice>(
         ParameterID{"audioThreads", 1}, "Kerne f" + String::fromUTF8("\xc3\xbc") + "r den Ton",
         StringArray{"automatisch", "1", "2", "3", "4"}, 0));
+
+    // "Summe": EQ and compressor on the output (Effekte page, tab "Summe")
+    {
+        auto hz = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return v >= 1000.0f ? String(v / 1000.0f, 2) + " kHz" : String(juce::roundToInt(v)) + " Hz"; });
+        auto db = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return (v > 0.05f ? "+" : "") + String(v, 1) + " dB"; });
+        auto ms = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(v, v < 10.0f ? 1 : 0) + " ms"; });
+        l.add(std::make_unique<AudioParameterBool>(ParameterID{"mstEqOn", 1}, "Summe EQ", false));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstLowHz", 1}, "Summe Tiefen Frequenz",
+                                                    NormalisableRange<float>(30.0f, 600.0f, 0.0f, 0.4f), 120.0f, hz));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstLowDb", 1}, "Summe Tiefen",
+                                                    NormalisableRange<float>(-15.0f, 15.0f), 0.0f, db));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstMidHz", 1}, "Summe Mitten Frequenz",
+                                                    NormalisableRange<float>(150.0f, 8000.0f, 0.0f, 0.3f), 1000.0f, hz));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstMidDb", 1}, "Summe Mitten",
+                                                    NormalisableRange<float>(-15.0f, 15.0f), 0.0f, db));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"mstMidQ", 1}, String::fromUTF8("Summe Mitten G\xc3\xbcte"),
+            NormalisableRange<float>(0.2f, 6.0f, 0.0f, 0.5f), 0.7f,
+            AudioParameterFloatAttributes().withStringFromValueFunction([](float v, int) { return "Q " + String(v, 2); })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstHighHz", 1}, String::fromUTF8("Summe H\xc3\xb6hen Frequenz"),
+                                                    NormalisableRange<float>(1500.0f, 18000.0f, 0.0f, 0.5f), 8000.0f, hz));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstHighDb", 1}, String::fromUTF8("Summe H\xc3\xb6hen"),
+                                                    NormalisableRange<float>(-15.0f, 15.0f), 0.0f, db));
+        l.add(std::make_unique<AudioParameterBool>(ParameterID{"mstCompOn", 1}, "Summe Kompressor", false));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstThresh", 1}, "Summe Schwelle",
+                                                    NormalisableRange<float>(-48.0f, 0.0f), -12.0f, db));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"mstRatio", 1}, String::fromUTF8("Summe Verh\xc3\xa4ltnis"),
+            NormalisableRange<float>(1.0f, 20.0f, 0.0f, 0.4f), 2.5f,
+            AudioParameterFloatAttributes().withStringFromValueFunction([](float v, int) { return String(v, v < 10.0f ? 1 : 0) + " : 1"; })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstAttack", 1}, "Summe Ansprache",
+                                                    NormalisableRange<float>(0.1f, 100.0f, 0.0f, 0.35f), 10.0f, ms));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstRelease", 1}, "Summe Ausklang",
+                                                    NormalisableRange<float>(10.0f, 1500.0f, 0.0f, 0.4f), 150.0f, ms));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"mstMakeup", 1}, "Summe Aufholen",
+                                                    NormalisableRange<float>(0.0f, 24.0f), 0.0f, db));
+    }
+    // each stop's own effects (Raum page, tab "Pfeife"), on top of the global ones
+    {
+        auto pct = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(juce::roundToInt(v * 100)) + " %"; });
+        for (int s = 0; s < kNumStops; ++s)
+        {
+            const String name = prettyLabel(kStops[(size_t)s].label) + " ";
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Trem", s), 1}, name + "Tremulant",
+                                                        NormalisableRange<float>(0, 1), 0.0f, pct));
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Crack", s), 1}, name + "Knistern",
+                                                        NormalisableRange<float>(0, 1), 0.0f, pct));
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Leak", s), 1}, name + "Windleck",
+                                                        NormalisableRange<float>(0, 1), 0.0f, pct));
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Spread", s), 1},
+                                                        name + "Tempo-Streuung", NormalisableRange<float>(0, 1), 0.0f, pct));
+        }
+    }
     return l;
+}
+
+rysum::MasterSettings RysumProcessor::masterSettingsNow() const
+{
+    // (audio thread: the values as the Verlauf and the modulation set them, where they do)
+    auto v = [this](int k)
+    {
+        const int i = masterIdx[(size_t)k];
+        if (i < 0)
+            return 0.0f;
+        if (haveModVals && i < (int)modVals.size())
+            return modVals[(size_t)i];
+        return rawList[(size_t)i]->load();
+    };
+    rysum::MasterSettings s;
+    s.eqOn = v(0) > 0.5f;
+    s.lowHz = v(1);
+    s.lowDb = v(2);
+    s.midHz = v(3);
+    s.midDb = v(4);
+    s.midQ = v(5);
+    s.highHz = v(6);
+    s.highDb = v(7);
+    s.compOn = v(8) > 0.5f;
+    s.threshDb = v(9);
+    s.ratio = v(10);
+    s.attackMs = v(11);
+    s.releaseMs = v(12);
+    s.makeupDb = v(13);
+    return s;
 }
 
 // the audio input: the instrument has a main input (Reaper: the track's own audio; the standalone
@@ -1250,6 +1337,8 @@ RysumProcessor::RysumProcessor()
                                        : 0);
         }
     const int N = (int)prmList.size();
+    for (size_t k = 0; k < kMasterIds.size(); ++k)
+        masterIdx[k] = getParamIndex(kMasterIds[k]);
     modVals.assign((size_t)N, 0.0f);
     modOff.assign((size_t)N, 0.0f);
     modHitFlag.assign((size_t)N, 0);
@@ -1386,6 +1475,9 @@ RysumProcessor::RysumProcessor()
         for (int st = 0; st < kNumStops; ++st)
             for (int k = 0; k < 8; ++k)
                 ix.pipeSnd[(size_t)st][(size_t)k] = I(pipeSndParamId(kPipeSndKeys[k], st));
+        for (int st = 0; st < kNumStops; ++st)
+            for (int k = 0; k < 4; ++k)
+                ix.stopFx[(size_t)st][(size_t)k] = I(pipeSndParamId(kStopFxKeys[k], st));
         ix.airInvert = I("airInvert");
         ix.clickRes = I("clickRes");
         ix.clickResDecay = I("clickResDecay");
@@ -1501,6 +1593,7 @@ bool RysumProcessor::isBusesLayoutSupported(const BusesLayout &busLayout) const
 void RysumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine.prepare(sampleRate, samplesPerBlock);
+    masterBus.prepare(sampleRate);
     referenceTone.prepare(sampleRate);
     keyboardState.reset();
     for (auto &b : irInputs)
@@ -1631,6 +1724,11 @@ EngineParams RysumProcessor::readParams(const float *vals) const
             q.hiFreq = Q(5);
             q.hiGain = Q(6);
             q.hiShape = Q(7);
+            // the stop's own tremulant, crackle, leaks, speed spread
+            p.stopTrem[(size_t)st] = V(ix.stopFx[(size_t)st][0]);
+            p.stopCrack[(size_t)st] = V(ix.stopFx[(size_t)st][1]);
+            p.stopLeak[(size_t)st] = V(ix.stopFx[(size_t)st][2]);
+            p.rateSpread[(size_t)st] = V(ix.stopFx[(size_t)st][3]);
         }
         p.airInvert = V(ix.airInvert);
         p.resClick = V(ix.clickRes);
@@ -2580,6 +2678,15 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     if (speakers)
         spkRenderer.process(binBuf.getArrayOfReadPointers(), binBuf.getNumChannels(),
                             buffer.getArrayOfWritePointers(), buffer.getNumChannels(), n);
+
+    // ---- "Summe": EQ and compressor on everything that goes out
+    {
+        const auto ms = masterSettingsNow();
+        if (ms.eqOn || ms.compOn)
+            masterBus.process(buffer.getArrayOfWritePointers(), buffer.getNumChannels(), n, ms);
+        else
+            masterBus.reductionDb.store(0.0f, std::memory_order_relaxed);
+    }
 
     midi.clear();
 

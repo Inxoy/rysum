@@ -145,9 +145,16 @@ outside the circle = below the horizon). Select a stop on the right, then
 - drag a dot to move one pipe,
 - drag on empty space to turn the whole stop around you,
 - *Anordnung*: layout generators (organ case C/C♯ side, pitch, scatter, ring,
-  spiral, zone) with width / centre / height / spread / *Abstand* (distance, 1–40 m;
-  bigger dots = nearer),
+  spiral, zone) with width / centre / height / spread / *Abstand* (distance, 1–40 m,
+  continuous; bigger dots = nearer),
 - The lower part has two tabs, *Bewegung* and *Hall* (buttons in its title line).
+- Tab *Pfeife* (the sound of this stop's pipes): besides Ansprache, Abriss and Obertöne, the stop's
+  own effects on top of the global ones – *Tremulant* (a tremulant for this stop alone, at the
+  tremulant's tempo from the Klang page), *Knistern* (crackle at its sounding pipes),
+  *Windleck* (two leaks at its pipes that hiss while the stop is drawn and move with the pipes),
+  *Tempo-Streuung* (every pipe turns, tilts, swings or drifts a little faster or slower than the
+  stop: a circle becomes a swarm that pulls apart; changing it never makes a pipe jump).
+  *für alle Register übernehmen* copies all of them to every stop.
 - *Bewegung*: Statisch, Rotation (horizontal), Pendel, Drift, Vertikal (turns over your
   head: front → up → back → down), Sprünge (every pipe suddenly jumps to a new random place
   around its position, each at its own moment; *Tiefe* = how far), Gezeichnet (see below).
@@ -322,6 +329,12 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
 
 **Effekte** – sounds that are easy to locate (short, bright, full of transients) and that
 follow the pipes. Everything is off in older patches.
+- Tab *Summe* (mixing / mastering): the last step of everything that goes out – stereo,
+  headphones, Ambisonics or loudspeakers. An *EQ* with three bands (low shelf, a bell with
+  *Güte*, high shelf; the curve is drawn) and a *Kompressor* (Schwelle, Verhältnis with a soft knee,
+  Ansprache, Ausklang, Aufholen; its line and how much it turns down now are drawn). The loudest
+  channel decides and all channels are turned down together, so the spatial image stays put.
+  Every control can have a lane in the Verlauf.
 - *Eigene Geräusche*: your own recordings, played by the keys. Put WAV/AIFF/FLAC files
   (up to 20 s, up to 64 files) into `samples\noise\eigene` – *Ordner öffnen* creates the folder
   and opens it, *Neu einlesen* reads it again without reloading the pipes. Each file is trimmed
@@ -453,6 +466,28 @@ loops of different lengths running against each other.
   clock runs: the movement is written into the lane (only where you moved it), thinned to a few
   points you can edit afterwards. A control that has no lane yet gets one, armed, the moment you
   touch it while *Aufnahme* is on – so recording can be just: *Aufnahme*, ▶, move what should move.
+- **Markers and a repeated section** (the band over the ruler, for performing): double-click the
+  band (or press *M* for the clock's place) to set a named marker (A, B, C …; double-click it to
+  rename it), click a marker to jump there, drag it to move it, *Bild auf / Bild ab* jump to the
+  previous / next one. Drag in the band to lay the repeated section; *A–B* in the bar turns it on,
+  and the own clock then runs from A to B and round again (a marker's menu: *bis zur nächsten Marke
+  wiederholen*). A jump past B stays there.
+- **Tempo lane** (*+ Spur → Tempo der eigenen Uhr*): 20–300 BPM, drives the own clock –
+  accelerandi, ritardandi, a sudden half time. The ruler's seconds follow it. (With the host's
+  clock it rests: the host has its own tempo.)
+- **Variation from pass to pass** (*Abschnitt*, third row; for looping lanes): *Chance* – in that
+  share of the passes the section moves, in the others it holds its start value; *Nur jedes
+  n-te Mal* – it moves only every n-th pass; *Streuung* – the point's value wanders by up to so
+  much from pass to pass. Each pass decides anew but the same way every time it comes round
+  (seeking and bouncing give the same result); *Variationen neu würfeln* in the lane's menu throws
+  the dice again. The section's tag in the lane shows its chance / n / ±.
+- **Editing tools** (the lane's menu *…*, or right-click on a chosen point): *Auswahl bearbeiten*
+  (the chosen points, or all of the lane): stretch ×2, squeeze ×½, reverse in time, mirror the
+  values, towards the middle, apart, onto the grid, a little off at random. *Füllen* (into the loop
+  of a looping lane, else into what is in view): a wave, a random walk, random steps, ramps, and
+  Euclidean rhythms (3 of 8, 5 of 8, 5 of 16, 7 of 16, 9 of 16 – one cell per grid step). *Kopie
+  für einen anderen Regler*: the same curve on another control. *Solo*: while any lane is solo,
+  only the solo lanes act (the tempo lane always does).
 - Ctrl+Z / Ctrl+Y undo / redo, Ctrl + mouse wheel zooms, Shift + wheel scrolls in time, the
   middle mouse button drags the view; *Alles* shows all points.
 - The lanes are saved with the project, not in patches: loading a patch mid-piece keeps them.
