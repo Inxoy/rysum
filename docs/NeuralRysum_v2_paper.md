@@ -1,8 +1,5 @@
 # NeuralRysum v2: Causal Audio-to-Organ Resynthesis through a Timbre-Blind Pitch Bottleneck
 
-> This report belongs to [NeuralRysum](https://github.com/Inxoy/NeuralRysum/tree/redesign-pitch-synth) (training, models, Python reference). It is copied here because the plugin's stop *Vox humana* is built from it: the C++ engine is in `plugin/source/vox/`, the glue in `plugin/source/VoxStop.h`, the model in `plugin/resources/vox_humana.nrv2`.
-
-
 *Technical report, branch `redesign-pitch-synth`, 17 November 2026.*
 *Status: final models (pitch estimator 40 k steps, synth 150 k steps). Built into the Rysum plugin as
 the stop "Vox humana" (in `main` of rysum_plugin); see Section 8.5.*
@@ -52,7 +49,7 @@ its tuning and room. The constraints:
 
 ### 1.2 What went wrong in v1
 
-v1 (described in [ARCHITECTURE.md](https://github.com/Inxoy/NeuralRysum/blob/redesign-pitch-synth/docs/ARCHITECTURE.md)) encoded the input into a 12-dim fast code `e`
+v1 (described in [ARCHITECTURE.md](ARCHITECTURE.md)) encoded the input into a 12-dim fast code `e`
 every 64 samples (1.33 ms) and a slow latent `z` every 2048 samples. A FiLM-conditioned decoder turned
 `e` plus `z` back into audio. It was trained to reconstruct organ audio from organ audio.
 
@@ -165,7 +162,7 @@ each 262 bins × 750 frames/s. Parameters: **17 150**.
 ### 3.3 Synthetic training data for the estimator
 
 The estimator never sees real recordings. Each batch is generated on the GPU with exact labels
-([pitch_data.py](https://github.com/Inxoy/NeuralRysum/blob/redesign-pitch-synth/neuralrysum/pitch_data.py)):
+([pitch_data.py](../neuralrysum/pitch_data.py)):
 
 - **Notes.** 0–6 voices per example (P = .05, .35, .20, .15, .12, .08, .05), each with 1–2 notes,
   pitch uniform in MIDI 24–96. 70 % of notes are snapped near a semitone (σ = 15 cents) and 30 % lie
@@ -371,7 +368,7 @@ match for realism.
 
 ### 6.1 Leak test
 
-The leak test ([leak_test.py](https://github.com/Inxoy/NeuralRysum/blob/redesign-pitch-synth/scripts/leak_test.py)) sends three synthetic **non-organ** signals
+The leak test ([leak_test.py](../scripts/leak_test.py)) sends three synthetic **non-organ** signals
 through the model: a sawtooth, sung vowels and a plucked string, four notes of known pitch each. Each is
 run once in Manual (dataset-mean timbre) and once in Follow. It reports:
 
@@ -592,7 +589,7 @@ is no exact value, because detection time depends on pitch (Section 6.3). The MI
 
 - Checkpoints: `runs/pitch/last.pt` (kind `pitch`) and `runs/synth/last.pt` (kind `synth`). These are
   PyTorch state dicts plus config, loaded by `load_pitch` / `load_synth` in
-  [v2.py](https://github.com/Inxoy/NeuralRysum/blob/redesign-pitch-synth/neuralrysum/v2.py). The synth checkpoint also holds the discriminator and optimiser
+  [v2.py](../neuralrysum/v2.py). The synth checkpoint also holds the discriminator and optimiser
   states, which are only needed to resume training.
 - `python -m neuralrysum.export_v2` writes the C++ file (`.nrv2`, magic `NRV20001`, 3.4 MB): all
   weights, the config, φ_k, the log-bin tables, the Manual timbre and the PCA axes of `z` over the
@@ -627,9 +624,9 @@ v2 is built into the sample-based Rysum plugin as a ninth stop, *Vox humana 8′
 
 | Page | What it shows |
 |---|---|
-| Spieltisch | the knob *Vox humana* with Lautstärke and Wind, like the other stops; *Vox …* opens the timbre controls (Klangfarbe X/Y, Helligkeit, Hauch, Breite) and the input options (*Eingang spielt die Orgel*, *Klangfarbe folgt dem Eingang*, detection threshold, confirmation time, number of voices) |
+| Spieltisch | the knob *Vox humana* with Lautstärke and Wind, like the other stops; *Vox …* opens the timbre controls (Klangfarbe X/Y, Helligkeit, Hauch, Breite) and the input options (*Eingang spielt die Orgel*, *Klangfarbe folgt dem Eingang*, detection threshold, confirmation time, number of voices); right-click on any of them modulates it, as everywhere else in the plugin |
 | Raum | a row under the audio input with its own panel: Lautstärke, Hall-Anteil, Richtung, Höhe, Abstand, the learned room, Breite of its row of pipes, Bewegung, Geschwindigkeit, Tiefe; in the top view its centre (dragged to place it) and its eight pipes where they are |
-| Saal | the symbol in the floor plan, in the room of the audio input; in the 3D view its own model (below) |
+| Saal | its own slot *Vox* in the strip of rooms (which of the four simulated Saals it sounds in, apart from the audio input); the symbol and its eight pipes in that Saal's floor plan, where it can be dragged (direction and distance from the listener); in the 3D view its own model (below) |
 | Modulation | all its parameters form the target group *Vox humana*; the engine reads their modulated values, so an LFO on Klangfarbe X glides through the registrations |
 
 **Eight sources in Ambisonics.** The synth renders every pipe separately: voice *v* (tracked voice
@@ -643,6 +640,26 @@ Sprünge; *Geschwindigkeit*, *Tiefe*): Rotation turns the row as a whole, Drift 
 pipe its own way. The pipes plus the tail add up exactly to the single output used before (checked
 in `VoxTest`); a rotation at 0.25 Hz swings the stereo balance by ±6 dB with a 4 s period
 (`VoxRender`). Cost: about 4 % of a core more than with one source, mostly the eight noise banks.
+
+**Without the learned room.** The learned impulse response is not only reverberation. Training
+gave it the pipe's body as well: |1 + ir| lies 35 dB above the direct path at 1 kHz and 39 dB at
+31 Hz, but only 15 dB at 16 kHz. The network's raw output before the room is therefore thin and
+bright. With the room simply removed, only key clicks remained audible. The control *eigener
+Raum* (0–100 %) therefore blends the trained path with the same tone without its time.
+- The plugin builds, at load, a minimum-phase filter with the room's spectrum:
+  1. Smooth |1 + ir|² over 1/6 octave.
+  2. Fold the real cepstrum.
+  3. Take 2048 taps (43 ms, 99.2 % of the filter's energy) with a half-Hann fade over the last quarter.
+- Per pipe: y = r · (d + early(d)) + (1 − r) · body(d), with the tail scaled by r.
+- In the octave bands from 31 Hz to 16 kHz the filter matches the room's long-term spectrum within
+  0.6 dB.
+- Measured in `VoxTest` (a chord held 1.5 s), room 0 against room 1:
+  - level: within 0.5 dB;
+  - share below 300 Hz: within 0.1 dB;
+  - 0.5–1 s after the release: 36 dB quieter.
+- The plugin's own simulated Saal then provides the space.
+- A Saal that holds only the Vox humana is now simulated too. Before, the engine counted only the
+  stops and the audio input as users of a room, so such a Saal stayed silent.
 
 **The 3D model.** The stop has no pipes, so it gets a picture of what the network does. Its eight
 voices are glass pipes, each standing where its own sound is (they move with the stop's motion), each as long as an open 8′ pipe of the pitch
