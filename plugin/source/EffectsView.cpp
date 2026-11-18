@@ -45,12 +45,12 @@ float EffectsView::value(const char *id) const
 EffectsView::EffectsView(RysumProcessor &p) : proc(p)
 {
     // ---- own sounds
-    openFolder.setTooltip(U("\xc3\x96"
+    openFolder.setTooltip(rysum::tr("\xc3\x96"
                             "ffnet den Ordner im Explorer (der Standardordner samples/noise/eigene "
                             "wird bei Bedarf angelegt) \xe2\x80\x93 "
                             "Dateien hineinlegen, dann \xe2\x80\x9eNeu einlesen\xe2\x80\x9c. "
                             "Kurze, helle Ger\xc3\xa4usche orten sich am besten."));
-    rescan.setTooltip(U("Liest den Ordner neu ein, ohne die Pfeifen neu zu laden"));
+    rescan.setTooltip(rysum::tr("Liest den Ordner neu ein, ohne die Pfeifen neu zu laden"));
     openFolder.onClick = [this]
     {
         auto dir = proc.getCustomFolder();
@@ -61,12 +61,12 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
         dir.startAsProcess();
     };
     rescan.onClick = [this] { proc.reloadCustomSounds(); };
-    chooseFolder.setTooltip(U("Einen beliebigen Ordner mit Ger\xc3\xa4uschen w\xc3\xa4hlen "
+    chooseFolder.setTooltip(rysum::tr("Einen beliebigen Ordner mit Ger\xc3\xa4uschen w\xc3\xa4hlen "
                               "(WAV/AIFF/FLAC/OGG bis 20 s, auch in Unterordnern, bis 64 Dateien). "
                               "Wird im Projekt und in Patches gespeichert."));
     chooseFolder.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser>(U("Ordner mit eigenen Ger\xc3\xa4uschen"),
+        chooser = std::make_unique<juce::FileChooser>(rysum::tr("Ordner mit eigenen Ger\xc3\xa4uschen"),
                                                       proc.getCustomFolder());
         chooser->launchAsync(juce::FileBrowserComponent::openMode |
                                  juce::FileBrowserComponent::canSelectDirectories,
@@ -80,7 +80,7 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
                                  repaint();
                              });
     };
-    resetFolder.setTooltip(U("Zur\xc3\xbc"
+    resetFolder.setTooltip(rysum::tr("Zur\xc3\xbc"
                              "ck zum Standardordner samples/noise/eigene"));
     resetFolder.onClick = [this]
     {
@@ -92,91 +92,91 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     addAndMakeVisible(openFolder);
     addAndMakeVisible(rescan);
     custPlace = &combo("fxCustPlace");
-    custPlace->setTooltip(U("Wo die Ger\xc3\xa4usche erklingen: an einer Pfeife eines gezogenen "
+    custPlace->setTooltip(rysum::tr("Wo die Ger\xc3\xa4usche erklingen: an einer Pfeife eines gezogenen "
                             "Registers, irgendwo im Raum, am Spieltisch oder auf einer Kreisbahn"));
-    custRows = {&row("fxCustLevel", U("Lautst\xc3\xa4rke")),
-                &row("fxCustDown", "Beim Anschlag (Wahrscheinlichkeit)"),
-                &row("fxCustUp", "Beim Loslassen"),
-                &row("fxCustPitch", U("Tonh\xc3\xb6he folgt der Taste")),
-                &row("fxCustScatter", U("Streuung (Echos, Zeit, Ort)")),
-                &row("fxCustWander", "Wandern")};
+    custRows = {&row("fxCustLevel", rysum::tr("Lautst\xc3\xa4rke")),
+                &row("fxCustDown", rysum::tr("Beim Anschlag (Wahrscheinlichkeit)")),
+                &row("fxCustUp", rysum::tr("Beim Loslassen")),
+                &row("fxCustPitch", rysum::tr("Tonh\xc3\xb6he folgt der Taste")),
+                &row("fxCustScatter", rysum::tr("Streuung (Echos, Zeit, Ort)")),
+                &row("fxCustWander", rysum::tr("Wandern"))};
 
     // ---- tracker path
-    pathRows = {&row("fxPathLevel", U("Lautst\xc3\xa4rke")),
-                &row("fxPathTime", "Laufzeit"),
-                &row("fxPathTicks", "Schritte"),
-                &row("fxPathSpread", "Streuung des Weges"),
+    pathRows = {&row("fxPathLevel", rysum::tr("Lautst\xc3\xa4rke")),
+                &row("fxPathTime", rysum::tr("Laufzeit")),
+                &row("fxPathTicks", rysum::tr("Schritte")),
+                &row("fxPathSpread", rysum::tr("Streuung des Weges")),
                 nullptr,
                 nullptr};
-    pathWait = &toggle("fxPathWait", "Pfeifen warten");
+    pathWait = &toggle("fxPathWait", rysum::tr("Pfeifen warten"));
     pathWait->setTooltip(
-        U("Die Pfeife spricht erst, wenn die Klicks bei ihr ankommen (Laufzeit)."));
+        rysum::tr("Die Pfeife spricht erst, wenn die Klicks bei ihr ankommen (Laufzeit)."));
 
     // ---- crackle
-    crackRows = {&row("fxCrackLevel", U("Lautst\xc3\xa4rke")),
-                 &row("fxCrackRate", "Dichte (je Pfeife)"),
-                 &row("fxCrackLen", U("L\xc3\xa4nge eines Knacksers")),
+    crackRows = {&row("fxCrackLevel", rysum::tr("Lautst\xc3\xa4rke")),
+                 &row("fxCrackRate", rysum::tr("Dichte (je Pfeife)")),
+                 &row("fxCrackLen", rysum::tr("L\xc3\xa4nge eines Knacksers")),
                  nullptr,
                  nullptr,
                  nullptr};
 
     // ---- wind leaks
-    leakRows = {&row("fxLeakLevel", U("Lautst\xc3\xa4rke")),
-                &row("fxLeakCount", "Anzahl"),
-                &row("fxLeakFreq", U("Tonh\xc3\xb6he")),
-                &row("fxLeakWander", "Wandern"),
+    leakRows = {&row("fxLeakLevel", rysum::tr("Lautst\xc3\xa4rke")),
+                &row("fxLeakCount", rysum::tr("Anzahl")),
+                &row("fxLeakFreq", rysum::tr("Tonh\xc3\xb6he")),
+                &row("fxLeakWander", rysum::tr("Wandern")),
                 nullptr,
                 nullptr};
-    windRound = &toggle("fxWindRound", U("Gebl\xc3\xa4se ringsum"));
+    windRound = &toggle("fxWindRound", rysum::tr("Gebl\xc3\xa4se ringsum"));
     windRound->setTooltip(
-        U("Das Gebl\xc3\xa4serauschen (Wind) kommt von allen Seiten statt als ein Signal."));
+        rysum::tr("Das Gebl\xc3\xa4serauschen (Wind) kommt von allen Seiten statt als ein Signal."));
 
     // ---- upper partials
-    partRows = {&row("fxPartSpread", U("Versatz der Obert\xc3\xb6ne")),
-                &row("fxPartSplit", U("Trennung (\xc3\x97 Grundton)")),
-                &row("fxPartTurn", "Kreisen"),
+    partRows = {&row("fxPartSpread", rysum::tr("Versatz der Obert\xc3\xb6ne")),
+                &row("fxPartSplit", rysum::tr("Trennung (\xc3\x97 Grundton)")),
+                &row("fxPartTurn", rysum::tr("Kreisen")),
                 nullptr,
                 nullptr,
                 nullptr};
 
     // ---- echoes
-    echoSync = &toggle("fxEchoSync", "Im Tempo");
+    echoSync = &toggle("fxEchoSync", rysum::tr("Im Tempo"));
     echoDiv = &combo("fxEchoDiv");
-    echoTime = &row("fxEchoTime", "Zeit");
-    echoRows = {&row("fxEchoLevel", U("Lautst\xc3\xa4rke")),
-                &row("fxEchoRepeats", "Wiederholungen"),
-                &row("fxEchoFeedback", "Abnahme je Wiederholung"),
-                &row("fxEchoTurn", "Drehung je Wiederholung"),
-                &row("fxEchoTilt", U("Neigung je Wiederholung")),
-                &row("fxEchoDamp", U("D\xc3\xa4mpfung"))};
+    echoTime = &row("fxEchoTime", rysum::tr("Zeit"));
+    echoRows = {&row("fxEchoLevel", rysum::tr("Lautst\xc3\xa4rke")),
+                &row("fxEchoRepeats", rysum::tr("Wiederholungen")),
+                &row("fxEchoFeedback", rysum::tr("Abnahme je Wiederholung")),
+                &row("fxEchoTurn", rysum::tr("Drehung je Wiederholung")),
+                &row("fxEchoTilt", rysum::tr("Neigung je Wiederholung")),
+                &row("fxEchoDamp", rysum::tr("D\xc3\xa4mpfung"))};
     for (int i = 0; i < getNumChildComponents(); ++i)
         page0.push_back(getChildComponent(i));
 
     // ---- second tab: the tuning in space, photographic operations
     const int before = getNumChildComponents();
     beatFrom = &combo("fxBeatIdeal");
-    beatFrom->setTooltip(U("Woraus die Schwebungen berechnet werden: aus der Stimmung, wie sie "
+    beatFrom->setTooltip(rysum::tr("Woraus die Schwebungen berechnet werden: aus der Stimmung, wie sie "
                            "gemeint ist (reine Terzen stehen still), "
                            "oder aus den Pfeifen, wie sie aufgenommen sind (\xc2\xb1"
                            "5 ct: auch reine Terzen schweben ein wenig)."));
-    ghostRows = {&row("fxGhostLevel", U("Lautst\xc3\xa4rke")),
-                 &row("fxGhostPlace", U("Ort (zwischen \xe2\x86\x92 unten)")),
-                 &row("fxGhostCons", "nur Konsonanzen"),
+    ghostRows = {&row("fxGhostLevel", rysum::tr("Lautst\xc3\xa4rke")),
+                 &row("fxGhostPlace", rysum::tr("Ort (zwischen \xe2\x86\x92 unten)")),
+                 &row("fxGhostCons", rysum::tr("nur Konsonanzen")),
                  nullptr,
                  nullptr,
                  nullptr};
     dexMirror = &combo("fxDexMirror");
     dexMirror->setTooltip(
-        U("Das alte Bild gespiegelt: links / rechts, vorn / hinten, oben / unten"));
-    dexRows = {&row("fxDexMix", "Menge"),
-               &row("fxDexTime", "Abstand (Sekunden davor)"),
-               &row("fxDexTurn", "Drehung"),
-               &row("fxDexFade", "Verblassen"),
-               &row("fxDexAgain", "mehrfach belichten"),
+        rysum::tr("Das alte Bild gespiegelt: links / rechts, vorn / hinten, oben / unten"));
+    dexRows = {&row("fxDexMix", rysum::tr("Menge")),
+               &row("fxDexTime", rysum::tr("Abstand (Sekunden davor)")),
+               &row("fxDexTurn", rysum::tr("Drehung")),
+               &row("fxDexFade", rysum::tr("Verblassen")),
+               &row("fxDexAgain", rysum::tr("mehrfach belichten")),
                nullptr};
-    expoRows = {&row("fxExpoMix", "Menge"),
-                &row("fxExpoTime", "Belichtungszeit"),
-                &row("fxExpoBright", "Helligkeit der Spuren"),
+    expoRows = {&row("fxExpoMix", rysum::tr("Menge")),
+                &row("fxExpoTime", rysum::tr("Belichtungszeit")),
+                &row("fxExpoBright", rysum::tr("Helligkeit der Spuren")),
                 nullptr,
                 nullptr,
                 nullptr};
@@ -186,93 +186,93 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     // ---- third tab: the living organ
     const int before2 = getNumChildComponents();
     blower = &combo("lvBlower");
-    blower->setTooltip(U("Woher der Wind kommt: ein Gebl\xc3\xa4se liefert stetig nach (gro\xc3\x9f"
+    blower->setTooltip(rysum::tr("Woher der Wind kommt: ein Gebl\xc3\xa4se liefert stetig nach (gro\xc3\x9f"
                          "e Akkorde dr\xc3\xbc"
                          "cken den Druck, solange sie klingen), "
                          "oder ein Kalkant tritt den Balg \xe2\x80\x93 dazwischen sinkt er, und "
                          "wer zu viel spielt, dem geht der Wind aus."));
     treadDiv = &combo("lvTreadDiv");
-    treadRate = &row("lvTreadRate", "Tritte");
-    bellowsRows = {&row("lvBellows", "Windverbrauch"),
-                   &row("lvBellowsSize", U("Gr\xc3\xb6\xc3\x9f"
+    treadRate = &row("lvTreadRate", rysum::tr("Tritte"));
+    bellowsRows = {&row("lvBellows", rysum::tr("Windverbrauch")),
+                   &row("lvBellowsSize", rysum::tr("Gr\xc3\xb6\xc3\x9f"
                                            "e des Balgs")),
                    treadRate,
-                   &row("lvTreadNoise", U("Trittger\xc3\xa4usch")),
+                   &row("lvTreadNoise", rysum::tr("Trittger\xc3\xa4usch")),
                    nullptr,
                    nullptr};
-    bellowsRows[0]->setTooltip(U("0 % = unendlich viel Wind (wie bisher). Dar\xc3\xbc"
+    bellowsRows[0]->setTooltip(rysum::tr("0 % = unendlich viel Wind (wie bisher). Dar\xc3\xbc"
                                  "ber teilen sich alle klingenden Pfeifen einen Vorrat: "
                                  "tiefe Pfeifen und viele Register verbrauchen am meisten. Fehlt "
                                  "Wind, werden alle Pfeifen tiefer, leiser, dumpfer und unruhig."));
     palletSrc = &combo("lvPalletSrc");
-    palletRows = {&row("lvPallet", U("Wie weit das Ventil geschlossen bleibt")),
+    palletRows = {&row("lvPallet", rysum::tr("Wie weit das Ventil geschlossen bleibt")),
                   nullptr,
                   nullptr,
                   nullptr,
                   nullptr,
                   nullptr};
     walkShape = &combo("lvWalkShape");
-    walkRows = {&row("lvListenX", "links / rechts"),
-                &row("lvListenY", U("zur\xc3\xbc"
+    walkRows = {&row("lvListenX", rysum::tr("links / rechts")),
+                &row("lvListenY", rysum::tr("zur\xc3\xbc"
                                     "ck / vor")),
                 &row("lvWalkRate", "Tempo"),
-                &row("lvWalkSize", "Weite des Wegs"),
+                &row("lvWalkSize", rysum::tr("Weite des Wegs")),
                 nullptr,
                 nullptr};
-    sympRows = {&row("lvSympLevel", U("Lautst\xc3\xa4rke")),
-                &row("lvSympDecay", "Nachklang"),
-                nullptr,
-                nullptr,
-                nullptr,
-                nullptr};
-    wearRows = {&row("lvWear", U("Wie stark man ihn h\xc3\xb6rt")),
-                &row("lvWearTime", "Lebensdauer einer Pfeife"),
+    sympRows = {&row("lvSympLevel", rysum::tr("Lautst\xc3\xa4rke")),
+                &row("lvSympDecay", rysum::tr("Nachklang")),
                 nullptr,
                 nullptr,
                 nullptr,
                 nullptr};
-    wearReset.setTooltip(U("Setzt den Verschlei\xc3\x9f aller Pfeifen zur\xc3\xbc"
+    wearRows = {&row("lvWear", rysum::tr("Wie stark man ihn h\xc3\xb6rt")),
+                &row("lvWearTime", rysum::tr("Lebensdauer einer Pfeife")),
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr};
+    wearReset.setTooltip(rysum::tr("Setzt den Verschlei\xc3\x9f aller Pfeifen zur\xc3\xbc"
                            "ck. Er wird mit dem Projekt gespeichert (nicht in Patches)."));
     wearReset.onClick = [this] { proc.resetWear(); };
     addAndMakeVisible(wearReset);
-    pureRows = {&row("lvPure", "Menge"),
-                &row("lvPureTime", "Zeit bis rein"),
+    pureRows = {&row("lvPure", rysum::tr("Menge")),
+                &row("lvPureTime", rysum::tr("Zeit bis rein")),
                 nullptr,
                 nullptr,
                 nullptr,
                 nullptr};
-    netOn = &toggle("lvNetOn", "Wanderer an");
-    netOn->setTooltip(U("Solange Tasten gehalten werden, wandert ein Spieler durch das Tonnetz der "
+    netOn = &toggle("lvNetOn", rysum::tr("Wanderer an"));
+    netOn->setTooltip(rysum::tr("Solange Tasten gehalten werden, wandert ein Spieler durch das Tonnetz der "
                         "Stimmung und spielt jede Taste, an der er vorbeikommt. "
                         "Er beginnt bei der zuletzt angeschlagenen Taste. Nicht mit freier "
                         "Stimmung (Scala / MTS) und MPE."));
     netPath = &combo("lvNetPath");
     netDiv = &combo("lvNetDiv");
     netRate = &row("lvNetRate", "Tempo");
-    netRows = {netRate, &row("lvNetGate", U("Tonl\xc3\xa4nge")), nullptr, nullptr, nullptr,
+    netRows = {netRate, &row("lvNetGate", rysum::tr("Tonl\xc3\xa4nge")), nullptr, nullptr, nullptr,
                nullptr};
-    impRows = {&row("lvImpLevel", U("Lautst\xc3\xa4rke")),
-               &row("lvImpRing", "Nachklang des Rohrs"),
+    impRows = {&row("lvImpLevel", rysum::tr("Lautst\xc3\xa4rke")),
+               &row("lvImpRing", rysum::tr("Nachklang des Rohrs")),
                nullptr,
                nullptr,
                nullptr,
                nullptr};
-    impRows[0]->setTooltip(U("Wie laut Pfeifen klopfen, die gegen W\xc3\xa4nde, Boden und Decke "
+    impRows[0]->setTooltip(rysum::tr("Wie laut Pfeifen klopfen, die gegen W\xc3\xa4nde, Boden und Decke "
                              "des Saals fliegen (aus = still). "
                              "Nur mit den Bewegungen Flug, Fall, Schwarm und Str\xc3\xb6mung "
                              "(Raum-Seite). Je schneller der Aufprall, "
                              "desto lauter und heller; eine schluckende Wand d\xc3\xa4mpft ihn."));
     impSrc = &combo("lvImpSrc");
-    impSrc->setTooltip(U("Nur klingende Pfeifen klopfen \xe2\x80\x93 oder alle Pfeifen gezogener "
+    impSrc->setTooltip(rysum::tr("Nur klingende Pfeifen klopfen \xe2\x80\x93 oder alle Pfeifen gezogener "
                          "Register, auch die stummen."));
     playerMode = &combo("lvPlayerMode");
     playerMode->setTooltip(
-        U("Der H\xc3\xb6rer - du im 3D-Saal, oder der H\xc3\xb6rer auf seinem Weg - bewegt die Pfeifen: wie eine "
+        rysum::tr("Der H\xc3\xb6rer - du im 3D-Saal, oder der H\xc3\xb6rer auf seinem Weg - bewegt die Pfeifen: wie eine "
           "Masse, zu der sie fallen (zieht an), vor der sie fliehen (st\xc3\xb6\xc3\x9ft ab), um die sie "
           "kreisen (Umlaufbahn) oder die sie mitrei\xc3\x9ft (Sog). Wirkt auf Register, deren Bewegung "
           "(Raum-Seite) im Saal stattfindet: Schweben, Flug, Fall, Schwarm, Str\xc3\xb6mung."));
-    playerRows = {&row("lvPlayerForce", "Kraft"),
-                  &row("lvPlayerRange", "Reichweite"),
+    playerRows = {&row("lvPlayerForce", rysum::tr("Kraft")),
+                  &row("lvPlayerRange", rysum::tr("Reichweite")),
                   nullptr,
                   nullptr,
                   nullptr,
@@ -283,19 +283,19 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     // ---- fourth tab: the "Summe"
     {
         const int before3 = getNumChildComponents();
-        eqOn = &toggle("mstEqOn", "EQ an");
-        eqOn->setTooltip(U("Drei B\xc3\xa4nder auf allem, was hinausgeht: Tiefen (Kuhschwanz), Mitten "
+        eqOn = &toggle("mstEqOn", rysum::tr("EQ an"));
+        eqOn->setTooltip(rysum::tr("Drei B\xc3\xa4nder auf allem, was hinausgeht: Tiefen (Kuhschwanz), Mitten "
                            "(Glocke mit G\xc3\xbcte), H\xc3\xb6hen (Kuhschwanz)."));
-        eqRows = {&row("mstLowHz", "Tiefen bei"),       &row("mstLowDb", "Tiefen"),
-                  &row("mstMidHz", "Mitten bei"),       &row("mstMidDb", "Mitten"),
-                  &row("mstMidQ", U("G\xc3\xbcte")),     &row("mstHighHz", U("H\xc3\xb6hen bei")),
-                  &row("mstHighDb", U("H\xc3\xb6hen"))};
-        compOn = &toggle("mstCompOn", "Kompressor an");
-        compOn->setTooltip(U("Ein Kompressor auf allem, was hinausgeht: der lauteste Kanal entscheidet, "
+        eqRows = {&row("mstLowHz", rysum::tr("Tiefen bei")),       &row("mstLowDb", rysum::tr("Tiefen")),
+                  &row("mstMidHz", rysum::tr("Mitten bei")),       &row("mstMidDb", rysum::tr("Mitten")),
+                  &row("mstMidQ", rysum::tr("G\xc3\xbcte")),     &row("mstHighHz", rysum::tr("H\xc3\xb6hen bei")),
+                  &row("mstHighDb", rysum::tr("H\xc3\xb6hen"))};
+        compOn = &toggle("mstCompOn", rysum::tr("Kompressor an"));
+        compOn->setTooltip(rysum::tr("Ein Kompressor auf allem, was hinausgeht: der lauteste Kanal entscheidet, "
                              "alle Kan\xc3\xa4le werden gleich leiser (das Raumbild bleibt stehen)."));
-        compRows = {&row("mstThresh", "Schwelle"), &row("mstRatio", U("Verh\xc3\xa4ltnis")),
-                    &row("mstAttack", "Ansprache"), &row("mstRelease", "Ausklang"),
-                    &row("mstMakeup", "Aufholen")};
+        compRows = {&row("mstThresh", rysum::tr("Schwelle")), &row("mstRatio", rysum::tr("Verh\xc3\xa4ltnis")),
+                    &row("mstAttack", rysum::tr("Ansprache")), &row("mstRelease", rysum::tr("Ausklang")),
+                    &row("mstMakeup", rysum::tr("Aufholen"))};
         for (int i = before3; i < getNumChildComponents(); ++i)
             page3.push_back(getChildComponent(i));
     }
@@ -309,8 +309,8 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
     tabLight.onClick = [this] { showTab(1); };
     tabLive.onClick = [this] { showTab(2); };
     tabMaster.onClick = [this] { showTab(3); };
-    tabMaster.setTooltip(U("Die Summe: EQ und Kompressor auf allem, was hinausgeht (Mischen, Mastern)"));
-    tabLive.setTooltip(U("Die Orgel als ein K\xc3\xb6rper: gemeinsamer Wind, Ventile, ein "
+    tabMaster.setTooltip(rysum::tr("Die Summe: EQ und Kompressor auf allem, was hinausgeht (Mischen, Mastern)"));
+    tabLive.setTooltip(rysum::tr("Die Orgel als ein K\xc3\xb6rper: gemeinsamer Wind, Ventile, ein "
                          "H\xc3\xb6rer, der geht, Pfeifen, die altern und mitklingen, "
                          "eine Stimmung, die sich rein zieht, ein Wanderer im Tonnetz"));
     showTab(0);
@@ -641,51 +641,51 @@ void EffectsView::paintLive(juce::Graphics &g)
 {
     auto &A = Assets::get();
     auto &e = proc.engine;
-    auto noteIn = [&](juce::Rectangle<int> r, const char *text)
+    auto noteIn = [&](juce::Rectangle<int> r, const juce::String &text)
     {
         g.setFont(A.sansFont(12.5f));
         g.setColour(col::mute);
         if (r.getHeight() > 14)
-            g.drawFittedText(U(text), r, juce::Justification::topLeft,
+            g.drawFittedText(text, r, juce::Justification::topLeft,
                              juce::jmax(1, r.getHeight() / 15));
     };
     const int ringing = e.sympNow.load();
     const float pureCt = e.pureNow.load();
     const int netKey = e.netKeyNow.load();
-    drawSectionTitle(g, bellowsBox, "Balg", U("ein Wind f\xc3\xbcr alle"));
-    drawSectionTitle(g, palletBox, "Ventil",
-                     U("wie die Taste \xc3\xb6"
+    drawSectionTitle(g, bellowsBox, rysum::tr("Balg"), rysum::tr("ein Wind f\xc3\xbcr alle"));
+    drawSectionTitle(g, palletBox, rysum::tr("Ventil"),
+                     rysum::tr("wie die Taste \xc3\xb6"
                        "ffnet"));
-    drawSectionTitle(g, walkBox, U("H\xc3\xb6rer"), "geht durch die Orgel");
-    drawSectionTitle(g, sympBox, "Mitklingen",
-                     ringing > 0 ? juce::String(ringing) + (ringing == 1 ? " Pfeife klingt mit"
-                                                                         : " Pfeifen klingen mit")
-                                 : juce::String("stumme Pfeifen antworten"));
-    drawSectionTitle(g, wearBox, U("Verschlei\xc3\x9f"),
-                     U("das St\xc3\xbc"
+    drawSectionTitle(g, walkBox, rysum::tr("H\xc3\xb6rer"), rysum::tr("geht durch die Orgel"));
+    drawSectionTitle(g, sympBox, rysum::tr("Mitklingen"),
+                     ringing > 0 ? juce::String(ringing) + (ringing == 1 ? rysum::tr(" Pfeife klingt mit")
+                                                                         : rysum::tr(" Pfeifen klingen mit"))
+                                 : rysum::tr("stumme Pfeifen antworten"));
+    drawSectionTitle(g, wearBox, rysum::tr("Verschlei\xc3\x9f"),
+                     rysum::tr("das St\xc3\xbc"
                        "ck nutzt die Orgel ab"));
-    drawSectionTitle(g, impBox, "Aufprall",
+    drawSectionTitle(g, impBox, rysum::tr("Aufprall"),
                      impRate > 0.05f ? juce::String(impRate, impRate < 10.0f ? 1 : 0) +
-                                           U(" Schl\xc3\xa4ge pro Sekunde")
-                                     : U("Pfeifen gegen die W\xc3\xa4nde"));
+                                           rysum::tr(" Schl\xc3\xa4ge pro Sekunde")
+                                     : rysum::tr("Pfeifen gegen die W\xc3\xa4nde"));
     g.setColour(col::mute);
     g.setFont(Assets::get().monoFont(11.0f));
-    g.drawText(U("Spieler bewegt die Pfeifen"), playerLabel, juce::Justification::centredLeft);
-    drawSectionTitle(g, pureBox, "Reinheit",
-                     pureCt > 0.05f ? U("zieht bis ") + juce::String(pureCt, 1) + " ct"
-                                    : U("Akkorde ziehen sich rein"));
+    g.drawText(rysum::tr("Spieler bewegt die Pfeifen"), playerLabel, juce::Justification::centredLeft);
+    drawSectionTitle(g, pureBox, rysum::tr("Reinheit"),
+                     pureCt > 0.05f ? rysum::tr("zieht bis ") + juce::String(pureCt, 1) + " ct"
+                                    : rysum::tr("Akkorde ziehen sich rein"));
     drawSectionTitle(
         g, netBox, "Tonnetz-Wanderer",
         netKey >= 0
-            ? U("bei ") + helmholtzName(kPhysKeys[(size_t)juce::jlimit(0, kNumKeys - 1, netKey)])
-            : juce::String("im Gitter"));
+            ? rysum::tr("bei ") + helmholtzName(kPhysKeys[(size_t)juce::jlimit(0, kNumKeys - 1, netKey)])
+            : rysum::tr("im Gitter"));
 
     // ---- the bellows: how full it is, and the pressure the pipes get
     {
         const float fill = juce::jlimit(0.0f, 1.0f, e.bellowsFillNow.load()),
                     press = juce::jlimit(0.0f, 1.0f, e.bellowsNow.load());
         auto m = bellowsMeter.toFloat();
-        auto bar = [&](juce::Rectangle<float> b, float v, const char *name, bool red)
+        auto bar = [&](juce::Rectangle<float> b, float v, const juce::String &name, bool red)
         {
             g.setColour(col::track);
             g.fillRect(b.withTrimmedLeft(64));
@@ -693,17 +693,17 @@ void EffectsView::paintLive(juce::Graphics &g)
             g.fillRect(b.withTrimmedLeft(64).withWidth((b.getWidth() - 64) * v));
             g.setColour(col::dim);
             g.setFont(A.monoFont(10.0f));
-            g.drawText(U(name), b.withWidth(62), juce::Justification::centredLeft);
+            g.drawText(name, b.withWidth(62), juce::Justification::centredLeft);
         };
-        bar(m.removeFromTop(11), fill, "Vorrat", false);
+        bar(m.removeFromTop(11), fill, rysum::tr("Vorrat"), false);
         m.removeFromTop(6);
-        bar(m.removeFromTop(11), press, "Winddruck", press < 0.6f);
+        bar(m.removeFromTop(11), press, rysum::tr("Winddruck"), press < 0.6f);
     }
-    noteIn(bellowsNote, "Als Modulationsquelle \xe2\x80\x9e"
-                        "Balg (Winddruck)\xe2\x80\x9c steuert der Druck alles andere.");
+    noteIn(bellowsNote, rysum::tr("Als Modulationsquelle \xe2\x80\x9e"
+                        "Balg (Winddruck)\xe2\x80\x9c steuert der Druck alles andere."));
     noteIn(
         palletNote,
-        "Das Ventil unter der Pfeife \xc3\xb6"
+        rysum::tr("Das Ventil unter der Pfeife \xc3\xb6"
         "ffnet nicht mehr schlagartig. \xe2\x80\x9e"
         "Anschlag\xe2\x80\x9c: eine langsam gedr\xc3\xbc"
         "ckte Taste "
@@ -711,36 +711,36 @@ void EffectsView::paintLive(juce::Graphics &g)
         "und mit Schneidenton an und findet "
         "erst dann ihren Ton; eine schnelle spricht sofort. \xe2\x80\x9e"
         "Druck\xe2\x80\x9c und \xe2\x80\x9eGleiten\xe2\x80\x9c: der Finger "
-        "h\xc3\xa4lt das Ventil selbst \xe2\x80\x93 ohne Druck bleibt die Pfeife bei 100 % stumm.");
-    noteIn(sympNote, "Stumme Pfeifen \xe2\x80\x93 auch die nicht gezogener Register \xe2\x80\x93 "
+        "h\xc3\xa4lt das Ventil selbst \xe2\x80\x93 ohne Druck bleibt die Pfeife bei 100 % stumm."));
+    noteIn(sympNote, rysum::tr("Stumme Pfeifen \xe2\x80\x93 auch die nicht gezogener Register \xe2\x80\x93 "
                      "klingen leise mit, wenn ein Teilton einer "
                      "klingenden Pfeife ihre Tonh\xc3\xb6he trifft, jede an ihrem eigenen Ort. "
                      "Reine Intervalle wecken mehr Pfeifen "
-                     "als unreine; in einer anderen Stimmung antworten andere.");
+                     "als unreine; in einer anderen Stimmung antworten andere."));
     noteIn(wearNote,
-           "Jede Pfeife merkt sich, wie lange sie geklungen hat. Viel gespielte Pfeifen zerfallen "
+           rysum::tr("Jede Pfeife merkt sich, wie lange sie geklungen hat. Viel gespielte Pfeifen zerfallen "
            "zuerst: "
            "sie verstimmen sich, k\xc3\xb6rnen, schwanken und setzen aus (K\xc3\xb6rnung, Bittiefe "
            "\xe2\x80\xa6 wie unter Verfall "
-           "auf dem Spieltisch eingestellt). Rechts: jede Pfeife, je Register eine Zeile.");
-    noteIn(impNote, "In den Bewegungen Flug, Fall, Schwarm und Str\xc3\xb6mung (Raum-Seite, je "
+           "auf dem Spieltisch eingestellt). Rechts: jede Pfeife, je Register eine Zeile."));
+    noteIn(impNote, rysum::tr("In den Bewegungen Flug, Fall, Schwarm und Str\xc3\xb6mung (Raum-Seite, je "
                     "Register) fliegen die Pfeifen frei durch "
                     "den Saal. Wo eine gegen Wand, Boden oder Decke st\xc3\xb6\xc3\x9ft, klopft es "
                     "dort: kurz und hell bei schnellem Aufprall, "
                     "dumpf bei langsamem oder an einer schluckenden Wand. Das Rohr klingt nach "
-                    "\xe2\x80\x93 lange Pfeifen tief, kurze hoch.");
+                    "\xe2\x80\x93 lange Pfeifen tief, kurze hoch."));
     noteIn(pureNote,
-           "Gehaltene T\xc3\xb6ne ziehen einander zu reinen Intervallen: die Schwebungen beruhigen "
+           rysum::tr("Gehaltene T\xc3\xb6ne ziehen einander zu reinen Intervallen: die Schwebungen beruhigen "
            "sich, der Akkord "
            "rastet ein. Neue T\xc3\xb6ne beginnen in der eingestellten Stimmung und gleiten dann. "
            "Auch der Wolf wird zahm \xe2\x80\x93 "
-           "mit der Bewegung \xe2\x80\x9eSchwebung\xe2\x80\x9c kommt der Raum dabei zur Ruhe.");
+           "mit der Bewegung \xe2\x80\x9eSchwebung\xe2\x80\x9c kommt der Raum dabei zur Ruhe."));
     noteIn(netNote,
-           "Quinten nach rechts, gro\xc3\x9f"
+           rysum::tr("Quinten nach rechts, gro\xc3\x9f"
            "e Terzen nach oben. Mit der Anordnung \xe2\x80\x9eTonnetz\xe2\x80\x9c (Raum-Seite) "
            "geht der Klang denselben Weg durch den Raum. Tonl\xc3\xa4nge \xc3\xbc"
            "ber 1 Schritt: die T\xc3\xb6ne \xc3\xbc"
-           "berlappen.");
+           "berlappen."));
 
     // ---- the listener's walk from above: the organ's usual listening place in the middle, front
     // up
@@ -838,7 +838,7 @@ void EffectsView::drawCompass(juce::Graphics &g, juce::Rectangle<int> area, int 
     g.fillEllipse(c.x - 2.5f, c.y - 2.5f, 5.0f, 5.0f);
     g.setFont(A.monoFont(9.0f));
     g.setColour(col::faint);
-    g.drawText("vorn", juce::Rectangle<float>(c.x - 20, c.y - R - 13, 40, 11),
+    g.drawText(rysum::tr("vorn"), juce::Rectangle<float>(c.x - 20, c.y - R - 13, 40, 11),
                juce::Justification::centred);
 
     // azimuth positive = to the left (AmbiX)
@@ -873,7 +873,7 @@ void EffectsView::drawCompass(juce::Graphics &g, juce::Rectangle<int> area, int 
         }
         g.setFont(A.monoFont(9.0f));
         g.setColour(col::dim);
-        g.drawText(U("\xe2\x97\x8f Grundton   \xe2\x97\x8b Obert\xc3\xb6ne"),
+        g.drawText(rysum::tr("\xe2\x97\x8f Grundton   \xe2\x97\x8b Obert\xc3\xb6ne"),
                    area.withTop(area.getBottom() - 11).expanded(20, 0),
                    juce::Justification::centred);
         return;
@@ -908,12 +908,12 @@ void EffectsView::paint(juce::Graphics &g)
         g.setOpacity(0.07f);
         drawCover(g, A.wall, getLocalBounds().toFloat(), 0.4f);
     }
-    auto noteIn = [&](juce::Rectangle<int> r, const char *text)
+    auto noteIn = [&](juce::Rectangle<int> r, const juce::String &text)
     {
         g.setFont(A.sansFont(12.5f));
         g.setColour(col::mute);
         if (r.getHeight() > 14)
-            g.drawFittedText(U(text), r, juce::Justification::topLeft,
+            g.drawFittedText(text, r, juce::Justification::topLeft,
                              juce::jmax(1, r.getHeight() / 15));
     };
     if (tab == 2)
@@ -930,14 +930,14 @@ void EffectsView::paint(juce::Graphics &g)
     {
         auto tonnetzBox = juce::Rectangle<int>(ghostBox.getRight() + 28, ghostBox.getY(),
                                                expoBox.getWidth(), ghostBox.getHeight());
-        drawSectionTitle(g, beatBox, "Schwebungsraum", "die Stimmung bewegt den Raum");
-        drawSectionTitle(g, ghostBox, U("Differenzt\xc3\xb6ne"), "Geister zwischen den Pfeifen");
-        drawSectionTitle(g, tonnetzBox, "Tonnetz", "die Stimmung als Landkarte");
-        drawSectionTitle(g, dexBox, "Doppelbelichtung",
-                         U("das Bild von vorhin dar\xc3\xbc"
+        drawSectionTitle(g, beatBox, rysum::tr("Schwebungsraum"), rysum::tr("die Stimmung bewegt den Raum"));
+        drawSectionTitle(g, ghostBox, rysum::tr("Differenzt\xc3\xb6ne"), rysum::tr("Geister zwischen den Pfeifen"));
+        drawSectionTitle(g, tonnetzBox, rysum::tr("Tonnetz"), rysum::tr("die Stimmung als Landkarte"));
+        drawSectionTitle(g, dexBox, rysum::tr("Doppelbelichtung"),
+                         rysum::tr("das Bild von vorhin dar\xc3\xbc"
                            "ber"));
-        drawSectionTitle(g, expoBox, "Belichtung", "Spuren auf der Kugel");
-        noteIn(beatNote, "Je zwei klingende Pfeifen schweben gegeneinander (die n\xc3\xa4"
+        drawSectionTitle(g, expoBox, rysum::tr("Belichtung"), rysum::tr("Spuren auf der Kugel"));
+        noteIn(beatNote, rysum::tr("Je zwei klingende Pfeifen schweben gegeneinander (die n\xc3\xa4"
                          "chsten Teilt\xc3\xb6ne, die fast zusammenfallen). "
                          "Mit der Bewegung \xe2\x80\x9eSchwebung\xe2\x80\x9c (Raum-Seite) dreht "
                          "sich jede Pfeife so schnell, wie sie schwebt: "
@@ -947,18 +947,18 @@ void EffectsView::paint(juce::Graphics &g)
                          "Es kreist heftig (um 13 Hz), die Wolfsterzen noch heftiger. "
                          "\xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = Umdrehungen je Schwebung.\n\n"
                          "Als Modulationsquelle \xe2\x80\x9eSchwebung\xe2\x80\x9c (je Pfeife) "
-                         "steuert sie alles andere.");
+                         "steuert sie alles andere."));
         noteIn(ghostNote,
-               "Aus je zwei gehaltenen Pfeifen entsteht der Differenzton (h\xc3\xb6here minus "
+               rysum::tr("Aus je zwei gehaltenen Pfeifen entsteht der Differenzton (h\xc3\xb6here minus "
                "tiefere Frequenz) \xe2\x80\x93 "
                "wie die Resultante, mit der Orgelbauer einen 32\xe2\x80\xb2 andeuten. Er "
                "erscheint, solange das Intervall "
                "gehalten wird, zwischen den beiden Pfeifen oder tief unter dem H\xc3\xb6rer. "
                "Quinte: die Oktave unter dem "
-               "tieferen Ton; reine Terz: zwei Oktaven unter dem Grundton des Dreiklangs.");
+               "tieferen Ton; reine Terz: zwei Oktaven unter dem Grundton des Dreiklangs."));
         noteIn(
             tonnetzBox.withTrimmedTop(38),
-            "Auf der Raum-Seite: Anordnung \xe2\x80\x9eTonnetz\xe2\x80\x9c. Jede Taste bekommt "
+            rysum::tr("Auf der Raum-Seite: Anordnung \xe2\x80\x9eTonnetz\xe2\x80\x9c. Jede Taste bekommt "
             "ihren Platz im Gitter "
             "der Stimmung: Quinten nach rechts, gro\xc3\x9f"
             "e Terzen nach oben. Reine Intervalle liegen eng "
@@ -967,57 +967,57 @@ void EffectsView::paint(juce::Graphics &g)
             "G\xe2\x99\xaf und Es liegen an entgegengesetzten R\xc3\xa4ndern (dort sitzt der "
             "Wolf). "
             "Eine andere Stimmung zeichnet die Karte neu (pythagoreisch: eine Kette von Quinten, "
-            "gleichstufig: weit auseinander liegende Terzen).");
-        noteIn(dexNote, "Das Klangfeld von vor ein paar Sekunden wird \xc3\xbc"
+            "gleichstufig: weit auseinander liegende Terzen)."));
+        noteIn(dexNote, rysum::tr("Das Klangfeld von vor ein paar Sekunden wird \xc3\xbc"
                         "ber das jetzige gelegt \xe2\x80\x93 gedreht, gespiegelt, "
                         "verblasst, wie eine zweite Belichtung auf demselben Film. "
                         "\xe2\x80\x9eMehrfach\xe2\x80\x9c belichtet das "
                         "alte Bild noch einmal: weitere, immer blassere Bilder weiter zur\xc3\xbc"
                         "ck.\n\n"
                         "Wirkt auf das ganze Feld nach Hall und Saal (bis 3. Ordnung; in Stereo "
-                        "wird gespiegelt durch Tauschen der Seiten).");
-        noteIn(expoNote, "Jede Richtung der Kugel h\xc3\xa4lt fest, was durch sie kommt, und gibt "
+                        "wird gespiegelt durch Tauschen der Seiten)."));
+        noteIn(expoNote, rysum::tr("Jede Richtung der Kugel h\xc3\xa4lt fest, was durch sie kommt, und gibt "
                          "es langsam wieder ab: "
-                         "bewegte Pfeifen ziehen Lichtspuren, schnelle malen B\xc3\xb6gen.");
+                         "bewegte Pfeifen ziehen Lichtspuren, schnelle malen B\xc3\xb6gen."));
         return;
     }
     const int n = proc.getNumCustomSounds();
     const juce::String where = proc.hasOwnCustomFolder()
                                    ? proc.getCustomFolder().getFileName() + U(" \xc2\xb7 ")
                                    : juce::String();
-    drawSectionTitle(g, custBox, U("Eigene Ger\xc3\xa4usche"),
-                     where + (n > 0 ? juce::String(n) + (n == 1 ? " Datei" : " Dateien")
-                                    : U("Ordner leer \xe2\x86\x92 Klicks")));
-    drawSectionTitle(g, pathBox, "Trakturweg", U("Spieltisch \xe2\x86\x92 Pfeife"));
-    drawSectionTitle(g, crackBox, "Knistern", "an jeder Pfeife");
-    drawSectionTitle(g, leakBox, "Windlecks", "zischende Stellen");
-    drawSectionTitle(g, partBox, U("Obert\xc3\xb6ne verteilen"), "Grundton bleibt");
-    drawSectionTitle(g, echoBox, "Wandernde Echos", "jede Wiederholung woanders");
+    drawSectionTitle(g, custBox, rysum::tr("Eigene Ger\xc3\xa4usche"),
+                     where + (n > 0 ? juce::String(n) + (n == 1 ? rysum::tr(" Datei") : rysum::tr(" Dateien"))
+                                    : rysum::tr("Ordner leer \xe2\x86\x92 Klicks")));
+    drawSectionTitle(g, pathBox, rysum::tr("Trakturweg"), rysum::tr("Spieltisch \xe2\x86\x92 Pfeife"));
+    drawSectionTitle(g, crackBox, rysum::tr("Knistern"), rysum::tr("an jeder Pfeife"));
+    drawSectionTitle(g, leakBox, rysum::tr("Windlecks"), rysum::tr("zischende Stellen"));
+    drawSectionTitle(g, partBox, rysum::tr("Obert\xc3\xb6ne verteilen"), rysum::tr("Grundton bleibt"));
+    drawSectionTitle(g, echoBox, rysum::tr("Wandernde Echos"), rysum::tr("jede Wiederholung woanders"));
 
     g.setFont(A.sansFont(12.5f));
     g.setColour(col::mute);
-    auto note = [&](juce::Rectangle<int> r, const char *text)
+    auto note = [&](juce::Rectangle<int> r, const juce::String &text)
     {
         if (r.getHeight() > 14)
-            g.drawFittedText(U(text), r, juce::Justification::topLeft,
+            g.drawFittedText(text, r, juce::Justification::topLeft,
                              juce::jmax(1, r.getHeight() / 15));
     };
-    note(pathNote, "Kleine Klicks laufen vom Spieltisch zu den Pfeifen der gezogenen Register, wie "
+    note(pathNote, rysum::tr("Kleine Klicks laufen vom Spieltisch zu den Pfeifen der gezogenen Register, wie "
                    "die Abstrakten "
                    "der Traktur. Mit \xe2\x80\x9ePfeifen warten\xe2\x80\x9c spricht die Pfeife "
-                   "erst, wenn der Weg ankommt.");
-    note(crackNote, "Kurze Knackser an jeder klingenden Pfeife: sie folgen jeder Bewegung, das Ohr "
+                   "erst, wenn der Weg ankommt."));
+    note(crackNote, rysum::tr("Kurze Knackser an jeder klingenden Pfeife: sie folgen jeder Bewegung, das Ohr "
                     "findet die Pfeifen leichter. "
                     "Hohe Dichte und kurze L\xc3\xa4nge klingen wie Glut, wenige lange Knackser "
                     "wie altes Holz.\n\n"
-                    "Nach dem Loslassen verklingt das Knistern in einer halben Sekunde.");
+                    "Nach dem Loslassen verklingt das Knistern in einer halben Sekunde."));
     note(leakNote,
-         "Undichte Stellen im Windsystem zischen ungleichm\xc3\xa4\xc3\x9fig von festen Orten. "
+         rysum::tr("Undichte Stellen im Windsystem zischen ungleichm\xc3\xa4\xc3\x9fig von festen Orten. "
          "Wie laut das Gebl\xc3\xa4se selbst rauscht, stellt \xe2\x80\x9eWind\xe2\x80\x9c auf dem "
-         "Spieltisch ein.");
-    note(partNote, "Oberhalb der Trennung wandert der Klang jeder Pfeife zur Seite "
+         "Spieltisch ein."));
+    note(partNote, rysum::tr("Oberhalb der Trennung wandert der Klang jeder Pfeife zur Seite "
                    "(zuf\xc3\xa4llig links oder rechts); "
-                   "\xe2\x80\x9eKreisen\xe2\x80\x9c dreht diesen Teil um den H\xc3\xb6rer.");
+                   "\xe2\x80\x9eKreisen\xe2\x80\x9c dreht diesen Teil um den H\xc3\xb6rer."));
     note(custNote, "");
 
     drawCompass(g, partCompass, 0);
@@ -1042,10 +1042,10 @@ void EffectsView::paintMaster(juce::Graphics &g)
     s.ratio = value("mstRatio");
     s.makeupDb = value("mstMakeup");
     const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
-    drawSectionTitle(g, eqBox, "EQ", s.eqOn ? U("drei B\xc3\xa4nder auf der Summe") : juce::String("aus"));
-    drawSectionTitle(g, compBox, "Kompressor",
-                     s.compOn ? U("zieht ") + juce::String(proc.masterBus.reductionDb.load(), 1) + " dB ab"
-                              : juce::String("aus"));
+    drawSectionTitle(g, eqBox, "EQ", s.eqOn ? rysum::tr("drei B\xc3\xa4nder auf der Summe") : rysum::tr("aus"));
+    drawSectionTitle(g, compBox, rysum::tr("Kompressor"),
+                     s.compOn ? rysum::tr("zieht ") + juce::String(proc.masterBus.reductionDb.load(), 1) + rysum::tr(" dB ab")
+                              : rysum::tr("aus"));
     // ---- the EQ: 20 Hz .. 20 kHz on a log axis, +-15 dB
     {
         const auto r = eqCurve.toFloat();
@@ -1143,11 +1143,11 @@ void EffectsView::paintMaster(juce::Graphics &g)
     g.setFont(A.sansFont(12.5f));
     g.setColour(col::mute);
     if (eqNote.getHeight() > 14)
-        g.drawFittedText(U("Wirkt auf alles, was hinausgeht \xe2\x80\x93 Stereo, Kopfh\xc3\xb6rer, Ambisonics oder "
+        g.drawFittedText(rysum::tr("Wirkt auf alles, was hinausgeht \xe2\x80\x93 Stereo, Kopfh\xc3\xb6rer, Ambisonics oder "
                            "Lautsprecher \xe2\x80\x93 als letzter Schritt. Jeder Regler kann eine Spur im Verlauf haben."),
                          eqNote, juce::Justification::topLeft, juce::jmax(1, eqNote.getHeight() / 15));
     if (compNote.getHeight() > 14)
-        g.drawFittedText(U("Der lauteste Kanal entscheidet, alle werden gleich leiser: das Raumbild bleibt stehen. "
+        g.drawFittedText(rysum::tr("Der lauteste Kanal entscheidet, alle werden gleich leiser: das Raumbild bleibt stehen. "
                            "Schwelle, Verh\xc3\xa4ltnis (mit weichem Knie), Ansprache, Ausklang, Aufholen."),
                          compNote, juce::Justification::topLeft, juce::jmax(1, compNote.getHeight() / 15));
 }

@@ -106,44 +106,44 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
         addAndMakeVisible (b);
     }
     back.onClick = [this] { if (onBack) onBack(); };
-    immerse.setTooltip (U ("Nur das Bild, \xc3\xbc" "ber das ganze Fenster: keine Kn\xc3\xb6pfe, keine Schrift, keine Karte. Die Maus schaut sich um, "
+    immerse.setTooltip (rysum::tr("Nur das Bild, \xc3\xbc" "ber das ganze Fenster: keine Kn\xc3\xb6pfe, keine Schrift, keine Karte. Die Maus schaut sich um, "
                            "ohne dass eine Taste gehalten wird (der Zeiger ist versteckt). Esc oder I: zur\xc3\xbc" "ck."));
     immerse.onClick = [this] { toggleImmersive(); };
-    actShock.setTooltip (U ("Eine Druckwelle st\xc3\xb6\xc3\x9ft alle Pfeifen von dir weg (Taste E, mit Shift st\xc3\xa4rker)"));
+    actShock.setTooltip (rysum::tr("Eine Druckwelle st\xc3\xb6\xc3\x9ft alle Pfeifen von dir weg (Taste E, mit Shift st\xc3\xa4rker)"));
     actShock.onClick = [this] { shock (juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown() ? 1.7f : 1.0f); };
-    actGrab.setTooltip (U ("Gedr\xc3\xbc" "ckt halten: die Pfeife unter dem Kreuz greifen und tragen; loslassen: werfen (Taste Q)"));
-    actFreeze.setTooltip (U ("Gedr\xc3\xbc" "ckt halten: alles, was sich bewegt, steht still (Taste F)"));
-    actHome.setTooltip (U ("Alle Pfeifen fliegen an ihren Platz in der Orgel zur\xc3\xbc" "ck (Taste R)"));
+    actGrab.setTooltip (rysum::tr("Gedr\xc3\xbc" "ckt halten: die Pfeife unter dem Kreuz greifen und tragen; loslassen: werfen (Taste Q)"));
+    actFreeze.setTooltip (rysum::tr("Gedr\xc3\xbc" "ckt halten: alles, was sich bewegt, steht still (Taste F)"));
+    actHome.setTooltip (rysum::tr("Alle Pfeifen fliegen an ihren Platz in der Orgel zur\xc3\xbc" "ck (Taste R)"));
     actHome.onClick = [this] { callHome(); };
-    actClap.setTooltip (U ("In die H\xc3\xa4nde klatschen, wo du stehst (Taste C)"));
+    actClap.setTooltip (rysum::tr("In die H\xc3\xa4nde klatschen, wo du stehst (Taste C)"));
     actClap.onClick = [this] { clap(); };
-    actMat.setTooltip (U ("Das Material der Fl\xc3\xa4" "che unter dem Kreuz wechseln (Taste M)"));
+    actMat.setTooltip (rysum::tr("Das Material der Fl\xc3\xa4" "che unter dem Kreuz wechseln (Taste M)"));
     actMat.onClick = [this] { cycleMaterial(); };
-    actJump.setTooltip (U ("Springen (Leertaste)"));
+    actJump.setTooltip (rysum::tr("Springen (Leertaste)"));
     actLight.setClickingTogglesState (true);
     actLight.setToggleState (proc.walkDark, juce::dontSendNotification);
-    actLight.setTooltip (U ("Licht aus: nur die klingenden Pfeifen (und die Funken ihrer St\xc3\xb6\xc3\x9f" "e) erhellen den Raum (Taste L)"));
+    actLight.setTooltip (rysum::tr("Licht aus: nur die klingenden Pfeifen (und die Funken ihrer St\xc3\xb6\xc3\x9f" "e) erhellen den Raum (Taste L)"));
     actLight.onClick = [this] { setDark (actLight.getToggleState()); };
     actAudience.setClickingTogglesState (true);
-    actAudience.setTooltip (U ("Das Publikum spielt mit: ein QR-Code f\xc3\xbchrt die Handys im selben WLAN zu einer kleinen Seite. Jedes Handy bekommt "
+    actAudience.setTooltip (rysum::tr("Das Publikum spielt mit: ein QR-Code f\xc3\xbchrt die Handys im selben WLAN zu einer kleinen Seite. Jedes Handy bekommt "
                                "eine Pfeife in eigener Farbe: Tippen schl\xc3\xa4gt sie an, schnell Wischen schickt eine Druckwelle, Halten und Ziehen "
                                "bl\xc3\xa4st die Pfeifen wie Wind (nach oben = wohin der Blick geht). Nur Pfeifen, die frei im Saal sind, spielen mit; "
                                "beim Einschalten schweben alle gezogenen Register, die stillstehen. Wird nicht gespeichert."));
     actAudience.onClick = [this] { setAudience (actAudience.getToggleState()); };
-    controlsButton.setTooltip (U ("Wie sich Maus und Gehen anf\xc3\xbchlen (auf diesem Computer): Tempo des Schauens, Maus umgekehrt, Gehtempo. Tab gehalten: alle Tasten."));
+    controlsButton.setTooltip (rysum::tr("Wie sich Maus und Gehen anf\xc3\xbchlen (auf diesem Computer): Tempo des Schauens, Maus umgekehrt, Gehtempo. Tab gehalten: alle Tasten."));
     controlsButton.onClick = [this] { showControlsMenu(); };
-    back.setTooltip (U ("Zur\xc3\xbc" "ck zum Saal (Esc)"));
+    back.setTooltip (rysum::tr("Zur\xc3\xbc" "ck zum Saal (Esc)"));
     load.onClick = [this]
     {
         // the rooms that come with the plugin, or a file of one's own
         juce::PopupMenu m;
-        m.addSectionHeader (U ("R\xc3\xa4ume, die dabei sind"));
+        m.addSectionHeader (rysum::tr("R\xc3\xa4ume, die dabei sind"));
         const auto& rooms = builtInRooms();
         for (int i = 0; i < (int) rooms.size(); ++i)
             m.addItem (i + 1, juce::String::fromUTF8 (rooms[(size_t) i].name) + U ("  \xe2\x80\x93  ") + juce::String::fromUTF8 (rooms[(size_t) i].about),
                        true, builtInRoomIndex (proc.walkModelFile.getFileName()) == i && proc.getWalkMesh() != nullptr);
         m.addSeparator();
-        m.addItem (100, U ("Eigene Datei (OBJ) \xe2\x80\xa6"));
+        m.addItem (100, rysum::tr("Eigene Datei (OBJ) \xe2\x80\xa6"));
         juce::Component::SafePointer<WalkView> safe (static_cast<WalkView*> (this));
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&load), [safe] (int r)
         {
@@ -152,9 +152,9 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
             else safe->loadBuiltInRoom (r - 1);
         });
     };
-    load.setTooltip (U ("Ein 3D-Modell (OBJ, mit MTL-Farben) als Raum: zu sehen, zu begehen (seine W\xc3\xa4nde halten dich auf) und \xe2\x80\x93 mit \xe2\x80\x9eModell h\xc3\xb6rbar\xe2\x80\x9c \xe2\x80\x93 zu h\xc3\xb6ren. Der Quader des Saals liegt darunter."));
-    clear.onClick = [this] { proc.clearWalkModel(); status = U ("Modell entfernt"); statusUntil = juce::Time::getMillisecondCounterHiRes() + 2500; updateButtons(); repaint(); };
-    fit.setTooltip (U ("Der Saal bekommt die Ma\xc3\x9f" "e des Modells (rechteckig, Breite \xc3\x97 L\xc3\xa4nge \xc3\x97 H\xc3\xb6he)"));
+    load.setTooltip (rysum::tr("Ein 3D-Modell (OBJ, mit MTL-Farben) als Raum: zu sehen, zu begehen (seine W\xc3\xa4nde halten dich auf) und \xe2\x80\x93 mit \xe2\x80\x9eModell h\xc3\xb6rbar\xe2\x80\x9c \xe2\x80\x93 zu h\xc3\xb6ren. Der Quader des Saals liegt darunter."));
+    clear.onClick = [this] { proc.clearWalkModel(); status = rysum::tr("Modell entfernt"); statusUntil = juce::Time::getMillisecondCounterHiRes() + 2500; updateButtons(); repaint(); };
+    fit.setTooltip (rysum::tr("Der Saal bekommt die Ma\xc3\x9f" "e des Modells (rechteckig, Breite \xc3\x97 L\xc3\xa4nge \xc3\x97 H\xc3\xb6he)"));
     fit.onClick = [this]
     {
         auto m = proc.getWalkMesh();
@@ -163,12 +163,12 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
         statusUntil = juce::Time::getMillisecondCounterHiRes() + 3000;
     };
     zUp.setClickingTogglesState (true);
-    zUp.setTooltip (U ("Das Modell hat Z als Hochachse (sonst Y, wie meist bei OBJ)"));
+    zUp.setTooltip (rysum::tr("Das Modell hat Z als Hochachse (sonst Y, wie meist bei OBJ)"));
     zUp.onClick = [this] { if (proc.walkModelFile.existsAsFile()) { proc.walkZUp = zUp.getToggleState(); loadModel (proc.walkModelFile); } else proc.walkZUp = zUp.getToggleState(); };
-    home.setTooltip (U ("Zur\xc3\xbc" "ck an den H\xc3\xb6rerplatz des Saals, Blick nach vorn"));
+    home.setTooltip (rysum::tr("Zur\xc3\xbc" "ck an den H\xc3\xb6rerplatz des Saals, Blick nach vorn"));
     home.onClick = [this] { px = py = yaw = pitch = yawT = pitchT = vx = vy = vz = fz = turnV = 0.0f; onGround = true; pushPose(); repaint(); };
-    units.addItemList ({ "Meter", "Zentimeter", "Millimeter", "Zoll", U ("Fu\xc3\x9f") }, 1);
-    units.setTooltip (U ("Einheit des Modells"));
+    units.addItemList ({ "Meter", rysum::tr("Zentimeter"), rysum::tr("Millimeter"), rysum::tr("Zoll"), rysum::tr("Fu\xc3\x9f") }, 1);
+    units.setTooltip (rysum::tr("Einheit des Modells"));
     units.setWantsKeyboardFocus (false);
     units.onChange = [this]
     {
@@ -177,15 +177,15 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     };
     addAndMakeVisible (units);
     hear.setClickingTogglesState (true);
-    hear.setTooltip (U ("Das Modell ist auch zu h\xc3\xb6ren: Pfeifen hinter seinen W\xc3\xa4nden kommen um die Ecke, der Nachhall wird per "
+    hear.setTooltip (rysum::tr("Das Modell ist auch zu h\xc3\xb6ren: Pfeifen hinter seinen W\xc3\xa4nden kommen um die Ecke, der Nachhall wird per "
                         "Raytracing durch das Modell berechnet. Der Quader des Saals liegt darunter (fr\xc3\xbche Reflexionen, Gr\xc3\xb6\xc3\x9f" "e). "
                         "Aus: das Modell ist nur zu sehen."));
     hear.onClick = [this] { proc.setWalkHear (hear.getToggleState()); };
     // the player and the pipes ("Spieler": the pipes that are bodies in the Saal follow, flee or circle the walker)
     for (int i = 0; i < 5; ++i)
-        playerMode.addItem (juce::StringArray { U ("Pfeifen: ruhig"), U ("Pfeifen: ich ziehe an"), U ("Pfeifen: ich sto\xc3\x9f" "e ab"), U ("Pfeifen: umkreisen mich"), U ("Pfeifen: Sog") }[i], i + 1);
+        playerMode.addItem (juce::StringArray { U ("Pfeifen: ruhig"), rysum::tr("Pfeifen: ich ziehe an"), rysum::tr("Pfeifen: ich sto\xc3\x9f" "e ab"), rysum::tr("Pfeifen: umkreisen mich"), rysum::tr("Pfeifen: Sog") }[i], i + 1);
     playerMode.setWantsKeyboardFocus (false);
-    playerMode.setTooltip (U ("Wie du die Pfeifen bewegst, w\xc3\xa4hrend du gehst: wie eine Masse, zu der sie fallen (anziehen), vor der sie fliehen "
+    playerMode.setTooltip (rysum::tr("Wie du die Pfeifen bewegst, w\xc3\xa4hrend du gehst: wie eine Masse, zu der sie fallen (anziehen), vor der sie fliehen "
                               "(absto\xc3\x9f" "en), um die sie kreisen (Umlaufbahn) oder die sie im Vorbeigehen mitrei\xc3\x9ft (Sog). "
                               "Wirkt auf Register, deren Bewegung (Raum-Seite) im Saal stattfindet: Flug, Fall, Schwarm, Str\xc3\xb6mung - und "
                               "Schweben, das nur auf dich reagiert."));
@@ -195,24 +195,24 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     playerForce.setSliderStyle (juce::Slider::LinearBar);
     playerForce.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
     playerForce.setWantsKeyboardFocus (false);
-    playerForce.setTooltip (U ("Kraft, mit der du die Pfeifen bewegst"));
+    playerForce.setTooltip (rysum::tr("Kraft, mit der du die Pfeifen bewegst"));
     playerForceAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "lvPlayerForce", playerForce);
     addAndMakeVisible (playerForce);
     {
         const char* ids[] { "lvSelfPlay", "lvGrow", "lvWhisper", "lvTimeDepth", "lvRoomHear", "lvWallPull" };
-        const juce::String names[] { "Selbstspiel", "Wachsen & Brechen", U ("Fl\xc3\xbcstern"), "Zeit als Entfernung", U ("H\xc3\xb6rraum"), U ("Wandn\xc3\xa4he") };
+        const juce::String names[] { "Selbstspiel", rysum::tr("Wachsen & Brechen"), rysum::tr("Fl\xc3\xbcstern"), rysum::tr("Zeit als Entfernung"), rysum::tr("H\xc3\xb6rraum"), rysum::tr("Wandn\xc3\xa4he") };
         const juce::String tips[] {
             U ("Der Raum spielt sich selbst: jede Pfeife, die gegen eine Wand, den Boden oder die Decke st\xc3\xb6\xc3\x9ft, klingt mit ihrem eigenen Ton \xe2\x80\x93 "
                "je h\xc3\xa4rter der Sto\xc3\x9f, desto l\xc3\xa4nger. Braucht Register, deren Bewegung im Saal stattfindet (Flug, Fall, Schwarm, Str\xc3\xb6mung)."),
-            U ("Pfeifen, die nicht klingen, wachsen langsam und werden tiefer (bis zur doppelten L\xc3\xa4nge, eine Oktave). Ein harter Sto\xc3\x9f bricht eine Pfeife "
+            rysum::tr("Pfeifen, die nicht klingen, wachsen langsam und werden tiefer (bis zur doppelten L\xc3\xa4nge, eine Oktave). Ein harter Sto\xc3\x9f bricht eine Pfeife "
                "entzwei: halb so lang, eine Oktave h\xc3\xb6her. Mehr = schnelleres Wachsen, leichteres Brechen. Aus: jede Pfeife findet zur\xc3\xbc" "ck; R heilt alle sofort."),
-            U ("Eine Pfeife ganz nah am Kopf (unter 1,4 m) ist auch direkt im Ohr zu h\xc3\xb6ren: das nahe Ohr viel lauter, das ferne sp\xc3\xa4ter und dumpfer, der Klang w\xc3\xa4rmer. "
+            rysum::tr("Eine Pfeife ganz nah am Kopf (unter 1,4 m) ist auch direkt im Ohr zu h\xc3\xb6ren: das nahe Ohr viel lauter, das ferne sp\xc3\xa4ter und dumpfer, der Klang w\xc3\xa4rmer. "
                "Pfeife greifen (Q) und mit dem Mausrad heranholen. Nur \xc3\xbc" "ber Kopfh\xc3\xb6rer (binaural) und Stereo."),
-            U ("Das vordere Ende des Saals spielt die Vergangenheit: am gewohnten Platz h\xc3\xb6rst du die Gegenwart, an der Stirnwand das, was vor so vielen Sekunden "
+            rysum::tr("Das vordere Ende des Saals spielt die Vergangenheit: am gewohnten Platz h\xc3\xb6rst du die Gegenwart, an der Stirnwand das, was vor so vielen Sekunden "
                "erklang. Schnell nach vorn gehen: die Zeit l\xc3\xa4uft r\xc3\xbc" "ckw\xc3\xa4rts; zur\xc3\xbc" "ckgehen: sie holt auf."),
-            U ("Der Nachhall geh\xc3\xb6rt zu einem Raum anderer Gr\xc3\xb6\xc3\x9f" "e als der, den du siehst und begehst: eine Kapelle sehen, eine Kathedrale h\xc3\xb6ren (oder umgekehrt). "
+            rysum::tr("Der Nachhall geh\xc3\xb6rt zu einem Raum anderer Gr\xc3\xb6\xc3\x9f" "e als der, den du siehst und begehst: eine Kapelle sehen, eine Kathedrale h\xc3\xb6ren (oder umgekehrt). "
                "Braucht \xe2\x80\x9eSaal an\xe2\x80\x9c."),
-            U ("Je n\xc3\xa4her du einer Wand kommst (ab 3 m), desto gr\xc3\xb6\xc3\x9f" "er und lauter wird der Nachhall \xe2\x80\x93 als \xc3\xb6" "ffne sich hinter der Wand ein weiterer Raum. Braucht \xe2\x80\x9eSaal an\xe2\x80\x9c.") };
+            rysum::tr("Je n\xc3\xa4her du einer Wand kommst (ab 3 m), desto gr\xc3\xb6\xc3\x9f" "er und lauter wird der Nachhall \xe2\x80\x93 als \xc3\xb6" "ffne sich hinter der Wand ein weiterer Raum. Braucht \xe2\x80\x9eSaal an\xe2\x80\x9c.") };
         for (int i = 0; i < 6; ++i)
         {
             illusions[(size_t) i] = std::make_unique<ParamRow> (proc.apvts, ids[i], names[i], true);
@@ -623,7 +623,7 @@ void WalkView::updateGpu()
     if (! gpu->isReady() && ++gpuWaiting > 240)
     {
         // no context after four seconds (no OpenGL 3.2 here)
-        gpuNote = "kein OpenGL 3.2";
+        gpuNote = rysum::tr("kein OpenGL 3.2");
         gpuGaveUp = true;
         gpu.reset();
     }
@@ -631,8 +631,8 @@ void WalkView::updateGpu()
 
 juce::String WalkView::pictureInfo() const
 {
-    if (gpuOn()) return "Grafikkarte (" + gpu->cardName() + "), " + juce::String (gpu->framesPerSecond(), 1) + " Bilder/s";
-    return "Prozessor" + (gpuNote.isNotEmpty() ? " (Grafikkarte: " + gpuNote + ")" : juce::String());
+    if (gpuOn()) return rysum::tr("Grafikkarte (") + gpu->cardName() + "), " + juce::String (gpu->framesPerSecond(), 1) + rysum::tr(" Bilder/s");
+    return rysum::tr("Prozessor") + (gpuNote.isNotEmpty() ? rysum::tr(" (Grafikkarte: ") + gpuNote + ")" : juce::String());
 }
 
 bool WalkView::isSpectator() const noexcept
@@ -705,7 +705,7 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
     }
     if (k == juce::KeyPress::escapeKey)
     {
-        if (selectedCount() > 0) { clearSelection(); say (U ("Auswahl leer")); return true; }
+        if (selectedCount() > 0) { clearSelection(); say (rysum::tr("Auswahl leer")); return true; }
         if (immersive) setImmersive (false);
         else if (onBack) onBack();
         return true;
@@ -761,7 +761,7 @@ void WalkView::setDark (bool on)
 {
     proc.walkDark = on;
     actLight.setToggleState (on, juce::dontSendNotification);
-    status = on ? U ("Licht aus: die Pfeifen leuchten") : U ("Licht an");
+    status = on ? rysum::tr("Licht aus: die Pfeifen leuchten") : rysum::tr("Licht an");
     statusUntil = juce::Time::getMillisecondCounterHiRes() + 2000;
     repaint();
 }
@@ -968,7 +968,7 @@ void WalkView::mouseUp (const juce::MouseEvent& e)
                 if (! isSelected (st, ky)) ++added;
                 sel[(size_t) st] |= (uint64_t) 1 << ky;
             }
-        say (juce::String (added) + U (" Pfeifen dazu, ") + juce::String (selectedCount()) + U (" gew\xc3\xa4hlt  \xc2\xb7  1 bis 5: aufstellen, rechte Maustaste: Magnet, Esc: Auswahl leeren"), 3500.0);
+        say (juce::String (added) + rysum::tr(" Pfeifen dazu, ") + juce::String (selectedCount()) + rysum::tr(" gew\xc3\xa4hlt  \xc2\xb7  1 bis 5: aufstellen, rechte Maustaste: Magnet, Esc: Auswahl leeren"), 3500.0);
         repaint();
         return;
     }
@@ -1056,19 +1056,19 @@ bool WalkView::makeHover (int stop, bool tell)
         if (m == (int) Motion::Static && handsMay (2))
         {
             proc.concert.requestHover (stop);
-            if (tell) say (U ("Register ") + juce::String (stop + 1) + U (" schwebt gleich \xe2\x80\x93 dann noch einmal greifen"), 3000.0);
+            if (tell) say (rysum::tr("Register ") + juce::String (stop + 1) + rysum::tr(" schwebt gleich \xe2\x80\x93 dann noch einmal greifen"), 3000.0);
         }
         return false;
     }
     if (m != (int) Motion::Static)
     {
-        if (tell) say (U ("Dieses Register bewegt sich anders (") + motionNames()[m] + U ("): zum Greifen die Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c w\xc3\xa4hlen (Raum-Seite)"), 4000.0);
+        if (tell) say (rysum::tr("Dieses Register bewegt sich anders (") + rysum::tr(motionNames()[m]) + rysum::tr("): zum Greifen die Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c w\xc3\xa4hlen (Raum-Seite)"), 4000.0);
         return false;
     }
     if (auto* prm = proc.apvts.getParameter (RysumProcessor::motionParamId (stop)))
     {
         prm->setValueNotifyingHost (prm->convertTo0to1 ((float) (int) Motion::Hover));
-        if (tell) say (U ("Register ") + juce::String (stop + 1) + U (": Bewegung jetzt \xe2\x80\x9eSchweben\xe2\x80\x9c"));
+        if (tell) say (rysum::tr("Register ") + juce::String (stop + 1) + rysum::tr(": Bewegung jetzt \xe2\x80\x9eSchweben\xe2\x80\x9c"));
         return true;
     }
     return false;
@@ -1094,12 +1094,12 @@ void WalkView::shock (float strength)
     if (woken > 0)
     {
         shockAt = now + 90.0;                            // (once their pipes are bodies: a few blocks from now)
-        say (juce::String (woken) + U (" Register schweben jetzt (Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c) \xe2\x80\x93 die Druckwelle treibt sie fort, sie kehren zur\xc3\xbc" "ck"), 4000.0);
+        say (juce::String (woken) + rysum::tr(" Register schweben jetzt (Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c) \xe2\x80\x93 die Druckwelle treibt sie fort, sie kehren zur\xc3\xbc" "ck"), 4000.0);
     }
     else
     {
         proc.engine.playerAct (OrganEngine::Act::Shock, -1, -1, {}, strength);
-        if (bodies == 0) say (U ("Druckwelle: kein Register, dessen Pfeifen frei im Saal sind (Bewegung Schweben, Flug, Fall, Schwarm, Str\xc3\xb6mung)"), 4000.0);
+        if (bodies == 0) say (rysum::tr("Druckwelle: kein Register, dessen Pfeifen frei im Saal sind (Bewegung Schweben, Flug, Fall, Schwarm, Str\xc3\xb6mung)"), 4000.0);
     }
 }
 
@@ -1108,7 +1108,7 @@ void WalkView::callHome()
     pushUndo();
     proc.engine.playerAct (OrganEngine::Act::Home);
     proc.engine.pipeLenReset = true;      // (and every broken or grown pipe is whole again)
-    say (U ("Alle Pfeifen fliegen an ihren Platz zur\xc3\xbc" "ck"));
+    say (rysum::tr("Alle Pfeifen fliegen an ihren Platz zur\xc3\xbc" "ck"));
 }
 
 void WalkView::resetView()
@@ -1125,7 +1125,7 @@ void WalkView::resetView()
     proc.engine.playerAct (OrganEngine::Act::Home);
     proc.engine.pipeLenReset = true;
     updateButtons();
-    say (U ("Alles zur\xc3\xbc" "ckgesetzt"));
+    say (rysum::tr("Alles zur\xc3\xbc" "ckgesetzt"));
     repaint();
 }
 
@@ -1153,7 +1153,7 @@ void WalkView::setGrab (bool on, bool fast)
     if (on)
     {
         if (heldStop >= 0) return;
-        if (aimStop < 0) { say (U ("Keine Pfeife im Blick (das Kreuz auf eine Pfeife richten, h\xc3\xb6" "chstens 9 m entfernt)")); return; }
+        if (aimStop < 0) { say (rysum::tr("Keine Pfeife im Blick (das Kreuz auf eine Pfeife richten, h\xc3\xb6" "chstens 9 m entfernt)")); return; }
         if (! makeHover (aimStop, true)) return;
         heldStop = aimStop; heldKey = aimKey;
         const V3 eye = eyeNow();
@@ -1186,7 +1186,7 @@ void WalkView::updateActions (bool qDown, bool fDown)
     auto& en = proc.engine;
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (fDown != frozen) setFreeze (fDown);
-    if (frozen) say (U ("Angehalten \xe2\x80\x93 solange F gehalten wird"), 250.0);
+    if (frozen) say (rysum::tr("Angehalten \xe2\x80\x93 solange F gehalten wird"), 250.0);
     if (qDown != qWas)
     {
         qWas = qDown;
@@ -1212,8 +1212,8 @@ void WalkView::updateActions (bool qDown, bool fDown)
         whirlAgain = 0.0;
         en.playerAct (OrganEngine::Act::Whirl, -1, -1, { whirlPoint.x, whirlPoint.y, whirlPoint.z }, whirlStrength);
     }
-    if (paused) say (U ("Pause \xe2\x80\x93 P: weiter"), 250.0);
-    else if (slow) say (U ("Zeitlupe \xe2\x80\x93 solange Z gehalten wird"), 250.0);
+    if (paused) say (rysum::tr("Pause \xe2\x80\x93 P: weiter"), 250.0);
+    else if (slow) say (rysum::tr("Zeitlupe \xe2\x80\x93 solange Z gehalten wird"), 250.0);
     if (magnet != 0)
     {
         const V3 p = eyeNow() + lookDir() * magnetDist;
@@ -1248,7 +1248,7 @@ void WalkView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDe
             auto cs = controls();
             cs.walk = juce::jlimit (0.4f, 8.0f, cs.walk * std::exp (dw * 0.8f));
             setControls (cs);
-            say (U ("Gehtempo \xc3\x97 ") + juce::String (cs.walk, 2));
+            say (rysum::tr("Gehtempo \xc3\x97 ") + juce::String (cs.walk, 2));
             return;
         }
     }
@@ -1263,7 +1263,7 @@ void WalkView::loadBuiltInRoom (int index)
     const auto f = writeBuiltInRoom (index, RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("Modelle"));
     if (! f.existsAsFile())
     {
-        status = U ("Konnte das Modell nicht schreiben: ") + f.getFullPathName();
+        status = rysum::tr("Konnte das Modell nicht schreiben: ") + f.getFullPathName();
         statusUntil = juce::Time::getMillisecondCounterHiRes() + 5000;
         repaint();
         return;
@@ -1290,7 +1290,7 @@ void WalkView::loadBuiltInRoom (int index)
 
 void WalkView::chooseModel()
 {
-    chooser = std::make_unique<juce::FileChooser> (U ("Raummodell (OBJ)"), proc.walkModelFile.existsAsFile() ? proc.walkModelFile.getParentDirectory() : juce::File(), "*.obj");
+    chooser = std::make_unique<juce::FileChooser> (rysum::tr("Raummodell (OBJ)"), proc.walkModelFile.existsAsFile() ? proc.walkModelFile.getParentDirectory() : juce::File(), "*.obj");
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
     {
         const auto f = fc.getResult();
@@ -1305,15 +1305,15 @@ void WalkView::loadModel (const juce::File& f)
     auto m = proc.getWalkMesh();
     if (err.isNotEmpty()) status = err;
     else if (m != nullptr)
-        status = m->name + ": " + juce::String ((int) m->tris.size()) + U (" Dreiecke, ") + juce::String (m->size.x, 1) + U (" \xc3\x97 ")
+        status = m->name + ": " + juce::String ((int) m->tris.size()) + rysum::tr(" Dreiecke, ") + juce::String (m->size.x, 1) + U (" \xc3\x97 ")
                + juce::String (m->size.y, 1) + U (" \xc3\x97 ") + juce::String (m->size.z, 1) + " m" + (m->message.isNotEmpty() ? " - " + m->message : juce::String());
     if (m != nullptr && err.isEmpty())
     {
         // the Saal's shoebox lies underneath (early reflections, the outer limit): say so when the sizes differ
         const auto r = roomNow();
         if (std::abs (m->size.x - r.W()) > 1.0f || std::abs (m->size.y - r.L()) > 1.0f || std::abs (m->size.z - r.H()) > 1.0f)
-            status << U ("  \xc2\xb7  der Saal ist ") << juce::String (r.W(), 1) << U (" \xc3\x97 ") << juce::String (r.L(), 1) << U (" \xc3\x97 ")
-                   << juce::String (r.H(), 1) << U (" m: \xe2\x80\x9eMa\xc3\x9f" "e \xc3\xbc" "bernehmen\xe2\x80\x9c passt ihn an");
+            status << rysum::tr("  \xc2\xb7  der Saal ist ") << juce::String (r.W(), 1) << U (" \xc3\x97 ") << juce::String (r.L(), 1) << U (" \xc3\x97 ")
+                   << juce::String (r.H(), 1) << rysum::tr(" m: \xe2\x80\x9eMa\xc3\x9f" "e \xc3\xbc" "bernehmen\xe2\x80\x9c passt ihn an");
     }
     statusUntil = juce::Time::getMillisecondCounterHiRes() + 5000;
     updateButtons();
@@ -1451,12 +1451,12 @@ int WalkView::surfaceAhead (const RoomParams& r, V3 eye) const
 juce::String WalkView::surfaceName (const RoomParams& r, int surf) const
 {
     juce::String n;
-    if (surf == kSurfFloor) n = "Boden";
-    else if (surf == kSurfCeiling) n = "Decke";
-    else if (r.box() || r.plan.n < 3) n = juce::StringArray { U ("R\xc3\xbc" "ckwand"), "rechte Wand", "Vorderwand", "linke Wand" }[juce::jlimit (0, 3, surf - kSurfWall0)];
-    else n = "Wand " + juce::String (surf - kSurfWall0 + 1);
+    if (surf == kSurfFloor) n = rysum::tr("Boden");
+    else if (surf == kSurfCeiling) n = rysum::tr("Decke");
+    else if (r.box() || r.plan.n < 3) n = juce::StringArray { U ("R\xc3\xbc" "ckwand"), rysum::tr("rechte Wand"), rysum::tr("Vorderwand"), rysum::tr("linke Wand") }[juce::jlimit (0, 3, surf - kSurfWall0)];
+    else n = rysum::tr("Wand ") + juce::String (surf - kSurfWall0 + 1);
     const int m = r.plan.surf[(size_t) juce::jlimit (0, kMaxSurf - 1, surf)];
-    return n + ": " + (m < 0 ? juce::String ("wie Regler") : juce::String (surfMaterial (m).name));
+    return n + ": " + (m < 0 ? rysum::tr("wie Regler") : juce::String (surfMaterial (m).name));
 }
 
 /** M: the surface under the cross gets the next material (after the last: as the sliders say again) */
@@ -1464,7 +1464,7 @@ void WalkView::cycleMaterial()
 {
     if (aimSurf < 0)
     {
-        status = proc.getWalkMesh() != nullptr ? U ("Material: nur f\xc3\xbcr die Fl\xc3\xa4" "chen des Saals (ohne Modell)") : U ("Keine Fl\xc3\xa4" "che im Blick");
+        status = proc.getWalkMesh() != nullptr ? rysum::tr("Material: nur f\xc3\xbcr die Fl\xc3\xa4" "chen des Saals (ohne Modell)") : rysum::tr("Keine Fl\xc3\xa4" "che im Blick");
         statusUntil = juce::Time::getMillisecondCounterHiRes() + 2500;
         return;
     }
@@ -2266,27 +2266,27 @@ void WalkView::drawOver (juce::Graphics& g)
     }
     g.setFont (A.monoFont (11.0f));
     g.setColour (col::mute);
-    const auto info = U ("Begehen \xc2\xb7 ") + (mesh != nullptr ? mesh->name : U ("Saal ") + juce::String (r.W(), 1) + U (" \xc3\x97 ") + juce::String (r.L(), 1) + U (" \xc3\x97 ") + juce::String (r.H(), 1) + " m")
-                    + U ("   \xc2\xb7   Platz ") + juce::String (eye.x, 1) + " / " + juce::String (eye.y, 1) + U (" m   Blick ") + juce::String (juce::roundToInt (-yaw)) + U ("\xc2\xb0")
-                    + U ("   \xc2\xb7   W\xc3\xa4nde: ") + materialName (wallLook)
-                    + (proc.engine.hiddenNow.load() > 0 ? U ("   \xc2\xb7   ") + juce::String (proc.engine.hiddenNow.load()) + U (" Pfeifen um die Ecke geh\xc3\xb6rt") : juce::String())
-                    + (aimSurf >= 0 && ! isSpectator() ? U ("   \xc2\xb7   ") + surfaceName (r, aimSurf) + U ("  [M: Material]") : juce::String());
-    g.drawText (info + (proc.timeBackNow.load() > 0.05f ? U ("   \xc2\xb7   du h\xc3\xb6rst, was vor ") + juce::String (proc.timeBackNow.load(), 1) + U (" s erklang") : juce::String())
-                     + (proc.engine.breakCount.load() > 0 ? U ("   \xc2\xb7   ") + juce::String ((int) proc.engine.breakCount.load()) + U (" Pfeifen gebrochen") : juce::String()),
+    const auto info = rysum::tr("Begehen \xc2\xb7 ") + (mesh != nullptr ? mesh->name : U ("Saal ") + juce::String (r.W(), 1) + U (" \xc3\x97 ") + juce::String (r.L(), 1) + U (" \xc3\x97 ") + juce::String (r.H(), 1) + " m")
+                    + rysum::tr("   \xc2\xb7   Platz ") + juce::String (eye.x, 1) + " / " + juce::String (eye.y, 1) + rysum::tr(" m   Blick ") + juce::String (juce::roundToInt (-yaw)) + U ("\xc2\xb0")
+                    + rysum::tr("   \xc2\xb7   W\xc3\xa4nde: ") + rysum::tr (materialName (wallLook))
+                    + (proc.engine.hiddenNow.load() > 0 ? U ("   \xc2\xb7   ") + juce::String (proc.engine.hiddenNow.load()) + rysum::tr(" Pfeifen um die Ecke geh\xc3\xb6rt") : juce::String())
+                    + (aimSurf >= 0 && ! isSpectator() ? U ("   \xc2\xb7   ") + rysum::trText (surfaceName (r, aimSurf)) + rysum::tr("  [M: Material]") : juce::String());
+    g.drawText (info + (proc.timeBackNow.load() > 0.05f ? rysum::tr("   \xc2\xb7   du h\xc3\xb6rst, was vor ") + juce::String (proc.timeBackNow.load(), 1) + rysum::tr(" s erklang") : juce::String())
+                     + (proc.engine.breakCount.load() > 0 ? U ("   \xc2\xb7   ") + juce::String ((int) proc.engine.breakCount.load()) + rysum::tr(" Pfeifen gebrochen") : juce::String()),
                 area.reduced (18, 0).withTrimmedTop (84).removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (col::faint);
     if (isSpectator())
-        g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  "
+        g.drawText (rysum::tr("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  "
                        "I immersiv  \xc2\xb7  L Licht  \xc2\xb7  H Ohren hierlassen")
-                       + (handsMay (2) ? U ("  \xc2\xb7  E Druckwelle  \xc2\xb7  C klatschen  \xc2\xb7  Klick: anklopfen  \xc2\xb7  Q tragen und werfen  \xc2\xb7  R zur\xc3\xbc" "ckrufen  \xc2\xb7  T Wirbel")
-                          : handsMay (1) ? U ("  \xc2\xb7  E Druckwelle  \xc2\xb7  C klatschen  \xc2\xb7  Klick: anklopfen")
-                                         : U ("   \xe2\x80\x94   du h\xc3\xb6rst zu: gespielt wird beim Spieler")),
+                       + (handsMay (2) ? rysum::tr("  \xc2\xb7  E Druckwelle  \xc2\xb7  C klatschen  \xc2\xb7  Klick: anklopfen  \xc2\xb7  Q tragen und werfen  \xc2\xb7  R zur\xc3\xbc" "ckrufen  \xc2\xb7  T Wirbel")
+                          : handsMay (1) ? rysum::tr("  \xc2\xb7  E Druckwelle  \xc2\xb7  C klatschen  \xc2\xb7  Klick: anklopfen")
+                                         : rysum::tr("   \xe2\x80\x94   du h\xc3\xb6rst zu: gespielt wird beim Spieler")),
                     area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
     else
-        g.drawText (U ("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Tab: alle Tasten  \xc2\xb7  Esc zur\xc3\xbc" "ck"
+        g.drawText (rysum::tr("W A S D gehen  \xc2\xb7  Leertaste springen  \xc2\xb7  Maus ziehen: schauen  \xc2\xb7  \xe2\x86\x90 \xe2\x86\x92 drehen  \xc2\xb7  Shift schneller  \xc2\xb7  M: Material der Fl\xc3\xa4" "che  \xc2\xb7  Rad: Blickwinkel  \xc2\xb7  Tab: alle Tasten  \xc2\xb7  Esc zur\xc3\xbc" "ck"
                       "   \xe2\x80\x94   gespielt wird hier \xc3\xbc" "ber MIDI oder \xe2\x80\x9eHalten\xe2\x80\x9c"),
                     area.reduced (18, 0).removeFromBottom (24), juce::Justification::centredLeft);
-    g.drawText (U ("Tab: alle Tasten  \xc2\xb7  G: Bild ") + (gpuOn() ? juce::String ("Grafikkarte") : (gpuWanted() && gpuNote.isNotEmpty() ? "Prozessor (" + gpuNote + ")" : juce::String ("Prozessor"))), handsArea.withTrimmedLeft (8), juce::Justification::centredLeft);
+    g.drawText (rysum::tr("Tab: alle Tasten  \xc2\xb7  G: Bild ") + (gpuOn() ? rysum::tr("Grafikkarte") : (gpuWanted() && gpuNote.isNotEmpty() ? rysum::tr("Prozessor (") + gpuNote + ")" : rysum::tr("Prozessor"))), handsArea.withTrimmedLeft (8), juce::Justification::centredLeft);
     {
         // the player moves pipes, but no stop has pipes that can be moved: say how
         bool anyBodies = false;
@@ -2294,20 +2294,20 @@ void WalkView::drawOver (juce::Graphics& g)
         if (params.live.playerMode > 0 && ! anyBodies && juce::Time::getMillisecondCounterHiRes() >= statusUntil)
         {
             g.setColour (col::rubric.brighter (0.2f));
-            g.drawText (U ("Die Pfeifen reagieren auf dich, wenn die Bewegung eines Registers (Raum-Seite) im Saal stattfindet: Schweben, Flug, Fall, Schwarm oder Str\xc3\xb6mung."),
+            g.drawText (rysum::tr("Die Pfeifen reagieren auf dich, wenn die Bewegung eines Registers (Raum-Seite) im Saal stattfindet: Schweben, Flug, Fall, Schwarm oder Str\xc3\xb6mung."),
                         area.reduced (18, 0).withTrimmedTop (102).removeFromTop (16), juce::Justification::centredLeft);
         }
     }
     if (! proc.isBinaural())
     {
         g.setColour (col::rubric.brighter (0.2f));
-        g.drawText (U ("Die Kopfdrehung ist nur bei Kopfh\xc3\xb6rer-Ausgabe (binaural) zu h\xc3\xb6ren; Gehen \xc3\xbc" "berall."),
+        g.drawText (rysum::tr("Die Kopfdrehung ist nur bei Kopfh\xc3\xb6rer-Ausgabe (binaural) zu h\xc3\xb6ren; Gehen \xc3\xbc" "berall."),
                     area.reduced (18, 0).withTrimmedBottom (52).removeFromBottom (16), juce::Justification::centredLeft);
     }
     if (juce::Time::getMillisecondCounterHiRes() < statusUntil && status.isNotEmpty())
     {
         g.setColour (col::ink);
-        g.drawText (status, area.reduced (18, 0).withTrimmedTop (102).removeFromTop (16), juce::Justification::centredLeft);
+        g.drawText (rysum::trText (status), area.reduced (18, 0).withTrimmedTop (102).removeFromTop (16), juce::Justification::centredLeft);
     }
 
     // Konzert: a name over everyone else in the Saal
@@ -2410,7 +2410,7 @@ void WalkView::setAudience (bool on)
     {
         proc.setAudience (false);
         actAudience.setToggleState (false, juce::dontSendNotification);
-        say (U ("Publikum aus: die Seite f\xc3\xbcr die Handys ist geschlossen"));
+        say (rysum::tr("Publikum aus: die Seite f\xc3\xbcr die Handys ist geschlossen"));
         return;
     }
     // (the phones knock and blow pipes that are bodies in the Saal: the pulled stops that stand still start
@@ -2421,9 +2421,9 @@ void WalkView::setAudience (bool on)
         if (params.stopOn[(size_t) s] && ! isRoomMotion (params.motionMode[(size_t) s]) && makeHover (s, false)) ++woken;
     const bool ok = proc.setAudience (true, audienceLoopback);
     actAudience.setToggleState (ok, juce::dontSendNotification);
-    if (! ok) { say (U ("Publikum: kein freier Port (8787 bis 8796) \xe2\x80\x93 l\xc3\xa4uft Rysum schon mehrmals?"), 5000.0); return; }
-    say (U ("Publikum an: ") + proc.getAudience()->url() + (woken > 0 ? U ("  \xc2\xb7  ") + juce::String (woken) + U (" Register schweben jetzt") : juce::String())
-         + U ("  \xc2\xb7  Windows fragt beim ersten Mal, ob Rysum ins Netz darf"), 6000.0);
+    if (! ok) { say (rysum::tr("Publikum: kein freier Port (8787 bis 8796) \xe2\x80\x93 l\xc3\xa4uft Rysum schon mehrmals?"), 5000.0); return; }
+    say (rysum::tr("Publikum an: ") + proc.getAudience()->url() + (woken > 0 ? U ("  \xc2\xb7  ") + juce::String (woken) + rysum::tr(" Register schweben jetzt") : juce::String())
+         + rysum::tr("  \xc2\xb7  Windows fragt beim ersten Mal, ob Rysum ins Netz darf"), 6000.0);
 }
 
 void WalkView::drawAudience (juce::Graphics& g, juce::Rectangle<int> area)
@@ -2472,12 +2472,12 @@ void WalkView::drawAudience (juce::Graphics& g, juce::Rectangle<int> area)
             if (q.at (x, y)) g.fillRect (box.getX() + (x + 4) * mod, box.getY() + (y + 4) * mod, mod, mod);
     g.setFont (A.monoFont (10.0f));
     g.drawText (au->url().fromFirstOccurrenceOf ("//", false, false).trimCharactersAtEnd ("/"), box.getX(), box.getBottom() - 4, side, 16, juce::Justification::centred);
-    g.drawText (phones == 0 ? U ("Handy: QR-Code scannen") : juce::String (phones) + (phones == 1 ? U (" Handy spielt mit") : U (" Handys spielen mit")),
+    g.drawText (phones == 0 ? rysum::tr("Handy: QR-Code scannen") : juce::String (phones) + (phones == 1 ? rysum::tr(" Handy spielt mit") : rysum::tr(" Handys spielen mit")),
                 box.getX(), box.getBottom() + 12, side, 16, juce::Justification::centred);
     if (hint)
     {
         g.setColour (juce::Colour (0xffa03010));
-        g.drawFittedText (U ("Handy l\xc3\xa4" "dt nicht? Windows-Firewall:\nRysum im privaten Netz zulassen"), box.getX() + 2, box.getBottom() + 28, side - 4, 28, juce::Justification::centred, 2, 0.7f);
+        g.drawFittedText (rysum::tr("Handy l\xc3\xa4" "dt nicht? Windows-Firewall:\nRysum im privaten Netz zulassen"), box.getX() + 2, box.getBottom() + 28, side - 4, 28, juce::Justification::centred, 2, 0.7f);
     }
 }
 } // namespace rysum::ui

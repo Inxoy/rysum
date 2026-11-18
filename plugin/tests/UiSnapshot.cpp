@@ -2751,7 +2751,7 @@ public:
                 if (!c->isVisible())
                     return nullptr;
                 if (auto *b = dynamic_cast<juce::TextButton *>(c))
-                    if (b->getButtonText() == t)
+                    if (b->getButtonText() == t || b->getButtonText() == rysum::tr(t))
                         return b;
                 for (auto *ch : c->getChildren())
                     if (auto *f = findButton(ch, t))
@@ -2888,7 +2888,7 @@ public:
                 if (!c->isVisible())
                     return nullptr;
                 if (auto *b = dynamic_cast<juce::TextButton *>(c))
-                    if (b->getButtonText() == t)
+                    if (b->getButtonText() == t || b->getButtonText() == rysum::tr(t))
                         return b;
                 for (auto *ch : c->getChildren())
                     if (auto *f = fb(ch, t))
@@ -3305,7 +3305,7 @@ public:
                     const auto hintPoint = tl->hintText();
                     tl->mouseMove(ev({60.0f, (float)tl->laneRect(li).getCentreY() - 10.0f}, {}, 1, false, {}));
                     const auto hintHeader = tl->hintText();
-                    const bool hints = hintPoint.contains("Punkt") && hintHeader.contains("Spurkopf");
+                    const bool hints = hintPoint.contains(rysum::tr("Punkt: ziehen verschiebt")) && hintHeader.contains(rysum::tr("Spurkopf: klicken w\xc3\xa4hlt die Spur (ihre Einstellungen unten links)"));
                     // markers and the repeated section, in the band over the ruler
                     {
                         const float by = (float)TL::kMarkH * 0.5f;
@@ -3527,7 +3527,7 @@ public:
                     if (!c->isVisible())
                         return nullptr;
                     if (auto *b = dynamic_cast<juce::TextButton *>(c))
-                        if (b->getButtonText() == t)
+                        if (b->getButtonText() == t || b->getButtonText() == rysum::tr(t))
                             return b;
                     for (auto *ch : c->getChildren())
                         if (auto *f = fb(ch, t))
@@ -4570,7 +4570,7 @@ public:
                     if (auto* c = dynamic_cast<RysumContent*> (content)) c->showView (4);
                     std::function<juce::TextButton* (juce::Component*)> liveTab = [&] (juce::Component* c) -> juce::TextButton*
                     {
-                        if (auto* b = dynamic_cast<juce::TextButton*> (c)) if (b->getButtonText() == "Lebendige Orgel") return b;
+                        if (auto* b = dynamic_cast<juce::TextButton*> (c)) if (b->getButtonText() == "Lebendige Orgel" || b->getButtonText() == rysum::tr("Lebendige Orgel")) return b;
                         for (auto* ch : c->getChildren()) if (auto* f = liveTab (ch)) return f;
                         return nullptr;
                     };
@@ -4727,6 +4727,38 @@ public:
             std::cout << "full screen: " << screen.toString() << ", moved " << moved
                       << ", back with Esc " << back << ((moved && back) ? "  ok" : "  FAIL")
                       << std::endl;
+        }
+
+        // the language switch (EN / DE in the header): the interface is made anew, in the other
+        // language, on the same page; and back (RYSUM_LANG is set for this run: nothing is saved)
+        {
+            auto *c = dynamic_cast<RysumContent *>(editor->getChildComponent(0));
+            const bool wasGerman = rysum::german();
+            if (c != nullptr)
+                c->showView(3);
+            auto *b = c != nullptr ? rysum::ui::findButton(*c, "@sprache") : nullptr;
+            bool ok = b != nullptr;
+            for (int round = 0; round < 2 && ok; ++round)
+            {
+                juce::Component::SafePointer<juce::Component> before(editor->getChildComponent(0));
+                b->triggerClick();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+                auto *after = dynamic_cast<RysumContent *>(editor->getChildComponent(0));
+                content = after; // (shoot() paints the content on screen)
+                ok = after != nullptr && before == nullptr && after->currentView() == 3 &&
+                     after->isVisible() && rysum::german() == (round == 0 ? !wasGerman : wasGerman);
+                if (!ok)
+                    std::cout << "  (round " << round << ": new " << (before == nullptr)
+                              << ", view " << (after != nullptr ? after->currentView() : -1)
+                              << ", german " << (int)rysum::german() << ")" << std::endl;
+                if (round == 0 && ok)
+                    shoot(3, wasGerman ? "ui_klang_en.png" : "ui_klang_de.png");
+                b = after != nullptr ? rysum::ui::findButton(*after, "@sprache") : nullptr;
+                ok = ok && b != nullptr;
+            }
+            std::cout << "language switch: built anew in the other language and back "
+                      << (ok ? "  ok" : "  FAIL") << std::endl;
+            content = editor->getChildComponent(0);
         }
 
         // state round trip

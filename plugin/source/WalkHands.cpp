@@ -22,7 +22,7 @@ WalkView::Controls& controlsNow()
         {
             c.mouse = juce::jlimit (0.25f, 3.0f, (float) xml->getDoubleAttribute ("maus", 1.0));
             c.walk = juce::jlimit (0.4f, 8.0f, (float) xml->getDoubleAttribute ("gehen", 1.0));
-            c.invertY = xml->getBoolAttribute ("umgekehrt", false);
+            c.invertY = xml->getBoolAttribute (rysum::tr("umgekehrt"), false);
         }
     }
     return c;
@@ -52,14 +52,14 @@ void WalkView::showControlsMenu()
     const float speeds[] { 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.5f, 6.0f };
     const char* names[] { "sehr langsam", "langsam", "normal", "schnell", "sehr schnell", "rasend", "wie der Wind" };
     for (int i = 0; i < 5; ++i)
-        mouse.addItem (10 + i, U (names[i]), true, std::abs (c.mouse - speeds[i]) < 0.01f);
+        mouse.addItem (10 + i, rysum::tr (names[i]), true, std::abs (c.mouse - speeds[i]) < 0.01f);
     // (walking: Shift runs 2.6 times as fast - "wie der Wind" runs at about 25 m/s)
     for (int i = 0; i < 7; ++i)
-        walk.addItem (20 + i, U (names[i]), true, std::abs (c.walk - speeds[i]) < 0.01f);
-    m.addSectionHeader (U ("Steuerung (auf diesem Computer)"));
-    m.addSubMenu (U ("Maus: Tempo des Schauens"), mouse);
-    m.addItem (1, U ("Maus umgekehrt (hoch = nach unten schauen)"), true, c.invertY);
-    m.addSubMenu (U ("Gehtempo (auch Shift+Rad)"), walk);
+        walk.addItem (20 + i, rysum::tr (names[i]), true, std::abs (c.walk - speeds[i]) < 0.01f);
+    m.addSectionHeader (rysum::tr("Steuerung (auf diesem Computer)"));
+    m.addSubMenu (rysum::tr("Maus: Tempo des Schauens"), mouse);
+    m.addItem (1, rysum::tr("Maus umgekehrt (hoch = nach unten schauen)"), true, c.invertY);
+    m.addSubMenu (rysum::tr("Gehtempo (auch Shift+Rad)"), walk);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&controlsButton),
                      [safe = juce::Component::SafePointer<WalkView> (this), speeds] (int r)
                      {
@@ -103,7 +103,7 @@ bool WalkView::setDown()
     one.has[(size_t) s] = (uint64_t) 1 << k;
     one.at[(size_t) s][(size_t) k] = { p.x, p.y, juce::jmax (0.2f, p.z) };
     applyLayout (one);
-    say (U ("Abgestellt \xe2\x80\x93 die Pfeife bleibt dort"));
+    say (rysum::tr("Abgestellt \xe2\x80\x93 die Pfeife bleibt dort"));
     return true;
 }
 
@@ -117,7 +117,7 @@ bool WalkView::togglePin (int stop, int key)
     if (stop < 0 || stop >= kNumStops || key < 0 || key >= kNumKeys) return false;
     const uint64_t bit = (uint64_t) 1 << key;
     const bool now = (proc.engine.pinMask[(size_t) stop].fetch_xor (bit) & bit) == 0;
-    say (now ? U ("Festgesteckt: diese Pfeife bleibt, wo sie ist (mittlere Maustaste: wieder frei)") : U ("Wieder frei"));
+    say (now ? rysum::tr("Festgesteckt: diese Pfeife bleibt, wo sie ist (mittlere Maustaste: wieder frei)") : rysum::tr("Wieder frei"));
     repaint();
     return now;
 }
@@ -163,14 +163,14 @@ void WalkView::whirl (float strength)
     whirlFx = now;
     proc.engine.playerAct (OrganEngine::Act::Whirl, -1, -1, { whirlPoint.x, whirlPoint.y, whirlPoint.z }, strength);
     if (woken > 0) whirlAgain = now + 120.0;      // (once their pipes are bodies)
-    say (U ("Wirbelwind \xe2\x80\x93 die Pfeifen in seiner N\xc3\xa4he drehen sich um ihn"));
+    say (rysum::tr("Wirbelwind \xe2\x80\x93 die Pfeifen in seiner N\xc3\xa4he drehen sich um ihn"));
 }
 
 void WalkView::setPause (bool on)
 {
     paused = on;
     proc.engine.actPause = on;
-    say (on ? U ("Pause: alles steht still \xe2\x80\x93 P l\xc3\xa4sst es weiterlaufen") : U ("Weiter"));
+    say (on ? rysum::tr("Pause: alles steht still \xe2\x80\x93 P l\xc3\xa4sst es weiterlaufen") : rysum::tr("Weiter"));
 }
 
 void WalkView::setSlow (bool on)
@@ -187,7 +187,7 @@ bool WalkView::scaleRoom (float factor)
 {
     if (proc.getWalkMesh() != nullptr)
     {
-        say (U ("Ein Raummodell hat seine eigene Gr\xc3\xb6\xc3\x9f" "e (\xe2\x80\x9eModell entfernen\xe2\x80\x9c: der Saal l\xc3\xa4sst sich gr\xc3\xb6\xc3\x9f" "er und kleiner ziehen)"), 3500.0);
+        say (rysum::tr("Ein Raummodell hat seine eigene Gr\xc3\xb6\xc3\x9f" "e (\xe2\x80\x9eModell entfernen\xe2\x80\x9c: der Saal l\xc3\xa4sst sich gr\xc3\xb6\xc3\x9f" "er und kleiner ziehen)"), 3500.0);
         return false;
     }
     auto* prm = proc.apvts.getParameter (RysumProcessor::roomParamId (0, "Size"));
@@ -200,7 +200,7 @@ bool WalkView::scaleRoom (float factor)
     const auto r = roomNow();
     say (U ("Saal \xc3\x97 ") + juce::String (now, 2) + U ("  \xc2\xb7  ") + juce::String (r.W() * now / juce::jmax (0.01f, was), 1) + U (" \xc3\x97 ")
          + juce::String (r.L() * now / juce::jmax (0.01f, was), 1) + U (" \xc3\x97 ") + juce::String (r.H() * now / juce::jmax (0.01f, was), 1)
-         + U (" m  \xc2\xb7  der Nachhall w\xc3\xa4" "chst mit"));
+         + rysum::tr(" m  \xc2\xb7  der Nachhall w\xc3\xa4" "chst mit"));
     return true;
 }
 
@@ -208,13 +208,13 @@ bool WalkView::materialAll()
 {
     if (aimSurf < 0)
     {
-        say (proc.getWalkMesh() != nullptr ? U ("Material: nur f\xc3\xbcr die Fl\xc3\xa4" "chen des Saals (ohne Modell)") : U ("Keine Fl\xc3\xa4" "che im Blick"));
+        say (proc.getWalkMesh() != nullptr ? rysum::tr("Material: nur f\xc3\xbcr die Fl\xc3\xa4" "chen des Saals (ohne Modell)") : rysum::tr("Keine Fl\xc3\xa4" "che im Blick"));
         return false;
     }
     const int cur = proc.getSurfaceMaterial (0, aimSurf);
     const int next = cur + 1 >= kNumSurfMaterials ? -1 : cur + 1;
     for (int s = 0; s < kMaxSurf; ++s) proc.setSurfaceMaterial (0, s, next);
-    say (U ("Alle Fl\xc3\xa4" "chen: ") + surfaceName (roomNow(), aimSurf).fromFirstOccurrenceOf (": ", false, false));
+    say (rysum::tr("Alle Fl\xc3\xa4" "chen: ") + surfaceName (roomNow(), aimSurf).fromFirstOccurrenceOf (": ", false, false));
     repaint();
     return true;
 }
@@ -222,14 +222,14 @@ bool WalkView::materialAll()
 bool WalkView::placeLantern()
 {
     auto& ls = proc.walkLanterns;
-    if ((int) ls.size() >= kMaxLanterns) { say (U ("Schon 16 Laternen \xe2\x80\x93 Shift+K nimmt die n\xc3\xa4" "chste weg")); return false; }
+    if ((int) ls.size() >= kMaxLanterns) { say (rysum::tr("Schon 16 Laternen \xe2\x80\x93 Shift+K nimmt die n\xc3\xa4" "chste weg")); return false; }
     // (a hand's breadth short of the surface, not lower than a candle on the floor)
     const V3 eye = eyeNow(), at = crossPoint (2.5f);
     const float dist = std::sqrt (dot (at - eye, at - eye));
     V3 p = eye + lookDir() * juce::jmax (0.5f, dist - 0.15f);
     p.z = juce::jmax (0.15f, p.z);
     ls.push_back ({ p.x, p.y, p.z });
-    say (U ("Laterne ") + juce::String ((int) ls.size()) + (proc.walkDark ? U (" \xe2\x80\x93 sie leuchtet den Raum aus") : U (" \xe2\x80\x93 L: Licht aus, dann leuchtet sie den Raum aus")));
+    say (rysum::tr("Laterne ") + juce::String ((int) ls.size()) + (proc.walkDark ? rysum::tr(" \xe2\x80\x93 sie leuchtet den Raum aus") : rysum::tr(" \xe2\x80\x93 L: Licht aus, dann leuchtet sie den Raum aus")));
     repaint();
     return true;
 }
@@ -237,7 +237,7 @@ bool WalkView::placeLantern()
 bool WalkView::removeLantern()
 {
     auto& ls = proc.walkLanterns;
-    if (ls.empty()) { say (U ("Keine Laterne da")); return false; }
+    if (ls.empty()) { say (rysum::tr("Keine Laterne da")); return false; }
     const V3 at = crossPoint (2.5f);
     size_t best = 0;
     float bestD = 1.0e9f;
@@ -248,7 +248,7 @@ bool WalkView::removeLantern()
         if (d < bestD) { bestD = d; best = i; }
     }
     ls.erase (ls.begin() + (ptrdiff_t) best);
-    say (U ("Laterne weggenommen (noch ") + juce::String ((int) ls.size()) + ")");
+    say (rysum::tr("Laterne weggenommen (noch ") + juce::String ((int) ls.size()) + ")");
     repaint();
     return true;
 }
@@ -256,7 +256,7 @@ bool WalkView::removeLantern()
 void WalkView::clearLanterns()
 {
     proc.walkLanterns.clear();
-    say (U ("Alle Laternen weggenommen"));
+    say (rysum::tr("Alle Laternen weggenommen"));
     repaint();
 }
 
@@ -268,10 +268,10 @@ void WalkView::leaveEars (bool on)
     {
         earEye = eyeNow();
         earPose[0] = px; earPose[1] = py; earPose[2] = yaw; earPose[3] = fz;
-        say (U ("Die Ohren bleiben hier \xe2\x80\x93 geh und sieh dir an, was du h\xc3\xb6rst (H: zur\xc3\xbc" "ck)"), 4000.0);
+        say (rysum::tr("Die Ohren bleiben hier \xe2\x80\x93 geh und sieh dir an, was du h\xc3\xb6rst (H: zur\xc3\xbc" "ck)"), 4000.0);
     }
     else
-        say (U ("Die Ohren sind wieder bei dir"));
+        say (rysum::tr("Die Ohren sind wieder bei dir"));
     pushPose();
     repaint();
 }
@@ -361,7 +361,7 @@ void WalkView::drawMoreHands (juce::Graphics& g, juce::Rectangle<int> area)
             g.drawEllipse (juce::Rectangle<float> (2.0f * r, 2.0f * r).withCentre (c), 1.6f);
             g.drawEllipse (juce::Rectangle<float> (2.0f * r + 7.0f, 2.0f * r + 7.0f).withCentre (c), 0.7f);
             g.setFont (Assets::get().monoFont (10.0f));
-            g.drawText (U ("deine Ohren"), juce::Rectangle<float> (120.0f, 14.0f).withCentre (c.translated (0.0f, r + 12.0f)), juce::Justification::centred);
+            g.drawText (rysum::tr("deine Ohren"), juce::Rectangle<float> (120.0f, 14.0f).withCentre (c.translated (0.0f, r + 12.0f)), juce::Justification::centred);
         }
     }
 }

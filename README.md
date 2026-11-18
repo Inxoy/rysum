@@ -98,6 +98,17 @@ binaural decoder: 128 samples.
 
 ## 3. The pages
 
+**Language (English / Deutsch):** the interface is in English by default. The small **EN / DE**
+button at the far right of the top bar (next to the full-screen square) switches it to German and
+back; the lit code is the current language. The switch is immediate: the interface is rebuilt on the
+same page, nothing about the sound changes. The choice is remembered on this computer
+(`Documents/Rysum/Sprache.xml`) for the plugin and the standalone app; `RYSUM_LANG=de` or `en` forces
+a language for one run without saving it. Parameter IDs, patches, projects and MIDI mappings do not
+depend on the language; host automation lists keep the German parameter names. Patch names and
+the bundled pieces stay German. This README and the paper use the German control names; in English
+the pages are *Console* (Spieltisch), *Sound* (Klang), *Effects* (Effekte), *Modulation*,
+*Timeline* (Verlauf), *Saal*, *Room* (Raum) and *Walk* (Begehen).
+
 **Top bar, next to the patches:**
 - *Tastatur*: play with the computer keyboard. `A W S E D F T G Z H U J K O L P` = C up to
   d♯ of the next octave (German layout: Z is the black key between G and H), `Y` / `X` = octave

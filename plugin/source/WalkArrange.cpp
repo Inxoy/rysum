@@ -21,7 +21,7 @@ void WalkView::selectPipe (int stop, int key, bool toggle)
     if (stop < 0 || stop >= kNumStops || key < 0 || key >= kNumKeys) return;
     const uint64_t bit = (uint64_t) 1 << key;
     if (toggle) sel[(size_t) stop] ^= bit; else sel[(size_t) stop] |= bit;
-    say (juce::String (selectedCount()) + U (" Pfeifen gew\xc3\xa4hlt  \xc2\xb7  1 bis 5: aufstellen, rechte Maustaste: Magnet, Esc: Auswahl leeren"), 3500.0);
+    say (juce::String (selectedCount()) + rysum::tr(" Pfeifen gew\xc3\xa4hlt  \xc2\xb7  1 bis 5: aufstellen, rechte Maustaste: Magnet, Esc: Auswahl leeren"), 3500.0);
     repaint();
 }
 
@@ -29,7 +29,7 @@ void WalkView::selectRegister (int stop)
 {
     if (stop < 0 || stop >= kNumStops) return;
     sel[(size_t) stop] = ((uint64_t) 1 << kNumKeys) - 1;
-    say (U ("Register ") + juce::String::fromUTF8 (kStops[(size_t) stop].label) + U (" gew\xc3\xa4hlt (") + juce::String (selectedCount()) + U (" Pfeifen)"), 3500.0);
+    say (rysum::tr("Register ") + juce::String::fromUTF8 (kStops[(size_t) stop].label) + rysum::tr(" gew\xc3\xa4hlt (") + juce::String (selectedCount()) + rysum::tr(" Pfeifen)"), 3500.0);
     repaint();
 }
 
@@ -105,12 +105,12 @@ void WalkView::pushUndo()
 
 bool WalkView::undo()
 {
-    if (undoStack.empty()) { say (U ("Nichts r\xc3\xbc" "ckg\xc3\xa4ngig zu machen")); return false; }
+    if (undoStack.empty()) { say (rysum::tr("Nichts r\xc3\xbc" "ckg\xc3\xa4ngig zu machen")); return false; }
     const auto lay = undoStack.back();
     undoStack.pop_back();
     const int n = applyLayout (lay);
-    say (U ("R\xc3\xbc" "ckg\xc3\xa4ngig: ") + juce::String (n) + U (" Pfeifen kehren an ihren Platz zur\xc3\xbc" "ck")
-         + (undoStack.empty() ? juce::String() : U ("  \xc2\xb7  noch ") + juce::String ((int) undoStack.size()) + U (" Schritte")));
+    say (rysum::tr("R\xc3\xbc" "ckg\xc3\xa4ngig: ") + juce::String (n) + rysum::tr(" Pfeifen kehren an ihren Platz zur\xc3\xbc" "ck")
+         + (undoStack.empty() ? juce::String() : rysum::tr("  \xc2\xb7  noch ") + juce::String ((int) undoStack.size()) + rysum::tr(" Schritte")));
     return n > 0;
 }
 
@@ -120,14 +120,14 @@ bool WalkView::storeLayout (int slot)
     auto lay = capture();
     if (lay.empty())
     {
-        say (U ("Keine Pfeife frei im Saal \xe2\x80\x93 nichts zu speichern (die Pfeifen eines Registers werden frei mit E, Q, 1 bis 5 oder der Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c)"), 4000.0);
+        say (rysum::tr("Keine Pfeife frei im Saal \xe2\x80\x93 nichts zu speichern (die Pfeifen eines Registers werden frei mit E, Q, 1 bis 5 oder der Bewegung \xe2\x80\x9eSchweben\xe2\x80\x9c)"), 4000.0);
         return false;
     }
     int n = 0;
     for (auto m : lay.has)
         for (uint64_t x = m; x != 0; x &= x - 1) ++n;
     proc.walkLayouts[(size_t) slot] = std::move (lay);
-    say (U ("Aufstellung F") + juce::String (slot + 1) + U (" gespeichert (") + juce::String (n) + U (" Pfeifen) \xc2\xb7  F") + juce::String (slot + 1) + U (" ruft sie zur\xc3\xbc" "ck"));
+    say (rysum::tr("Aufstellung F") + juce::String (slot + 1) + rysum::tr(" gespeichert (") + juce::String (n) + rysum::tr(" Pfeifen) \xc2\xb7  F") + juce::String (slot + 1) + rysum::tr(" ruft sie zur\xc3\xbc" "ck"));
     return true;
 }
 
@@ -135,10 +135,10 @@ bool WalkView::recallLayout (int slot)
 {
     if (slot < 0 || slot >= (int) proc.walkLayouts.size()) return false;
     const auto& lay = proc.walkLayouts[(size_t) slot];
-    if (lay.empty()) { say (U ("Aufstellung F") + juce::String (slot + 1) + U (" ist leer \xe2\x80\x93 Strg+F") + juce::String (slot + 1) + U (" speichert, wie die Pfeifen jetzt stehen")); return false; }
+    if (lay.empty()) { say (rysum::tr("Aufstellung F") + juce::String (slot + 1) + rysum::tr(" ist leer \xe2\x80\x93 Strg+F") + juce::String (slot + 1) + rysum::tr(" speichert, wie die Pfeifen jetzt stehen")); return false; }
     pushUndo();
     const int n = applyLayout (lay);
-    say (U ("Aufstellung F") + juce::String (slot + 1) + U (": ") + juce::String (n) + U (" Pfeifen fliegen an ihren Platz"));
+    say (rysum::tr("Aufstellung F") + juce::String (slot + 1) + U (": ") + juce::String (n) + rysum::tr(" Pfeifen fliegen an ihren Platz"));
     return n > 0;
 }
 
@@ -162,7 +162,7 @@ bool WalkView::formation (int kind)
             items.push_back ({ s, k, (float) k - 12.0f * std::log2 (kStopFootage[(size_t) s] / 8.0f) + 0.01f * (float) s });
         }
     }
-    if (items.empty()) { say (U ("Kein Register gezogen \xe2\x80\x93 keine Pfeife aufzustellen")); return false; }
+    if (items.empty()) { say (rysum::tr("Kein Register gezogen \xe2\x80\x93 keine Pfeife aufzustellen")); return false; }
     std::stable_sort (items.begin(), items.end(), [] (const Item& a, const Item& b) { return a.pitch < b.pitch; });
 
     // around you: ahead and to the right on the floor's plane, a little below the eyes
@@ -222,8 +222,8 @@ bool WalkView::formation (int kind)
     }
     pushUndo();
     const int sent = applyLayout (lay);
-    say (U (kFormationNames[kind]) + U (": ") + juce::String (sent) + U (" Pfeifen") + (chosen ? U (" (die gew\xc3\xa4hlten)") : juce::String())
-         + U ("  \xc2\xb7  Strg+Z: zur\xc3\xbc" "ck  \xc2\xb7  Strg+F1 bis F8: Aufstellung speichern"));
+    say (U (kFormationNames[kind]) + U (": ") + juce::String (sent) + rysum::tr(" Pfeifen") + (chosen ? rysum::tr(" (die gew\xc3\xa4hlten)") : juce::String())
+         + rysum::tr("  \xc2\xb7  Strg+Z: zur\xc3\xbc" "ck  \xc2\xb7  Strg+F1 bis F8: Aufstellung speichern"));
     return sent > 0;
 }
 
@@ -244,8 +244,8 @@ void WalkView::setMagnet (int mode)
         for (int s = 0; s < kNumStops; ++s)
             if (chosen ? sel[(size_t) s] != 0 : (bool) params.stopOn[(size_t) s]) makeHover (s, false);
         for (int s = 0; s < kNumStops; ++s) en.magnetMask[(size_t) s] = chosen ? sel[(size_t) s] : ~(uint64_t) 0;
-        say (mode > 0 ? U ("Magnet: die Pfeifen kommen zu dir  \xc2\xb7  Rad: n\xc3\xa4her / weiter  \xc2\xb7  Shift: absto\xc3\x9f" "en")
-                      : U ("Magnet: die Pfeifen weichen zur\xc3\xbc" "ck"), 2000.0);
+        say (mode > 0 ? rysum::tr("Magnet: die Pfeifen kommen zu dir  \xc2\xb7  Rad: n\xc3\xa4her / weiter  \xc2\xb7  Shift: absto\xc3\x9f" "en")
+                      : rysum::tr("Magnet: die Pfeifen weichen zur\xc3\xbc" "ck"), 2000.0);
     }
     magnet = mode;
     en.magnetMode = mode;
@@ -386,10 +386,10 @@ void WalkView::drawHelp (juce::Graphics& g, juce::Rectangle<int> area)
         {
             g.setFont (A.romanFont (13.0f));
             g.setColour (col::ink);
-            g.drawText (U (l.key), x, y[(size_t) c], 128, lineH, juce::Justification::centredLeft);
+            g.drawText (rysum::tr (l.key), x, y[(size_t) c], 128, lineH, juce::Justification::centredLeft);
             g.setFont (A.monoFont (12.0f));
             g.setColour (col::dim);
-            g.drawText (U (l.what), x + 132, y[(size_t) c], colW - 132, lineH, juce::Justification::centredLeft);
+            g.drawText (rysum::tr (l.what), x + 132, y[(size_t) c], colW - 132, lineH, juce::Justification::centredLeft);
             g.setColour (col::line);
             g.fillRect (x, y[(size_t) c] + lineH - 1, colW, 1);
             y[(size_t) c] += lineH;

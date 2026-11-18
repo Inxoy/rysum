@@ -22,7 +22,7 @@ private:
     RysumProcessor &proc;
     int stop = 0, key = 29; // a'
     std::array<juce::TextButton, kNumStops> stopButtons;
-    juce::TextButton preview{juce::String(juce::CharPointer_UTF8("Vorh\xc3\xb6ren"))},
+    juce::TextButton preview{((rysum::tr("Vorh\xc3\xb6ren")))},
         muteButton{"Stumm"};
     juce::Rectangle<int> nav, strip, header, wave, info;
     std::vector<float> envMax, envMin;

@@ -62,18 +62,18 @@ RysumContent::RysumContent(RysumProcessor &p)
                 });
         }
     };
-    outInfoButton.setTooltip(juce::String::fromUTF8("Lautsprecher einrichten (AllRAD)"));
+    outInfoButton.setTooltip(rysum::tr("Lautsprecher einrichten (AllRAD)"));
     outInfoButton.setAlpha(0.0f);
     outInfoButton.onClick = [this] { showView(current == 7 ? viewBeforeOrgan : 7); };
     addAndMakeVisible(outInfoButton);
     logoButton.setTooltip(
-        juce::String::fromUTF8("\xc3\x9c"
+        rysum::tr("\xc3\x9c"
                                "ber die Orgel zu Rysum (nochmal klicken: zur\xc3\xbc"
                                "ck)"));
     logoButton.onClick = [this] { showView(current == 6 ? viewBeforeOrgan : 6); };
     addAndMakeVisible(logoButton);
     diceButton.setTooltip(
-        juce::String::fromUTF8("W\xc3\xbcrfeln: zuf\xc3\xa4llige Einstellungen \xe2\x80\x93 sanft "
+        rysum::tr("W\xc3\xbcrfeln: zuf\xc3\xa4llige Einstellungen \xe2\x80\x93 sanft "
                                "oder wild, nur in den gew\xc3\xa4hlten Bereichen. "
                                "Ein Schritt zur\xc3\xbc"
                                "ck ist m\xc3\xb6glich."));
@@ -88,20 +88,20 @@ RysumContent::RysumContent(RysumProcessor &p)
     const char *names[]{"Spieltisch", "Raum", "Saal", "Klang", "Effekte", "Modulation", "Verlauf"};
     for (int i = 0; i < kNumTabs; ++i)
     {
-        tabs[(size_t)i].setButtonText(juce::String(names[i]).toUpperCase());
+        tabs[(size_t)i].setButtonText(rysum::tr(names[i]).toUpperCase());
         tabs[(size_t)i].onClick = [this, i] { showView(tabView(i)); };
         addAndMakeVisible(tabs[(size_t)i]);
     }
     showView(0);
 
     patchName.setTooltip(
-        "Patches: Klang, Register, Raum, Modulation und Hall (ohne Ausgabeformat)");
+        rysum::tr("Patches: Klang, Register, Raum, Modulation und Hall (ohne Ausgabeformat)"));
     patchName.onClick = [this] { showPatchMenu(); };
     patchPrev.onClick = [this] { stepPatch(-1); };
     patchNext.onClick = [this] { stepPatch(1); };
     patchSave.onClick = [this] { askSavePatch(); };
-    patchPrev.setTooltip("Vorheriger Patch");
-    patchNext.setTooltip(u8("N\xc3\xa4"
+    patchPrev.setTooltip(rysum::tr("Vorheriger Patch"));
+    patchNext.setTooltip(rysum::tr("N\xc3\xa4"
                             "chster Patch"));
     for (auto *b : {&patchPrev, &patchName, &patchNext, &patchSave})
         addAndMakeVisible(b);
@@ -109,8 +109,7 @@ RysumContent::RysumContent(RysumProcessor &p)
     // playing helpers: computer keyboard, "Halten"
     keyNoteDown.fill(-1);
     setWantsKeyboardFocus(true);
-    keysButton.setTooltip(juce::String::fromUTF8(
-        "Mit der Computertastatur spielen: A W S E D F T G Z H U J K O L P = C bis "
+    keysButton.setTooltip(rysum::tr("Mit der Computertastatur spielen: A W S E D F T G Z H U J K O L P = C bis "
         "D\xe2\x80\xb2\xe2\x80\xb2, "
         "Y / X = Oktave tiefer / h\xc3\xb6her, C / V = leiser / lauter anschlagen. "
         "Im Host vorher ins Plugin-Fenster klicken."));
@@ -123,8 +122,7 @@ RysumContent::RysumContent(RysumProcessor &p)
             releaseComputerKeys();
         updatePlayButtons();
     };
-    latchButton.setTooltip(juce::String::fromUTF8(
-        "Halten: eine Taste zweimal schnell anschlagen \xe2\x80\x93 der Ton bleibt liegen, als ob "
+    latchButton.setTooltip(rysum::tr("Halten: eine Taste zweimal schnell anschlagen \xe2\x80\x93 der Ton bleibt liegen, als ob "
         "du sie h\xc3\xa4ltst "
         "(H\xc3\xa4nde frei f\xc3\xbcr Register und Modulation). Nochmal anschlagen = loslassen. "
         "Ausschalten l\xc3\xa4sst alle gehaltenen T\xc3\xb6ne los."));
@@ -143,7 +141,7 @@ RysumContent::RysumContent(RysumProcessor &p)
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "output", outputChoice);
     outputChoice.setTooltip(
-        juce::String::fromUTF8("Ausgabeformat: Stereo, AmbiX (ACN/SN3D), Binaural f\xc3\xbcr "
+        rysum::tr("Ausgabeformat: Stereo, AmbiX (ACN/SN3D), Binaural f\xc3\xbcr "
                                "Kopfh\xc3\xb6rer (Einstellungen: Seite Klang) "
                                "oder Lautsprecher (AllRAD, Klick auf die Kanalanzeige daneben)"));
     outputChoice.onChange = [this]
@@ -164,6 +162,14 @@ RysumContent::RysumContent(RysumProcessor &p)
     };
     setFullscreenShown(false);
     addAndMakeVisible(fullButton);
+    langButton.setTooltip("Sprache: Deutsch / English (Klick wechselt)");
+    langButton.onClick = [this]
+    {
+        rysum::setLanguage(rysum::german() ? rysum::Language::English : rysum::Language::German);
+        if (onLanguageChanged)
+            onLanguageChanged();
+    };
+    addAndMakeVisible(langButton);
 
     // grain over the whole interface, rendered once
     grainLayer = juce::Image(juce::Image::ARGB, kW, kH, true);
@@ -198,6 +204,7 @@ RysumContent::RysumContent(RysumProcessor &p)
             {&organ, "orgel"},         {&speakers, "lautsprecher"}, {&walk, "begehen"},
             {&outInfoButton, "ausgabe-info"}, {&logoButton, "logo"}, {&diceButton, "zufall"},
             {&keysButton, "tastatur"}, {&latchButton, "halten"}, {&fullButton, "vollbild"},
+            {&langButton, "sprache"},
             {&outputChoice, "ausgabe"}, {&patchPrev, "patch-zurueck"}, {&patchNext, "patch-vor"},
             {&patchName, "patch"},     {&patchSave, "patch-speichern"}, {&learnOverlay, "midi-tasten"}};
         for (auto &n : named)
@@ -465,7 +472,7 @@ void ButtonLearnOverlay::mouseDown(const juce::MouseEvent &e)
             b.triggerClick();
     }
     else if (!learn(b))
-        note = juce::String::fromUTF8("Alle Pl\xc3\xa4tze sind belegt.");
+        note = rysum::tr("Alle Pl\xc3\xa4tze sind belegt.");
     refresh();
     repaint();
 }
@@ -501,7 +508,7 @@ void ButtonLearnOverlay::paint(juce::Graphics &g)
                                          : col::ink.withAlpha(i == hover ? 0.85f : 0.3f));
         g.drawRect(r, it.waiting ? 2.0f : (mapped || i == hover ? 1.5f : 1.0f));
         const auto text =
-            it.waiting ? juce::String::fromUTF8("MIDI-Taste dr\xc3\xbc"
+            it.waiting ? rysum::tr("MIDI-Taste dr\xc3\xbc"
                                                 "cken \xe2\x80\xa6")
                        : it.label;
         if (text.isEmpty())
@@ -524,8 +531,7 @@ void ButtonLearnOverlay::paint(juce::Graphics &g)
     g.setColour(col::ink);
     g.drawText(note.isNotEmpty()
                    ? note
-                   : juce::String::fromUTF8(
-                         "MIDI-Tasten zuordnen:  Knopf anklicken, dann die MIDI-Taste dr\xc3\xbc"
+                   : rysum::tr("MIDI-Tasten zuordnen:  Knopf anklicken, dann die MIDI-Taste dr\xc3\xbc"
                          "cken (Pad, Taster oder Klaviertaste)   \xc2\xb7   Rechtsklick: "
                          "Zuordnung l\xc3\xb6schen   \xc2\xb7   Strg+Klick: Knopf bet\xc3\xa4tigen "
                          "(z. B. Seite wechseln)   \xc2\xb7   Esc: fertig"),
@@ -598,17 +604,18 @@ void RysumContent::resized()
     }
     outputChoice.setBounds(kOutX, 14, kOutW, 28);
     fullButton.setBounds(kFullX, 14, 28, 28);
+    langButton.setBounds(kFullX + 31, 14, 22, 28);
 }
 
 void RysumContent::updatePlayButtons()
 {
     keysButton.setToggleState(proc.computerKeys, juce::dontSendNotification);
-    keysButton.setButtonText(proc.computerKeys ? "Tastatur C" + juce::String(proc.keysOctave)
-                                               : juce::String("Tastatur"));
+    keysButton.setButtonText(proc.computerKeys ? rysum::tr("Tastatur C") + juce::String(proc.keysOctave)
+                                               : rysum::tr("Tastatur"));
     const int n = proc.latchedCount.load();
     latchButton.setToggleState(proc.latchOn.load(), juce::dontSendNotification);
-    latchButton.setButtonText(proc.latchOn.load() && n > 0 ? "Halten " + juce::String(n)
-                                                           : juce::String("Halten"));
+    latchButton.setButtonText(proc.latchOn.load() && n > 0 ? rysum::tr("Halten ") + juce::String(n)
+                                                           : rysum::tr("Halten"));
 }
 
 // computer keyboard: two rows like a piano (German layout: Z is the black key between G and H)
@@ -865,7 +872,7 @@ void RysumContent::tickBody()
     {
         shownPatchVersion = proc.patchVersion;
         const auto n = proc.getPatchName();
-        patchName.setButtonText(n.isEmpty() ? u8("\xe2\x80\x93 kein Patch \xe2\x80\x93") : n);
+        patchName.setButtonText(n.isEmpty() ? rysum::tr("\xe2\x80\x93 kein Patch \xe2\x80\x93") : n);
     }
     repaint(0, 0, kW, kHeader);
 }
@@ -879,18 +886,18 @@ void RysumContent::showPatchMenu()
         m.addItem(1 + i, files[i].getFileNameWithoutExtension(), true,
                   files[i].getFileNameWithoutExtension() == proc.getPatchName());
     if (files.isEmpty())
-        m.addItem(-1, "(noch keine)", false);
+        m.addItem(-1, rysum::tr("(noch keine)"), false);
     m.addSeparator();
-    m.addItem(10000, "Speichern unter ...");
-    m.addItem(10001, u8("Patch-Ordner \xc3\xb6"
+    m.addItem(10000, rysum::tr("Speichern unter ..."));
+    m.addItem(10001, rysum::tr("Patch-Ordner \xc3\xb6"
                         "ffnen"));
     m.addSeparator();
-    m.addItem(10002, u8("Alles zur\xc3\xbc"
+    m.addItem(10002, rysum::tr("Alles zur\xc3\xbc"
                         "cksetzen \xe2\x80\xa6"));
     m.addSeparator();
     m.addItem(10003, proc.concert.role() == rysum::ConcertLink::Role::off
-                         ? u8("Konzert \xe2\x80\xa6")
-                         : u8("Konzert \xe2\x80\x93 ") + proc.concert.status());
+                         ? rysum::tr("Konzert \xe2\x80\xa6")
+                         : rysum::tr("Konzert \xe2\x80\x93 ") + proc.concert.status());
     juce::Component::SafePointer<RysumContent> safe(this);
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&patchName),
                     [safe, files](int r)
@@ -934,14 +941,14 @@ public:
     explicit ConcertPanel(RysumProcessor &p) : proc(p)
     {
         auto &link = proc.concert;
-        playButton.setTooltip(u8("Spielen: andere verbinden sich mit diesem Computer und h\xc3\xb6ren zu"));
+        playButton.setTooltip(rysum::tr("Spielen: andere verbinden sich mit diesem Computer und h\xc3\xb6ren zu"));
         playButton.onClick = [this]
         {
             if (!proc.concert.startPerformer())
                 refresh();
             refresh();
         };
-        listenButton.setTooltip(u8("Bei einem Spieler zuh\xc3\xb6ren (seine Adresse aus seinem Konzert-Fenster)"));
+        listenButton.setTooltip(rysum::tr("Bei einem Spieler zuh\xc3\xb6ren (seine Adresse aus seinem Konzert-Fenster)"));
         listenButton.onClick = [this]
         {
             lastHost() = hostField.getText().trim();
@@ -955,24 +962,24 @@ public:
             refresh();
         };
         hostField.setText(lastHost(), false);
-        hostField.setTextToShowWhenEmpty(u8("Adresse des Spielers, z. B. 192.168.1.20"), col::faint);
+        hostField.setTextToShowWhenEmpty(rysum::tr("Adresse des Spielers, z. B. 192.168.1.20"), col::faint);
         hostField.setFont(Assets::get().monoFont(12.0f));
         hostField.onReturnKey = [this] { listenButton.triggerClick(); };
         delayRow.format = [](double v) { return juce::String(juce::roundToInt(v)) + " ms"; };
         delayRow.slider.setValue(link.getDelayMs(), juce::dontSendNotification);
         delayRow.onChange = [this](double v) { proc.concert.setDelayMs(v); };
-        delayRow.slider.setTooltip(u8("Wie weit der Zuh\xc3\xb6rer hinter dem Spieler liegt: Platz f\xc3\xbcr ein "
+        delayRow.slider.setTooltip(rysum::tr("Wie weit der Zuh\xc3\xb6rer hinter dem Spieler liegt: Platz f\xc3\xbcr ein "
                                       "ungleichm\xc3\xa4\xc3\x9figes Netz. Mehr = sicherer, weniger = n\xc3\xa4her dran."));
         for (juce::Component *c : {(juce::Component *)&playButton, (juce::Component *)&listenButton,
                                    (juce::Component *)&stopButton, (juce::Component *)&hostField,
                                    (juce::Component *)&delayRow})
             addAndMakeVisible(c);
-        handsBox.addItem(u8("H\xc3\xa4nde der Zuh\xc3\xb6rer: keine"), 1);
-        handsBox.addItem(u8("H\xc3\xa4nde: anklopfen, Druckwelle, klatschen"), 2);
-        handsBox.addItem(u8("H\xc3\xa4nde: alles \xe2\x80\x93 auch tragen, werfen, zur\xc3\xbc" "ckrufen"), 3);
+        handsBox.addItem(rysum::tr("H\xc3\xa4nde der Zuh\xc3\xb6rer: keine"), 1);
+        handsBox.addItem(rysum::tr("H\xc3\xa4nde: anklopfen, Druckwelle, klatschen"), 2);
+        handsBox.addItem(rysum::tr("H\xc3\xa4nde: alles \xe2\x80\x93 auch tragen, werfen, zur\xc3\xbc" "ckrufen"), 3);
         handsBox.setSelectedId(link.getGuestHands() + 1, juce::dontSendNotification);
         handsBox.onChange = [this] { proc.concert.setGuestHands(handsBox.getSelectedId() - 1); };
-        handsBox.setTooltip(u8("Was die Zuh\xc3\xb6rer im 3D-Saal mit den Pfeifen tun d\xc3\xbc" "rfen. Was sie tun, geschieht bei dir "
+        handsBox.setTooltip(rysum::tr("Was die Zuh\xc3\xb6rer im 3D-Saal mit den Pfeifen tun d\xc3\xbc" "rfen. Was sie tun, geschieht bei dir "
                                "und alle sehen und h\xc3\xb6ren es."));
         addAndMakeVisible(handsBox);
         setSize(460, 304);
@@ -986,25 +993,25 @@ public:
         g.fillAll(col::bg);
         auto r = getLocalBounds().reduced(16, 10);
         const auto role = proc.concert.role();
-        drawSectionTitle(g, r.removeFromTop(34), "Konzert", proc.concert.status());
+        drawSectionTitle(g, r.removeFromTop(34), rysum::tr("Konzert"), proc.concert.status());
         g.setFont(A.monoFont(10.5f));
         g.setColour(col::dim);
-        g.drawFittedText(u8("Einer spielt, die anderen h\xc3\xb6ren zu \xe2\x80\x93 jeder auf seinem Computer, mit "
+        g.drawFittedText(rysum::tr("Einer spielt, die anderen h\xc3\xb6ren zu \xe2\x80\x93 jeder auf seinem Computer, mit "
                             "dem Plugin und den Samples, und h\xc3\xb6rt die Orgel von dort, wo er im 3D-Saal "
                             "steht. Es reist kein Klang, nur das Spiel."),
                          r.removeFromTop(44), juce::Justification::topLeft, 3);
         if (role == rysum::ConcertLink::Role::performer)
         {
-            auto addr = rysum::ConcertLink::localAddresses().joinIntoString("  oder  ");
+            auto addr = rysum::ConcertLink::localAddresses().joinIntoString(rysum::tr("  oder  "));
             g.setFont(A.monoFont(12.0f));
             g.setColour(col::ink);
-            g.drawFittedText(u8("Zuh\xc3\xb6rer verbinden sich mit:  ") + addr + "   (Port " +
+            g.drawFittedText(rysum::tr("Zuh\xc3\xb6rer verbinden sich mit:  ") + addr + "   (Port " +
                                  juce::String(rysum::ConcertLink::kDefaultPort) + ")",
                              addrBox, juce::Justification::centredLeft, 2);
         }
         g.setFont(A.monoFont(9.5f));
         g.setColour(col::faint);
-        g.drawFittedText(u8("Im Netz zu Hause. Nicht mitgespielt werden: Tonnetz-Wanderer, "
+        g.drawFittedText(rysum::tr("Im Netz zu Hause. Nicht mitgespielt werden: Tonnetz-Wanderer, "
                             "Selbstspiel, Publikum und eigene Raummodelle. Zuh\xc3\xb6rer brauchen nur die App \xe2\x80\x9eRysum Konzert\xe2\x80\x9c."),
                          getLocalBounds().reduced(16, 8).removeFromBottom(26), juce::Justification::bottomLeft, 2);
     }
@@ -1075,15 +1082,15 @@ void RysumContent::showConcertPanel()
 void RysumContent::askResetEverything()
 {
     auto opts = juce::MessageBoxOptions()
-                    .withTitle(u8("Alles zur\xc3\xbc"
+                    .withTitle(rysum::tr("Alles zur\xc3\xbc"
                                   "cksetzen"))
-                    .withMessage(u8("Alles wie beim ersten Start: alle Regler, der Raum, das 3D-Modell "
+                    .withMessage(rysum::tr("Alles wie beim ersten Start: alle Regler, der Raum, das 3D-Modell "
                                     "und wo du im Saal stehst, Laternen, Aufstellungen. Ungespeicherte "
                                     "\xc3\x84nderungen gehen verloren (Patches bleiben, der Samples-Ordner "
                                     "auch)."))
-                    .withButton(u8("Zur\xc3\xbc"
+                    .withButton(rysum::tr("Zur\xc3\xbc"
                                    "cksetzen"))
-                    .withButton("Abbrechen")
+                    .withButton(rysum::tr("Abbrechen"))
                     .withAssociatedComponent(this);
     juce::Component::SafePointer<RysumContent> safe(this);
     juce::AlertWindow::showAsync(opts,
@@ -1112,15 +1119,15 @@ void RysumContent::stepPatch(int delta)
 
 void RysumContent::askSavePatch()
 {
-    auto *w = new juce::AlertWindow("Patch speichern",
-                                    u8("Name des Patches. Gespeichert wird alles au\xc3\x9f"
+    auto *w = new juce::AlertWindow(rysum::tr("Patch speichern"),
+                                    rysum::tr("Name des Patches. Gespeichert wird alles au\xc3\x9f"
                                        "er dem Ausgabeformat und dem Samples-Ordner."),
                                     juce::MessageBoxIconType::NoIcon, this);
     w->setLookAndFeel(&getLookAndFeel());
-    w->addTextEditor("name", proc.getPatchName().isEmpty() ? juce::String("Mein Patch")
+    w->addTextEditor("name", proc.getPatchName().isEmpty() ? rysum::tr("Mein Patch")
                                                            : proc.getPatchName());
-    w->addButton("Speichern", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    w->addButton("Abbrechen", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->addButton(rysum::tr("Speichern"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton(rysum::tr("Abbrechen"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
     juce::Component::SafePointer<RysumContent> safe(this);
     w->enterModalState(
         true,
@@ -1138,8 +1145,8 @@ void RysumContent::askSavePatch()
                         return;
                     if (!safe->proc.savePatch(name))
                         juce::AlertWindow::showMessageBoxAsync(
-                            juce::MessageBoxIconType::WarningIcon, "Patch speichern",
-                            "Konnte nicht gespeichert werden:\n" +
+                            juce::MessageBoxIconType::WarningIcon, rysum::tr("Patch speichern"),
+                            rysum::tr("Konnte nicht gespeichert werden:\n") +
                                 RysumProcessor::getPatchFolder().getFullPathName());
                 };
                 const bool exists =
@@ -1147,10 +1154,10 @@ void RysumContent::askSavePatch()
                 if (exists && name != safe->proc.getPatchName())
                 {
                     auto opts = juce::MessageBoxOptions()
-                                    .withTitle("Patch speichern")
-                                    .withMessage("\"" + name + u8("\" gibt es schon. Ersetzen?"))
-                                    .withButton("Ersetzen")
-                                    .withButton("Abbrechen")
+                                    .withTitle(rysum::tr("Patch speichern"))
+                                    .withMessage("\"" + name + rysum::tr("\" gibt es schon. Ersetzen?"))
+                                    .withButton(rysum::tr("Ersetzen"))
+                                    .withButton(rysum::tr("Abbrechen"))
                                     .withAssociatedComponent(safe.getComponent());
                     juce::AlertWindow::showAsync(opts,
                                                  [doSave](int r)
@@ -1203,14 +1210,14 @@ void RysumContent::paint(juce::Graphics &g)
     const int spkCh = dec != nullptr ? dec->numOutChannels : 0;
     const int needed = out == 0 || bin ? 2 : spk ? spkCh : (out + 1) * (out + 1);
     const int have = proc.getTotalNumOutputChannels();
-    juce::String o = bin ? (proc.binauralReady() ? juce::String(tr ? "2 LS" : "2 ch HRTF")
+    juce::String o = bin ? (proc.binauralReady() ? juce::String(tr ? rysum::tr("2 LS") : "2 ch HRTF")
                                                  : juce::String::fromUTF8("HRTF \xe2\x80\xa6"))
                      : spk
-                         ? (dec != nullptr && dec->error.isEmpty() ? juce::String(spkCh) + " ch LS"
-                                                                   : juce::String("LS: Fehler"))
+                         ? (dec != nullptr && dec->error.isEmpty() ? juce::String(spkCh) + rysum::tr(" ch LS")
+                                                                   : rysum::tr("LS: Fehler"))
                          : juce::String(needed) + " ch";
     if (have < needed)
-        o = u8("nur ") + juce::String(have) + " ch!";
+        o = rysum::tr("nur ") + juce::String(have) + " ch!";
     g.setColour(have < needed ? col::white : col::faint);
     g.setFont(A.monoFont(10.0f));
     const juce::Rectangle<int> info(kOutX + kOutW + 2, 0, kFullX - 5 - (kOutX + kOutW + 2),
@@ -1218,7 +1225,7 @@ void RysumContent::paint(juce::Graphics &g)
     g.drawText(o, info.withTrimmedBottom(kHeader / 2).withTrimmedTop(9),
                juce::Justification::centredRight);
     g.setColour(col::faint);
-    g.drawText(juce::String(proc.engine.activeVoices.load()) + " St.",
+    g.drawText(juce::String(proc.engine.activeVoices.load()) + rysum::tr(" St."),
                info.withTrimmedTop(kHeader / 2).withTrimmedBottom(9),
                juce::Justification::centredRight);
 }
@@ -1226,22 +1233,21 @@ void RysumContent::paint(juce::Graphics &g)
 void RysumContent::showDiceMenu()
 {
     juce::PopupMenu m;
-    m.addSectionHeader(juce::String::fromUTF8("W\xc3\xbcrfeln"));
-    m.addItem(1, juce::String::fromUTF8("Sanft \xe2\x80\x93 kleine Schritte vom jetzigen Klang"));
-    m.addItem(2, juce::String::fromUTF8("Wild \xe2\x80\x93 alles neu (aber spielbar)"));
+    m.addSectionHeader(rysum::tr("W\xc3\xbcrfeln"));
+    m.addItem(1, rysum::tr("Sanft \xe2\x80\x93 kleine Schritte vom jetzigen Klang"));
+    m.addItem(2, rysum::tr("Wild \xe2\x80\x93 alles neu (aber spielbar)"));
     m.addItem(3,
-              juce::String::fromUTF8("Zur\xc3\xbc"
+              rysum::tr("Zur\xc3\xbc"
                                      "ck zum Klang davor"),
               proc.canUndoDice());
     m.addSeparator();
-    m.addSectionHeader(juce::String::fromUTF8("Was gew\xc3\xbcrfelt wird"));
+    m.addSectionHeader(rysum::tr("Was gew\xc3\xbcrfelt wird"));
     const auto names = RysumProcessor::diceGroupNames();
     for (int g = 0; g < RysumProcessor::kNumDiceGroups; ++g)
         m.addItem(10 + g, names[g], true, proc.isDiceGroupOn(g));
     m.addSeparator();
     m.addItem(4,
-              juce::String::fromUTF8(
-                  "Nie: Lautst\xc3\xa4rke, Ausgabe, Stimmung, MIDI, Freeze, Anordnung der Pfeifen"),
+              rysum::tr("Nie: Lautst\xc3\xa4rke, Ausgabe, Stimmung, MIDI, Freeze, Anordnung der Pfeifen"),
               false);
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&diceButton),
                     [safe = juce::Component::SafePointer<RysumContent>(this)](int r)
@@ -1269,10 +1275,10 @@ void RysumContent::showModMenu(juce::Component &target, const juce::String &para
     if (prm == nullptr)
         return;
     juce::PopupMenu m;
-    m.addSectionHeader(prm->getName(64));
+    m.addSectionHeader(rysum::trText(prm->getName(64)));
     const auto names = modSourceNames();
     if (!proc.isModTarget(idx))
-        m.addItem(-1, u8("Schalter/Auswahl \xe2\x80\x93 nicht modulierbar"), false);
+        m.addItem(-1, rysum::tr("Schalter/Auswahl \xe2\x80\x93 nicht modulierbar"), false);
     else
     {
         bool free = false;
@@ -1281,28 +1287,28 @@ void RysumContent::showModMenu(juce::Component &target, const juce::String &para
         juce::PopupMenu with;
         for (int s = 0; s < kNumSources; ++s)
             with.addItem(1 + s, names[s]);
-        m.addSubMenu(free ? juce::String("Modulieren mit")
-                          : u8("Modulieren mit (alle ") + juce::String(kNumRoutes) +
-                                u8(" Pl\xc3\xa4tze belegt)"),
+        m.addSubMenu(free ? rysum::tr("Modulieren mit")
+                          : rysum::tr("Modulieren mit (alle ") + juce::String(kNumRoutes) +
+                                rysum::tr(" Pl\xc3\xa4tze belegt)"),
                      with, free);
         for (int r = 0; r < kNumRoutes; ++r)
             if (proc.getRouteTgt(r) == kGlobalTargetBase + idx && proc.getRouteSrc(r) >= 0)
             {
                 auto *a = proc.apvts.getParameter(proc.getModAmountId(r));
                 m.addItem(100 + r,
-                          "Entfernen: " + names[proc.getRouteSrc(r)] + " (" +
+                          rysum::tr("Entfernen: ") + names[proc.getRouteSrc(r)] + " (" +
                               (a != nullptr ? a->getCurrentValueAsText() : juce::String()) + ")");
             }
     }
     // MIDI learn
     m.addSeparator();
-    m.addItem(400, u8("MIDI lernen (Regler am Keyboard bewegen)"));
+    m.addItem(400, rysum::tr("MIDI lernen (Regler am Keyboard bewegen)"));
     for (int slot : proc.midiMapsFor(idx))
     {
         const auto mm = proc.getMidiMap(slot);
         m.addItem(500 + slot,
-                  u8("MIDI-Zuordnung entfernen: ") +
-                      (mm.cc >= 0 ? "CC " + juce::String(mm.cc) : u8("noch nicht gelernt")));
+                  rysum::tr("MIDI-Zuordnung entfernen: ") +
+                      (mm.cc >= 0 ? "CC " + juce::String(mm.cc) : rysum::tr("noch nicht gelernt")));
     }
     // Verlauf: a lane for this control
     m.addSeparator();
@@ -1311,9 +1317,10 @@ void RysumContent::showModMenu(juce::Component &target, const juce::String &para
         bool has = false;
         for (auto &l : proc.getAuto().lanes)
             has = has || l.paramId == paramId;
-        m.addItem(600, has ? u8("Im Verlauf zeigen") : u8("Im Verlauf automatisieren"));
+        m.addItem(600, has ? rysum::tr("Im Verlauf zeigen") : rysum::tr("Im Verlauf automatisieren"));
     }
-    m.addItem(300, "Modulationsseite " + juce::String(u8("\xc3\xb6")) + "ffnen");
+    m.addItem(300, rysum::tr("Modulationsseite \xc3\xb6"
+                             "ffnen"));
     juce::Component::SafePointer<RysumContent> safe(this);
     m.showMenuAsync(
         juce::PopupMenu::Options().withTargetComponent(&target),
@@ -1342,9 +1349,9 @@ void RysumContent::showModMenu(juce::Component &target, const juce::String &para
                 const int slot = self.proc.learnMidiFor(idx);
                 if (slot < 0)
                     juce::AlertWindow::showMessageBoxAsync(
-                        juce::MessageBoxIconType::NoIcon, "MIDI lernen",
-                        u8("Alle ") + juce::String(RysumProcessor::kNumMidiMaps) +
-                            u8(" MIDI-Zuordnungen sind belegt."));
+                        juce::MessageBoxIconType::NoIcon, rysum::tr("MIDI lernen"),
+                        rysum::tr("Alle ") + juce::String(RysumProcessor::kNumMidiMaps) +
+                            rysum::tr(" MIDI-Zuordnungen sind belegt."));
                 else
                     self.mod.showMidiTab(
                         true,
@@ -1417,7 +1424,7 @@ void RysumContent::updateStats()
                   juce::String(100.0 * stats.area / secs, 0) + " % des Fensters pro s\n" + "Takt " +
                   juce::String(stats.ticks / secs, 1) + "/s (max Pause " +
                   juce::String(stats.tickMax, 0) + " ms)   " + engine + "   Pixel x" +
-                  juce::String(scale, 2) + "   " + (fullButton.active ? "Vollbild" : "Fenster") +
+                  juce::String(scale, 2) + "   " + (fullButton.active ? rysum::tr("Vollbild") : "Fenster") +
                   "\n" + "Seite " + views[juce::jlimit(0, 8, current)] +
                   "   Strg+Umschalt+R: Renderer wechseln";
     {
@@ -1463,7 +1470,7 @@ void RysumContent::startStats()
     stats.lastTick = 0.0;
     stats.paints = stats.ticks = 0;
     stats.paintMs = stats.paintMax = stats.area = stats.tickMax = 0.0;
-    stats.shown = "Messe ...";
+    stats.shown = rysum::tr("Messe ...");
     paintStatsFile().appendText("---- " + juce::Time::getCurrentTime().toString(true, true) + "\n");
 }
 
@@ -1514,13 +1521,14 @@ static void saveWindowScale(float s)
     xml.writeTo(windowSizeFile());
 }
 
-RysumEditor::RysumEditor(RysumProcessor &p) : AudioProcessorEditor(p), content(p)
+RysumEditor::RysumEditor(RysumProcessor &p)
+    : AudioProcessorEditor(p), content(std::make_unique<RysumContent>(p))
 {
     setLookAndFeel(&lnf.get());
-    content.setLookAndFeel(&lnf.get());
     juce::LookAndFeel::setDefaultLookAndFeel(
         &lnf.get()); // right-click menus and dialogs have no parent: they use the default
-    addAndMakeVisible(content);
+    connectContent();
+    addAndMakeVisible(*content);
     setResizable(true, true);
     setResizeLimits(kW / 2, kH / 2, kW * 2, kH * 2);
     if (auto *c = getConstrainer())
@@ -1528,18 +1536,6 @@ RysumEditor::RysumEditor(RysumProcessor &p) : AudioProcessorEditor(p), content(p
     const float s0 = loadWindowScale();
     setSize(juce::roundToInt(kW * s0), juce::roundToInt(kH * s0));
     sizeRestored = true;
-    // deferred: the click / key that asked for it is still being handled by a component that moves
-    // (the safe pointer is made here, outside the nested lambda: MSVC reads 'this' there
-    // differently)
-    content.onToggleFullscreen = [safe = juce::Component::SafePointer<RysumEditor>(this)]
-    {
-        juce::MessageManager::callAsync(
-            [safe]
-            {
-                if (safe != nullptr)
-                    safe->toggleFullscreen();
-            });
-    };
     startTimer(0, 16); // 60 times a second: on fast screens 30 looked choppy (the paints are cheap:
                        // 0.5 - 3 ms)
     // (measuring: RYSUM_PAINT_STATS=1 switches the readout on at start, RYSUM_PAINT_STATS=fs also
@@ -1551,14 +1547,14 @@ RysumEditor::RysumEditor(RysumProcessor &p) : AudioProcessorEditor(p), content(p
                                     [safe = juce::Component::SafePointer<RysumEditor>(this)]
                                     {
                                         if (safe != nullptr)
-                                            safe->content.runImmersiveTest();
+                                            safe->content->runImmersiveTest();
                                     });
     if (ps.isNotEmpty())
     {
-        content.startStats();
+        content->startStats();
         const auto pv = juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_VIEW", {});
         if (pv.isNotEmpty())
-            content.showView(pv.getIntValue());
+            content->showView(pv.getIntValue());
         if (juce::SystemStats::getEnvironmentVariable("RYSUM_PAINT_CHORD", {}) == "heavy")
         {
             // (measuring) a full scene: every stop flying in the Saal, knocking, playing itself
@@ -1604,17 +1600,68 @@ RysumEditor::RysumEditor(RysumProcessor &p) : AudioProcessorEditor(p), content(p
     }
 }
 
+void RysumEditor::connectContent()
+{
+    content->setLookAndFeel(&lnf.get());
+    // deferred: the click / key that asked for it is still being handled by a component that moves
+    // (the safe pointer is made here, outside the nested lambda: MSVC reads 'this' there
+    // differently)
+    content->onToggleFullscreen = [safe = juce::Component::SafePointer<RysumEditor>(this)]
+    {
+        juce::MessageManager::callAsync(
+            [safe]
+            {
+                if (safe != nullptr)
+                    safe->toggleFullscreen();
+            });
+    };
+    // the language switch builds the interface anew (texts are set as its parts are made); deferred:
+    // the button that asked for it belongs to the content that goes
+    content->onLanguageChanged = [safe = juce::Component::SafePointer<RysumEditor>(this)]
+    {
+        juce::MessageManager::callAsync(
+            [safe]
+            {
+                if (safe != nullptr)
+                    safe->rebuildContent();
+            });
+    };
+}
+
+void RysumEditor::rebuildContent()
+{
+    auto &pr = static_cast<RysumProcessor &>(processor);
+    const int view = content->currentView();
+    auto *parent = content->getParentComponent();
+    const auto transform = content->getTransform();
+    content->releaseComputerKeys();
+    if (parent != nullptr)
+        parent->removeChildComponent(content.get());
+    content->setLookAndFeel(nullptr);
+    content.reset(); // the old one first: the processor knows only one interface at a time
+    content = std::make_unique<RysumContent>(pr);
+    connectContent();
+    if (parent != nullptr)
+        parent->addAndMakeVisible(*content, 0);
+    content->setTransform(transform);
+    content->setBounds(0, 0, kW, kH);
+    content->setFullscreenShown(fullscreen != nullptr);
+    content->showView(view);
+    content->grabKeyboardFocus();
+    repaint();
+}
+
 RysumEditor::~RysumEditor()
 {
     if (fullscreen != nullptr)
     {
         if (juce::Desktop::getInstance().getKioskModeComponent() == fullscreen.get())
             juce::Desktop::getInstance().setKioskModeComponent(nullptr, false);
-        fullscreen->removeChildComponent(&content);
+        fullscreen->removeChildComponent(content.get());
         fullscreen.reset();
     }
-    content.releaseComputerKeys();
-    content.setLookAndFeel(nullptr);
+    content->releaseComputerKeys();
+    content->setLookAndFeel(nullptr);
     setLookAndFeel(nullptr);
 }
 
@@ -1623,8 +1670,8 @@ void RysumEditor::resized()
     if (fullscreen != nullptr)
         return; // the content is on the full-screen window
     const float s = (float)getWidth() / (float)kW;
-    content.setTransform(juce::AffineTransform::scale(s));
-    content.setBounds(0, 0, kW, kH);
+    content->setTransform(juce::AffineTransform::scale(s));
+    content->setBounds(0, 0, kW, kH);
     if (sizeRestored)
     {
         scaleToSave = s;
@@ -1645,8 +1692,7 @@ void RysumEditor::paint(juce::Graphics &g)
     g.drawText("Rysum", r.withTrimmedBottom(r.getHeight() * 0.2f), juce::Justification::centred);
     g.setColour(col::dim);
     g.setFont(A.sansFont(juce::jmax(11.0f, r.getHeight() * 0.025f)));
-    g.drawText(juce::String::fromUTF8(
-                   "l\xc3\xa4uft im Vollbild \xe2\x80\x93 hier klicken oder Esc dr\xc3\xbc"
+    g.drawText(rysum::tr("l\xc3\xa4uft im Vollbild \xe2\x80\x93 hier klicken oder Esc dr\xc3\xbc"
                    "cken, um zur\xc3\xbc"
                    "ckzukehren"),
                r.withTrimmedTop(r.getHeight() * 0.12f), juce::Justification::centred);
@@ -1661,33 +1707,33 @@ void RysumEditor::toggleFullscreen()
             juce::Desktop::getInstance().getDisplays().getDisplayForRect(getScreenBounds());
         if (display == nullptr)
             return;
-        content.releaseComputerKeys();
+        content->releaseComputerKeys();
         fullscreen = std::make_unique<FullscreenWindow>(*this);
         fullscreen->setLookAndFeel(&lnf.get());
         fullscreen->setName("Rysum");
-        fullscreen->addAndMakeVisible(content);
+        fullscreen->addAndMakeVisible(*content);
         fullscreen->addToDesktop(juce::ComponentPeer::windowAppearsOnTaskbar);
         fullscreen->setBounds(display->totalArea);
         fullscreen->setVisible(true);
         juce::Desktop::getInstance().setKioskModeComponent(fullscreen.get(), false);
         fullscreen->toFront(true);
-        content.grabKeyboardFocus();
-        content.setFullscreenShown(true);
+        content->grabKeyboardFocus();
+        content->setFullscreenShown(true);
     }
     else
     {
-        content.releaseComputerKeys();
+        content->releaseComputerKeys();
         if (juce::Desktop::getInstance().getKioskModeComponent() == fullscreen.get())
             juce::Desktop::getInstance().setKioskModeComponent(nullptr, false);
         auto old = std::move(
             fullscreen); // fullscreen == nullptr from here on (resized() places the content again)
-        addAndMakeVisible(content);
+        addAndMakeVisible(*content);
         resized();
         old.reset();
-        content.setFullscreenShown(false);
+        content->setFullscreenShown(false);
         if (auto *top = getTopLevelComponent())
             top->toFront(true);
-        content.grabKeyboardFocus();
+        content->grabKeyboardFocus();
     }
     repaint();
 }
@@ -1696,7 +1742,7 @@ void RysumEditor::FullscreenWindow::resized()
 {
     // the 1280 x 720 design as large as the screen allows, centred (black bars where the shape
     // differs)
-    auto &c = editor.content;
+    auto &c = *editor.content;
     const float s = juce::jmin((float)getWidth() / (float)kW, (float)getHeight() / (float)kH);
     const float ox = 0.5f * ((float)getWidth() - s * (float)kW),
                 oy = 0.5f * ((float)getHeight() - s * (float)kH);
@@ -1723,7 +1769,7 @@ void RysumEditor::timerCallback(int id)
 {
     if (id == 0)
     {
-        content.tick();
+        content->tick();
         return;
     }
     stopTimer(1);

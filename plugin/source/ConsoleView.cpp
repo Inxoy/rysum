@@ -66,7 +66,7 @@ void StopTile::paintButton(juce::Graphics &g, bool over, bool)
     g.drawText(capText, cap, juce::Justification::centredLeft);
     auto stateR = cap.removeFromRight(80.0f);
     g.setColour(on ? col::ink : col::faint);
-    g.drawText(on ? "gezogen" : "ab", stateR, juce::Justification::centredRight);
+    g.drawText(on ? rysum::tr("gezogen") : rysum::tr("ab"), stateR, juce::Justification::centredRight);
     auto sq = juce::Rectangle<float>(7.0f, 7.0f)
                   .withCentre({stateR.getRight() - (on ? 58.0f : 22.0f), stateR.getCentreY()});
     g.setColour(col::ink);
@@ -121,11 +121,11 @@ void VoxTile::paintButton(juce::Graphics &g, bool over, bool)
     auto cap = caption.withTrimmedTop(6.0f).reduced(3.0f, 0.0f);
     g.setFont(A.monoFont(11.0f));
     g.setColour(error.isEmpty() ? col::dim : col::faint);
-    g.drawText(error.isEmpty() ? juce::String::fromUTF8("8\xe2\x80\xb2") : juce::String("kein Modell"), cap,
+    g.drawText(error.isEmpty() ? juce::String::fromUTF8("8\xe2\x80\xb2") : rysum::tr("kein Modell"), cap,
                juce::Justification::centredLeft);
     auto stateR = cap.removeFromRight(80.0f);
     g.setColour(on ? col::ink : col::faint);
-    g.drawText(on ? "gezogen" : "ab", stateR, juce::Justification::centredRight);
+    g.drawText(on ? rysum::tr("gezogen") : rysum::tr("ab"), stateR, juce::Justification::centredRight);
     auto sq = juce::Rectangle<float>(7.0f, 7.0f).withCentre({stateR.getRight() - (on ? 58.0f : 22.0f), stateR.getCentreY()});
     g.setColour(col::ink);
     if (on)
@@ -139,12 +139,10 @@ VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
 {
     playsAtt = attachButton(proc.apvts, "inPlays", plays);
     followAtt = attachButton(proc.apvts, "voxFollow", follow);
-    plays.setTooltip(juce::String::fromUTF8(
-        "Was am Eingang erklingt (Stimme, Instrument, eine Aufnahme), wird erkannt und spielt die Orgel: "
+    plays.setTooltip(rysum::tr("Was am Eingang erklingt (Stimme, Instrument, eine Aufnahme), wird erkannt und spielt die Orgel: "
         "alle gezogenen Register, die Vox humana gleitend mit der Tonh\xc3\xb6he, die anderen auf den "
         "n\xc3\xa4" "chsten Tasten. Der Eingang selbst muss daf\xc3\xbcr nicht an sein."));
-    follow.setTooltip(juce::String::fromUTF8(
-        "Die Klangfarbe der Vox humana folgt dem Eingang: ein heller Eingang zieht hellere Register. "
+    follow.setTooltip(rysum::tr("Die Klangfarbe der Vox humana folgt dem Eingang: ein heller Eingang zieht hellere Register. "
         "Die Regler unten verschieben sie dann von dort aus."));
     for (auto *b : {&plays, &follow})
         addAndMakeVisible(*b);
@@ -169,7 +167,7 @@ VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
     {
         rows.push_back(std::make_unique<ParamRow>(proc.apvts, sp.first, juce::String::fromUTF8(sp.second)));
         if (*tips[i] != 0)
-            rows.back()->setTooltip(juce::String::fromUTF8(tips[i]));
+            rows.back()->setTooltip(rysum::tr(tips[i]));
         ++i;
         addAndMakeVisible(*rows.back());
     }
@@ -187,13 +185,13 @@ void VoxPanel::paint(juce::Graphics &g)
     g.setColour(col::dim);
     static const char *names[]{"Klang", "Eingang"};
     for (size_t k = 0; k < heads.size(); ++k)
-        g.drawText(names[k], heads[k], juce::Justification::bottomLeft);
-    g.drawText(juce::String::fromUTF8("Ort, Lautst\xc3\xa4rke, Raum: Seite Raum \xc2\xb7 Vox humana"),
+        g.drawText(rysum::tr(names[k]), heads[k], juce::Justification::bottomLeft);
+    g.drawText(rysum::tr("Ort, Lautst\xc3\xa4rke, Raum: Seite Raum \xc2\xb7 Vox humana"),
                getLocalBounds().removeFromBottom(24).reduced(12, 0), juce::Justification::centredLeft);
     if (proc.voxError.isNotEmpty())
     {
         g.setColour(col::ink);
-        g.drawText(proc.voxError, getLocalBounds().removeFromTop(34).reduced(12, 0), juce::Justification::centredRight);
+        g.drawText(rysum::trText(proc.voxError), getLocalBounds().removeFromTop(34).reduced(12, 0), juce::Justification::centredRight);
     }
 }
 
@@ -239,7 +237,7 @@ void SceneButton::paintButton(juce::Graphics &g, bool over, bool)
     {
         g.setFont(A.monoFont(8.5f));
         g.setColour(col::faint);
-        g.drawText("leer", getLocalBounds().removeFromBottom(12), juce::Justification::centred);
+        g.drawText(rysum::tr("leer"), getLocalBounds().removeFromBottom(12), juce::Justification::centred);
     }
 }
 
@@ -272,10 +270,10 @@ void SceneButton::showMenu()
 {
     juce::PopupMenu m;
     const auto name = getButtonText();
-    m.addSectionHeader("Szene " + name);
-    m.addItem(1, juce::String::fromUTF8("Aktuellen Klang hier speichern"));
-    m.addItem(2, "Hierhin wechseln", proc.isSceneStored(slot));
-    m.addItem(3, "Leeren", proc.isSceneStored(slot));
+    m.addSectionHeader(rysum::tr("Szene ") + name);
+    m.addItem(1, rysum::tr("Aktuellen Klang hier speichern"));
+    m.addItem(2, rysum::tr("Hierhin wechseln"), proc.isSceneStored(slot));
+    m.addItem(3, rysum::tr("Leeren"), proc.isSceneStored(slot));
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
                     [safe = juce::Component::SafePointer<SceneButton>(this)](int r)
                     {
@@ -423,8 +421,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
     voxWind = std::make_unique<ParamRow>(proc.apvts, "voxWind", "Wind", true);
     addAndMakeVisible(*voxVol);
     addAndMakeVisible(*voxWind);
-    voxMore.setTooltip(juce::String::fromUTF8(
-        "Einstellungen der Vox humana: Klangfarbe, Ort im Raum, und \xe2\x80\x9e" "Eingang spielt die Orgel\xe2\x80\x9c."));
+    voxMore.setTooltip(rysum::tr("Einstellungen der Vox humana: Klangfarbe, Ort im Raum, und \xe2\x80\x9e" "Eingang spielt die Orgel\xe2\x80\x9c."));
     addAndMakeVisible(voxMore);
     voxMore.onClick = [this]
     {
@@ -439,13 +436,13 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
     };
 
     testToneButton.setClickingTogglesState(true);
-    testToneButton.setTooltip("DSF-Referenzton. Stimmung und Frequenz auf der Seite Klang.");
+    testToneButton.setTooltip(rysum::tr("DSF-Referenzton. Stimmung und Frequenz auf der Seite Klang."));
     addAndMakeVisible(testToneButton);
     testToneAttachment = rysum::ui::attachButton(
         proc.apvts, "dsfOn", testToneButton);
     testToneLevel =
-        std::make_unique<ParamRow>(proc.apvts, "dsfLevel", u8("Lautst\xc3\xa4rke"), true);
-    testToneColour = std::make_unique<ParamRow>(proc.apvts, "dsfSpectrum", "Klangfarbe", true);
+        std::make_unique<ParamRow>(proc.apvts, "dsfLevel", rysum::tr("Lautst\xc3\xa4rke"), true);
+    testToneColour = std::make_unique<ParamRow>(proc.apvts, "dsfSpectrum", rysum::tr("Klangfarbe"), true);
     addAndMakeVisible(*testToneLevel);
     addAndMakeVisible(*testToneColour);
 
@@ -466,8 +463,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         spreadChoice.addItemList(choice->choices, 1);
     spreadAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "noteSpread", spreadChoice);
-    spreadChoice.setTooltip(juce::String::fromUTF8(
-        "Jeder Ton nur auf einer Pfeife eines gezogenen Registers statt auf allen: der Reihe nach "
+    spreadChoice.setTooltip(rysum::tr("Jeder Ton nur auf einer Pfeife eines gezogenen Registers statt auf allen: der Reihe nach "
         "(1. Ton Praestant, 2. Ton Gedackt \xe2\x80\xa6), nach Lage im Akkord (tiefster Ton aufs "
         "erste Register links) "
         "oder zuf\xc3\xa4llig. Stumm geschaltete Pfeifen (Seite Raum) werden \xc3\xbc"
@@ -512,7 +508,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         {
             spaceRows.push_back(std::make_unique<ParamRow>(
                 proc.apvts, n.first, juce::String(juce::CharPointer_UTF8(n.second))));
-            spaceRows.back()->setTooltip(juce::String::fromUTF8(tips[i++]));
+            spaceRows.back()->setTooltip(rysum::tr(tips[i++]));
             addChildComponent(*spaceRows.back());
         }
         // "Glitch": transients of a failing playback, per pipe
@@ -539,7 +535,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         {
             glitchRows.push_back(std::make_unique<ParamRow>(
                 proc.apvts, n.first, juce::String(juce::CharPointer_UTF8(n.second))));
-            glitchRows.back()->setTooltip(juce::String::fromUTF8(gtips[gi++]));
+            glitchRows.back()->setTooltip(rysum::tr(gtips[gi++]));
             addChildComponent(*glitchRows.back());
         }
         for (auto *b : {&tabSound, &tabSpace, &tabGlitch})
@@ -551,7 +547,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         tabSpace.onClick = [this] { showDecayTab(1); };
         tabGlitch.onClick = [this] { showDecayTab(2); };
         tabGlitch.setTooltip(
-            juce::String::fromUTF8("Glitches einer versagenden Wiedergabe: Stottern, Bandschnitte, "
+            rysum::tr("Glitches einer versagenden Wiedergabe: Stottern, Bandschnitte, "
                                    "harte Kanten, Clipping (pro Pfeife)"));
         // Traktur · Resonanz: the key clicks ring the harmonics of the pressed key
         const std::pair<const char *, const char *> res[]{{"clickRes", "Klick-Resonanz"},
@@ -568,7 +564,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         {
             resRows.push_back(std::make_unique<ParamRow>(
                 proc.apvts, n.first, juce::String(juce::CharPointer_UTF8(n.second))));
-            resRows.back()->setTooltip(juce::String::fromUTF8(rtips[ri++]));
+            resRows.back()->setTooltip(rysum::tr(rtips[ri++]));
             addChildComponent(*resRows.back());
         }
         for (auto *b : {&tabNoise, &tabRes})
@@ -578,10 +574,8 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
         }
         tabNoise.onClick = [this] { showNoiseTab(false); };
         tabRes.onClick = [this] { showNoiseTab(true); };
-        tabSound.setTooltip(juce::String::fromUTF8(
-            "Verfall des Klangs: K\xc3\xb6rnung, Bittiefe, Abtastrate, Windschwankung, Aussetzer"));
-        tabSpace.setTooltip(juce::String::fromUTF8(
-            "Verfall des Raumbilds: die Ambisonics-Kugel nutzt sich ab (Ambisonics, Binaural, "
+        tabSound.setTooltip(rysum::tr("Verfall des Klangs: K\xc3\xb6rnung, Bittiefe, Abtastrate, Windschwankung, Aussetzer"));
+        tabSpace.setTooltip(rysum::tr("Verfall des Raumbilds: die Ambisonics-Kugel nutzt sich ab (Ambisonics, Binaural, "
             "Lautsprecher; in Stereo nur das Richtungsraster)"));
     }
     for (auto *b : {&perPipe, &onSum})
@@ -612,7 +606,7 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
     addAndMakeVisible(folderButton);
     folderButton.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser>("Ordner mit rysum_samples.json",
+        chooser = std::make_unique<juce::FileChooser>(rysum::tr("Ordner mit rysum_samples.json"),
                                                       proc.getSamplesFolder());
         chooser->launchAsync(juce::FileBrowserComponent::openMode |
                                  juce::FileBrowserComponent::canSelectDirectories,
@@ -631,18 +625,16 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
     {
         sceneButtons.push_back(std::make_unique<SceneButton>(proc, s));
         sceneButtons.back()->setTooltip(
-            juce::String::fromUTF8("Szene ") + sceneButtons.back()->getButtonText() +
-            juce::String::fromUTF8(
-                ": Klicken = dorthin wechseln (eine leere Szene speichert den aktuellen Klang). "
+            rysum::tr("Szene ") + sceneButtons.back()->getButtonText() +
+            rysum::tr(": Klicken = dorthin wechseln (eine leere Szene speichert den aktuellen Klang). "
                 "Rechtsklick = speichern / leeren."));
         addAndMakeVisible(*sceneButtons.back());
     }
     sceneMorph = std::make_unique<ParamRow>(proc.apvts, "sceneMorph",
-                                            juce::String::fromUTF8("\xc3\x9c"
+                                            rysum::tr("\xc3\x9c"
                                                                    "berblenden"),
                                             true);
-    sceneMorph->setTooltip(juce::String::fromUTF8(
-        "Blendet zwischen den gespeicherten Szenen (leere werden \xc3\xbc"
+    sceneMorph->setTooltip(rysum::tr("Blendet zwischen den gespeicherten Szenen (leere werden \xc3\xbc"
         "bersprungen): alle Regler gleiten, "
         "Schalter wechseln auf halbem Weg. Automatisierbar, MIDI-lernbar, modulierbar. "
         "Nicht dabei: Lautst\xc3\xa4rke, Ausgabe, Stimmung, MIDI."));
@@ -796,9 +788,9 @@ juce::String ConsoleView::spaceInfo() const
 {
     const int out = juce::roundToInt(proc.apvts.getRawParameterValue("output")->load());
     if (out == 0)
-        return juce::String::fromUTF8("Stereo: nur das Raster");
+        return rysum::tr("Stereo: nur das Raster");
     const float e = proc.engine.spaceErosionNow.load();
-    return e > 0.005f ? juce::String::fromUTF8("abgetragen ") +
+    return e > 0.005f ? rysum::tr("abgetragen ") +
                             juce::String(juce::roundToInt(e * 100.0f)) + " %"
                       : juce::String();
 }
@@ -852,23 +844,23 @@ void ConsoleView::paint(juce::Graphics &g)
     auto head = stopsArea.withHeight(20);
     g.setColour(col::mute);
     g.setFont(A.sansFont(11.0f).withExtraKerningFactor(0.18f));
-    g.drawText("REGISTER", head, juce::Justification::centredLeft);
+    g.drawText(rysum::tr("Register").toUpperCase(), head, juce::Justification::centredLeft);
     int on = 0;
     for (int s = 0; s < kNumStops; ++s)
         on += proc.apvts.getRawParameterValue(RysumProcessor::stopParamId(s))->load() > 0.5f;
     on += proc.apvts.getRawParameterValue("voxOn")->load() > 0.5f; // the Vox humana
     g.setFont(A.monoFont(11.0f));
-    g.drawText(juce::String(on) + " von " + juce::String(kNumStops + 1) + " gezogen", head,
+    g.drawText(juce::String(on) + rysum::tr(" von ") + juce::String(kNumStops + 1) + rysum::tr(" gezogen"), head,
                juce::Justification::centredRight);
 
-    drawSectionTitle(g, noiseArea, "Traktur");
+    drawSectionTitle(g, noiseArea, rysum::tr("Traktur"));
     g.setFont(Assets::get().sansFont(14.0f));
     g.setColour(col::ink);
     if (!resTab)
-        g.drawText(juce::String::fromUTF8("T\xc3\xb6ne verteilen"), spreadLabel,
+        g.drawText(rysum::tr("T\xc3\xb6ne verteilen"), spreadLabel,
                    juce::Justification::centredLeft);
-    drawSectionTitle(g, decayArea, "Verfall", spaceTab ? shownSpaceInfo : juce::String());
-    drawSectionTitle(g, outArea, "Ausgang");
+    drawSectionTitle(g, decayArea, rysum::tr("Verfall"), spaceTab ? shownSpaceInfo : juce::String());
+    drawSectionTitle(g, outArea, rysum::tr("Ausgang"));
 
     // meters + volume scale
     auto m = meterArea;
@@ -877,7 +869,7 @@ void ConsoleView::paint(juce::Graphics &g)
     g.setColour(col::faint);
     const char *labels[]{"+12", "-6", "-24", "-42", "-60"};
     for (int i = 0; i < 5; ++i)
-        g.drawText(labels[i],
+        g.drawText(rysum::tr(labels[i]),
                    scale.withHeight(12).withY(scale.getY() + (i * (scale.getHeight() - 12) / 4)),
                    juce::Justification::centredLeft);
     auto meterBar = [&](juce::Rectangle<int> b, float v)
@@ -895,7 +887,7 @@ void ConsoleView::paint(juce::Graphics &g)
     auto info = outInfoArea;
     g.setFont(A.sansFont(14.0f));
     g.setColour(col::ink);
-    g.drawText(juce::String(juce::CharPointer_UTF8("Lautst\xc3\xa4rke")), info.removeFromTop(18),
+    g.drawText(((rysum::tr("Lautst\xc3\xa4rke"))), info.removeFromTop(18),
                juce::Justification::centredLeft);
     g.setFont(A.monoFont(12.0f));
     g.setColour(col::dim);
@@ -903,19 +895,19 @@ void ConsoleView::paint(juce::Graphics &g)
                info.withY(info.getY() - 18).withHeight(18), juce::Justification::centredRight);
     g.setFont(A.monoFont(11.0f));
     g.setColour(col::mute);
-    g.drawText(juce::String(proc.engine.activeVoices.load()) + " Stimmen aktiv",
+    g.drawText(juce::String(proc.engine.activeVoices.load()) + rysum::tr(" Stimmen aktiv"),
                info.removeFromTop(18), juce::Justification::centredLeft);
-    g.drawFittedText(proc.getLoadStatus(), info.removeFromTop(48), juce::Justification::topLeft, 3);
+    g.drawFittedText(rysum::trText(proc.getLoadStatus()), info.removeFromTop(48), juce::Justification::topLeft, 3);
     {
         g.setColour(col::mute);
         g.setFont(A.sansFont(11.0f).withExtraKerningFactor(0.18f));
-        g.drawText("SZENEN", scenesArea, juce::Justification::centredLeft);
+        g.drawText(rysum::tr("Szenen").toUpperCase(), scenesArea, juce::Justification::centredLeft);
         int n = 0;
         for (int s = 0; s < RysumProcessor::kNumScenes; ++s)
             n += proc.isSceneStored(s);
         g.setFont(A.monoFont(10.5f));
-        g.drawText(n == 0 ? juce::String::fromUTF8("Klick auf einen Buchstaben speichert")
-                          : juce::String(n) + " gespeichert",
+        g.drawText(n == 0 ? rysum::tr("Klick auf einen Buchstaben speichert")
+                          : juce::String(n) + rysum::tr(" gespeichert"),
                    scenesArea, juce::Justification::centredRight);
     }
 
@@ -932,11 +924,11 @@ void ConsoleView::paint(juce::Graphics &g)
     g.setColour(col::mute);
     const bool extended = proc.usesExtendedRange();
     const bool chromatic = proc.apvts.getRawParameterValue("temperament")->load() > 0.5f;
-    auto compass = u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 kurze Oktave \xc2\xb7 41 Tasten");
+    auto compass = rysum::tr("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 kurze Oktave \xc2\xb7 41 Tasten");
     if (extended)
-        compass = u8("C1 \xe2\x80\x93 C8 \xc2\xb7 chromatisch");
+        compass = rysum::tr("C1 \xe2\x80\x93 C8 \xc2\xb7 chromatisch");
     else if (chromatic)
-        compass = u8("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 chromatisch");
+        compass = rysum::tr("C \xe2\x80\x93 a\xe2\x80\xb3 \xc2\xb7 chromatisch");
     g.drawText(compass, kh, juce::Justification::centredLeft);
     g.drawText(extended ? "MIDI 24-108" : "MIDI 36-81", kh, juce::Justification::centredRight);
 }

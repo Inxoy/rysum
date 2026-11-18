@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.h"
+#include "Lang.h"
 #include "Modulation.h"
 #include "RysumBinaryData.h"
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -311,8 +312,76 @@ public:
     {
         g.setFont(getTextButtonFont(b, b.getHeight()));
         g.setColour(b.getToggleState() ? col::bg : col::dim);
-        g.drawFittedText(b.getButtonText(), b.getLocalBounds().reduced(4, 0),
+        g.drawFittedText(rysum::tr(b.getButtonText()), b.getLocalBounds().reduced(4, 0),
                          juce::Justification::centred, 1);
+    }
+
+    // ---- the interface language: texts are given in German and shown via rysum::tr (Lang.h),
+    // so a component keeps its German name (MIDI button paths) and only what is drawn changes
+    void drawToggleButton(juce::Graphics &g, juce::ToggleButton &button, bool over,
+                          bool down) override
+    {
+        const auto fontSize = juce::jmin(15.0f, (float)button.getHeight() * 0.75f);
+        const auto tickWidth = fontSize * 1.1f;
+        drawTickBox(g, button, 4.0f, ((float)button.getHeight() - tickWidth) * 0.5f, tickWidth,
+                    tickWidth, button.getToggleState(), button.isEnabled(), over, down);
+        g.setColour(button.findColour(juce::ToggleButton::textColourId));
+        g.setFont(fontSize);
+        if (!button.isEnabled())
+            g.setOpacity(0.5f);
+        g.drawFittedText(rysum::tr(button.getButtonText()),
+                         button.getLocalBounds()
+                             .withTrimmedLeft(juce::roundToInt(tickWidth) + 10)
+                             .withTrimmedRight(2),
+                         juce::Justification::centredLeft, 10);
+    }
+    void drawLabel(juce::Graphics &g, juce::Label &label) override
+    {
+        g.fillAll(label.findColour(juce::Label::backgroundColourId));
+        if (!label.isBeingEdited())
+        {
+            const auto alpha = label.isEnabled() ? 1.0f : 0.5f;
+            const juce::Font font(getLabelFont(label));
+            g.setColour(label.findColour(juce::Label::textColourId).withMultipliedAlpha(alpha));
+            g.setFont(font);
+            const auto textArea = getLabelBorderSize(label).subtractedFrom(label.getLocalBounds());
+            g.drawFittedText(rysum::tr(label.getText()), textArea, label.getJustificationType(),
+                             juce::jmax(1, (int)((float)textArea.getHeight() / font.getHeight())),
+                             label.getMinimumHorizontalScale());
+            g.setColour(label.findColour(juce::Label::outlineColourId).withMultipliedAlpha(alpha));
+        }
+        else if (label.isEnabled())
+            g.setColour(label.findColour(juce::Label::outlineColourId));
+        g.drawRect(label.getLocalBounds());
+    }
+    void drawPopupMenuItem(juce::Graphics &g, const juce::Rectangle<int> &area, bool isSeparator,
+                           bool isActive, bool isHighlighted, bool isTicked, bool hasSubMenu,
+                           const juce::String &text, const juce::String &shortcutKeyText,
+                           const juce::Drawable *icon, const juce::Colour *textColour) override
+    {
+        juce::LookAndFeel_V4::drawPopupMenuItem(g, area, isSeparator, isActive, isHighlighted,
+                                                isTicked, hasSubMenu, rysum::tr(text),
+                                                shortcutKeyText, icon, textColour);
+    }
+    void drawPopupMenuSectionHeader(juce::Graphics &g, const juce::Rectangle<int> &area,
+                                    const juce::String &name) override
+    {
+        juce::LookAndFeel_V4::drawPopupMenuSectionHeader(g, area, rysum::tr(name));
+    }
+    void getIdealPopupMenuItemSize(const juce::String &text, bool isSeparator, int standardHeight,
+                                   int &idealWidth, int &idealHeight) override
+    {
+        juce::LookAndFeel_V4::getIdealPopupMenuItemSize(rysum::tr(text), isSeparator,
+                                                        standardHeight, idealWidth, idealHeight);
+    }
+    juce::Rectangle<int> getTooltipBounds(const juce::String &tip, juce::Point<int> pos,
+                                          juce::Rectangle<int> parentArea) override
+    {
+        return juce::LookAndFeel_V4::getTooltipBounds(rysum::tr(tip), pos, parentArea);
+    }
+    void drawTooltip(juce::Graphics &g, const juce::String &text, int w, int h) override
+    {
+        juce::LookAndFeel_V4::drawTooltip(g, rysum::tr(text), w, h);
     }
 
     void drawLinearSlider(juce::Graphics &g, int x, int y, int w, int h, float pos, float, float,
@@ -675,13 +744,13 @@ public:
         auto r = headerArea();
         g.setColour(compact ? col::dim : col::ink);
         g.setFont(compact ? Assets::get().romanFont(11.5f) : Assets::get().sansFont(14.0f));
-        g.drawText(!isEnabled() && disabledTitle.isNotEmpty() ? disabledTitle : title, r,
+        g.drawText(rysum::tr(!isEnabled() && disabledTitle.isNotEmpty() ? disabledTitle : title), r,
                    juce::Justification::centredLeft);
         g.setFont(Assets::get().monoFont(compact ? 10.0f : 12.0f));
         if (!isEnabled() && disabledValueText.isNotEmpty())
         {
             g.setColour(col::dim);
-            g.drawText(disabledValueText, r, juce::Justification::centredRight);
+            g.drawText(rysum::tr(disabledValueText), r, juce::Justification::centredRight);
             return;
         }
         if (dragRoute >= 0 && access != nullptr)
@@ -695,22 +764,22 @@ public:
         else if (midiCc == -2)
         {
             g.setColour(col::rubric.brighter(0.5f));
-            g.drawText(juce::String::fromUTF8("MIDI: Regler bewegen \xe2\x80\xa6"), r,
+            g.drawText(rysum::tr("MIDI: Regler bewegen \xe2\x80\xa6"), r,
                        juce::Justification::centredRight);
         }
         else
         {
             // automated (Verlauf): the value the curve gives it right now
             const bool automated = !std::isnan(autoNorm) && param != nullptr;
-            const juce::String valueText =
+            const juce::String valueText = rysum::trText(
                 automated ? param->getText(autoNorm, 1024)
-                          : (param != nullptr ? param->getCurrentValueAsText() : juce::String());
+                          : (param != nullptr ? param->getCurrentValueAsText() : juce::String()));
             g.setColour(valueHover ? col::white : col::dim);
             g.drawText(valueText, r, juce::Justification::centredRight);
             if (midiCc >= 0 || automated)
             {
                 // a small tag: this one follows a controller / the Verlauf
-                const auto tag = automated ? juce::String("Verlauf") : midiCc >= 128 ? "Note " + juce::MidiMessage::getMidiNoteName(midiCc - 128, true, true, 4) : "CC " + juce::String(midiCc); // (128 + n: note n)
+                const auto tag = automated ? rysum::tr("Verlauf") : midiCc >= 128 ? "Note " + juce::MidiMessage::getMidiNoteName(midiCc - 128, true, true, 4) : "CC " + juce::String(midiCc); // (128 + n: note n)
                 g.setFont(Assets::get().monoFont(compact ? 8.5f : 9.5f));
                 g.setColour(automated ? col::rubric.brighter(0.35f) : col::faint);
                 const int tw = juce::roundToInt(juce::GlyphArrangement::getStringWidth(
@@ -965,10 +1034,11 @@ inline void drawLozenge(juce::Graphics &g, juce::Point<float> c, float rw, float
 
 /** section head: thick-thin double rule with a lozenge, the title in spaced capitals with a red
  * initial */
-inline void drawSectionTitle(juce::Graphics &g, juce::Rectangle<int> r, const juce::String &title,
-                             const juce::String &right = {})
+inline void drawSectionTitle(juce::Graphics &g, juce::Rectangle<int> r,
+                             const juce::String &germanTitle, const juce::String &germanRight = {})
 {
     auto &A = Assets::get();
+    const auto title = rysum::tr(germanTitle), right = rysum::trText(germanRight);
     const float x0 = (float)r.getX(), x1 = (float)r.getRight(), y = (float)r.getY();
     g.setColour(col::ink.withAlpha(0.9f));
     g.fillRect(x0, y, x1 - x0, 1.5f);

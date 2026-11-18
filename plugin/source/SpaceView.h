@@ -134,7 +134,7 @@ public:
         drawInputGlyph(g, {5.0f, (float)r.getCentreY()}, 9.0f, on);
         g.setColour(sel ? col::bg : (on ? col::ink : col::faint));
         g.setFont(A.sansFont(14.0f));
-        g.drawText(juce::String::fromUTF8("Eingang (Audio)"), r.withTrimmedLeft(28),
+        g.drawText(rysum::tr("Eingang (Audio)"), r.withTrimmedLeft(28),
                    juce::Justification::centredLeft);
         g.setColour(sel ? col::bg : col::mute);
         g.setFont(A.monoFont(11.0f));
@@ -150,8 +150,7 @@ class PipeStrip : public juce::Component, public juce::SettableTooltipClient
 public:
     PipeStrip(RysumProcessor &p, int &selectedStop) : proc(p), stop(selectedStop)
     {
-        setTooltip(juce::String::fromUTF8(
-            "Pfeifen des Registers: Klick schaltet eine Pfeife stumm / wieder an, \xc3\xbc"
+        setTooltip(rysum::tr("Pfeifen des Registers: Klick schaltet eine Pfeife stumm / wieder an, \xc3\xbc"
             "ber mehrere ziehen. "
             "Rechtsklick: Muster. Stumme Pfeifen spielen nicht (beim Verteilen der T\xc3\xb6ne "
             "werden sie \xc3\xbc"
@@ -176,7 +175,7 @@ public:
     PullToggle() : juce::Button("ziehen")
     {
         setClickingTogglesState(true);
-        setTooltip(juce::String::fromUTF8("Register ziehen / absto\xc3\x9f"
+        setTooltip(rysum::tr("Register ziehen / absto\xc3\x9f"
                                           "en"));
     }
     void paintButton(juce::Graphics &g, bool over, bool) override

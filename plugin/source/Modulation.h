@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.h"
+#include "Lang.h"
 #include <cmath>
 #include <juce_core/juce_core.h>
 
@@ -40,20 +41,20 @@ inline juce::StringArray modSourceNames()
             "LFO 2",
             "LFO 3",
             "LFO 4",
-            juce::String::fromUTF8("H\xc3\xbc"
+            rysum::tr("H\xc3\xbc"
                                    "llkurve 1"),
-            juce::String::fromUTF8("H\xc3\xbc"
+            rysum::tr("H\xc3\xbc"
                                    "llkurve 2"),
-            "Tastenlage",
-            "Modrad",
-            juce::String::fromUTF8("Zufall je Ton"),
-            "Anschlag",
-            juce::String::fromUTF8("Tonh\xc3\xb6henrad"),
-            "Druck (MPE)",
-            "Gleiten (MPE, CC 74)",
-            "Eingang (Pegel)",
-            "Schwebung",
-            "Balg (Winddruck)"};
+            rysum::tr("Tastenlage"),
+            rysum::tr("Modrad"),
+            rysum::tr("Zufall je Ton"),
+            rysum::tr("Anschlag"),
+            rysum::tr("Tonh\xc3\xb6henrad"),
+            rysum::tr("Druck (MPE)"),
+            rysum::tr("Gleiten (MPE, CC 74)"),
+            rysum::tr("Eingang (Pegel)"),
+            rysum::tr("Schwebung"),
+            rysum::tr("Balg (Winddruck)")};
 }
 
 /** targets 0..kNumPipeTargets-1 act on every pipe separately: only here do the per-pipe sources
@@ -109,39 +110,39 @@ constexpr int kGlobalTargetBase = 100;
 inline juce::StringArray pipeTargetNames()
 {
     return {"Pfeife: Richtung",
-            juce::String::fromUTF8("Pfeife: H\xc3\xb6he"),
-            "Pfeife: Abstand",
-            juce::String::fromUTF8("Pfeife: Lautst\xc3\xa4rke"),
-            juce::String::fromUTF8("Pfeife: Tonh\xc3\xb6he"),
-            "Pfeife: Helligkeit",
-            "Pfeife: Hall-Anteil",
-            "Pfeife: Wind",
-            "Pfeife: Verfall",
-            "Pfeife: Windschwankung",
-            "Pfeife: Knistern",
-            "Pfeife: Ansprache",
-            juce::String::fromUTF8("Pfeife: Ansprache Sch\xc3\xa4rfe"),
-            "Pfeife: Nur Ansprache",
-            "Pfeife: Ansprache wiederholen",
-            "Pfeife: Abriss",
-            juce::String::fromUTF8("Pfeife: Obert\xc3\xb6ne ab"),
-            juce::String::fromUTF8("Pfeife: Obert\xc3\xb6ne Pegel"),
-            juce::String::fromUTF8("Pfeife: Obert\xc3\xb6ne Anschlag"),
-            "Pfeife: Luft umkehren",
-            "Pfeife: Wolke Menge",
-            "Pfeife: Wolke Dichte",
-            "Pfeife: Wolke Streuung",
-            juce::String::fromUTF8("Pfeife: Wolke Korngr\xc3\xb6\xc3\x9f"
+            rysum::tr("Pfeife: H\xc3\xb6he"),
+            rysum::tr("Pfeife: Abstand"),
+            rysum::tr("Pfeife: Lautst\xc3\xa4rke"),
+            rysum::tr("Pfeife: Tonh\xc3\xb6he"),
+            rysum::tr("Pfeife: Helligkeit"),
+            rysum::tr("Pfeife: Hall-Anteil"),
+            rysum::tr("Pfeife: Wind"),
+            rysum::tr("Pfeife: Verfall"),
+            rysum::tr("Pfeife: Windschwankung"),
+            rysum::tr("Pfeife: Knistern"),
+            rysum::tr("Pfeife: Ansprache"),
+            rysum::tr("Pfeife: Ansprache Sch\xc3\xa4rfe"),
+            rysum::tr("Pfeife: Nur Ansprache"),
+            rysum::tr("Pfeife: Ansprache wiederholen"),
+            rysum::tr("Pfeife: Abriss"),
+            rysum::tr("Pfeife: Obert\xc3\xb6ne ab"),
+            rysum::tr("Pfeife: Obert\xc3\xb6ne Pegel"),
+            rysum::tr("Pfeife: Obert\xc3\xb6ne Anschlag"),
+            rysum::tr("Pfeife: Luft umkehren"),
+            rysum::tr("Pfeife: Wolke Menge"),
+            rysum::tr("Pfeife: Wolke Dichte"),
+            rysum::tr("Pfeife: Wolke Streuung"),
+            rysum::tr("Pfeife: Wolke Korngr\xc3\xb6\xc3\x9f"
                                    "e"),
-            "Pfeife: Wolke Zeitstreuung",
-            juce::String::fromUTF8("Pfeife: K\xc3\xb6rnung"),
-            "Pfeife: Bittiefe",
-            "Pfeife: Abtastrate",
-            "Pfeife: Aussetzer",
-            "Pfeife: Glitch Stottern",
-            "Pfeife: Glitch Bandschnitt",
-            "Pfeife: Glitch harte Kanten",
-            "Pfeife: Glitch Clipping"};
+            rysum::tr("Pfeife: Wolke Zeitstreuung"),
+            rysum::tr("Pfeife: K\xc3\xb6rnung"),
+            rysum::tr("Pfeife: Bittiefe"),
+            rysum::tr("Pfeife: Abtastrate"),
+            rysum::tr("Pfeife: Aussetzer"),
+            rysum::tr("Pfeife: Glitch Stottern"),
+            rysum::tr("Pfeife: Glitch Bandschnitt"),
+            rysum::tr("Pfeife: Glitch harte Kanten"),
+            rysum::tr("Pfeife: Glitch Clipping")};
 }
 inline juce::String pipeTargetId(int t)
 {

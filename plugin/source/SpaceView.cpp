@@ -81,7 +81,7 @@ void SpaceCircle::paint(juce::Graphics &g)
 
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::mute);
-    g.drawText(juce::String(juce::CharPointer_UTF8("vorn \xc2\xb7 0\xc2\xb0")),
+    g.drawText(((rysum::tr("vorn \xc2\xb7 0\xc2\xb0"))),
                juce::Rectangle<float>(120, 14).withCentre({c.x, c.y - R - 12}),
                juce::Justification::centred);
     g.setColour(col::faint);
@@ -92,7 +92,7 @@ void SpaceCircle::paint(juce::Graphics &g)
                                                    "90\xc2\xb0")),
                juce::Rectangle<float>(40, 14).withCentre({c.x + R + 22, c.y}),
                juce::Justification::centred);
-    g.drawText(juce::String(juce::CharPointer_UTF8("hinten")),
+    g.drawText(((rysum::tr("hinten"))),
                juce::Rectangle<float>(60, 14).withCentre({c.x, c.y + R + 12}),
                juce::Justification::centred);
     g.setColour(juce::Colour(0xff55534f));
@@ -166,7 +166,7 @@ void SpaceCircle::paint(juce::Graphics &g)
                     g.drawEllipse(juce::Rectangle<float>(11.0f, 11.0f).withCentre(toScreen({az, el, 6.0f})), 1.5f);
                 }
                 g.setColour(col::faint);
-                g.drawText(juce::String::fromUTF8("Fahrplan: Marken entlang der Bahn ziehen \xc2\xb7 Alt + Klick: "
+                g.drawText(rysum::tr("Fahrplan: Marken entlang der Bahn ziehen \xc2\xb7 Alt + Klick: "
                                                   "eine Marke zur jetzigen Zeit"),
                            juce::Rectangle<float>(c.x - R, c.y + R + 22.0f, 2.0f * R, 14.0f),
                            juce::Justification::centred);
@@ -190,8 +190,7 @@ void SpaceCircle::paint(juce::Graphics &g)
         {
             g.setFont(A.monoFont(11.0f));
             g.setColour(col::rubric.brighter(0.4f));
-            g.drawText(juce::String::fromUTF8(
-                           "Bahn zeichnen: mit gedr\xc3\xbc"
+            g.drawText(rysum::tr("Bahn zeichnen: mit gedr\xc3\xbc"
                            "ckter Maustaste eine Linie ziehen (Mitte = oben, Rand = Horizont)"),
                        juce::Rectangle<float>(c.x - R, c.y + R + 22.0f, 2.0f * R, 14.0f),
                        juce::Justification::centred);
@@ -252,9 +251,8 @@ void SpaceCircle::paint(juce::Graphics &g)
             {
                 g.setFont(A.monoFont(11.0f));
                 g.setColour(col::rubric.brighter(0.4f));
-                g.drawText(on ? juce::String::fromUTF8("Eingang: ziehen = Richtung und H\xc3\xb6he")
-                              : juce::String::fromUTF8(
-                                    "Eingang ist aus \xe2\x80\x93 links in der Liste einschalten"),
+                g.drawText(on ? rysum::tr("Eingang: ziehen = Richtung und H\xc3\xb6he")
+                              : rysum::tr("Eingang ist aus \xe2\x80\x93 links in der Liste einschalten"),
                            juce::Rectangle<float>(c.x - R, c.y + R + 22.0f, 2.0f * R, 14.0f),
                            juce::Justification::centred);
             }
@@ -301,8 +299,8 @@ void SpaceCircle::paint(juce::Graphics &g)
             {
                 g.setFont(A.monoFont(11.0f));
                 g.setColour(col::ink);
-                g.drawText(on ? juce::String::fromUTF8("Vox humana: ziehen = Richtung und H\xc3\xb6he")
-                              : juce::String::fromUTF8("Vox humana ist abgesto\xc3\x9f" "en \xe2\x80\x93 links in der Liste ziehen"),
+                g.drawText(on ? rysum::tr("Vox humana: ziehen = Richtung und H\xc3\xb6he")
+                              : rysum::tr("Vox humana ist abgesto\xc3\x9f" "en \xe2\x80\x93 links in der Liste ziehen"),
                            juce::Rectangle<float>(c.x - R, c.y + R + 22.0f, 2.0f * R, 14.0f),
                            juce::Justification::centred);
             }
@@ -631,12 +629,12 @@ void PipeStrip::mouseDown(const juce::MouseEvent &e)
     if (e.mods.isPopupMenu())
     {
         juce::PopupMenu m;
-        m.addItem(1, "alle an");
-        m.addItem(2, "alle stumm");
-        m.addItem(3, "jede zweite");
-        m.addItem(4, juce::String::fromUTF8("nur die untere H\xc3\xa4lfte"));
-        m.addItem(5, juce::String::fromUTF8("nur die obere H\xc3\xa4lfte"));
-        m.addItem(6, juce::String::fromUTF8("zuf\xc3\xa4llig die H\xc3\xa4lfte"));
+        m.addItem(1, rysum::tr("alle an"));
+        m.addItem(2, rysum::tr("alle stumm"));
+        m.addItem(3, rysum::tr("jede zweite"));
+        m.addItem(4, rysum::tr("nur die untere H\xc3\xa4lfte"));
+        m.addItem(5, rysum::tr("nur die obere H\xc3\xa4lfte"));
+        m.addItem(6, rysum::tr("zuf\xc3\xa4llig die H\xc3\xa4lfte"));
         m.addItem(7, "umkehren");
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
                         [this](int r)
@@ -706,28 +704,26 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     // the Vox humana: a row under the input, its own panel (place, level, room)
     voxRow.onClick = [this] { selectVox(); };
     addAndMakeVisible(voxRow);
-    voxPull.setTooltip(juce::String::fromUTF8("Vox humana ziehen / absto\xc3\x9f" "en"));
+    voxPull.setTooltip(rysum::tr("Vox humana ziehen / absto\xc3\x9f" "en"));
     addAndMakeVisible(voxPull);
     voxPullAttachment = rysum::ui::attachButton(proc.apvts, "voxOn", voxPull);
-    voxVolRow = std::make_unique<ParamRow>(proc.apvts, "voxVol", juce::String::fromUTF8("Lautst\xc3\xa4rke"), true);
+    voxVolRow = std::make_unique<ParamRow>(proc.apvts, "voxVol", rysum::tr("Lautst\xc3\xa4rke"), true);
     voxSendRow = std::make_unique<ParamRow>(proc.apvts, "voxSend", "Hall-Anteil", true);
-    voxAzRow = std::make_unique<ParamRow>(proc.apvts, "voxAz", "Richtung", true);
-    voxElRow = std::make_unique<ParamRow>(proc.apvts, "voxEl", juce::String::fromUTF8("H\xc3\xb6he"), true);
-    voxDistRow = std::make_unique<ParamRow>(proc.apvts, "voxDist", "Abstand", true);
-    voxRoomRow = std::make_unique<ParamRow>(proc.apvts, "voxRoom", "eigener Raum", true);
-    voxAzRow->setTooltip(juce::String::fromUTF8("0\xc2\xb0 = vorn, +90\xc2\xb0 = links"));
-    voxDistRow->setTooltip(juce::String::fromUTF8("Leiser und dumpfer mit der Entfernung, wie eine Pfeife"));
-    voxSendRow->setTooltip(juce::String::fromUTF8("Wie viel in den Hall / Saal geht, verglichen mit einer Pfeife"));
-    voxRoomRow->setTooltip(juce::String::fromUTF8(
-        "Der Raum, den das Netz mitgelernt hat (die Kirche in Rysum). 0 = trocken: die Pfeifen behalten "
+    voxAzRow = std::make_unique<ParamRow>(proc.apvts, "voxAz", rysum::tr("Richtung"), true);
+    voxElRow = std::make_unique<ParamRow>(proc.apvts, "voxEl", rysum::tr("H\xc3\xb6he"), true);
+    voxDistRow = std::make_unique<ParamRow>(proc.apvts, "voxDist", rysum::tr("Abstand"), true);
+    voxRoomRow = std::make_unique<ParamRow>(proc.apvts, "voxRoom", rysum::tr("eigener Raum"), true);
+    voxAzRow->setTooltip(rysum::tr("0\xc2\xb0 = vorn, +90\xc2\xb0 = links"));
+    voxDistRow->setTooltip(rysum::tr("Leiser und dumpfer mit der Entfernung, wie eine Pfeife"));
+    voxSendRow->setTooltip(rysum::tr("Wie viel in den Hall / Saal geht, verglichen mit einer Pfeife"));
+    voxRoomRow->setTooltip(rysum::tr("Der Raum, den das Netz mitgelernt hat (die Kirche in Rysum). 0 = trocken: die Pfeifen behalten "
         "ihren Klang, ohne Nachhall \xe2\x80\x93 dann klingt nur der Saal des Plugins (Seite Saal, \xe2\x80\x9eVox\xe2\x80\x9c)."));
-    voxRateRow = std::make_unique<ParamRow>(proc.apvts, "voxRate", "Geschwindigkeit");
-    voxDepthRow = std::make_unique<ParamRow>(proc.apvts, "voxDepth", "Tiefe", true);
-    voxWidthRow = std::make_unique<ParamRow>(proc.apvts, "voxWidth", "Breite (Pfeifen)", true);
-    voxWidthRow->setTooltip(juce::String::fromUTF8(
-        "Wie weit die acht Pfeifen auseinander stehen (eine Reihe quer, um die Richtung herum). Jede ist "
+    voxRateRow = std::make_unique<ParamRow>(proc.apvts, "voxRate", rysum::tr("Geschwindigkeit"));
+    voxDepthRow = std::make_unique<ParamRow>(proc.apvts, "voxDepth", rysum::tr("Tiefe"), true);
+    voxWidthRow = std::make_unique<ParamRow>(proc.apvts, "voxWidth", rysum::tr("Breite (Pfeifen)"), true);
+    voxWidthRow->setTooltip(rysum::tr("Wie weit die acht Pfeifen auseinander stehen (eine Reihe quer, um die Richtung herum). Jede ist "
         "eine eigene Quelle im Raum."));
-    voxDepthRow->setTooltip(juce::String::fromUTF8("Pendel, Drift, Spr\xc3\xbcnge: wie weit (Grad)"));
+    voxDepthRow->setTooltip(rysum::tr("Pendel, Drift, Spr\xc3\xbcnge: wie weit (Grad)"));
     for (auto *r : {voxVolRow.get(), voxSendRow.get(), voxAzRow.get(), voxElRow.get(), voxDistRow.get(),
                     voxRoomRow.get(), voxRateRow.get(), voxDepthRow.get(), voxWidthRow.get()})
         addChildComponent(*r);
@@ -735,16 +731,14 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
         voxMotionBox.addItemList(mc->choices, 1);
     voxMotionAttachment =
         std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(proc.apvts, "voxMotion", voxMotionBox);
-    voxMotionBox.setTooltip(juce::String::fromUTF8(
-        "Wie sich die acht Pfeifen der Vox humana bewegen, wie bei den Registern: Rotation dreht die Reihe "
+    voxMotionBox.setTooltip(rysum::tr("Wie sich die acht Pfeifen der Vox humana bewegen, wie bei den Registern: Rotation dreht die Reihe "
         "als Ganzes, Drift und Spr\xc3\xbcnge nehmen jede Pfeife ihren eigenen Weg."));
     addChildComponent(voxMotionBox);
 
     // the audio input: a row under the stops, its own panel
     inputRow.onClick = [this] { selectInput(); };
     addAndMakeVisible(inputRow);
-    inputPull.setTooltip(juce::String::fromUTF8(
-        "Eingang an / aus: das Audio, das in Rysum hineingeht, klingt im Raum"));
+    inputPull.setTooltip(rysum::tr("Eingang an / aus: das Audio, das in Rysum hineingeht, klingt im Raum"));
     addAndMakeVisible(inputPull);
     inputPullAttachment = rysum::ui::attachButton(
         proc.apvts, "inpOn", inputPull);
@@ -776,12 +770,11 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
         if (inModeAttachment)
             inModeAttachment->setValueAsCompleteGesture(1.0f);
     };
-    inMono.setTooltip(juce::String::fromUTF8("Eine Quelle: links und rechts zusammen"));
-    inStereo.setTooltip(juce::String::fromUTF8("Zwei Quellen: links und rechts, \xe2\x80\x9e"
+    inMono.setTooltip(rysum::tr("Eine Quelle: links und rechts zusammen"));
+    inStereo.setTooltip(rysum::tr("Zwei Quellen: links und rechts, \xe2\x80\x9e"
                                                "Breite\xe2\x80\x9c auseinander"));
     inGate.setClickingTogglesState(true);
-    inGate.setTooltip(juce::String::fromUTF8(
-        "Der Eingang klingt nur, solange Tasten gehalten werden (\xe2\x80\x9e"
+    inGate.setTooltip(rysum::tr("Der Eingang klingt nur, solange Tasten gehalten werden (\xe2\x80\x9e"
         "Ausklang\xe2\x80\x9c: wie schnell er sich schlie\xc3\x9ft)"));
     inGateAttachment = rysum::ui::attachButton(
         proc.apvts, "inpGate", inGate);
@@ -790,28 +783,25 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
         inFollow.addItemList(f->choices, 1);
     inFollowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "inpFollow", inFollow);
-    inFollow.setTooltip(juce::String::fromUTF8(
-        "Eigener Ort, oder auf den Pfeifen eines Registers: der Eingang macht dessen Bewegung mit "
+    inFollow.setTooltip(rysum::tr("Eigener Ort, oder auf den Pfeifen eines Registers: der Eingang macht dessen Bewegung mit "
         "(links auf der tiefen, rechts auf der hohen Seite)"));
     addChildComponent(inFollow);
-    inLevel = std::make_unique<ParamRow>(proc.apvts, "inpLevel", "Pegel", true);
+    inLevel = std::make_unique<ParamRow>(proc.apvts, "inpLevel", rysum::tr("Pegel"), true);
     inSend = std::make_unique<ParamRow>(proc.apvts, "inpSend", "Hall-Anteil", true);
-    inAz = std::make_unique<ParamRow>(proc.apvts, "inpAz", "Richtung", true);
-    inEl = std::make_unique<ParamRow>(proc.apvts, "inpEl", juce::String::fromUTF8("H\xc3\xb6he"),
+    inAz = std::make_unique<ParamRow>(proc.apvts, "inpAz", rysum::tr("Richtung"), true);
+    inEl = std::make_unique<ParamRow>(proc.apvts, "inpEl", rysum::tr("H\xc3\xb6he"),
                                       true);
-    inDist = std::make_unique<ParamRow>(proc.apvts, "inpDist", "Abstand", true);
-    inWidth = std::make_unique<ParamRow>(proc.apvts, "inpWidth", "Breite (L / R)", true);
-    inSpin = std::make_unique<ParamRow>(proc.apvts, "inpSpin", "Kreisen", true);
-    inRelease = std::make_unique<ParamRow>(proc.apvts, "inpRelease", "Ausklang (Tasten)", true);
-    inAz->setTooltip(juce::String::fromUTF8(
-        "0\xc2\xb0 = vorn, +90\xc2\xb0 = links. Auf einem Register: zus\xc3\xa4tzliche Drehung"));
+    inDist = std::make_unique<ParamRow>(proc.apvts, "inpDist", rysum::tr("Abstand"), true);
+    inWidth = std::make_unique<ParamRow>(proc.apvts, "inpWidth", rysum::tr("Breite (L / R)"), true);
+    inSpin = std::make_unique<ParamRow>(proc.apvts, "inpSpin", rysum::tr("Kreisen"), true);
+    inRelease = std::make_unique<ParamRow>(proc.apvts, "inpRelease", rysum::tr("Ausklang (Tasten)"), true);
+    inAz->setTooltip(rysum::tr("0\xc2\xb0 = vorn, +90\xc2\xb0 = links. Auf einem Register: zus\xc3\xa4tzliche Drehung"));
     inDist->setTooltip(
-        juce::String::fromUTF8("Leiser, dumpfer und sp\xc3\xa4ter mit der Entfernung (Doppler, "
+        rysum::tr("Leiser, dumpfer und sp\xc3\xa4ter mit der Entfernung (Doppler, "
                                "Luft, Abstand: Seite Raum \xc2\xb7 Klang)"));
     inSpin->setTooltip(
-        juce::String::fromUTF8("Kreist um dich, Grad pro Sekunde (negativ = andersherum)"));
-    inSend->setTooltip(juce::String::fromUTF8(
-        "Wie viel vom Eingang in den Hall / Saal geht, verglichen mit einer Pfeife"));
+        rysum::tr("Kreist um dich, Grad pro Sekunde (negativ = andersherum)"));
+    inSend->setTooltip(rysum::tr("Wie viel vom Eingang in den Hall / Saal geht, verglichen mit einer Pfeife"));
     for (auto *r : {inLevel.get(), inSend.get(), inAz.get(), inEl.get(), inDist.get(),
                     inWidth.get(), inSpin.get(), inRelease.get()})
         addChildComponent(*r);
@@ -831,7 +821,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     for (int i = 0; i < (int)layoutButtons.size(); ++i)
     {
         auto &b = layoutButtons[(size_t)i];
-        b.setButtonText(lnames[i]);
+        b.setButtonText(rysum::tr(lnames[i]));
         b.onClick = [this, i]
         {
             proc.layouts[(size_t)selected].type = i;
@@ -843,7 +833,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     for (int i = 0; i < (int)motionButtons.size(); ++i)
     {
         auto &b = motionButtons[(size_t)i];
-        b.setButtonText(mnames[i].upToFirstOccurrenceOf(
+        b.setButtonText(rysum::tr(mnames[i]).upToFirstOccurrenceOf(
             " (", false, false)); // ("Flug (im Saal)" -> "Flug": the row says where)
         b.onClick = [this, i]
         {
@@ -853,12 +843,12 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
         addAndMakeVisible(b);
     }
     layoutButtons[6].setTooltip(
-        u8("Jede Taste an ihrem Platz im Tonnetz der Stimmung: Quinten nach rechts, gro\xc3\x9f"
+        rysum::tr("Jede Taste an ihrem Platz im Tonnetz der Stimmung: Quinten nach rechts, gro\xc3\x9f"
            "e Terzen nach oben. "
            "Reine Intervalle liegen eng, unreine weit; der Wolf ist die Naht. Folgt einem Wechsel "
            "der Stimmung."));
     motionButtons[7].setTooltip(
-        u8("Jede Pfeife dreht sich so schnell, wie sie mit den anderen klingenden Pfeifen schwebt: "
+        rysum::tr("Jede Pfeife dreht sich so schnell, wie sie mit den anderen klingenden Pfeifen schwebt: "
            "reine Terzen stehen still, "
            "der Wolf kreist. \xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = Umdrehungen je Schwebung."));
     {
@@ -878,17 +868,17 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
             "kehren an ihren Platz zur\xc3\xbc" "ck); \xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = eigene Unruhe."};
         for (int i = 0; i < 5; ++i)
             motionButtons[(size_t)(8 + i)].setTooltip(
-                u8(tips[i]) + u8(" Die Pfeifen sind dann K\xc3\xb6rper im Saal (Grundriss, Boden, "
+                u8(tips[i]) + rysum::tr(" Die Pfeifen sind dann K\xc3\xb6rper im Saal (Grundriss, Boden, "
                                  "Decke) \xe2\x80\x93 "
                                  "Aufprall auf der Seite Effekte \xc2\xb7 Lebendige Orgel."));
     }
     motionButtons[6].setTooltip(
-        u8("Die Pfeifen laufen die gezeichnete Bahn entlang (Bahn zeichnen \xe2\x86\x92)"));
+        rysum::tr("Die Pfeifen laufen die gezeichnete Bahn entlang (Bahn zeichnen \xe2\x86\x92)"));
     motionButtons[5].setTooltip(
-        u8("Spr\xc3\xbcnge an zuf\xc3\xa4llige Orte \xe2\x80\x93 mit \xe2\x80\x9eharte "
+        rysum::tr("Spr\xc3\xbcnge an zuf\xc3\xa4llige Orte \xe2\x80\x93 mit \xe2\x80\x9eharte "
            "Spr\xc3\xbcnge\xe2\x80\x9c ohne jede Gl\xc3\xa4ttung: bei hohem Tempo klickt es"));
     drawButton.setClickingTogglesState(true);
-    drawButton.setTooltip(u8("Eine Bahn f\xc3\xbcr das gew\xc3\xa4hlte Register in die Draufsicht "
+    drawButton.setTooltip(rysum::tr("Eine Bahn f\xc3\xbcr das gew\xc3\xa4hlte Register in die Draufsicht "
                              "zeichnen. Die Pfeifen folgen ihr wie ein Zug; "
                              "\xe2\x80\x9eGeschwindigkeit\xe2\x80\x9c = Runden pro Sekunde."));
     drawButton.onClick = [this]
@@ -897,8 +887,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
         circle.repaint();
     };
     addAndMakeVisible(drawButton);
-    timetableButton.setTooltip(u8(
-        "Fahrplan: wann das Register wo auf seiner Bahn ist, nach der Uhr des Verlaufs. Legt eine Spur "
+    timetableButton.setTooltip(rysum::tr("Fahrplan: wann das Register wo auf seiner Bahn ist, nach der Uhr des Verlaufs. Legt eine Spur "
         "\xe2\x80\x9e" "Bahn\xe2\x80\x9c auf der Seite Verlauf an; ihre Punkte sind Marken auf der Bahn "
         "(entlang ziehen, Alt + Klick: eine neue zur jetzigen Zeit). Nochmals: an / aus."));
     timetableButton.onClick = [this]
@@ -948,21 +937,21 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     };
     pathOpt(
         pathLoop, [](RysumProcessor::DrawnPath &d) { d.pingPong = false; },
-        u8("Am Ende zur\xc3\xbc"
+        rysum::tr("Am Ende zur\xc3\xbc"
            "ck zum Anfang (die Bahn schlie\xc3\x9ft sich)"));
     pathOpt(
         pathPing, [](RysumProcessor::DrawnPath &d) { d.pingPong = true; },
-        u8("Die Bahn hin und wieder zur\xc3\xbc"
+        rysum::tr("Die Bahn hin und wieder zur\xc3\xbc"
            "ck"));
     pathOpt(
         pathEven, [](RysumProcessor::DrawnPath &d) { d.drawnTiming = false; },
-        u8("Gleichm\xc3\xa4\xc3\x9fige Geschwindigkeit entlang der Bahn"));
+        rysum::tr("Gleichm\xc3\xa4\xc3\x9fige Geschwindigkeit entlang der Bahn"));
     pathOpt(
         pathDrawnT, [](RysumProcessor::DrawnPath &d) { d.drawnTiming = true; },
-        u8("Schnell, wo schnell gezeichnet wurde, langsam, wo langsam gezeichnet wurde"));
+        rysum::tr("Schnell, wo schnell gezeichnet wurde, langsam, wo langsam gezeichnet wurde"));
     jumpHard.setClickingTogglesState(true);
     jumpHard.setTooltip(
-        u8("Spr\xc3\xbcnge ohne die kurze Gl\xc3\xa4ttung: der Ort wechselt auf das Sample genau "
+        rysum::tr("Spr\xc3\xbcnge ohne die kurze Gl\xc3\xa4ttung: der Ort wechselt auf das Sample genau "
            "\xe2\x80\x93 bei hohem Tempo h\xc3\xb6rbare Klicks, ab ~50 Hz ein Schnarren"));
     addAndMakeVisible(jumpHard);
     const auto fnames = ellipseFormNames();
@@ -970,10 +959,10 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     {
         ellForm[(size_t)i].setButtonText(juce::String(i + 1));
         ellForm[(size_t)i].setTooltip(
-            "Ellipse: " + fnames[i] +
-            (i == 0   ? u8(" \xe2\x80\x93 eine nahe Seite (du im Brennpunkt)")
-             : i == 1 ? u8(" \xe2\x80\x93 zwei nahe Seiten (du in der Mitte)")
-                      : u8(" \xe2\x80\x93 ") + juce::String(i + 1) + " nahe Seiten"));
+            rysum::tr("Ellipse: ") + rysum::tr(fnames[i]) +
+            (i == 0   ? rysum::tr(" \xe2\x80\x93 eine nahe Seite (du im Brennpunkt)")
+             : i == 1 ? rysum::tr(" \xe2\x80\x93 zwei nahe Seiten (du in der Mitte)")
+                      : u8(" \xe2\x80\x93 ") + juce::String(i + 1) + rysum::tr(" nahe Seiten")));
         ellForm[(size_t)i].onClick = [this, i]
         {
             if (ellFormAttachment)
@@ -985,10 +974,10 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     tabHall.onClick = [this] { showTab(1); };
     tabCloud.onClick = [this] { showTab(2); };
     tabPipe.onClick = [this] { showTab(3); };
-    tabPipe.setTooltip(u8("Der Klang der Pfeifen dieses Registers: Ansprache (Chiff), Abriss beim "
+    tabPipe.setTooltip(rysum::tr("Der Klang der Pfeifen dieses Registers: Ansprache (Chiff), Abriss beim "
                           "Loslassen, Obert\xc3\xb6ne als eigene Schicht"));
     addAndMakeVisible(tabPipe);
-    pipeAll.setTooltip(u8("Diese acht Werte f\xc3\xbcr alle Register setzen"));
+    pipeAll.setTooltip(rysum::tr("Diese acht Werte f\xc3\xbcr alle Register setzen"));
     pipeAll.onClick = [this]
     {
         std::vector<const char *> keys(std::begin(RysumProcessor::kPipeSndKeys), std::end(RysumProcessor::kPipeSndKeys));
@@ -1010,12 +999,12 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     };
     addAndMakeVisible(pipeAll);
     tabCloud.setTooltip(
-        u8("K\xc3\xb6rnerwolke: der Klang jeder Pfeife zerstreut sich in K\xc3\xb6rnern \xc3\xbc"
+        rysum::tr("K\xc3\xb6rnerwolke: der Klang jeder Pfeife zerstreut sich in K\xc3\xb6rnern \xc3\xbc"
            "ber die Kugel um die Pfeife"));
     addAndMakeVisible(tabMotion);
     addAndMakeVisible(tabHall);
     addAndMakeVisible(tabCloud);
-    cloudAll.setTooltip(u8("Diese f\xc3\xbcnf Werte f\xc3\xbcr alle Register setzen"));
+    cloudAll.setTooltip(rysum::tr("Diese f\xc3\xbcnf Werte f\xc3\xbcr alle Register setzen"));
     cloudAll.onClick = [this]
     {
         for (const char *k : RysumProcessor::kCloudKeys)
@@ -1052,7 +1041,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
             }
         if (!builtIn.empty())
             m.addSeparator();
-        m.addItem(1000, juce::String::fromUTF8("Datei laden \xe2\x80\xa6"));
+        m.addItem(1000, rysum::tr("Datei laden \xe2\x80\xa6"));
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&irLoad),
                         [this, builtIn](int r)
                         {
@@ -1065,7 +1054,7 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     chooseIrFile = [this]
     {
         chooser =
-            std::make_unique<juce::FileChooser>("Impulsantwort (WAV, AmbiX / Stereo / Mono)",
+            std::make_unique<juce::FileChooser>(rysum::tr("Impulsantwort (WAV, AmbiX / Stereo / Mono)"),
                                                 proc.getIrFile(), "*.wav;*.aif;*.aiff;*.flac");
         chooser->launchAsync(juce::FileBrowserComponent::openMode |
                                  juce::FileBrowserComponent::canSelectFiles,
@@ -1076,24 +1065,23 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
                              });
     };
     irClear.onClick = [this] { proc.clearIr(); };
-    irClear.setTooltip("Impulsantwort entfernen");
+    irClear.setTooltip(rysum::tr("Impulsantwort entfernen"));
     irFumaAttachment = rysum::ui::attachButton(
         proc.apvts, "irFuma", irFuma);
     irFuma.setClickingTogglesState(true);
-    irFuma.setTooltip(juce::String::fromUTF8(
-        "Nur f\xc3\xbcr 4-Kanal-IRs: B-Format in FuMa-Reihenfolge (W X Y Z) statt AmbiX"));
-    irDry = std::make_unique<ParamRow>(proc.apvts, "irDry", "Direkt", true);
-    irWet = std::make_unique<ParamRow>(proc.apvts, "irWet", "Hall", true);
+    irFuma.setTooltip(rysum::tr("Nur f\xc3\xbcr 4-Kanal-IRs: B-Format in FuMa-Reihenfolge (W X Y Z) statt AmbiX"));
+    irDry = std::make_unique<ParamRow>(proc.apvts, "irDry", rysum::tr("Direkt"), true);
+    irWet = std::make_unique<ParamRow>(proc.apvts, "irWet", rysum::tr("Hall"), true);
     irEnvelop = std::make_unique<ParamRow>(proc.apvts, "irEnvelop",
-                                           juce::String::fromUTF8("Umh\xc3\xbcllung"), true);
-    irDirect = std::make_unique<ParamRow>(proc.apvts, "irDirect", "Direktschall der IR", true);
+                                           rysum::tr("Umh\xc3\xbcllung"), true);
+    irDirect = std::make_unique<ParamRow>(proc.apvts, "irDirect", rysum::tr("Direktschall der IR"), true);
     for (auto *r : {irDry.get(), irWet.get(), irEnvelop.get(), irDirect.get()})
         addAndMakeVisible(*r);
     irEnvelop->slider.setTooltip(
-        juce::String::fromUTF8("Nachhall als gleichm\xc3\xa4\xc3\x9figes Feld von allen Seiten "
+        rysum::tr("Nachhall als gleichm\xc3\xa4\xc3\x9figes Feld von allen Seiten "
                                "(auch f\xc3\xbcr Mono-/Stereo-IRs und bis zur 5. Ordnung)"));
     irDirect->slider.setTooltip(
-        juce::String::fromUTF8("Direktschall in der Impulsantwort \xe2\x80\x93 die Pfeifen selbst "
+        rysum::tr("Direktschall in der Impulsantwort \xe2\x80\x93 die Pfeifen selbst "
                                "sind schon der Direktschall"));
     for (auto *b : {&irN3D, &irFollow})
     {
@@ -1103,23 +1091,20 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     irOrder.addItemList({"Ord. 1", "Ord. 2", "Ord. 3", "Ord. 4", "Ord. 5"}, 1);
     irOrderAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "irOrder", irOrder);
-    irOrder.setTooltip(juce::String::fromUTF8(
-        "H\xc3\xb6"
+    irOrder.setTooltip(rysum::tr("H\xc3\xb6"
         "chste Ambisonics-Ordnung des Halls (die Pfeifen selbst bleiben in voller Ordnung). "
         "H\xc3\xb6"
         "her = genauer, aber mehr Rechenlast."));
     addAndMakeVisible(irOrder);
-    irLoad.setTooltip(juce::String::fromUTF8(
-        "Impulsantwort: die im Raum gemessenen (Klatschen) oder eine Datei laden "
+    irLoad.setTooltip(rysum::tr("Impulsantwort: die im Raum gemessenen (Klatschen) oder eine Datei laden "
         "(WAV/AIFF/FLAC, Mono, Stereo oder AmbiX 1.\xe2\x80\x93"
         "5. Ordnung)"));
     irN3DAttachment = rysum::ui::attachButton(
         proc.apvts, "irN3D", irN3D);
     irFollowAttachment = rysum::ui::attachButton(
         proc.apvts, "irFollow", irFollow);
-    irN3D.setTooltip(juce::String::fromUTF8("Ambisonics-IR in N3D-Normierung (statt SN3D)"));
-    irFollow.setTooltip(juce::String::fromUTF8(
-        "Die fr\xc3\xbchen Reflexionen kommen f\xc3\xbcr jede Pfeife aus deren Richtung"));
+    irN3D.setTooltip(rysum::tr("Ambisonics-IR in N3D-Normierung (statt SN3D)"));
+    irFollow.setTooltip(rysum::tr("Die fr\xc3\xbchen Reflexionen kommen f\xc3\xbcr jede Pfeife aus deren Richtung"));
 
     auto setup = [this](juce::Slider &s, double lo, double hi, const juce::String &suffix)
     {
@@ -1240,25 +1225,25 @@ void SpaceView::selectStop(int s)
     for (int i = 0; i < kNumStops; ++i)
         stopButtons[(size_t)i]->setToggleState(i == s, juce::dontSendNotification);
     rateRow =
-        std::make_unique<ParamRow>(proc.apvts, RysumProcessor::rateParamId(s), "Geschwindigkeit");
+        std::make_unique<ParamRow>(proc.apvts, RysumProcessor::rateParamId(s), rysum::tr("Geschwindigkeit"));
     depthRow =
-        std::make_unique<ParamRow>(proc.apvts, RysumProcessor::depthParamId(s), "Tiefe", true);
+        std::make_unique<ParamRow>(proc.apvts, RysumProcessor::depthParamId(s), rysum::tr("Tiefe"), true);
     ellipseRow =
         std::make_unique<ParamRow>(proc.apvts, RysumProcessor::ellipseParamId(s), "Ellipse", true);
     spreadRow = std::make_unique<ParamRow>(proc.apvts, RysumProcessor::pathSpreadParamId(s),
-                                           "Verteilung auf der Bahn", true);
+                                           rysum::tr("Verteilung auf der Bahn"), true);
     ellDirRow = std::make_unique<ParamRow>(proc.apvts, RysumProcessor::ellDirParamId(s),
-                                           "Richtung (nahe Seite)", true);
+                                           rysum::tr("Richtung (nahe Seite)"), true);
     ellTiltRow =
-        std::make_unique<ParamRow>(proc.apvts, RysumProcessor::ellTiltParamId(s), "Neigung", true);
+        std::make_unique<ParamRow>(proc.apvts, RysumProcessor::ellTiltParamId(s), rysum::tr("Neigung"), true);
     ellipseRow->slider.setTooltip(
-        u8("Wie viel n\xc3\xa4her die Pfeifen auf der nahen Seite der Bahn kommen"));
+        rysum::tr("Wie viel n\xc3\xa4her die Pfeifen auf der nahen Seite der Bahn kommen"));
     spreadRow->slider.setTooltip(
-        u8("Gezeichnete Bahn: 0 % = alle Pfeifen des Registers an einem Punkt, 100 % = \xc3\xbc"
+        rysum::tr("Gezeichnete Bahn: 0 % = alle Pfeifen des Registers an einem Punkt, 100 % = \xc3\xbc"
            "ber die ganze Bahn verteilt"));
-    ellDirRow->slider.setTooltip(u8("Wo die nahe Seite der Ellipse liegt (0\xc2\xb0 = vorn) "
+    ellDirRow->slider.setTooltip(rysum::tr("Wo die nahe Seite der Ellipse liegt (0\xc2\xb0 = vorn) "
                                     "\xe2\x80\x93 modulierbar: die Ellipse dreht sich"));
-    ellTiltRow->slider.setTooltip(u8("Die Bahn neigt sich: zur nahen Seite hin h\xc3\xb6her, auf "
+    ellTiltRow->slider.setTooltip(rysum::tr("Die Bahn neigt sich: zur nahen Seite hin h\xc3\xb6her, auf "
                                      "der anderen Seite tiefer (negativ: umgekehrt)"));
     for (auto *r : {rateRow.get(), depthRow.get(), ellipseRow.get(), spreadRow.get(),
                     ellDirRow.get(), ellTiltRow.get()})
@@ -1284,8 +1269,8 @@ void SpaceView::selectStop(int s)
         {
             cloudRows[(size_t)k] = std::make_unique<ParamRow>(
                 proc.apvts, RysumProcessor::cloudParamId(RysumProcessor::kCloudKeys[k], s),
-                juce::String::fromUTF8(names[k]));
-            cloudRows[(size_t)k]->setTooltip(juce::String::fromUTF8(tips[k]));
+                rysum::tr(names[k]));
+            cloudRows[(size_t)k]->setTooltip(rysum::tr(tips[k]));
             addAndMakeVisible(*cloudRows[(size_t)k]);
         }
     }
@@ -1315,8 +1300,8 @@ void SpaceView::selectStop(int s)
         {
             pipeRows[(size_t)k] = std::make_unique<ParamRow>(
                 proc.apvts, RysumProcessor::pipeSndParamId(RysumProcessor::kPipeSndKeys[k], s),
-                juce::String::fromUTF8(names[k]));
-            pipeRows[(size_t)k]->setTooltip(juce::String::fromUTF8(tips[k]));
+                rysum::tr(names[k]));
+            pipeRows[(size_t)k]->setTooltip(rysum::tr(tips[k]));
             addAndMakeVisible(*pipeRows[(size_t)k]);
         }
         // the stop's own effects, on top of the global ones
@@ -1335,8 +1320,8 @@ void SpaceView::selectStop(int s)
             auto &row = pipeRows[(size_t)(8 + k)];
             row = std::make_unique<ParamRow>(proc.apvts,
                                              RysumProcessor::pipeSndParamId(RysumProcessor::kStopFxKeys[k], s),
-                                             juce::String::fromUTF8(fxNames[k]));
-            row->setTooltip(juce::String::fromUTF8(fxTips[k]));
+                                             rysum::tr(fxNames[k]));
+            row->setTooltip(rysum::tr(fxTips[k]));
             addAndMakeVisible(*row);
         }
     }
@@ -1644,7 +1629,7 @@ void SpaceView::refresh()
     for (int s = 0; s < kNumStops; ++s)
     {
         const auto txt =
-            mnames[(int)proc.apvts.getRawParameterValue(RysumProcessor::motionParamId(s))->load()];
+            rysum::tr(mnames[(int)proc.apvts.getRawParameterValue(RysumProcessor::motionParamId(s))->load()]);
         const bool pulled =
             proc.apvts.getRawParameterValue(RysumProcessor::stopParamId(s))->load() > 0.5f;
         if (stopButtons[(size_t)s]->motion != txt || stopButtons[(size_t)s]->pulled != pulled)
@@ -1658,17 +1643,17 @@ void SpaceView::refresh()
         auto raw = [this](const char *id) { return proc.apvts.getRawParameterValue(id)->load(); };
         const bool on = raw("inpOn") > 0.5f;
         juce::String st =
-            on ? juce::String(raw("inpMode") > 0.5f ? "Stereo" : "Mono") : juce::String("aus");
+            on ? juce::String(raw("inpMode") > 0.5f ? "Stereo" : "Mono") : rysum::tr("aus");
         if (on)
         {
             const int f = juce::roundToInt(raw("inpFollow"));
             if (f > 0)
-                st << juce::String::fromUTF8(" \xc2\xb7 auf ")
+                st << rysum::tr(" \xc2\xb7 auf ")
                    << prettyLabel(kStops[(size_t)juce::jlimit(0, kNumStops - 1, f - 1)].label);
             if (std::abs(raw("inpSpin")) > 0.05f)
-                st << juce::String::fromUTF8(" \xc2\xb7 kreist");
+                st << rysum::tr(" \xc2\xb7 kreist");
             if (raw("inpGate") > 0.5f)
-                st << juce::String::fromUTF8(" \xc2\xb7 Tasten");
+                st << rysum::tr(" \xc2\xb7 Tasten");
         }
         if (inputRow.status != st || inputRow.on != on)
         {
@@ -1680,9 +1665,9 @@ void SpaceView::refresh()
         inMeterShown = juce::jmax(pk, inMeterShown * 0.85f);
         // the Vox humana
         const bool von = raw("voxOn") > 0.5f;
-        juce::String vs = von ? juce::String("gezogen") : juce::String("ab");
+        juce::String vs = von ? rysum::tr("gezogen") : rysum::tr("ab");
         if (raw("inPlays") > 0.5f)
-            vs << juce::String::fromUTF8(" \xc2\xb7 Eingang spielt");
+            vs << rysum::tr(" \xc2\xb7 Eingang spielt");
         if (voxRow.status != vs || voxRow.on != von)
         {
             voxRow.status = vs;
@@ -1706,25 +1691,25 @@ void SpaceView::paint(juce::Graphics &g)
         // the row of the motions in the Saal
         g.setFont(A.romanFont(12.5f));
         g.setColour(col::dim);
-        g.drawText("im Saal:", motionSaalLabel.withTrimmedRight(6),
+        g.drawText(rysum::tr("im Saal:"), motionSaalLabel.withTrimmedRight(6),
                    juce::Justification::centredRight);
     }
     g.setFont(A.monoFont(11.0f));
     g.setColour(col::mute);
     auto top = left.reduced(28, 0).withTrimmedTop(16).withHeight(16);
-    g.drawText(juce::String(juce::CharPointer_UTF8("Draufsicht \xc2\xb7 Mitte = Zenit \xc2\xb7 "
-                                                   "Rand = Horizont \xc2\xb7 gro\xc3\x9f = nah")),
+    g.drawText(((rysum::tr("Draufsicht \xc2\xb7 Mitte = Zenit \xc2\xb7 "
+                                                   "Rand = Horizont \xc2\xb7 gro\xc3\x9f = nah"))),
                top, juce::Justification::centredLeft);
-    g.drawText(juce::String(juce::CharPointer_UTF8("Punkt ziehen = Pfeife \xc2\xb7 Fl\xc3\xa4"
-                                                   "che ziehen = Register drehen")),
+    g.drawText(((rysum::tr("Punkt ziehen = Pfeife \xc2\xb7 Fl\xc3\xa4"
+                                                   "che ziehen = Register drehen"))),
                top, juce::Justification::centredRight);
 
     // stop list header + dot legend + motion
     g.setColour(col::mute);
     g.setFont(A.sansFont(11.0f).withExtraKerningFactor(0.18f));
-    g.drawText("REGISTER", stopsBox.withHeight(18), juce::Justification::centredLeft);
+    g.drawText(rysum::tr("Register").toUpperCase(), stopsBox.withHeight(18), juce::Justification::centredLeft);
     g.setFont(A.monoFont(11.0f));
-    g.drawText("Bewegung", stopsBox.withHeight(18), juce::Justification::centredRight);
+    g.drawText(rysum::tr("Bewegung"), stopsBox.withHeight(18), juce::Justification::centredRight);
     if (inputSel)
     {
         paintInput(g);
@@ -1736,7 +1721,7 @@ void SpaceView::paint(juce::Graphics &g)
         return;
     }
     drawSectionTitle(g, layoutBox,
-                     "Anordnung " + juce::String(juce::CharPointer_UTF8("\xc2\xb7 ")) +
+                     rysum::tr("Anordnung ") + juce::String(juce::CharPointer_UTF8("\xc2\xb7 ")) +
                          prettyLabel(kStops[(size_t)selected].label));
     const char *names[]{"Breite", "Mitte", "H\xc3\xb6he", "Streuung", "Abstand"};
     juce::Slider *sl[]{&width, &centre, &elevation, &spread, &distance};
@@ -1745,7 +1730,7 @@ void SpaceView::paint(juce::Graphics &g)
         auto b = sl[i]->getBounds();
         g.setFont(A.sansFont(13.0f));
         g.setColour(col::ink);
-        g.drawText(juce::String(juce::CharPointer_UTF8(names[i])),
+        g.drawText(rysum::tr(names[i]),
                    b.withX(right.getX()).withWidth(96), juce::Justification::centredLeft);
         g.setFont(A.monoFont(11.0f));
         g.setColour(col::dim);
@@ -1758,7 +1743,7 @@ void SpaceView::paint(juce::Graphics &g)
     {
         g.setFont(A.sansFont(13.0f));
         g.setColour(col::ink);
-        g.drawText("Pfeifen", pipeStripLabel.withWidth(96), juce::Justification::centredLeft);
+        g.drawText(rysum::tr("Pfeifen"), pipeStripLabel.withWidth(96), juce::Justification::centredLeft);
         int on = 0;
         for (int k = 0; k < kNumKeys; ++k)
             on += proc.isPipeMuted(selected, k) ? 0 : 1;
@@ -1770,22 +1755,22 @@ void SpaceView::paint(juce::Graphics &g)
     }
     if (pipeTab)
     {
-        drawSectionTitle(g, tabBox, "Pfeife");
+        drawSectionTitle(g, tabBox, rysum::tr("Pfeife"));
     }
     else if (cloudTab)
     {
-        drawSectionTitle(g, tabBox, "Wolke");
+        drawSectionTitle(g, tabBox, rysum::tr("Wolke"));
         g.setFont(A.monoFont(10.0f));
         g.setColour(col::faint);
         const int n = proc.engine.cloudGrainsNow.load();
-        g.drawText(n > 0 ? juce::String(n) + u8(" K\xc3\xb6rner") : u8("K\xc3\xb6rnerwolke"),
+        g.drawText(n > 0 ? juce::String(n) + rysum::tr(" K\xc3\xb6rner") : rysum::tr("K\xc3\xb6rnerwolke"),
                    juce::Rectangle<int>(tabBox.getX() + 120, tabBox.getY() + 9,
                                         tabMotion.getX() - 8 - tabBox.getX() - 120, 20),
                    juce::Justification::centredRight);
         g.setFont(A.sansFont(12.0f));
         g.setColour(col::mute);
         if (cloudNote.getHeight() > 14)
-            g.drawFittedText(u8("Jede klingende Pfeife dieses Registers sendet K\xc3\xb6rner ihres "
+            g.drawFittedText(rysum::tr("Jede klingende Pfeife dieses Registers sendet K\xc3\xb6rner ihres "
                                 "eigenen Klangs aus, jedes aus einer anderen Richtung "
                                 "um sie herum. Mit der Bewegung zieht die Wolke mit."),
                              cloudNote, juce::Justification::topLeft,
@@ -1793,10 +1778,10 @@ void SpaceView::paint(juce::Graphics &g)
     }
     else if (!hallTab)
     {
-        drawSectionTitle(g, tabBox, "Bewegung");
+        drawSectionTitle(g, tabBox, rysum::tr("Bewegung"));
         g.setFont(A.monoFont(10.0f));
         g.setColour(col::faint);
-        g.drawText(u8("Tempo negativ = Gegenrichtung"),
+        g.drawText(rysum::tr("Tempo negativ = Gegenrichtung"),
                    juce::Rectangle<int>(tabBox.getX() + 120, tabBox.getY() + 9,
                                         tabMotion.getX() - 8 - tabBox.getX() - 120, 20),
                    juce::Justification::centredRight);
@@ -1828,18 +1813,18 @@ void SpaceView::paint(juce::Graphics &g)
         g.fillEllipse(juce::Rectangle<float>(4.0f, 4.0f).withCentre(c));
         g.setFont(A.monoFont(9.0f));
         g.setColour(col::faint);
-        g.drawText("vorn", pr.withHeight(9.0f).translated(0.0f, -9.0f),
+        g.drawText(rysum::tr("vorn"), pr.withHeight(9.0f).translated(0.0f, -9.0f),
                    juce::Justification::centred);
     }
     else
-        drawSectionTitle(g, tabBox, u8("Hall"), {});
+        drawSectionTitle(g, tabBox, rysum::tr("Hall"), {});
     if (hallTab)
     {
         g.setFont(A.monoFont(10.0f));
         g.setColour(col::mute);
         g.drawText(proc.readParams().room.on
-                       ? juce::String::fromUTF8("pausiert \xe2\x80\x93 der Saal ist an")
-                       : proc.getIrStatus(),
+                       ? rysum::tr("pausiert \xe2\x80\x93 der Saal ist an")
+                       : rysum::trText(proc.getIrStatus()),
                    juce::Rectangle<int>(tabBox.getX() + 70, tabBox.getY() + 9,
                                         tabMotion.getX() - 8 - tabBox.getX() - 70, 20),
                    juce::Justification::centredRight);
@@ -1853,16 +1838,15 @@ void SpaceView::paintVox(juce::Graphics &g)
 {
     auto &A = Assets::get();
     const bool on = proc.apvts.getRawParameterValue("voxOn")->load() > 0.5f;
-    drawSectionTitle(g, inputBox, juce::String::fromUTF8("Vox humana 8\xe2\x80\xb2 \xc2\xb7 neuronal"),
-                     on ? juce::String() : juce::String("ab"));
+    drawSectionTitle(g, inputBox, rysum::tr("Vox humana 8\xe2\x80\xb2 \xc2\xb7 neuronal"),
+                     on ? juce::String() : rysum::tr("ab"));
     g.setFont(A.sansFont(13.0f));
     g.setColour(col::ink);
-    g.drawText("Bewegung", voxMotionLabel, juce::Justification::centredLeft);
+    g.drawText(rysum::tr("Bewegung"), voxMotionLabel, juce::Justification::centredLeft);
     g.setFont(A.romanFont(13.0f));
     g.setColour(col::dim);
     g.drawFittedText(
-        juce::String::fromUTF8(
-            "Ein Register ohne Pfeifen: ein Netz (NeuralRysum), das die Rysumer Orgel spielen gelernt hat, "
+        rysum::tr("Ein Register ohne Pfeifen: ein Netz (NeuralRysum), das die Rysumer Orgel spielen gelernt hat, "
             "erzeugt jeden Ton. Seine acht Pfeifen sind acht eigene Quellen im Raum (Stimme 1 auf Pfeife 1 "
             "\xe2\x80\xa6), in einer Reihe um seinen Ort \xe2\x80\x93 in der Draufsicht ziehen = Richtung und "
             "H\xc3\xb6he \xe2\x80\x93, und sie bewegen sich wie die Register (Rotation, Pendel, Drift, "
@@ -1877,15 +1861,15 @@ void SpaceView::paintInput(juce::Graphics &g)
 {
     auto &A = Assets::get();
     const bool on = proc.apvts.getRawParameterValue("inpOn")->load() > 0.5f;
-    drawSectionTitle(g, inputBox, juce::String::fromUTF8("Eingang \xc2\xb7 Audio"),
-                     on ? juce::String() : juce::String("aus"));
+    drawSectionTitle(g, inputBox, rysum::tr("Eingang \xc2\xb7 Audio"),
+                     on ? juce::String() : rysum::tr("aus"));
 
     // input meter (raw, before the level): -60 .. 0 dBFS
     {
         auto m = inMeter;
         g.setFont(A.romanFont(11.5f));
         g.setColour(col::dim);
-        g.drawText(juce::String::fromUTF8("Am Eingang"), m.removeFromLeft(84),
+        g.drawText(rysum::tr("Am Eingang"), m.removeFromLeft(84),
                    juce::Justification::centredLeft);
         const float dB = inMeterShown > 1.0e-6f ? 20.0f * std::log10(inMeterShown) : -100.0f;
         auto txt = m.removeFromRight(64);
@@ -1910,35 +1894,35 @@ void SpaceView::paintInput(juce::Graphics &g)
     juce::AttributedString as;
     as.setJustification(juce::Justification::topLeft);
     as.setLineSpacing(2.0f);
-    auto body = [&](const char *t)
-    { as.append(juce::String::fromUTF8(t), A.sansFont(12.5f), col::dim); };
-    auto head = [&](const char *t)
-    { as.append(juce::String::fromUTF8(t), A.sansFont(12.5f), col::ink); };
-    body("Live-Audio im selben Raum wie die Pfeifen: Ort, Abstand (mit Laufzeit, Luft und "
+    auto body = [&](const juce::String &t)
+    { as.append(t, A.sansFont(12.5f), col::dim); };
+    auto head = [&](const juce::String &t)
+    { as.append(t, A.sansFont(12.5f), col::ink); };
+    body(rysum::tr("Live-Audio im selben Raum wie die Pfeifen: Ort, Abstand (mit Laufzeit, Luft und "
          "Doppler), Saal oder Impulsantwort, "
          "Effekte, Verfall und Lucier wirken auch auf den Eingang. Sein Pegel ist au\xc3\x9f"
          "erdem die Modulationsquelle "
          "\xe2\x80\x9e"
-         "Eingang (Pegel)\xe2\x80\x9c \xe2\x80\x93 auch wenn er aus ist.\n\n");
+         "Eingang (Pegel)\xe2\x80\x9c \xe2\x80\x93 auch wenn er aus ist.\n\n"));
 #if RYSUM_FX
     head("Rysum FX ");
-    body("liegt auf einer Audiospur: ihr Audio ist der Eingang. Die Orgel spielt, wenn eine "
+    body(rysum::tr("liegt auf einer Audiospur: ihr Audio ist der Eingang. Die Orgel spielt, wenn eine "
          "MIDI-Spur hierher geschickt wird "
          "(Ableton: \xe2\x80\x9eMIDI To\xe2\x80\x9c \xe2\x86\x92 diese Spur \xc2\xb7 Reaper: Send "
-         "mit MIDI).\n");
+         "mit MIDI).\n"));
 #else
     head("Reaper: ");
-    body("Audio auf der Rysum-Spur geht direkt hinein; andere Spuren per Send auf die "
-         "Kan\xc3\xa4le 3/4 (Sidechain).\n");
+    body(rysum::tr("Audio auf der Rysum-Spur geht direkt hinein; andere Spuren per Send auf die "
+         "Kan\xc3\xa4le 3/4 (Sidechain).\n"));
     head("Ableton Live: ");
-    body("\xe2\x80\x9eRysum FX\xe2\x80\x9c auf die Audiospur legen (Mikrofon: Monitor "
+    body(rysum::tr("\xe2\x80\x9eRysum FX\xe2\x80\x9c auf die Audiospur legen (Mikrofon: Monitor "
          "\xe2\x80\x9eIn\xe2\x80\x9c) und eine MIDI-Spur "
          "mit \xe2\x80\x9eMIDI To\xe2\x80\x9c dorthin schicken. Das Instrument hat au\xc3\x9f"
-         "erdem einen Sidechain-Eingang.\n");
+         "erdem einen Sidechain-Eingang.\n"));
     head("Standalone: ");
-    body("Audio-Einstellungen \xe2\x86\x92 Eingang w\xc3\xa4hlen und \xe2\x80\x9eMute audio "
+    body(rysum::tr("Audio-Einstellungen \xe2\x86\x92 Eingang w\xc3\xa4hlen und \xe2\x80\x9eMute audio "
          "input\xe2\x80\x9c ausschalten (Kopfh\xc3\xb6rer: R\xc3\xbc"
-         "ckkopplung).\n");
+         "ckkopplung).\n"));
 #endif
     juce::TextLayout tl;
     tl.createLayout(as, (float)inHelp.getWidth());

@@ -5,34 +5,34 @@ namespace rysum::ui
 juce::String ModView::paramGroup(const juce::String &id)
 {
     if (id.startsWith("mst"))
-        return "Summe";
+        return rysum::tr("Summe");
     if (id.startsWith("vol") || id.startsWith("swind") || id.startsWith("rate") ||
         id.startsWith("depth") || id.startsWith("ellipse"))
-        return "Register";
+        return rysum::tr("Register");
     if (id.startsWith("deg") || id.startsWith("spc"))
-        return "Verfall";
+        return rysum::tr("Verfall");
     if (id.startsWith("cloud") || id.startsWith("pipe"))
-        return "Register";
+        return rysum::tr("Register");
     if (id.startsWith("clickRes"))
-        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
+        return rysum::tr("Traktur \xc2\xb7 Ausgang");
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
         id == "wind" || id == "master")
-        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
+        return rysum::tr("Traktur \xc2\xb7 Ausgang");
     if (id.startsWith("stop") || id.startsWith("motion") || id.startsWith("jumpHard"))
-        return "Register";
+        return rysum::tr("Register");
     if (id.startsWith("ir"))
-        return "Hall";
+        return rysum::tr("Hall");
     if (id.startsWith("fx"))
-        return "Effekte";
+        return rysum::tr("Effekte");
     if (id.startsWith("sim"))
         return "Saal";
     if (id.startsWith("inp"))
-        return "Eingang";
+        return rysum::tr("Eingang");
     if (id.startsWith("vox") || id == "inThresh")
         return "Vox humana";
     if (id.startsWith("lfo") || id.startsWith("env") || id.startsWith("mod"))
         return "Modulation";
-    return "Klang";
+    return rysum::tr("Klang");
 }
 
 namespace
@@ -50,7 +50,7 @@ int comboIdFromTarget(int t)
 void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int idOffset)
 {
     const auto pipeNames = pipeTargetNames();
-    menu.addSectionHeader(juce::String::fromUTF8("Je Pfeife (Versatz, H\xc3\xbcllkurve pro Pfeife, "
+    menu.addSectionHeader(rysum::tr("Je Pfeife (Versatz, H\xc3\xbcllkurve pro Pfeife, "
                                                  "Tastenlage, Zufall, Anschlag wirken einzeln)"));
     for (int t = 0; t < tgtAttack; ++t)
         menu.addItem(idOffset + t + 1, pipeNames[t]);
@@ -63,25 +63,25 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
                         pipeNames[t].fromFirstOccurrenceOf("Pfeife: ", false, false));
         menu.addSubMenu(title, sub);
     };
-    group(juce::String::fromUTF8("Pfeife: Ansprache \xc2\xb7 Abriss \xc2\xb7 Obert\xc3\xb6ne"),
+    group(rysum::tr("Pfeife: Ansprache \xc2\xb7 Abriss \xc2\xb7 Obert\xc3\xb6ne"),
           tgtAttack, tgtAirInvert);
-    group("Pfeife: Wolke", tgtCloudMix, tgtCloudScatter);
-    group(juce::String::fromUTF8("Pfeife: Verfall (nur \xe2\x80\x9epro Pfeife\xe2\x80\x9c)"),
+    group(rysum::tr("Pfeife: Wolke"), tgtCloudMix, tgtCloudScatter);
+    group(rysum::tr("Pfeife: Verfall (nur \xe2\x80\x9epro Pfeife\xe2\x80\x9c)"),
           tgtDegGrain, tgtDegDrops);
-    group("Pfeife: Glitch", tgtStutter, tgtClip);
+    group(rysum::tr("Pfeife: Glitch"), tgtStutter, tgtClip);
     menu.addSeparator();
-    menu.addSectionHeader(juce::String::fromUTF8("Global (ein Wert f\xc3\xbcr alle Pfeifen)"));
-    const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
-                                   "Verfall",   "Klang",
-                                   "Hall",      "Saal",
-                                   "Eingang",   "Vox humana", "Effekte",
-                                   "Modulation", "Summe"};
+    menu.addSectionHeader(rysum::tr("Global (ein Wert f\xc3\xbcr alle Pfeifen)"));
+    const juce::StringArray groups{"Register",  rysum::tr("Traktur \xc2\xb7 Ausgang"),
+                                   rysum::tr("Verfall"),   rysum::tr("Klang"),
+                                   rysum::tr("Hall"),      "Saal",
+                                   rysum::tr("Eingang"),   "Vox humana", rysum::tr("Effekte"),
+                                   "Modulation", rysum::tr("Summe")};
     for (auto &grp : groups)
     {
         juce::PopupMenu sub;
         for (int i = 0; i < proc.getNumParams(); ++i)
             if (proc.isModTarget(i) && paramGroup(proc.getParamAt(i)->getParameterID()) == grp)
-                sub.addItem(idOffset + 1000 + i, proc.getParamAt(i)->getName(64));
+                sub.addItem(idOffset + 1000 + i, rysum::trText(proc.getParamAt(i)->getName(64)));
         if (sub.getNumItems() > 0)
             menu.addSubMenu(grp, sub);
     }
@@ -97,18 +97,17 @@ ModView::ModView(RysumProcessor &p) : proc(p)
         L.shape.addItemList(lfoShapeNames(), 1);
         L.div.addItemList(lfoDivNames(), 1);
         L.spreadMode.addItemList({"Versatz entlang der Tastatur",
-                                  juce::String::fromUTF8("Versatz zuf\xc3\xa4llig je Pfeife")},
+                                  rysum::tr("Versatz zuf\xc3\xa4llig je Pfeife")},
                                  1);
         L.shapeAtt = std::make_unique<ComboAtt>(st, id + "Shape", L.shape);
         L.divAtt = std::make_unique<ComboAtt>(st, id + "Div", L.div);
         L.spreadModeAtt = std::make_unique<ComboAtt>(st, id + "SpreadMode", L.spreadMode);
         L.sync.setClickingTogglesState(true);
-        L.sync.setTooltip("Im Projekttempo, an der Taktposition eingerastet");
+        L.sync.setTooltip(rysum::tr("Im Projekttempo, an der Taktposition eingerastet"));
         L.syncAtt = rysum::ui::attachButton(st, id + "Sync", L.sync);
         L.rate = std::make_unique<ParamRow>(st, id + "Rate", "Tempo");
-        L.spread = std::make_unique<ParamRow>(st, id + "Spread", "Versatz je Pfeife");
-        L.spread->slider.setTooltip(juce::String::fromUTF8(
-            "0 % = alle Pfeifen gleich, 100 % = ein ganzer Durchlauf \xc3\xbc"
+        L.spread = std::make_unique<ParamRow>(st, id + "Spread", rysum::tr("Versatz je Pfeife"));
+        L.spread->slider.setTooltip(rysum::tr("0 % = alle Pfeifen gleich, 100 % = ein ganzer Durchlauf \xc3\xbc"
             "ber die Pfeifen verteilt (nur f\xc3\xbcr die Ziele \xe2\x80\x9ePfeife: "
             "\xe2\x80\xa6\xe2\x80\x9c)"));
         for (juce::Component *c :
@@ -123,19 +122,18 @@ ModView::ModView(RysumProcessor &p) : proc(p)
         const juce::String id = "env" + juce::String(j + 1);
         E.mode.addItemList(
             {juce::String::fromUTF8("Pro Pfeife (jeder Ton eigene H\xc3\xbcllkurve)"),
-             "Global (jede Taste startet neu)"},
+             rysum::tr("Global (jede Taste startet neu)")},
             1);
         E.modeAtt = std::make_unique<ComboAtt>(st, id + "Mode", E.mode);
-        E.mode.setTooltip(juce::String::fromUTF8(
-            "Pro Pfeife wirkt nur auf die Ziele \xe2\x80\x9ePfeife: \xe2\x80\xa6\xe2\x80\x9c (z. "
+        E.mode.setTooltip(rysum::tr("Pro Pfeife wirkt nur auf die Ziele \xe2\x80\x9ePfeife: \xe2\x80\xa6\xe2\x80\x9c (z. "
             "B. Pfeife: Wind). "
             "Auf globale Ziele (Regler des Plugins) wirkt sie wie eine globale H\xc3\xbcllkurve."));
         E.delay = std::make_unique<ParamRow>(st, id + "Delay",
-                                             juce::String::fromUTF8("Verz\xc3\xb6gerung"), true);
-        E.attack = std::make_unique<ParamRow>(st, id + "Attack", "Anstieg", true);
-        E.decay = std::make_unique<ParamRow>(st, id + "Decay", "Abfall", true);
-        E.sustain = std::make_unique<ParamRow>(st, id + "Sustain", "Halten", true);
-        E.release = std::make_unique<ParamRow>(st, id + "Release", "Ausklang", true);
+                                             rysum::tr("Verz\xc3\xb6gerung"), true);
+        E.attack = std::make_unique<ParamRow>(st, id + "Attack", rysum::tr("Anstieg"), true);
+        E.decay = std::make_unique<ParamRow>(st, id + "Decay", rysum::tr("Abfall"), true);
+        E.sustain = std::make_unique<ParamRow>(st, id + "Sustain", rysum::tr("Halten", "env"), true);
+        E.release = std::make_unique<ParamRow>(st, id + "Release", rysum::tr("Ausklang"), true);
         for (juce::Component *c :
              {(juce::Component *)&E.mode, (juce::Component *)E.delay.get(),
               (juce::Component *)E.attack.get(), (juce::Component *)E.decay.get(),
@@ -147,9 +145,9 @@ ModView::ModView(RysumProcessor &p) : proc(p)
     {
         auto &R = routes[(size_t)r];
         R.src.addItemList(srcNames, 1);
-        R.src.setTextWhenNothingSelected("Quelle");
+        R.src.setTextWhenNothingSelected(rysum::tr("Quelle"));
         fillTargetMenu(*R.tgt.getRootMenu(), proc, 0);
-        R.tgt.setTextWhenNothingSelected("Ziel");
+        R.tgt.setTextWhenNothingSelected(rysum::tr("Ziel"));
         R.src.onChange = [this, r] { routeEdited(r); };
         R.tgt.onChange = [this, r] { routeEdited(r); };
         R.amount.setSliderStyle(juce::Slider::LinearHorizontal);
@@ -160,14 +158,14 @@ ModView::ModView(RysumProcessor &p) : proc(p)
         R.amount.onValueChange = [this, r] { list.repaint(routes[(size_t)r].row); };
         R.amount.setScrollWheelEnabled(false); // the wheel scrolls the list
         R.uni.setTooltip(
-            juce::String::fromUTF8("\xc2\xb1 bipolar: LFOs schwingen um den Reglerwert.  + "
+            rysum::tr("\xc2\xb1 bipolar: LFOs schwingen um den Reglerwert.  + "
                                    "unipolar: nur in eine Richtung (0 \xe2\x80\xa6 Menge)."));
         R.uni.onClick = [this, r]
         {
             proc.setRouteUni(r, !proc.getRouteUni(r));
             syncRoutes();
         };
-        R.clear.setTooltip("Zuordnung entfernen");
+        R.clear.setTooltip(rysum::tr("Zuordnung entfernen"));
         R.clear.onClick = [this, r]
         {
             proc.clearRoute(r);
@@ -185,9 +183,8 @@ ModView::ModView(RysumProcessor &p) : proc(p)
     addAndMakeVisible(matrixView);
     syncRoutes();
 
-    tabMod.setTooltip(juce::String::fromUTF8(
-        "Modulationsquellen (LFOs, H\xc3\xbcllkurven, \xe2\x80\xa6) auf Ziele"));
-    tabMidi.setTooltip(juce::String::fromUTF8("Drehregler, Fader und Taster deines MIDI-Keyboards "
+    tabMod.setTooltip(rysum::tr("Modulationsquellen (LFOs, H\xc3\xbcllkurven, \xe2\x80\xa6) auf Ziele"));
+    tabMidi.setTooltip(rysum::tr("Drehregler, Fader und Taster deines MIDI-Keyboards "
                                               "auf beliebige Regler legen (MIDI lernen)"));
     tabMod.onClick = [this] { showMidiTab(false); };
     tabMidi.onClick = [this] { showMidiTab(true); };
@@ -229,11 +226,9 @@ void ModView::syncRoutes()
         R.tgt.setSelectedId(comboIdFromTarget(t), juce::dontSendNotification);
         R.tgt.setTooltip(t < 0 ? juce::String()
                          : t < kNumPipeTargets
-                             ? juce::String::fromUTF8(
-                                   "Je Pfeife: jede Pfeife bekommt ihren eigenen Wert (Versatz, "
+                             ? rysum::tr("Je Pfeife: jede Pfeife bekommt ihren eigenen Wert (Versatz, "
                                    "H\xc3\xbcllkurve pro Pfeife, Tastenlage \xe2\x80\xa6)")
-                             : juce::String::fromUTF8(
-                                   "Global: ein Wert f\xc3\xbcr alle Pfeifen \xe2\x80\x93 Versatz "
+                             : rysum::tr("Global: ein Wert f\xc3\xbcr alle Pfeifen \xe2\x80\x93 Versatz "
                                    "und H\xc3\xbcllkurve pro Pfeife wirken hier nicht einzeln. "
                                    "F\xc3\xbcr einzelne Pfeifen die Ziele \xe2\x80\x9ePfeife: "
                                    "\xe2\x80\xa6\xe2\x80\x9c nehmen."));
@@ -425,8 +420,8 @@ void ModView::paint(juce::Graphics &g)
         const juce::String id = "env" + juce::String(j + 1);
         const bool perPipe = paramValue(id + "Mode") < 0.5f;
         drawSectionTitle(g, E.box,
-                         juce::String::fromUTF8("H\xc3\xbcllkurve ") + juce::String(j + 1),
-                         perPipe ? "pro Pfeife" : "global");
+                         rysum::tr("H\xc3\xbcllkurve ") + juce::String(j + 1),
+                         perPipe ? rysum::tr("pro Pfeife") : "global");
         const float d = paramValue(id + "Delay"), a = paramValue(id + "Attack"),
                     dc = paramValue(id + "Decay"), su = paramValue(id + "Sustain"),
                     rl = paramValue(id + "Release");
@@ -467,12 +462,12 @@ void ModView::paint(juce::Graphics &g)
     }
 
     // ---- matrix
-    drawSectionTitle(g, matrixBox, "Zuordnungen");
+    drawSectionTitle(g, matrixBox, rysum::tr("Zuordnungen"));
     {
         g.setColour(col::mute);
         g.setFont(Assets::get().monoFont(11.0f));
-        const auto hint = midiTab ? juce::String("Rechtsklick auf Regler: MIDI lernen")
-                                  : juce::String("Rechtsklick auf Regler: zuweisen");
+        const auto hint = midiTab ? rysum::tr("Rechtsklick auf Regler: MIDI lernen")
+                                  : rysum::tr("Rechtsklick auf Regler: zuweisen");
         g.drawText(hint,
                    juce::Rectangle<int>(matrixBox.getX() + 150, tabMod.getY(),
                                         tabMod.getX() - 10 - (matrixBox.getX() + 150),
@@ -484,10 +479,10 @@ void ModView::paint(juce::Graphics &g)
         auto h = matrixBox.withTrimmedTop(38).withHeight(14);
         g.setFont(A.monoFont(10.0f));
         g.setColour(col::faint);
-        g.drawText("Quelle", h.withTrimmedLeft(22).withWidth(104),
+        g.drawText(rysum::tr("Quelle"), h.withTrimmedLeft(22).withWidth(104),
                    juce::Justification::centredLeft);
-        g.drawText("Ziel", h.withTrimmedLeft(144).withWidth(196), juce::Justification::centredLeft);
-        g.drawText("Menge", h.withTrimmedLeft(350), juce::Justification::centredLeft);
+        g.drawText(rysum::tr("Ziel"), h.withTrimmedLeft(144).withWidth(196), juce::Justification::centredLeft);
+        g.drawText(rysum::tr("Menge"), h.withTrimmedLeft(350), juce::Justification::centredLeft);
     }
 }
 
@@ -528,7 +523,7 @@ void MatrixList::paint(juce::Graphics &g)
         {
             g.setColour(proc.getRouteTgt(r) >= 0 && s >= 0 ? col::dim : col::faint);
             g.setFont(A.monoFont(11.0f));
-            g.drawText(a->getCurrentValueAsText(),
+            g.drawText(rysum::trText(a->getCurrentValueAsText()),
                        R.clear.getBounds().translated(-48, 0).withWidth(44),
                        juce::Justification::centredRight);
         }

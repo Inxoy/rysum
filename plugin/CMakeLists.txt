@@ -86,6 +86,7 @@ juce_add_binary_data(RysumData
         resources/knob_bare.jpg
         resources/keys.jpg
         resources/orgel.txt
+        resources/orgel_en.txt
         resources/wall.jpg
         resources/grain.png
         resources/fabian_hrir.bin
@@ -153,6 +154,7 @@ endif()
 
 set(RYSUM_PLUGIN_SOURCES
     ${RYSUM_KERNEL_SOURCES}
+    source/Lang.cpp
     source/SampleLibrary.cpp
     source/OrganEngine.cpp
     source/OrganLive.cpp
@@ -328,6 +330,7 @@ if(RYSUM_BUILD_TESTS)
     target_sources(RysumRenderTest PRIVATE
         tests/RenderTest.cpp
         ${RYSUM_KERNEL_SOURCES}
+        source/Lang.cpp
         source/SampleLibrary.cpp
         source/OrganEngine.cpp
         source/OrganLive.cpp
@@ -353,7 +356,7 @@ if(RYSUM_BUILD_TESTS)
     target_sources(RysumUiSnapshot PRIVATE
         tests/UiSnapshot.cpp
         ${RYSUM_KERNEL_SOURCES}
-        source/SampleLibrary.cpp source/OrganEngine.cpp source/OrganLive.cpp source/OrganBodies.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/Audience.cpp source/ProcessorScenes.cpp source/ProcessorAutomation.cpp source/Concert.cpp source/PluginEditor.cpp
+        source/Lang.cpp source/SampleLibrary.cpp source/OrganEngine.cpp source/OrganLive.cpp source/OrganBodies.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/Audience.cpp source/ProcessorScenes.cpp source/ProcessorAutomation.cpp source/Concert.cpp source/PluginEditor.cpp
         source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/VerlaufView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp source/Walk3D.cpp source/RoomModels.cpp source/WalkGpu.cpp source/WalkView.cpp source/WalkArrange.cpp source/WalkHands.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0

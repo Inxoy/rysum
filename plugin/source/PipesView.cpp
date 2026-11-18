@@ -118,12 +118,12 @@ void PipesView::paint(juce::Graphics &g)
     g.fillRect(nav.getRight() - 1, nav.getY(), 1, nav.getHeight());
     g.setColour(col::mute);
     g.setFont(A.sansFont(11.0f).withExtraKerningFactor(0.18f));
-    g.drawText("REGISTER", nav.withTrimmedLeft(28).withTrimmedTop(18).withHeight(18),
+    g.drawText(rysum::tr("Register").toUpperCase(), nav.withTrimmedLeft(28).withTrimmedTop(18).withHeight(18),
                juce::Justification::centredLeft);
     g.setFont(A.monoFont(11.0f));
     g.drawFittedText(juce::String(juce::CharPointer_UTF8(
-                         "\xe2\x97\x8f eigene Aufnahme\n\xe2\x97\x8c ersetzt "
-                         "(Nachbar)\n\xe2\x80\x93 keine Pfeife\n\nDoppelklick = h\xc3\xb6ren")),
+                         rysum::tr("\xe2\x97\x8f eigene Aufnahme\n\xe2\x97\x8c ersetzt "
+                         "(Nachbar)\n\xe2\x80\x93 keine Pfeife\n\nDoppelklick = h\xc3\xb6ren"))),
                      nav.withTrimmedLeft(28).withTrimmedRight(12).withTop(nav.getBottom() - 110),
                      juce::Justification::topLeft, 6);
 
@@ -132,7 +132,7 @@ void PipesView::paint(juce::Graphics &g)
     {
         g.setColour(col::dim);
         g.setFont(A.sansFont(16.0f));
-        g.drawText(proc.getLoadStatus(), strip.withHeight(60), juce::Justification::centredLeft);
+        g.drawText(rysum::trText(proc.getLoadStatus()), strip.withHeight(60), juce::Justification::centredLeft);
         return;
     }
 
@@ -143,9 +143,9 @@ void PipesView::paint(juce::Graphics &g)
         g.setColour(col::mute);
         g.drawText(prettyLabel(kStops[(size_t)stop].label) +
                        juce::String(juce::CharPointer_UTF8(
-                           " \xc2\xb7 Pegel pro Taste (nicht normalisiert)")),
+                           rysum::tr(" \xc2\xb7 Pegel pro Taste (nicht normalisiert)"))),
                    head, juce::Justification::centredLeft);
-        g.drawText("Taste klicken", head, juce::Justification::centredRight);
+        g.drawText(rysum::tr("Taste klicken"), head, juce::Justification::centredRight);
         auto bars = strip.withTrimmedTop(4).withTrimmedBottom(16);
         const float gap = 2.0f, w = ((float)bars.getWidth() - gap * 45) / 46.0f;
         for (int i = 0; i < 46; ++i)
@@ -271,21 +271,21 @@ void PipesView::paint(juce::Graphics &g)
                                               (float)waveArea.getHeight()));
             line(p.loopStart, col::white);
             line(p.loopEnd, col::white);
-            label(p.loopStart, u8("Schleife ") + juce::String(p.loopStart / sr, 3) +
+            label(p.loopStart, rysum::tr("Schleife ") + juce::String(p.loopStart / sr, 3) +
                                    u8(" \xe2\x80\x93 ") + juce::String(p.loopEnd / sr, 3) + " s");
         }
         line(p.onset, col::faint);
-        label(p.onset, "Einsatz");
+        label(p.onset, rysum::tr("Einsatz"));
         line(p.release, col::mute);
         label(p.release,
-              u8("Loslassen \xc2\xb7 Ausklang ") + juce::String((len - p.release) / sr, 2) + " s");
+              rysum::tr("Loslassen \xc2\xb7 Ausklang ") + juce::String((len - p.release) / sr, 2) + " s");
         drawGrain(g, waveArea, 0.5f);
     }
     else
     {
         g.setColour(col::mute);
         g.setFont(A.sansFont(15.0f));
-        g.drawText("keine Aufnahme", waveArea, juce::Justification::centred);
+        g.drawText(rysum::tr("keine Aufnahme"), waveArea, juce::Justification::centred);
     }
 
     // ---- info grid
@@ -297,12 +297,12 @@ void PipesView::paint(juce::Graphics &g)
     const auto ct = juce::String(juce::CharPointer_UTF8(" ct"));
     if (p.substituted)
         kv.push_back(
-            {"Status", juce::String(juce::CharPointer_UTF8("\xe2\x97\x8c ersetzt durch ")) +
+            {"Status", ((rysum::tr("\xe2\x97\x8c ersetzt durch "))) +
                            helmholtzName(kPhysKeys[(size_t)p.substituteFrom]) +
-                           " (tonh. verschoben)"});
+                           rysum::tr(" (tonh. verschoben)")});
     else
         kv.push_back(
-            {"Status", juce::String(juce::CharPointer_UTF8("\xe2\x97\x8f eigene Aufnahme")) +
+            {"Status", ((rysum::tr("\xe2\x97\x8f eigene Aufnahme"))) +
                            (p.takes > 1 ? u8(" \xc2\xb7 ") + juce::String(p.takes) + " Takes"
                                         : juce::String())});
     kv.push_back({u8("Soll (mittelt\xc3\xb6nig)"), juce::String(meantoneHz(p.midi), 2) + " Hz"});
@@ -312,17 +312,17 @@ void PipesView::paint(juce::Graphics &g)
     kv.push_back(
         {"Abweichung", p.hasCents && !p.substituted
                            ? juce::String(p.cents - 1200.0 * std::round(p.cents / 1200.0), 1) + ct
-                           : juce::String(juce::CharPointer_UTF8("aus Tastenfolge"))});
+                           : ((rysum::tr("aus Tastenfolge")))});
     kv.push_back({"Pegel", juce::String(p.levelDb, 1) + " dBFS"});
-    kv.push_back({juce::String(juce::CharPointer_UTF8("L\xc3\xa4nge")),
+    kv.push_back({((rysum::tr("L\xc3\xa4nge"))),
                   p.sample ? juce::String(p.sample->size() / p.sample->sampleRate, 2) + " s"
                            : juce::String()});
     kv.push_back({"Quelle", p.source + " @ " + juce::String(p.sourceTime, 2) + " s"});
     kv.push_back({"Mono", p.monoMethod.isEmpty()
                               ? juce::String(juce::CharPointer_UTF8("\xe2\x80\x93"))
-                              : p.monoMethod.replace("aligned_sum", "beide Mikros ausgerichtet")
-                                    .replace("left", "linkes Mikro")
-                                    .replace("right", "rechtes Mikro")});
+                              : p.monoMethod.replace("aligned_sum", rysum::tr("beide Mikros ausgerichtet"))
+                                    .replace("left", rysum::tr("linkes Mikro"))
+                                    .replace("right", rysum::tr("rechtes Mikro"))});
     const int cols = 4;
     const int cw = (info.getWidth() - (cols - 1) * 24) / cols;
     for (size_t i = 0; i < kv.size(); ++i)
@@ -333,17 +333,17 @@ void PipesView::paint(juce::Graphics &g)
         g.fillRect(cell.getX(), cell.getY(), cell.getWidth(), 1);
         g.setColour(col::mute);
         g.setFont(A.sansFont(11.0f));
-        g.drawText(kv[i].k, cell.withTrimmedTop(6).withHeight(14),
+        g.drawText(rysum::tr(kv[i].k), cell.withTrimmedTop(6).withHeight(14),
                    juce::Justification::centredLeft);
         g.setColour(col::ink);
         g.setFont(A.monoFont(12.0f));
-        g.drawFittedText(kv[i].v, cell.withTrimmedTop(22), juce::Justification::topLeft, 2);
+        g.drawFittedText(rysum::tr(kv[i].v), cell.withTrimmedTop(22), juce::Justification::topLeft, 2);
     }
     if (p.flags.size() > 0)
     {
         g.setColour(col::mute);
         g.setFont(A.monoFont(11.0f));
-        g.drawFittedText("Hinweise: " + p.flags.joinIntoString(", "),
+        g.drawFittedText(rysum::tr("Hinweise: ") + p.flags.joinIntoString(", "),
                          info.withTrimmedTop(110).withHeight(30), juce::Justification::topLeft, 2);
     }
 }
