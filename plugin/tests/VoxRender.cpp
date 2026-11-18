@@ -130,6 +130,12 @@ private:
                   << " dBFS, rms " << juce::String(juce::Decibels::gainToDecibels(out.getRMSLevel(0, 0, total)), 1)
                   << " dBFS, CPU " << juce::String(100.0 * busy / (total / 48000.0), 1) << " % of real time"
                   << std::endl;
+        // the notes the input played (channel 16): velocity, pressure
+        const auto &st = proc->voxNoteStats();
+        if (st.notes > 0)
+            std::cout << "                   tracked notes " << st.notes << ", velocity " << st.velMin << " .. "
+                      << st.velMax << ", pressure messages " << st.pressure << std::endl;
+        proc->clearVoxNoteStats();
         auto f = outDir.getChildFile(name + ".wav");
         f.deleteFile();
         juce::WavAudioFormat wav;
@@ -234,6 +240,26 @@ private:
         set(RysumProcessor::stopParamId(2).toRawUTF8(), 1.0f); // Octave 4'
         set("inPlays", 1.0f);
         render("organ_input", &in, noMidi);
+
+        // the same, with the input's dynamics on every pipe: velocity -> Pfeife: Lautstärke, pressure
+        // (its level while it sounds) -> Pfeife: Wind; and the Vox humana with Dynamik 100 %
+        resetParams();
+        set(RysumProcessor::stopParamId(1).toRawUTF8(), 1.0f);
+        set(RysumProcessor::stopParamId(2).toRawUTF8(), 1.0f);
+        set("inPlays", 1.0f);
+        proc->addRoute(rysum::srcVelocity, rysum::tgtLevel, 0.25f); // up to +9 dB at full velocity
+        proc->addRoute(rysum::srcPressure, rysum::tgtWind, 0.5f);   // louder = more wind
+        set(RysumProcessor::stopParamId(1).toRawUTF8(), 0.5f);     // (half-drawn: wind has room to move)
+        set(RysumProcessor::stopParamId(2).toRawUTF8(), 0.5f);
+        render("organ_input_dynamics", &in, noMidi);
+        for (int r = 0; r < 64; ++r)
+            proc->clearRoute(r);
+
+        resetParams();
+        set("voxOn", 1.0f);
+        set("inPlays", 1.0f);
+        set("voxDyn", 1.0f);
+        render("vox_input_dynamics", &in, noMidi);
 
         resetParams();
         set(RysumProcessor::stopParamId(1).toRawUTF8(), 1.0f);

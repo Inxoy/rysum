@@ -150,9 +150,9 @@ VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
         addAndMakeVisible(*b);
     const std::pair<const char *, const char *> spec[]{
         {"voxX", "Klangfarbe X"},  {"voxY", "Klangfarbe Y"},     {"voxBright", "Helligkeit"},
-        {"voxNoise", "Hauch"},     {"voxSpread", "Breite"},
+        {"voxNoise", "Hauch"},     {"voxSpread", "Breite"},      {"voxDyn", "Dynamik"},
         {"inThresh", "Erkennungsschwelle"}, {"inConfirm", "Best\xc3\xa4tigung"},
-        {"inVoices", "Stimmen"}};
+        {"inVoices", "Stimmen"},   {"inVelGain", "Anschlag: Empfindlichkeit"}, {"inVelRange", "Anschlag: Bereich"}};
     const char *tips[]{
         "Die Hauptrichtung, in der sich die Register der Rysumer Orgel unterscheiden (in "
         "Standardabweichungen): durch die Registrierungen gleiten.",
@@ -160,10 +160,18 @@ VoxPanel::VoxPanel(RysumProcessor &p) : proc(p)
         "Spektraler Schwerpunkt: dunkler \xe2\x80\x93 heller.",
         "Rauschanteil: reiner Ton \xe2\x80\x93 Wind und Hauch.",
         "Wie breit das Spektrum ist.",
+        "Wie stark jede Stimme ihrem Anschlag folgt: gespielte Tasten ihrer Anschlagst\xc3\xa4rke, erkannte T\xc3\xb6ne "
+        "ihrem Pegel im Eingang (laufend). 0 = alle gleich laut, 100 % = \xc2\xb1" "15 dB.",
         "Wie sicher ein Ton erkannt sein muss, bevor er spielt: h\xc3\xb6her = weniger, sicherere T\xc3\xb6ne.",
         "Wie lange ein Ton zu h\xc3\xb6ren sein muss, bevor er spielt: l\xc3\xa4nger = ruhiger, sp\xc3\xa4ter.",
         "Wie viele T\xc3\xb6ne der Eingang h\xc3\xb6"
-        "chstens zugleich spielt (1 = einstimmig)."};
+        "chstens zugleich spielt (1 = einstimmig).",
+        "Jeder erkannte Ton bekommt einen Anschlag aus seinem Pegel im Eingang (die St\xc3\xa4rke seiner "
+        "Obert\xc3\xb6ne) und, solange er klingt, seinen Pegel als Druck (polyphoner Aftertouch). Auf der Seite "
+        "Modulation wirken \xe2\x80\x9e" "Anschlag\xe2\x80\x9c und \xe2\x80\x9e" "Druck\xe2\x80\x9c damit je Pfeife, "
+        "z. B. auf Pfeife: Wind. Mehr = ein leiser Eingang spielt schon kr\xc3\xa4" "ftig.",
+        "Wie viele dB vom leisesten bis zum st\xc3\xa4rksten Anschlag: kleiner = schon kleine Unterschiede "
+        "im Eingang machen den ganzen Bereich aus."};
     int i = 0;
     for (auto &sp : spec)
     {
@@ -204,7 +212,7 @@ void VoxPanel::resized()
     plays.setBounds(r.removeFromTop(26));
     follow.setBounds(r.removeFromTop(26));
     heads.clear();
-    const int groups[]{5, 3};
+    const int groups[]{6, 5};
     size_t ri = 0;
     for (int gsize : groups)
     {

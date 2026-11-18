@@ -94,6 +94,9 @@ public:
         float thresh = 0.6f;   // tracker: start threshold
         int confirm = 4;       // tracker: frames a pitch must last
         int voices = 8;        // tracker: most notes at once
+        // velocity of the tracked notes (from the input's level): sensitivity, range in dB
+        float velGainDb = 0.0f, velRangeDb = 48.0f;
+        float dynamics = 0.0f; // the Vox humana's voices follow their velocity / level, 0..1
     };
 
     bool load(const void *data, size_t size, juce::String &error)
@@ -130,6 +133,7 @@ public:
         eng.reset();
         heldTracked.fill(-1);
         noteCount.fill(0);
+        sentPress.fill(-1);
         playedOn.fill(false);
         sustain = false;
         sustained.fill(false);
@@ -182,6 +186,9 @@ public:
         tp.on = s.thresh;
         tp.confirm = juce::jlimit(1, 32, s.confirm);
         tp.voices = juce::jlimit(1, 8, s.voices);
+        eng.velGainDb = s.velGainDb;
+        eng.velRangeDb = juce::jlimit(6.0f, 96.0f, s.velRangeDb);
+        eng.dynamics = juce::jlimit(0.0f, 1.0f, s.dynamics);
 
         // keys -> played voices (in the organ's tuning)
         for (const auto meta : midi)
@@ -191,7 +198,7 @@ public:
             if (m.isNoteOn() && s.stopOn)
             {
                 const int id = (m.getChannel() - 1) * 128 + m.getNoteNumber();
-                eng.noteOn(off48, id, keyFor(m.getChannel(), m.getNoteNumber(), p));
+                eng.noteOn(off48, id, keyFor(m.getChannel(), m.getNoteNumber(), p), m.getFloatVelocity());
                 playedOn[(size_t)id] = true;
                 sustained[(size_t)id] = false;
             }
@@ -273,15 +280,52 @@ public:
                         noteOffTracked(organMidi, ev.voice, at);
                     const int k = organKey(ev.key);
                     heldTracked[(size_t)ev.voice] = k;
+                    // velocity: how loud the note came in (1 .. 127)
+                    const auto vel = (juce::uint8)juce::jlimit(1, 127, 1 + juce::roundToInt(126.0f * ev.velocity));
                     if (noteCount[(size_t)k]++ == 0)
-                        organMidi.addEvent(juce::MidiMessage::noteOn(kChannel, k, (juce::uint8)96), at);
+                    {
+                        organMidi.addEvent(juce::MidiMessage::noteOn(kChannel, k, vel), at);
+                        sentPress[(size_t)k] = -1;
+                        ++stats.notes;
+                        stats.velMin = juce::jmin(stats.velMin, (int)vel);
+                        stats.velMax = juce::jmax(stats.velMax, (int)vel);
+                    }
                 }
                 else
                     noteOffTracked(organMidi, ev.voice, at);
             }
         else
             releaseTracked(organMidi, 0);
+
+        // while they sound: their level as polyphonic aftertouch (the modulation source "Druck"),
+        // one value per key (the loudest voice on it), sent when it changed
+        if (s.inputPlays)
+        {
+            std::array<int, vox::Engine::kTracked> val{};
+            for (int v = 0; v < vox::Engine::kTracked; ++v)
+                val[(size_t)v] = heldTracked[(size_t)v] >= 0 ? juce::roundToInt(127.0f * eng.trackedLevel(v)) : -1;
+            for (int v = 0; v < vox::Engine::kTracked; ++v)
+            {
+                const int k = heldTracked[(size_t)v];
+                if (k < 0)
+                    continue;
+                int best = val[(size_t)v];
+                for (int u = 0; u < vox::Engine::kTracked; ++u)
+                    if (heldTracked[(size_t)u] == k)
+                        best = juce::jmax(best, val[(size_t)u]);
+                best = juce::jlimit(0, 127, best);
+                if (std::abs(best - sentPress[(size_t)k]) >= 2 || (best == 0) != (sentPress[(size_t)k] == 0))
+                {
+                    organMidi.addEvent(juce::MidiMessage::aftertouchChange(kChannel, k, best), juce::jmax(0, n - 1));
+                    sentPress[(size_t)k] = best;
+                    ++stats.pressure;
+                }
+            }
+        }
     }
+
+    /** a tracked voice's level now (0..1, the velocity scale; 0 = not sounding), for displays */
+    float trackedLevel(int v) const noexcept { return eng.trackedLevel(v); }
 
     const float *output() const noexcept { return out.data(); }
     /** the separate pipes (0 .. 7) and the learned room's tail (8), host rate */
@@ -293,6 +337,14 @@ public:
     int trackedNote(int v) const noexcept { return heldTracked[(size_t)v]; }
 
     static constexpr int kChannel = 16; // the input's notes arrive on this MIDI channel
+
+    /** counted on the audio thread, read by tests after rendering */
+    struct NoteStats
+    {
+        int notes = 0, velMin = 128, velMax = 0, pressure = 0;
+        void clear() noexcept { *this = NoteStats{}; }
+    };
+    NoteStats stats;
 
 private:
     int toModelOffset(int hostOffset) const noexcept
@@ -361,6 +413,7 @@ private:
     bool bypass = true, wasActive = false, sustain = false;
     std::array<int, vox::Engine::kTracked> heldTracked{};
     std::array<int, 128> noteCount{};
+    std::array<int, 128> sentPress{}; // the aftertouch last sent per key (-1 = none yet)
     std::array<bool, 16 * 128> playedOn{}, sustained{};
 };
 } // namespace rysum

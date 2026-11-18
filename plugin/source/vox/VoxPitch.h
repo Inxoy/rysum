@@ -261,6 +261,7 @@ public:
         spec.assign((size_t)maxWin);
         hist.assign((size_t)maxWin, 0.0f);
         logSpec.assign((size_t)nIn, 0.0f);
+        lin.assign((size_t)nIn, 0.0f);
 
         l1.init(m.t("pitch.l1.conv.weight"), m.t("pitch.l1.conv.bias"), 1, 1);
         l2.init(m.t("pitch.l2.conv.weight"), m.t("pitch.l2.conv.bias"), 2, 1);
@@ -298,6 +299,7 @@ public:
     }
 
     int hopSize() const noexcept { return hop; }
+    int longestWindow() const noexcept { return maxWin; }
     int numBins() const noexcept { return nb; }
     double binMidi(int i) const noexcept { return midiLo + (double)i / (double)bps; }
 
@@ -312,6 +314,44 @@ public:
 
     const float *salienceLogits() const noexcept { return sal.data(); }
     const float *onsetLogits() const noexcept { return ons.data(); }
+
+    /** how strong a note is in the last frame: the power of its harmonics 1 .. 7 (the ones the
+        network stacks), each the strongest of three neighbouring bins, amplitude² (a sine of
+        amplitude a: a²). Harmonics a chord shares count for every note that has them. */
+    /** the input's power over the last `n` samples (Hann-weighted), on the same scale as
+        harmonicPower (a sine of amplitude a: a²). Short: right at a note's start, when the long
+        windows of the spectrum hold only a little of it */
+    float shortPower(int n = 512) const noexcept
+    {
+        n = std::min(n, maxWin);
+        const float *x = hist.data() + (maxWin - n);
+        double s = 0.0, w2 = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            const double w = 0.5 - 0.5 * std::cos(6.283185307179586 * (i + 0.5) / n);
+            s += w * w * (double)x[i] * x[i];
+            w2 += w * w;
+        }
+        return (float)(2.0 * s / std::max(1e-12, w2));
+    }
+
+    float harmonicPower(double midi) const noexcept
+    {
+        const int b = (int)std::lround((midi - (double)midiLo) * (double)bps);
+        float s = 0.0f;
+        for (int sh : shifts)
+        {
+            if (sh < 0)
+                continue; // (the subharmonic: not this note's)
+            const int i = loPad + sh + b;
+            float m = 0.0f;
+            for (int d = -1; d <= 1; ++d)
+                if (i + d >= 0 && i + d < nIn)
+                    m = std::max(m, lin[(size_t)(i + d)]);
+            s += m * m;
+        }
+        return s;
+    }
 
 private:
     void spectrum() noexcept
@@ -346,6 +386,7 @@ private:
                 logSpec[(size_t)ds[q]] = mag(id[q]) * (1.0f - f) + mag(id[q] + 1) * f;
             }
         }
+        std::copy(logSpec.begin(), logSpec.end(), lin.begin()); // (magnitudes, for harmonicPower)
         for (auto &v : logSpec)
         {
             const float db = 20.0f * std::log10(v + 1e-5f);
@@ -432,7 +473,7 @@ private:
     std::vector<float> winScale;
     std::vector<FFT> ffts;
     Floats frameBuf, spec;
-    std::vector<float> hist, logSpec;
+    std::vector<float> hist, logSpec, lin;
 
     Conv2dLayer l1, l2, l3, l4;
     std::vector<float> outW, outB;

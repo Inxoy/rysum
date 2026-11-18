@@ -328,6 +328,71 @@ int main(int argc, char **argv)
         check(tailDb > 15.0, "room 0: 0.5-1 s after release, quieter than with the room by (dB)", tailDb, 15.0);
     }
 
+    // 5d. velocity of tracked notes: a tone (harmonics 1..6 at 1/h) at three levels, 10 dB apart
+    {
+        std::array<float, 3> vel{};
+        for (int li = 0; li < 3; ++li)
+        {
+            Engine e;
+            e.load(modelBytes.data(), modelBytes.size(), err);
+            e.synthOn = false;
+            const float a = 0.03f * std::pow(10.0f, 0.5f * (float)li); // 0.03, 0.095, 0.3
+            const int n = 48000;
+            std::vector<float> in((size_t)n), out((size_t)n);
+            for (int i = 0; i < n; ++i)
+            {
+                const float t = (float)i / 48000.0f;
+                float s = 0.0f;
+                for (int h = 1; h <= 6; ++h)
+                    s += std::sin(6.2831853f * 220.0f * (float)h * t) / (float)h;
+                in[(size_t)i] = i > 4800 ? a * s : 0.0f;
+            }
+            float first = -1.0f;
+            for (int p = 0; p < n; p += 256)
+            {
+                e.process(in.data() + p, out.data() + p, std::min(256, n - p));
+                for (int k = 0; k < e.numTrackedEvents(); ++k)
+                    if (e.trackedEvent(k).on && first < 0.0f)
+                        first = e.trackedEvent(k).velocity;
+            }
+            vel[(size_t)li] = first;
+            float held = 0.0f;
+            for (int v = 0; v < Engine::kTracked; ++v)
+                held = std::max(held, e.trackedLevel(v));
+            std::printf("   level %d: note-on velocity %.3f, held level after 1 s %.3f\n", li, first, held);
+            check(std::fabs(held - first) < 0.08, "velocity: held level matches the note-on", std::fabs(held - first), 0.08);
+        }
+        // expected: 10 dB = 10/48 of the scale between the levels; the loudest about 0.94
+        const double d1 = vel[1] - vel[0], d2 = vel[2] - vel[1];
+        check(vel[0] > 0.0f && d1 > 0.15 && d1 < 0.27 && d2 > 0.15 && d2 < 0.27,
+              "velocity: steps for +10 dB (expected 0.21 each)", std::min(d1, d2), 0.15);
+        check(std::fabs(vel[2] - 0.94) < 0.08, "velocity of the loudest tone (expected 0.94)", vel[2], 0.08);
+        std::printf("   velocities %.3f %.3f %.3f\n", vel[0], vel[1], vel[2]);
+    }
+
+    // 5e. dynamics: played notes at velocity 0.3 and 1.0 differ by 30 dB * 0.7 = 21 dB with Dynamik 100 %
+    {
+        auto lvl = [&](float velocity, float dyn)
+        {
+            Engine e;
+            e.load(modelBytes.data(), modelBytes.size(), err);
+            e.trackInput = false;
+            e.setNoise(false);
+            e.dynamics = dyn;
+            e.noteOn(0, 0, 60.0f, velocity);
+            std::vector<float> out(48128); // (a whole number of 256-sample blocks)
+            for (size_t p = 0; p < out.size(); p += 256)
+                e.process(nullptr, out.data() + p, 256);
+            double s = 0.0;
+            for (size_t i = 24000; i < out.size(); ++i)
+                s += (double)out[i] * out[i];
+            return 10.0 * std::log10(s / 24000.0 + 1e-30);
+        };
+        const double spread = lvl(1.0f, 1.0f) - lvl(0.3f, 1.0f), none = lvl(1.0f, 0.0f) - lvl(0.3f, 0.0f);
+        check(std::fabs(spread - 21.0) < 1.0, "Dynamik 100 %: velocity 1.0 against 0.3 (dB, expected 21)", spread, 1.0);
+        check(std::fabs(none) < 0.01, "Dynamik 0: velocity changes nothing (dB)", none, 0.01);
+    }
+
     // 6. CPU: 8 played voices only (keyboard, no tracking, no learned room)
     for (int noise = 0; noise < 2; ++noise)
     {

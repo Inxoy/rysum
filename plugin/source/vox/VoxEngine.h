@@ -35,6 +35,7 @@ public:
         int voice = 0;      // tracker voice
         float key = 0.0f;   // fractional MIDI note (folded)
         bool on = false;
+        float velocity = 0.0f; // note on: how loud it came in, 0..1 (velocityOf)
     };
 
     // ---- setup (not real-time safe) ---------------------------------------------------------
@@ -103,6 +104,26 @@ public:
     bool follow = false;      // Follow: the input steers the timbre (else Manual)
     float foldLo = 36.0f, foldHi = 84.0f;
     float smoothingMs = 30.0f;
+    // velocity of the tracked notes, from the power of their harmonics in the input:
+    // velTopDb (+ velGainDb) gives 1, velRangeDb below it 0
+    float velGainDb = 0.0f, velRangeDb = 48.0f;
+    static constexpr float kVelTopDb = -6.0f;
+    // the voices' own level: 0 = all alike (as trained), 1 = each follows its velocity (played) or the
+    // input's level (tracked), +-15 dB around velocity 0.75
+    float dynamics = 0.0f;
+
+    /** a level in dB -> 0..1 (the velocity scale) */
+    float velocityOf(float db) const noexcept
+    {
+        const float lo = kVelTopDb - velRangeDb;
+        return std::min(1.0f, std::max(0.0f, (db + velGainDb - lo) / std::max(1.0f, velRangeDb)));
+    }
+    /** a tracked voice's level now, 0..1 on the velocity scale (0 when it is not sounding) */
+    float trackedLevel(int v) const noexcept
+    {
+        const auto &s = trk[(size_t)v];
+        return s.lastGate ? velocityOf(s.levelDb) : 0.0f;
+    }
 
     VoiceTracker::Params &trackerParams() noexcept { return tracker.params; }
     void setNoise(bool on) noexcept { synth.noiseOn = on; }
@@ -130,7 +151,10 @@ public:
     }
 
     // ---- MIDI (played voices): times are samples into the next process() call ---------------
-    void noteOn(int offset, int id, float key) noexcept { queue(offset, id, key, true); }
+    void noteOn(int offset, int id, float key, float velocity = 0.75f) noexcept
+    {
+        queue(offset, id, key, true, velocity);
+    }
     void noteOff(int offset, int id) noexcept { queue(offset, id, 0.0f, false); }
     void allNotesOff(int offset) noexcept
     {
@@ -201,12 +225,16 @@ private:
         // note events for the organ
         bool noteOn = false;
         float noteKey = 0.0f;
+        // its level in the input: dB, rises at once, falls in about 80 ms
+        float levelDb = -120.0f;
+        float velHeld = 0.75f; // its level on the velocity scale while it sounds, kept for the release
+        int age = 0;           // estimator frames since it started
     };
     struct Played
     {
         int id = -1;
         bool held = false, used = false;
-        float key = 0.0f;
+        float key = 0.0f, velocity = 0.75f;
         int64_t on = 0, off = 0;     // samples, absolute
         double freeAt = -1e18;        // seconds
     };
@@ -216,13 +244,23 @@ private:
         int id = 0;
         float key = 0.0f;
         bool on = false;
+        float velocity = 0.75f;
     };
 
-    void queue(int offset, int id, float key, bool on) noexcept
+    void queue(int offset, int id, float key, bool on, float velocity = 0.75f) noexcept
     {
         if (nQueued >= kMaxQueued)
             return;
-        queued[(size_t)nQueued++] = {(int64_t)offset, id, key, on};
+        queued[(size_t)nQueued++] = {(int64_t)offset, id, key, on, velocity};
+    }
+
+    /** the voice's own gain from its velocity / level (dynamics 0: 1) */
+    float voiceGain(float v01) const noexcept
+    {
+        if (dynamics <= 0.0f)
+            return 1.0f;
+        const float db = 30.0f * (std::min(1.0f, std::max(0.0f, v01)) - 0.75f) * std::min(1.0f, dynamics);
+        return std::pow(10.0f, db / 20.0f);
     }
 
     void build(const ModelFile &m)
@@ -355,6 +393,7 @@ private:
                 vs.gate = s.offT < 0.0 ? 1.0f : 0.0f;
                 vs.onAge = (float)(t - s.onT);
                 vs.offAge = s.offT < 0.0 ? -1.0f : (float)(t - s.offT);
+                vs.gain = voiceGain(s.velHeld);
             }
         }
         for (int v = 0; v < kPlayed; ++v)
@@ -369,6 +408,7 @@ private:
             vs.gate = held ? 1.0f : 0.0f;
             vs.onAge = (float)((double)(T0 - p.on) / sr);
             vs.offAge = held ? -1.0f : (float)((double)(T0 - p.off) / sr);
+            vs.gain = voiceGain(p.velocity);
         }
 
         updateConditioning();
@@ -399,6 +439,22 @@ private:
                 }
                 tracker.step(salP.data(), onsP.data());
                 const int offset = blockEnd - H + o + estHop; // the estimator frame ends here
+                // the voices' levels: the power of their harmonics at the pitch they are found at
+                // (not folded). At a note's start the long windows hold only a little of it, so
+                // its velocity is the input's power of the last 10 ms, shared out between the
+                // sounding voices by their harmonic power; until the longest window has filled the
+                // level only rises from there, then it follows (at once up, ~80 ms down)
+                const float rel = 1.0f - std::exp(-(float)estHop / (0.08f * (float)sr));
+                const int fillFrames = est.longestWindow() / estHop;
+                std::array<float, kTracked> pw{};
+                float pwSum = 0.0f;
+                for (int v = 0; v < kTracked; ++v)
+                    if (tracker.voiceGate(v))
+                    {
+                        pw[(size_t)v] = est.harmonicPower(tracker.voiceMidi(v));
+                        pwSum += pw[(size_t)v];
+                    }
+                const float shortP = est.shortPower(512);
                 for (int v = 0; v < kTracked; ++v)
                 {
                     Tracked &s = trk[(size_t)v];
@@ -406,6 +462,24 @@ private:
                     s.startedAny = s.startedAny || st;
                     s.lastGate = g;
                     s.lastMidi = (float)fold(tracker.voiceMidi(v));
+                    if (g)
+                    {
+                        const float db = 10.0f * std::log10(pw[(size_t)v] + 1e-12f);
+                        if (st)
+                        {
+                            const float share = pwSum > 0.0f ? pw[(size_t)v] / pwSum : 1.0f;
+                            s.levelDb = std::max(db, 10.0f * std::log10(shortP * share + 1e-12f));
+                            s.age = 0;
+                        }
+                        else if (db > s.levelDb)
+                            s.levelDb = db;
+                        else if (s.age >= fillFrames)
+                            s.levelDb += rel * (db - s.levelDb);
+                        ++s.age;
+                        s.velHeld = velocityOf(s.levelDb);
+                    }
+                    else
+                        s.levelDb = -120.0f;
                     report(s, v, st, g, offset);
                 }
             }
@@ -430,7 +504,7 @@ private:
         auto push = [&](bool on, float key)
         {
             if (nEvents < kMaxEvents)
-                events[(size_t)nEvents++] = {std::max(0, offset - 1), v, key, on};
+                events[(size_t)nEvents++] = {std::max(0, offset - 1), v, key, on, on ? velocityOf(s.levelDb) : 0.0f};
         };
         const float k = s.lastMidi;
         if (s.noteOn && (!gate || started || std::fabs(k - s.noteKey) > 0.6f))
@@ -487,6 +561,7 @@ private:
                 p.held = true;
                 p.used = true;
                 p.key = e.key;
+                p.velocity = e.velocity;
                 p.on = at;
                 p.off = std::numeric_limits<int64_t>::max();
                 p.freeAt = 1e300;

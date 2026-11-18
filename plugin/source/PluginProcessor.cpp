@@ -1266,6 +1266,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         for (int r = 0; r < rysum::kNumRooms; ++r)
             saals.add("Saal " + String(r + 1));
         l.add(std::make_unique<AudioParameterChoice>(ParameterID{"simRoomVox", 1}, "Vox humana im Saal", saals, 0));
+        // velocity of the notes the input plays (its level), and how much the Vox humana's voices follow it
+        auto vdb = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return (v > 0.05f ? "+" : "") + String(v, 1) + " dB"; });
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"inVelGain", 1}, "Eingang Anschlag Empfindlichkeit",
+                                                    NormalisableRange<float>(-24.0f, 36.0f, 0.1f), 0.0f, vdb));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"inVelRange", 1}, "Eingang Anschlag Bereich", NormalisableRange<float>(12.0f, 72.0f, 0.1f), 48.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, 0) + " dB"; })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxDyn", 1}, "Vox humana Dynamik",
+                                                    NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f, vpct));
     }
     return l;
 }
@@ -2200,6 +2211,9 @@ void RysumProcessor::runVox(juce::MidiBuffer &midi, int n, EngineParams &params)
     s.thresh = v(15);
     s.confirm = juce::roundToInt(v(16));
     s.voices = juce::roundToInt(v(17));
+    s.velGainDb = v(23);
+    s.velRangeDb = v(24);
+    s.dynamics = v(25);
     const bool haveIn = inputThisBlock;
     voxMidi.clear();
     voxStop.process(haveIn ? inBuf.getReadPointer(0) : nullptr, haveIn ? inBuf.getReadPointer(1) : nullptr, n,

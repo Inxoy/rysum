@@ -28,7 +28,7 @@ juce::String ModView::paramGroup(const juce::String &id)
         return "Saal";
     if (id.startsWith("inp"))
         return "Eingang";
-    if (id.startsWith("vox") || id == "inThresh")
+    if (id.startsWith("vox") || id == "inThresh" || id.startsWith("inVel"))
         return "Vox humana";
     if (id.startsWith("lfo") || id.startsWith("env") || id.startsWith("mod"))
         return "Modulation";

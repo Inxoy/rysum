@@ -26,6 +26,7 @@ struct VoiceState
     float gate = 0.0f;    // 1 while held
     float onAge = 0.0f;   // seconds since (re)start
     float offAge = -1.0f; // seconds since release, -1 while held
+    float gain = 1.0f;    // the voice's own level (dynamics: velocity / the input's level), linear
 };
 
 /** uniformly partitioned overlap-save convolution, block = frame, no latency */
@@ -438,8 +439,11 @@ public:
             const VoiceState in = v < nv ? voices[v] : VoiceState{};
             const float key = in.key > 0.0f ? in.key : 60.0f;
             const float fBase = 440.0f * std::exp2((key - 69.0f) / 12.0f) / 2.0f;
+            const float g = std::max(0.0f, in.gain);
             if (first)
                 st.fPrev = fBase;
+            if (!st.prevOn)
+                st.gPrev = g; // (a new note starts at its own level)
             float *cur = tables[(size_t)v].data();
             bool curOn = false;
             if (row[(size_t)v] >= 0)
@@ -450,7 +454,7 @@ public:
                 curOn = true;
                 auto &gp = gNowP[(size_t)(v % kPipes)];
                 for (int b = 0; b < nNoise; ++b)
-                    gp[(size_t)b] += std::exp(std::min(4.0f, std::max(-30.0f, ov[nh + b])));
+                    gp[(size_t)b] += g * std::exp(std::min(4.0f, std::max(-30.0f, ov[nh + b])));
                 float total = 0.0f, top = 1.0e-20f;
                 for (float e : bands)
                 {
@@ -459,18 +463,19 @@ public:
                 }
                 auto &d = disp[(size_t)v];
                 d.key.store(key, std::memory_order_relaxed);
-                d.level.store(std::sqrt(total), std::memory_order_relaxed);
+                d.level.store(g * std::sqrt(total), std::memory_order_relaxed);
                 for (size_t j = 0; j < bands.size(); ++j)
                     d.rings[j].store(std::sqrt(bands[j] / top), std::memory_order_relaxed);
             }
             else
                 disp[(size_t)v].level.store(0.0f, std::memory_order_relaxed);
             oscillate(st, fBase, st.prevOn ? prevTables[(size_t)v].data() : nullptr, curOn ? cur : nullptr,
-                      dryP[(size_t)(v % kPipes)].data());
+                      dryP[(size_t)(v % kPipes)].data(), st.gPrev, g);
             if (curOn)
                 std::memcpy(prevTables[(size_t)v].data(), cur, (size_t)N * sizeof(float));
             st.prevOn = curOn;
             st.fPrev = fBase;
+            st.gPrev = g;
         }
         first = false;
         // 3. noise, the learned room: every pipe its own, the room's tail from the sum
@@ -538,6 +543,7 @@ private:
     {
         double cyc = 0.0; // phase in cycles
         float fPrev = 0.0f;
+        float gPrev = 1.0f; // its gain at the last frame (ramped over the frame: never clicks)
         bool prevOn = false;
     };
 
@@ -621,7 +627,8 @@ private:
         fft.inverse(spec.data(), table);
     }
 
-    void oscillate(Voice &st, float fBase, const float *prev, const float *cur, float *dry) noexcept
+    void oscillate(Voice &st, float fBase, const float *prev, const float *cur, float *dry, float g0,
+                   float g1) noexcept
     {
         const double inv = 1.0 / (double)sr;
         const float fp = st.fPrev;
@@ -644,7 +651,7 @@ private:
                 y += (prev[i0] * (1.0f - a) + prev[i1] * a) * (1.0f - w);
             if (cur != nullptr)
                 y += (cur[i0] * (1.0f - a) + cur[i1] * a) * w;
-            dry[j] += y;
+            dry[j] += y * (g0 + (g1 - g0) * w);
         }
     }
 

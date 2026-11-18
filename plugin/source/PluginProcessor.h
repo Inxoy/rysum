@@ -1273,13 +1273,16 @@ public:
     int voxTrackedNote(int v) const noexcept { return voxShown[(size_t)v].load(); }
     /** the Vox humana's voices for the 3D Saal (0..7 tracked, 8..15 played) */
     const vox::OrganSynth::Display &voxVoice(int v) const noexcept { return voxStop.display(v); }
+    /** what the input's notes carried so far (tests): note-ons, velocity range, pressure messages */
+    const rysum::VoxStop::NoteStats &voxNoteStats() const noexcept { return voxStop.stats; }
+    void clearVoxNoteStats() noexcept { voxStop.stats.clear(); }
 
     /** the Vox humana's level against the sample stops (the network's output is quiet) */
     static constexpr float kVoxGain = 10.0f; // measured: then about as loud as one sample stop
-    static constexpr std::array<const char *, 23> kVoxIds{
+    static constexpr std::array<const char *, 26> kVoxIds{
         "voxOn",   "voxVol",  "voxWind", "voxX",    "voxY",    "voxBright", "voxNoise",  "voxSpread", "voxFollow",
         "voxRoom", "voxAz",   "voxEl",   "voxDist", "voxSend", "inPlays",   "inThresh",  "inConfirm", "inVoices",
-        "voxMotion", "voxRate", "voxDepth", "voxWidth", "simRoomVox"};
+        "voxMotion", "voxRate", "voxDepth", "voxWidth", "simRoomVox", "inVelGain", "inVelRange", "voxDyn"};
 
 private:
     std::array<std::atomic<int>, 8> voxShown{};
