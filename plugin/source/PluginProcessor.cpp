@@ -1248,6 +1248,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                   AudioParameterIntAttributes().withStringFromValueFunction(
                                                       [](int v, int) { return String(v * 4 / 3.0f, 1) + " ms"; })));
         l.add(std::make_unique<AudioParameterInt>(ParameterID{"inVoices", 1}, "Eingang Stimmen", 1, 8, 8));
+        // its eight pipes in the room: how they stand and move (the motions on the sphere, as for the stops)
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"voxMotion", 1}, "Vox humana Bewegung",
+            StringArray{"Statisch", "Rotation", "Pendel", "Drift", "Vertikal", String::fromUTF8("Spr\xc3\xbcnge")}, 0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"voxRate", 1}, "Vox humana Geschwindigkeit",
+            NormalisableRange<float>(-500.0f, 500.0f, 0.0001f, 0.2f, true), 0.08f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return (v > 0 ? "+" : "") + String(v, std::abs(v) < 1.0f ? 3 : 2) + " Hz"; })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxDepth", 1}, "Vox humana Tiefe",
+                                                    NormalisableRange<float>(0.0f, 180.0f, 0.1f), 40.0f, vdeg));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxWidth", 1}, "Vox humana Breite (Pfeifen)",
+                                                    NormalisableRange<float>(0.0f, 360.0f, 0.1f), 40.0f, vdeg));
     }
     return l;
 }
@@ -2050,7 +2063,29 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     q.roomFollow = p.roomFollow;
     q.roomBaseAz = p.roomBaseAz;
     q.outputMode = p.outputMode;
+    // the Vox humana is not in readParams: keep it, with its place and level as modulated now
+    q.vox = p.vox;
+    fillVoxPlace(q.vox, modVals.data());
     p = q;
+}
+
+void RysumProcessor::fillVoxPlace(VoxParams &vp, const float *vals) const noexcept
+{
+    auto v = [&](int i)
+    {
+        const int k = voxIdx[(size_t)i];
+        return vals != nullptr && k >= 0 ? vals[(size_t)k] : voxRaw[(size_t)i]->load();
+    };
+    const float wnd = juce::jlimit(0.0f, 1.0f, v(2));
+    vp.level = (v(1) <= -47.9f ? 0.0f : dbToGain(v(1))) * wnd * std::sqrt(wnd) * kVoxGain;
+    vp.az = v(10);
+    vp.el = v(11);
+    vp.dist = v(12);
+    vp.send = v(13);
+    vp.motion = juce::roundToInt(v(18));
+    vp.rate = v(19);
+    vp.depth = v(20);
+    vp.width = v(21);
 }
 
 int RysumProcessor::getParamIndex(const juce::String &id) const
@@ -2168,16 +2203,14 @@ void RysumProcessor::runVox(juce::MidiBuffer &midi, int n, EngineParams &params)
     for (int i = 0; i < (int)voxShown.size(); ++i)
         voxShown[(size_t)i] = s.inputPlays ? voxStop.trackedNote(i) : -1;
 
-    // the stop's level: a half-drawn stop is quieter too (at 0 % silent, like the others)
-    const float wnd = juce::jlimit(0.0f, 1.0f, s.wind);
+    // the stop's level (a half-drawn stop is quieter too, at 0 % silent like the others) and place
     auto &vp = params.vox;
     vp.on = s.stopOn && voxStop.isLoaded();
-    vp.level = (v(1) <= -47.9f ? 0.0f : dbToGain(v(1))) * wnd * std::sqrt(wnd) * kVoxGain;
-    vp.az = v(10);
-    vp.el = v(11);
-    vp.dist = v(12);
-    vp.send = v(13);
-    engine.setVox(voxStop.output(), n);
+    fillVoxPlace(vp, haveModVals ? modVals.data() : nullptr);
+    std::array<const float *, VoxStop::kOut> chans{};
+    for (int c = 0; c < VoxStop::kOut; ++c)
+        chans[(size_t)c] = voxStop.pipeOutput(c);
+    engine.setVox(chans.data(), VoxStop::kOut, n);
 }
 
 void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midi)
@@ -2534,7 +2567,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     runVox(midi, n, params); // the Vox humana, and the notes the input plays (into `midi`)
     engine.process(work, midi, params);
     engine.setInput(nullptr, nullptr, 0);
-    engine.setVox(nullptr, 0);
+    engine.setVox(nullptr, 0, 0);
     if (concertRole == rysum::ConcertLink::Role::performer)
     {
         // the clocks that move things, as they are at the end of this block

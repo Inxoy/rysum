@@ -628,12 +628,24 @@ v2 is built into the sample-based Rysum plugin as a ninth stop, *Vox humana 8′
 | Page | What it shows |
 |---|---|
 | Spieltisch | the knob *Vox humana* with Lautstärke and Wind, like the other stops; *Vox …* opens the timbre controls (Klangfarbe X/Y, Helligkeit, Hauch, Breite) and the input options (*Eingang spielt die Orgel*, *Klangfarbe folgt dem Eingang*, detection threshold, confirmation time, number of voices) |
-| Raum | a row under the audio input with its own panel: Lautstärke, Hall-Anteil, Richtung, Höhe, Abstand, the learned room; a symbol in the top view that is dragged to place it |
+| Raum | a row under the audio input with its own panel: Lautstärke, Hall-Anteil, Richtung, Höhe, Abstand, the learned room, Breite of its row of pipes, Bewegung, Geschwindigkeit, Tiefe; in the top view its centre (dragged to place it) and its eight pipes where they are |
 | Saal | the symbol in the floor plan, in the room of the audio input; in the 3D view its own model (below) |
 | Modulation | all its parameters form the target group *Vox humana*; the engine reads their modulated values, so an LFO on Klangfarbe X glides through the registrations |
 
+**Eight sources in Ambisonics.** The synth renders every pipe separately: voice *v* (tracked voice
+*i* or played voice *i*) sounds from pipe *v* mod 8, with its own band noise and its own copy of the
+first 80 ms of the learned room (44 % of the room's energy; that is where the body of the sound
+is). The rest of the learned room (80 ms – 2 s) is convolved once with the sum. The engine places
+the eight pipes as eight sources in a row across the stop's direction (*Breite*, 0–360°) and the
+tail as a ninth at the centre; each pipe gets its own gains, air, room send and early reflections in
+the Saal. The pipes move with the stops' motions on the sphere (Rotation, Pendel, Drift, Vertikal,
+Sprünge; *Geschwindigkeit*, *Tiefe*): Rotation turns the row as a whole, Drift and Sprünge take each
+pipe its own way. The pipes plus the tail add up exactly to the single output used before (checked
+in `VoxTest`); a rotation at 0.25 Hz swings the stereo balance by ±6 dB with a 4 s period
+(`VoxRender`). Cost: about 4 % of a core more than with one source, mostly the eight noise banks.
+
 **The 3D model.** The stop has no pipes, so it gets a picture of what the network does. Its eight
-voices are glass pipes standing in a row at its place, each as long as an open 8′ pipe of the pitch
+voices are glass pipes, each standing where its own sound is (they move with the stop's motion), each as long as an open 8′ pipe of the pitch
 it sings at that moment (2.44 m · 2^−(key−36)/12), so a tracked voice that glides visibly grows or
 shrinks. Around each pipe sit eight collars, one per band of its harmonics on key/2: 16′, 8′, 5⅓′,
 4′, 3⅕′–2⅔′, 2²⁄₇′–2′, 1⁷⁄₉′–1′ and higher, from the bottom up. A collar's width and brightness show

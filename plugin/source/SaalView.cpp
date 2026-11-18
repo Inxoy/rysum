@@ -300,11 +300,23 @@ void SaalPlan::paint(juce::Graphics &g)
     if (proc.apvts.getRawParameterValue("voxOn")->load() > 0.5f && params.inputRoom == shownRoom)
     {
         auto raw = [this](const char *id) { return proc.apvts.getRawParameterValue(id)->load(); };
-        const auto q = roomPoint(now, Pos{raw("voxAz"), raw("voxEl"), raw("voxDist")});
+        const Pos centre{raw("voxAz"), raw("voxEl"), raw("voxDist")};
+        const auto q = roomPoint(now, centre);
         const auto pt = P(q.x, q.y);
         const float lvl = juce::jlimit(0.0f, 1.0f, proc.engine.voxPeak.load() * 6.0f);
         juce::Graphics::ScopedSaveState ss(g);
         g.setOpacity(on ? 1.0f : 0.3f);
+        // its eight pipes, where they are (each a source of its own)
+        const bool live = proc.engine.voxShowDist[0].load() > 0.0f;
+        for (int j = 0; j < 8; ++j)
+        {
+            const Pos pp = live ? Pos{proc.engine.voxShowAz[(size_t)j].load(), proc.engine.voxShowEl[(size_t)j].load(),
+                                      proc.engine.voxShowDist[(size_t)j].load()}
+                                : Pos{wrapAz(centre.az + raw("voxWidth") * ((float)j - 3.5f) / 7.0f), centre.el, centre.dist};
+            const auto qq = roomPoint(now, pp);
+            g.setColour(col::ink);
+            g.drawEllipse(juce::Rectangle<float>(6.0f, 6.0f).withCentre(P(qq.x, qq.y)), 1.1f);
+        }
         if (lvl > 0.01f)
         {
             g.setColour(col::white.withAlpha(0.1f + 0.7f * lvl));

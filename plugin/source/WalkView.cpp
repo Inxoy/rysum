@@ -1770,19 +1770,17 @@ void WalkView::addVoxHumana (const RoomParams& r, V3 homeP, bool dark)
         for (auto& v : voxShown) v.glow = 0.0f;
         return;
     }
-    // its place, as heard (in a shaped Saal: inside the walls, like the pipes)
-    const Pos pos { raw ("voxAz"), raw ("voxEl"), raw ("voxDist") };
-    V3 c;
-    if (pipesInRoom) { const auto q = roomPoint (r, pos); c = { q.x, q.y, q.z }; }
-    else
+    // every pipe stands where its sound is (each is a source of its own; with a motion they move), as heard
+    // - in a shaped Saal inside the walls, like the pipes of the other stops
+    const Pos centre { raw ("voxAz"), raw ("voxEl"), raw ("voxDist") };
+    const bool live = proc.engine.voxShowDist[0].load() > 0.0f;
+    const float width = raw ("voxWidth");
+    auto pointOf = [&] (Pos pos)
     {
+        if (pipesInRoom) { const auto q = roomPoint (r, pos); return V3 { q.x, q.y, q.z }; }
         const float a = juce::degreesToRadians (pos.az), e = juce::degreesToRadians (pos.el);
-        c = { homeP.x - std::sin (a) * std::cos (e) * pos.dist, homeP.y + std::cos (a) * std::cos (e) * pos.dist, homeP.z + std::sin (e) * pos.dist };
-    }
-    // the eight voices in a row across the line to the listener, all standing on one foot line
-    const float dx = homeP.x - c.x, dy = homeP.y - c.y, dl = juce::jmax (1.0e-3f, std::sqrt (dx * dx + dy * dy));
-    const V3 across { -dy / dl, dx / dl, 0.0f };
-    const float face = std::atan2 (dy, dx);
+        return V3 { homeP.x - std::sin (a) * std::cos (e) * pos.dist, homeP.y + std::cos (a) * std::cos (e) * pos.dist, homeP.z + std::sin (e) * pos.dist };
+    };
     float levelTop = 0.0f;
     for (int i = 0; i < 8; ++i)
     {
@@ -1809,10 +1807,14 @@ void WalkView::addVoxHumana (const RoomParams& r, V3 homeP, bool dark)
             for (auto& v : sh.rings) v *= 0.95f;
         }
         const float rad = juce::jlimit (0.035f, 0.1f, sh.len * 0.05f);
-        const V3 at = c + across * (0.5f * ((float) i - 3.5f));
-        const V3 bottom { at.x, at.y, c.z - 0.8f };
+        const Pos pp = live ? Pos { proc.engine.voxShowAz[(size_t) i].load(), proc.engine.voxShowEl[(size_t) i].load(),
+                                    proc.engine.voxShowDist[(size_t) i].load() }
+                            : Pos { wrapAz (centre.az + width * ((float) i - 3.5f) / 7.0f), centre.el, centre.dist };
+        const V3 at = pointOf (pp);
+        const V3 bottom { at.x, at.y, at.z - 0.5f * sh.len };
+        const float face = std::atan2 (homeP.y - at.y, homeP.x - at.x);
         addVoxPipe (bottom, sh.len, rad, face, dark ? sh.glow + 0.025f : sh.glow, sh.rings.data());
-        if (sh.glow > 0.02f) scene.glows.push_back ({ { at.x, at.y, bottom.z + 0.5f * sh.len }, sh.glow, sh.len });
+        if (sh.glow > 0.02f) scene.glows.push_back ({ at, sh.glow, sh.len });
     }
     // (the brightest voice of the last seconds sets what "full" is)
     voxLevelMax = juce::jmax (1.0e-4f, juce::jmax (levelTop, voxLevelMax * 0.995f));

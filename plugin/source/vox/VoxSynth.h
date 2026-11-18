@@ -1,4 +1,4 @@
-﻿// Vox humana - the organ synth of NeuralRysum v2 (neuralrysum/synth.py), frame by frame.
+// Vox humana - the organ synth of NeuralRysum v2 (neuralrysum/synth.py), frame by frame.
 //
 // One frame = 128 samples at 48 kHz. Per voice and frame a small MLP turns
 // (key, gate, onset / release timers, timbre) into 511 harmonic amplitudes of key/2 and
@@ -39,6 +39,7 @@ public:
         fft.init(N);
         parts = (int)((ir.size() + (size_t)B - 1) / (size_t)B);
         H.assign((size_t)parts * N);
+        used.assign((size_t)parts, 0);
         Floats seg((size_t)N);
         for (int p = 0; p < parts; ++p)
         {
@@ -47,7 +48,10 @@ public:
             {
                 const size_t s = (size_t)p * B + (size_t)i;
                 if (s < ir.size())
+                {
                     seg[(size_t)i] = ir[s];
+                    used[(size_t)p] = used[(size_t)p] || ir[s] != 0.0f;
+                }
             }
             fft.forward(seg.data(), H.data() + (size_t)p * N);
         }
@@ -74,6 +78,8 @@ public:
         acc.clear();
         for (int p = 0; p < parts; ++p)
         {
+            if (!used[(size_t)p])
+                continue; // (the tail's first 80 ms: nothing to add)
             const float *Xp = fdl.data() + (size_t)((pos + p) % parts) * N;
             const float *Hp = H.data() + (size_t)p * N;
             acc[0] += Xp[0] * Hp[0];
@@ -93,6 +99,7 @@ public:
 
 private:
     int B = 128, N = 256, parts = 0, pos = 0;
+    std::vector<char> used; // partitions that are not all zero
     FFT fft;
     Floats H, fdl, win, acc, out;
 };
@@ -102,8 +109,10 @@ private:
 class NoiseBank
 {
 public:
-    void init(int bands, double sr)
+    void init(int bands, double sr, uint32_t seed = 0x9E3779B9u)
     {
+        for (int i = 0; i < 4; ++i)
+            rng[(size_t)i] = (seed ^ (0x7F4A7C15u * (uint32_t)(i + 1))) | 1u;
         nb = bands;
         filt.assign((size_t)nb, {});
         for (int b = 0; b < nb; ++b)
@@ -240,6 +249,16 @@ public:
             ci[(size_t)k] = 0.5f * std::sin(p);
         }
         ir = m.t("synth.ir").data;
+        // the learned room in two parts: its first 80 ms with every pipe (that is where the body of
+        // the sound is: it moves with the pipe), the rest once on the sum (the room around them)
+        {
+            const size_t split = std::min(ir.size(), (size_t)kEarlySamples);
+            std::vector<float> early(ir.begin(), ir.begin() + (std::ptrdiff_t)split), late(ir);
+            std::fill(late.begin(), late.begin() + (std::ptrdiff_t)split, 0.0f);
+            for (auto &c : earlyP)
+                c.init(early, hop);
+            tailConv.init(late, hop);
+        }
         fft.init(N);
         spec.assign((size_t)N);
         for (auto &t : tables)
@@ -250,12 +269,15 @@ public:
         h1.assign((size_t)kMaxVoices * l1.outP, 0.0f);
         h2.assign((size_t)kMaxVoices * l1.outP, 0.0f);
         oM.assign((size_t)kMaxVoices * lo.outP, 0.0f);
-        gNow.assign((size_t)nNoise, 0.0f);
-        gPrev.assign((size_t)nNoise, 0.0f);
-        dry.assign((size_t)hop, 0.0f);
+        for (int p = 0; p < kPipes; ++p)
+        {
+            gNowP[(size_t)p].assign((size_t)nNoise, 0.0f);
+            gPrevP[(size_t)p].assign((size_t)nNoise, 0.0f);
+            dryP[(size_t)p].assign((size_t)hop, 0.0f);
+            noiseP[(size_t)p].init(nNoise, (double)sr, 0x9E3779B9u * (uint32_t)(p + 1));
+        }
+        drySum.assign((size_t)hop, 0.0f);
         wet.assign((size_t)hop, 0.0f);
-        noise.init(nNoise, (double)sr);
-        conv.init(ir, hop);
         reset();
     }
 
@@ -265,12 +287,21 @@ public:
             v = Voice{};
         for (auto &t : prevTables)
             t.clear();
-        std::fill(gPrev.begin(), gPrev.end(), 0.0f);
-        noise.reset();
-        conv.reset();
+        for (auto &g : gPrevP)
+            std::fill(g.begin(), g.end(), 0.0f);
+        for (auto &nb : noiseP)
+            nb.reset();
+        for (auto &c : earlyP)
+            c.reset();
+        tailConv.reset();
         clearDisplay();
         first = true;
     }
+
+    /** the stop's pipes: voice v sounds from pipe v % kPipes (tracked voice i and played voice i share
+        pipe i, as in the 3D view); outputs kPipes pipes + 1 for the late part of the learned room */
+    static constexpr int kPipes = 8;
+    static constexpr int kEarlySamples = 3840; // 80 ms: the learned room's part that moves with a pipe
 
     int hopSize() const noexcept { return hop; }
     int sampleRate() const noexcept { return sr; }
@@ -295,12 +326,16 @@ public:
     bool noiseOn = true;   // band noise (off for exact tests)
     float roomMix = 1.0f;  // learned room: 0 = dry, 1 = as trained (dry + convolution)
 
-    /** one frame: voices (nv <= kMaxVoices) as they are at the frame start, timbre cond -> hop samples */
-    void renderFrame(const VoiceState *voices, int nv, const float *cond, float *out) noexcept
+    /** one frame: voices (nv <= kMaxVoices) as they are at the frame start, timbre cond -> hop samples.
+        out = everything; pipes (optional, kPipes + 1 buffers of hop): every pipe, then the room's tail */
+    void renderFrame(const VoiceState *voices, int nv, const float *cond, float *out,
+                     float *const *pipes = nullptr) noexcept
     {
         nv = std::min(nv, kMaxVoices);
-        std::fill(dry.begin(), dry.end(), 0.0f);
-        std::fill(gNow.begin(), gNow.end(), 0.0f);
+        for (auto &d : dryP)
+            std::fill(d.begin(), d.end(), 0.0f);
+        for (auto &g : gNowP)
+            std::fill(g.begin(), g.end(), 0.0f);
         // 1. the network, for all sounding voices at once
         int nAlive = 0;
         std::array<int, kMaxVoices> row{};
@@ -332,8 +367,9 @@ public:
                 std::array<float, 8> bands{};
                 buildTable(fBase, ov, cur, bands.data());
                 curOn = true;
+                auto &gp = gNowP[(size_t)(v % kPipes)];
                 for (int b = 0; b < nNoise; ++b)
-                    gNow[(size_t)b] += std::exp(std::min(4.0f, std::max(-30.0f, ov[nh + b])));
+                    gp[(size_t)b] += std::exp(std::min(4.0f, std::max(-30.0f, ov[nh + b])));
                 float total = 0.0f, top = 1.0e-20f;
                 for (float e : bands)
                 {
@@ -348,28 +384,50 @@ public:
             }
             else
                 disp[(size_t)v].level.store(0.0f, std::memory_order_relaxed);
-            oscillate(st, fBase, st.prevOn ? prevTables[(size_t)v].data() : nullptr, curOn ? cur : nullptr);
+            oscillate(st, fBase, st.prevOn ? prevTables[(size_t)v].data() : nullptr, curOn ? cur : nullptr,
+                      dryP[(size_t)(v % kPipes)].data());
             if (curOn)
                 std::memcpy(prevTables[(size_t)v].data(), cur, (size_t)N * sizeof(float));
             st.prevOn = curOn;
             st.fPrev = fBase;
         }
         first = false;
-        if (noiseOn)
-            noise.render(gPrev.data(), gNow.data(), dry.data(), hop);
-        else
-            noise.render(zeroG(), zeroG(), dry.data(), hop); // keeps the filters' state in step
-        std::swap(gPrev, gNow);
+        // 3. noise, the learned room: every pipe its own, the room's tail from the sum
+        std::fill(drySum.begin(), drySum.end(), 0.0f);
+        std::fill(out, out + hop, 0.0f);
+        for (int p = 0; p < kPipes; ++p)
+        {
+            auto &d = dryP[(size_t)p];
+            if (noiseOn)
+                noiseP[(size_t)p].render(gPrevP[(size_t)p].data(), gNowP[(size_t)p].data(), d.data(), hop);
+            std::swap(gPrevP[(size_t)p], gNowP[(size_t)p]);
+            for (int i = 0; i < hop; ++i)
+                drySum[(size_t)i] += d[(size_t)i];
+            float *po = pipes != nullptr ? pipes[p] : nullptr;
+            if (roomMix > 0.0f)
+                earlyP[(size_t)p].process(d.data(), wet.data());
+            for (int i = 0; i < hop; ++i)
+            {
+                const float y = d[(size_t)i] + (roomMix > 0.0f ? roomMix * wet[(size_t)i] : 0.0f);
+                out[i] += y;
+                if (po != nullptr)
+                    po[i] = y;
+            }
+        }
+        float *to = pipes != nullptr ? pipes[kPipes] : nullptr;
         if (roomMix > 0.0f)
         {
-            conv.process(dry.data(), wet.data());
+            tailConv.process(drySum.data(), wet.data());
             for (int i = 0; i < hop; ++i)
-                out[i] = dry[(size_t)i] + roomMix * wet[(size_t)i];
+            {
+                const float y = roomMix * wet[(size_t)i];
+                out[i] += y;
+                if (to != nullptr)
+                    to[i] = y;
+            }
         }
-        else
-        {
-            std::memcpy(out, dry.data(), (size_t)hop * sizeof(float));
-        }
+        else if (to != nullptr)
+            std::fill(to, to + hop, 0.0f);
     }
 
 private:
@@ -460,7 +518,7 @@ private:
         fft.inverse(spec.data(), table);
     }
 
-    void oscillate(Voice &st, float fBase, const float *prev, const float *cur) noexcept
+    void oscillate(Voice &st, float fBase, const float *prev, const float *cur, float *dry) noexcept
     {
         const double inv = 1.0 / (double)sr;
         const float fp = st.fPrev;
@@ -483,7 +541,7 @@ private:
                 y += (prev[i0] * (1.0f - a) + prev[i1] * a) * (1.0f - w);
             if (cur != nullptr)
                 y += (cur[i0] * (1.0f - a) + cur[i1] * a) * w;
-            dry[(size_t)j] += y;
+            dry[j] += y;
         }
     }
 
@@ -497,9 +555,11 @@ private:
     std::array<Floats, kMaxVoices> tables, prevTables;
     std::array<Voice, kMaxVoices> vs{};
     std::array<Display, kMaxVoices> disp{};
-    std::vector<float> featM, h1, h2, oM, gNow, gPrev, dry, wet, zeros;
-    NoiseBank noise;
-    FrameConvolver conv;
+    std::vector<float> featM, h1, h2, oM, drySum, wet, zeros;
+    std::array<std::vector<float>, kPipes> dryP, gNowP, gPrevP;
+    std::array<NoiseBank, kPipes> noiseP;
+    std::array<FrameConvolver, kPipes> earlyP;
+    FrameConvolver tailConv;
     bool first = true;
 };
 } // namespace vox

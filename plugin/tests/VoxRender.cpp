@@ -182,6 +182,33 @@ private:
                    }
                });
 
+        // modulated (an LFO on Klangfarbe X): it must keep sounding
+        resetParams();
+        set("voxOn", 1.0f);
+        proc->addRoute(0, rysum::kGlobalTargetBase + proc->getParamIndex("voxX"), 0.6f);
+        render("vox_modulated", nullptr, [bps](int b, juce::MidiBuffer &mb)
+               {
+                   if (b == bps / 4)
+                       for (int m : {48, 55, 60, 64})
+                           mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)100), 0);
+               });
+        for (int r = 0; r < 64; ++r)
+            proc->clearRoute(r);
+
+        // its eight pipes turning around the listener (Rotation, 0.25 Hz, wide row)
+        resetParams();
+        set("voxOn", 1.0f);
+        set("voxMotion", 1.0f);
+        set("voxRate", 0.25f);
+        set("voxWidth", 120.0f);
+        set("voxAz", 90.0f);
+        render("vox_rotation", nullptr, [bps](int b, juce::MidiBuffer &mb)
+               {
+                   if (b == bps / 4)
+                       for (int m : {48, 55, 60, 64, 67, 72})
+                           mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)100), 0);
+               });
+
         // 2. - 4. the input plays the organ
         resetParams();
         set("voxOn", 1.0f);

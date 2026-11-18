@@ -76,6 +76,8 @@ public:
         std::fill(followed.begin(), followed.end(), 0.0f);
         std::fill(inBuf.begin(), inBuf.end(), 0.0f);
         std::fill(outBuf.begin(), outBuf.end(), 0.0f);
+        for (auto &b : pipeBuf)
+            std::fill(b.begin(), b.end(), 0.0f);
         fill = 0;
         frame = 0;
         for (auto &t : trk)
@@ -137,7 +139,9 @@ public:
 
     // ---- audio --------------------------------------------------------------------------------
     /** in: input (nullptr = silence), out: the Vox humana; n samples at the model rate */
-    void process(const float *in, float *out, int n) noexcept
+    static constexpr int kPipeOutputs = OrganSynth::kPipes + 1; // the pipes, then the learned room's tail
+
+    void process(const float *in, float *out, int n, float *const *pipesOut = nullptr) noexcept
     {
         nEvents = 0;
         if (!loaded)
@@ -150,6 +154,9 @@ public:
         for (int i = 0; i < n; ++i)
         {
             out[i] = outBuf[(size_t)fill];
+            if (pipesOut != nullptr)
+                for (int c = 0; c < kPipeOutputs; ++c)
+                    pipesOut[c][i] = pipeBuf[(size_t)c][(size_t)fill];
             inBuf[(size_t)fill] = in != nullptr ? in[i] : 0.0f;
             if (++fill == H)
             {
@@ -297,6 +304,11 @@ private:
         const int H = synth.hopSize();
         inBuf.assign((size_t)H, 0.0f);
         outBuf.assign((size_t)H, 0.0f);
+        for (int ch = 0; ch < kPipeOutputs; ++ch)
+        {
+            pipeBuf[(size_t)ch].assign((size_t)H, 0.0f);
+            pipePtrs[(size_t)ch] = pipeBuf[(size_t)ch].data();
+        }
         voices.assign((size_t)(kTracked + kPlayed), {});
     }
 
@@ -359,10 +371,12 @@ private:
 
         updateConditioning();
         if (synthOn)
-            synth.renderFrame(voices.data(), nv, cond.data(), outBuf.data());
+            synth.renderFrame(voices.data(), nv, cond.data(), outBuf.data(), pipePtrs.data());
         else
         {
             std::fill(outBuf.begin(), outBuf.end(), 0.0f);
+            for (auto &b : pipeBuf)
+                std::fill(b.begin(), b.end(), 0.0f);
             synth.clearDisplay();
         }
 
@@ -576,6 +590,8 @@ private:
     bool condPrimed = false, useRaw = false;
 
     std::vector<float> inBuf, outBuf, salP, onsP;
+    std::array<std::vector<float>, kPipeOutputs> pipeBuf;
+    std::array<float *, kPipeOutputs> pipePtrs{};
     int fill = 0, blockEnd = 0;
     int64_t frame = 0;
     std::vector<VoiceState> voices;

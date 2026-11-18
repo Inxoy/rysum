@@ -230,7 +230,9 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
         is = InSrc{};
     }
     inRunning = false;
-    voxSrc = InSrc{};
+    for (auto &is : voxSrc)
+        is = InSrc{};
+    voxPhase = 0.0;
     voxRunning = false;
     voxLevelSm = 0.0f;
     inGate = inLevelSm = inEnv = inFollowVal = 0.0f;
@@ -3357,8 +3359,8 @@ void OrganEngine::renderErGroup(int group) noexcept
         }
         else if (s.input >= 0)
         {
-            const bool vox = s.input == kVoxInput;
-            const auto &is = vox ? voxSrc : inSrc[(size_t)juce::jmin(s.input, 1)];
+            const bool vox = s.input >= kVoxInput;
+            const auto &is = vox ? voxSrc[(size_t)juce::jlimit(0, kVoxSources - 1, s.input - kVoxInput)] : inSrc[(size_t)juce::jmin(s.input, 1)];
             if ((vox ? voxRunning : inRunning) && is.erSlot == (int)si)
                 updateSlotTaps(s, w, is.pos, 1.0f, p,
                                roomsEr[(size_t)juce::jlimit(0, kNumRooms - 1, p.inputRoom)]);
@@ -4953,110 +4955,139 @@ void OrganEngine::renderVox(juce::AudioBuffer<float> &out, int n, const EnginePa
         return;
     if (!vp.on && !voxRunning)
         return;
-    auto &is = voxSrc;
     if (!voxRunning)
     {
         voxRunning = true;
         voxLevelSm = 0.0f;
-        is.fresh = true;
-        is.lp = 0.0f;
-    }
-    // place (static: no Doppler), gains, sends
-    const Pos pos{wrapAz(vp.az), juce::jlimit(-90.0f, 90.0f, vp.el), juce::jlimit(kMinDist, kMaxDist, vp.dist)};
-    is.pos = pos;
-    gainsFor(pos, is.g1.data());
-    const float dg = distanceGain(pos.dist, p.distAmount);
-    for (auto &g : is.g1)
-        g *= dg;
-    is.send1 = distanceGain(pos.dist, p.distAmount * 0.35f) * vp.send;
-    is.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
-    const float fc = juce::jlimit(1200.0f, 20000.0f, 20000.0f / (1.0f + p.air * pos.dist / 5.0f));
-    is.airA = fc >= 19999.0f ? 1.0f : 1.0f - std::exp(-juce::MathConstants<float>::twoPi * fc / (float)sr);
-    if (is.fresh)
-    {
-        is.g0 = is.g1;
-        is.send0 = is.send1;
-        is.sendAz0 = is.sendAz1;
-        is.fresh = false;
-    }
-    if (roomOnNow && vp.on)
-    {
-        if (is.erSlot < 0)
+        for (auto &is : voxSrc)
         {
-            is.erSlot = allocSlot(-1, -1);
-            if (is.erSlot >= 0)
-                erSlots[(size_t)is.erSlot].input = kVoxInput;
+            is.fresh = true;
+            is.lp = 0.0f;
         }
     }
-    else
-        releaseSlot(is.erSlot);
-
-    // the signal: level (smoothed, so pulling / pushing the stop never clicks), air
-    const bool have = voxPtr != nullptr && roomOffset + n <= voxLen;
-    const float levelT = vp.on ? vp.level : 0.0f;
+    // the motion: one clock for the whole stop (Rotation turns the row of pipes as one; Drift and
+    // Jumps take every pipe its own way)
+    voxPhase += (double)vp.rate * (double)n / sr;
+    if (std::abs(voxPhase) > 1.0e6)
+        voxPhase -= std::floor(voxPhase);
+    const auto mode = (Motion)juce::jlimit(0, (int)Motion::Jumps, vp.motion);
     const float cl = 1.0f - std::exp(-1.0f / (0.02f * (float)sr));
-    std::array<float, kSubBlock> buf{}, bufRamp{};
-    float peak = 0.0f;
+    const float levelT = vp.on ? vp.level : 0.0f;
+    std::array<float, kSubBlock> lvl{};
     for (int i = 0; i < n; ++i)
     {
         voxLevelSm += cl * (levelT - voxLevelSm);
-        const float x = have ? voxPtr[roomOffset + i] * voxLevelSm : 0.0f;
-        is.lp += is.airA * (x - is.lp);
-        buf[(size_t)i] = is.lp;
-        bufRamp[(size_t)i] = is.lp * (float)i;
-        peak = juce::jmax(peak, std::abs(is.lp));
+        lvl[(size_t)i] = voxLevelSm;
     }
-    voxPeak = juce::jmax(peak, voxPeak.load() * 0.93f);
     const float inv = 1.0f / (float)n;
-    if (peak > 1.0e-9f)
+    float peakAll = 0.0f;
+    for (int j = 0; j < kVoxSources; ++j)
     {
-        for (int ch = 0; ch < usedChannels; ++ch)
+        auto &is = voxSrc[(size_t)j];
+        const bool tail = j == kVoxSources - 1; // the learned room's tail: at the centre, no own reflections
+        const float off = tail ? 0.0f : vp.width * ((float)j - 3.5f) / 7.0f;
+        const Pos base{wrapAz(vp.az + off), juce::jlimit(-90.0f, 90.0f, vp.el),
+                       juce::jlimit(kMinDist, kMaxDist, vp.dist)};
+        const Pos pos = applyMotion(base, mode, voxPhase, vp.depth, 7001u + (uint32_t)j * 13u);
+        is.pos = pos;
+        voxShowAz[(size_t)j] = pos.az;
+        voxShowEl[(size_t)j] = pos.el;
+        voxShowDist[(size_t)j] = pos.dist;
+        gainsFor(pos, is.g1.data());
+        const float dg = distanceGain(pos.dist, p.distAmount);
+        for (auto &g : is.g1)
+            g *= dg;
+        is.send1 = distanceGain(pos.dist, p.distAmount * 0.35f) * vp.send;
+        is.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
+        const float fc = juce::jlimit(1200.0f, 20000.0f, 20000.0f / (1.0f + p.air * pos.dist / 5.0f));
+        is.airA = fc >= 19999.0f ? 1.0f : 1.0f - std::exp(-juce::MathConstants<float>::twoPi * fc / (float)sr);
+        if (is.fresh)
         {
-            const float a = is.g0[(size_t)ch], b = is.g1[(size_t)ch];
-            const float d = (b - a) * inv;
-            float *o = out.getWritePointer(ch);
-            if (std::abs(a) > 1.0e-9f)
-                juce::FloatVectorOperations::addWithMultiply(o, buf.data(), a, n);
-            if (std::abs(d) > 1.0e-12f)
-                juce::FloatVectorOperations::addWithMultiply(o, bufRamp.data(), d, n);
+            is.g0 = is.g1;
+            is.send0 = is.send1;
+            is.sendAz0 = is.sendAz1;
+            is.fresh = false;
         }
-        const double a0 = juce::degreesToRadians((double)is.sendAz0), a1 = juce::degreesToRadians((double)is.sendAz1);
-        for (int k = 0; k < roomSends; ++k)
+        if (roomOnNow && vp.on && !tail)
         {
-            const int m = (k + 1) / 2;
-            const float w0 = k == 0 ? 1.0f : (float)(k % 2 == 1 ? std::cos(m * a0) : std::sin(m * a0));
-            const float w1 = k == 0 ? 1.0f : (float)(k % 2 == 1 ? std::cos(m * a1) : std::sin(m * a1));
-            const float g0 = is.send0 * w0, g1 = is.send1 * w1;
-            float *dst = roomSend[(size_t)k].data() + roomOffset;
-            if (std::abs(g0) > 1.0e-12f)
-                juce::FloatVectorOperations::addWithMultiply(dst, buf.data(), g0, n);
-            if (std::abs(g1 - g0) > 1.0e-12f)
-                juce::FloatVectorOperations::addWithMultiply(dst, bufRamp.data(), (g1 - g0) * inv, n);
-            if (k == 0 && p.inputRoom > 0 && roomOnNow)
+            if (is.erSlot < 0)
             {
-                float *d2 = rt[(size_t)juce::jlimit(0, kNumRooms - 1, p.inputRoom)].send.data() + roomOffset;
-                if (std::abs(g0) > 1.0e-12f)
-                    juce::FloatVectorOperations::addWithMultiply(d2, buf.data(), g0, n);
-                if (std::abs(g1 - g0) > 1.0e-12f)
-                    juce::FloatVectorOperations::addWithMultiply(d2, bufRamp.data(), (g1 - g0) * inv, n);
+                is.erSlot = allocSlot(-1, -1);
+                if (is.erSlot >= 0)
+                    erSlots[(size_t)is.erSlot].input = kVoxInput + j;
             }
         }
-        if (is.erSlot >= 0)
+        else
+            releaseSlot(is.erSlot);
+
+        // the signal: level (smoothed: pulling / pushing never clicks), air
+        const float *src = j < voxChannels ? voxPtr[(size_t)j] : nullptr;
+        const bool have = src != nullptr && roomOffset + n <= voxLen;
+        std::array<float, kSubBlock> buf{}, bufRamp{};
+        float peak = 0.0f;
+        for (int i = 0; i < n; ++i)
         {
-            float *er = erRing.data() + (size_t)is.erSlot * (size_t)kErRing;
-            for (int i = 0; i < n; ++i)
-                er[(erClock + (uint32_t)i) & (kErRing - 1)] += buf[(size_t)i];
+            const float x = have ? src[roomOffset + i] * lvl[(size_t)i] : 0.0f;
+            is.lp += is.airA * (x - is.lp);
+            buf[(size_t)i] = is.lp;
+            bufRamp[(size_t)i] = is.lp * (float)i;
+            peak = juce::jmax(peak, std::abs(is.lp));
         }
+        peakAll = juce::jmax(peakAll, peak);
+        if (peak > 1.0e-9f)
+        {
+            for (int ch = 0; ch < usedChannels; ++ch)
+            {
+                const float a = is.g0[(size_t)ch], b = is.g1[(size_t)ch];
+                const float d = (b - a) * inv;
+                float *o = out.getWritePointer(ch);
+                if (std::abs(a) > 1.0e-9f)
+                    juce::FloatVectorOperations::addWithMultiply(o, buf.data(), a, n);
+                if (std::abs(d) > 1.0e-12f)
+                    juce::FloatVectorOperations::addWithMultiply(o, bufRamp.data(), d, n);
+            }
+            const double a0 = juce::degreesToRadians((double)is.sendAz0), a1 = juce::degreesToRadians((double)is.sendAz1);
+            for (int k = 0; k < roomSends; ++k)
+            {
+                const int m = (k + 1) / 2;
+                const float w0 = k == 0 ? 1.0f : (float)(k % 2 == 1 ? std::cos(m * a0) : std::sin(m * a0));
+                const float w1 = k == 0 ? 1.0f : (float)(k % 2 == 1 ? std::cos(m * a1) : std::sin(m * a1));
+                const float g0 = is.send0 * w0, g1 = is.send1 * w1;
+                float *dst = roomSend[(size_t)k].data() + roomOffset;
+                if (std::abs(g0) > 1.0e-12f)
+                    juce::FloatVectorOperations::addWithMultiply(dst, buf.data(), g0, n);
+                if (std::abs(g1 - g0) > 1.0e-12f)
+                    juce::FloatVectorOperations::addWithMultiply(dst, bufRamp.data(), (g1 - g0) * inv, n);
+                if (k == 0 && p.inputRoom > 0 && roomOnNow)
+                {
+                    float *d2 = rt[(size_t)juce::jlimit(0, kNumRooms - 1, p.inputRoom)].send.data() + roomOffset;
+                    if (std::abs(g0) > 1.0e-12f)
+                        juce::FloatVectorOperations::addWithMultiply(d2, buf.data(), g0, n);
+                    if (std::abs(g1 - g0) > 1.0e-12f)
+                        juce::FloatVectorOperations::addWithMultiply(d2, bufRamp.data(), (g1 - g0) * inv, n);
+                }
+            }
+            if (is.erSlot >= 0)
+            {
+                float *er = erRing.data() + (size_t)is.erSlot * (size_t)kErRing;
+                for (int i = 0; i < n; ++i)
+                    er[(erClock + (uint32_t)i) & (kErRing - 1)] += buf[(size_t)i];
+            }
+        }
+        is.g0 = is.g1;
+        is.send0 = is.send1;
+        is.sendAz0 = is.sendAz1;
     }
-    is.g0 = is.g1;
-    is.send0 = is.send1;
-    is.sendAz0 = is.sendAz1;
+    voxPeak = juce::jmax(peakAll, voxPeak.load() * 0.93f);
     // pushed in: runs on until the fade is done
-    if (!vp.on && voxLevelSm < 1.0e-5f && std::abs(is.lp) < 1.0e-7f)
+    if (!vp.on && voxLevelSm < 1.0e-5f && peakAll < 1.0e-7f)
     {
         voxRunning = false;
-        releaseSlot(is.erSlot);
-        is.fresh = true;
+        for (auto &is : voxSrc)
+        {
+            releaseSlot(is.erSlot);
+            is.fresh = true;
+        }
     }
 }
 

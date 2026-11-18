@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "Common.h"
 #include "OrganEngine.h"
@@ -115,6 +115,14 @@ public:
         const int max48 = (int)std::ceil(maxBlock * 48000.0 / hostRate) + 8;
         toModel.prepare(hostRate / 48000.0, maxBlock, 0.0);
         fromModel.prepare(48000.0 / hostRate, max48, 4.0);
+        for (int ch = 0; ch < kOut; ++ch)
+        {
+            fromPipe[(size_t)ch].prepare(48000.0 / hostRate, max48, 4.0);
+            pipe48[(size_t)ch].assign((size_t)max48 + 8, 0.0f);
+            pipeHost[(size_t)ch].assign((size_t)maxBlock, 0.0f);
+            ptr48[(size_t)ch] = pipe48[(size_t)ch].data();
+            ptrHost[(size_t)ch] = pipeHost[(size_t)ch].data();
+        }
         in48.assign((size_t)max48 + 8, 0.0f);
         out48.assign((size_t)max48 + 8, 0.0f);
         mono.assign((size_t)maxBlock, 0.0f);
@@ -145,10 +153,14 @@ public:
                 eng.reset();
                 toModel.reset();
                 fromModel.reset();
+                for (auto &r : fromPipe)
+                    r.reset();
                 playedOn.fill(false);
                 wasActive = false;
             }
             std::fill(out.begin(), out.begin() + n, 0.0f);
+            for (auto &b : pipeHost)
+                std::fill(b.begin(), b.begin() + n, 0.0f);
             return;
         }
         wasActive = true;
@@ -237,11 +249,16 @@ public:
             m48 = toModel.pull(in48.data(), (int)in48.size());
             src = in48.data();
         }
-        eng.process(src, bypass ? out.data() : out48.data(), m48);
+        eng.process(src, bypass ? out.data() : out48.data(), m48, bypass ? ptrHost.data() : ptr48.data());
         if (!bypass)
         {
             fromModel.push(out48.data(), m48);
             fromModel.pullExactly(out.data(), n);
+            for (int ch = 0; ch < kOut; ++ch)
+            {
+                fromPipe[(size_t)ch].push(pipe48[(size_t)ch].data(), m48);
+                fromPipe[(size_t)ch].pullExactly(pipeHost[(size_t)ch].data(), n);
+            }
         }
 
         // what the input played -> notes for the sample organ
@@ -267,6 +284,9 @@ public:
     }
 
     const float *output() const noexcept { return out.data(); }
+    /** the separate pipes (0 .. 7) and the learned room's tail (8), host rate */
+    static constexpr int kOut = vox::Engine::kPipeOutputs;
+    const float *pipeOutput(int ch) const noexcept { return pipeHost[(size_t)ch].data(); }
     /** voice v (0..7 tracked, 8..15 played) for displays: key, level, harmonic bands */
     const vox::OrganSynth::Display &display(int v) const noexcept { return eng.voiceDisplay(v); }
     /** the tracker's notes right now (for displays): MIDI key or -1 */
@@ -334,6 +354,9 @@ private:
     vox::Engine eng;
     StreamResampler toModel, fromModel;
     std::vector<float> in48, out48, mono, out;
+    std::array<StreamResampler, vox::Engine::kPipeOutputs> fromPipe;
+    std::array<std::vector<float>, vox::Engine::kPipeOutputs> pipe48, pipeHost;
+    std::array<float *, vox::Engine::kPipeOutputs> ptr48{}, ptrHost{};
     double rate = 48000.0;
     bool bypass = true, wasActive = false, sustain = false;
     std::array<int, vox::Engine::kTracked> heldTracked{};

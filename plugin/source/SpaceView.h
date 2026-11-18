@@ -260,7 +260,11 @@ private:
     VoxRow voxRow;
     PullToggle voxPull;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> voxPullAttachment;
-    std::unique_ptr<ParamRow> voxVolRow, voxSendRow, voxAzRow, voxElRow, voxDistRow, voxRoomRow;
+    std::unique_ptr<ParamRow> voxVolRow, voxSendRow, voxAzRow, voxElRow, voxDistRow, voxRoomRow, voxRateRow,
+        voxDepthRow, voxWidthRow;
+    juce::ComboBox voxMotionBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> voxMotionAttachment;
+    juce::Rectangle<int> voxMotionLabel;
     juce::Rectangle<int> voxHelp;
     PipeStrip pipeStrip{proc, selected};
     // the audio input

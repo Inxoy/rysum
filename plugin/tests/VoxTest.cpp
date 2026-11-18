@@ -237,6 +237,45 @@ int main(int argc, char **argv)
         check(maxAbs(y, r, r.size()) < tm, "engine MIDI dry: max error", maxAbs(y, r, r.size()), tm);
     }
 
+    // 5b. the eight pipes and the room's tail add up to the whole
+    {
+        Engine e;
+        e.load(modelBytes.data(), modelBytes.size(), err);
+        for (int k = 0; k < 6; ++k)
+            e.noteOn(0, k, 48.0f + 4.0f * k);
+        const int n = 48000;
+        std::vector<float> in((size_t)n), out((size_t)n);
+        for (int i = 0; i < n; ++i)
+            in[(size_t)i] = x[(size_t)i % x.size()];
+        std::array<std::vector<float>, Engine::kPipeOutputs> ch;
+        std::array<float *, Engine::kPipeOutputs> ptr{};
+        double err2 = 0.0, pk = 0.0;
+        int pipesSounding = 0;
+        for (int c = 0; c < Engine::kPipeOutputs; ++c)
+        {
+            ch[(size_t)c].assign((size_t)n, 0.0f);
+            ptr[(size_t)c] = ch[(size_t)c].data();
+        }
+        e.process(in.data(), out.data(), n, ptr.data());
+        for (int i = 0; i < n; ++i)
+        {
+            float s = 0.0f;
+            for (int c = 0; c < Engine::kPipeOutputs; ++c)
+                s += ch[(size_t)c][(size_t)i];
+            err2 = std::max(err2, (double)std::fabs(s - out[(size_t)i]));
+            pk = std::max(pk, (double)std::fabs(out[(size_t)i]));
+        }
+        for (int c = 0; c < 8; ++c)
+        {
+            double m = 0.0;
+            for (float v : ch[(size_t)c])
+                m = std::max(m, (double)std::fabs(v));
+            pipesSounding += m > 1e-4 ? 1 : 0;
+        }
+        check(err2 < 1e-5 * pk + 1e-7, "pipes + tail = the whole: max error", err2, 1e-5 * pk + 1e-7);
+        check(pipesSounding >= 6, "pipes that sound (8 played + tracked voices)", pipesSounding, 6);
+    }
+
     // 6. CPU: 8 played voices only (keyboard, no tracking, no learned room)
     for (int noise = 0; noise < 2; ++noise)
     {
