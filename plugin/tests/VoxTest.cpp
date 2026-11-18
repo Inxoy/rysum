@@ -99,6 +99,7 @@ static double peak(const std::vector<float> &a)
 
 int main(int argc, char **argv)
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0); // (a crash still shows how far it got)
     if (argc < 3)
     {
         std::printf("usage: VoxTest model.nrv2 reference.nrv2\n");
@@ -193,6 +194,7 @@ int main(int argc, char **argv)
         }
         e.setNoise(false);
         e.setRoomMix(0.0f);
+        e.setBody(false); // the network's raw output, as the reference
         e.smoothingMs = 0.0f;
         const auto t0 = std::chrono::steady_clock::now();
         const auto y = run(e, x);
@@ -214,6 +216,7 @@ int main(int argc, char **argv)
         e.load(modelBytes.data(), modelBytes.size(), err);
         e.setNoise(false);
         e.setRoomMix(0.0f);
+        e.setBody(false);
         e.smoothingMs = 0.0f;
         e.follow = true;
         const auto y = run(e, x);
@@ -228,6 +231,7 @@ int main(int argc, char **argv)
         e.load(modelBytes.data(), modelBytes.size(), err);
         e.setNoise(false);
         e.setRoomMix(0.0f);
+        e.setBody(false);
         e.smoothingMs = 0.0f;
         e.trackInput = false;
         const auto &r = ref.t("midi_dry").data;
@@ -274,6 +278,54 @@ int main(int argc, char **argv)
         }
         check(err2 < 1e-5 * pk + 1e-7, "pipes + tail = the whole: max error", err2, 1e-5 * pk + 1e-7);
         check(pipesSounding >= 6, "pipes that sound (8 played + tracked voices)", pipesSounding, 6);
+    }
+
+    // 5c. without the learned room ("eigener Raum" 0) the pipe keeps its tone and level, only the
+    //     reverberation goes: a chord held 1.5 s, then released
+    {
+        auto render = [&](float room)
+        {
+            Engine e;
+            e.load(modelBytes.data(), modelBytes.size(), err);
+            e.trackInput = false;
+            e.setRoomMix(room);
+            const int n = 48000 * 3, offAt = 48000 * 3 / 2;
+            std::vector<float> out((size_t)n);
+            for (int k = 0; k < 3; ++k)
+                e.noteOn(0, k, 48.0f + 4.0f * k);
+            for (int p = 0; p < n; p += 256)
+            {
+                if (p == offAt / 256 * 256)
+                    for (int k = 0; k < 3; ++k)
+                        e.noteOff(0, k);
+                e.process(nullptr, out.data() + p, std::min(256, n - p));
+            }
+            return out;
+        };
+        auto rms = [](const std::vector<float> &v, int a, int b, float lpA)
+        {
+            double s = 0.0, z = 0.0;
+            for (int i = 0; i < b; ++i)
+            {
+                z += lpA * (v[(size_t)i] - z);
+                const double y = lpA < 1.0f ? z : v[(size_t)i];
+                if (i >= a)
+                    s += y * y;
+            }
+            return std::sqrt(s / (double)(b - a));
+        };
+        const auto dry = render(0.0f), wet = render(1.0f);
+        const int a = 24000, b = 72000; // 0.5 .. 1.5 s: held
+        const float lp = 1.0f - std::exp(-6.2831853f * 300.0f / 48000.0f);
+        const double lvl = 20.0 * std::log10(rms(dry, a, b, 1.0f) / rms(wet, a, b, 1.0f));
+        const double bass = 20.0 * std::log10((rms(dry, a, b, lp) / rms(dry, a, b, 1.0f)) /
+                                              (rms(wet, a, b, lp) / rms(wet, a, b, 1.0f)));
+        const double tailDry = rms(dry, 96000, 120000, 1.0f) / rms(dry, a, b, 1.0f);
+        const double tailWet = rms(wet, 96000, 120000, 1.0f) / rms(wet, a, b, 1.0f);
+        const double tailDb = 20.0 * std::log10(tailWet / std::max(tailDry, 1e-12));
+        check(std::fabs(lvl) < 3.0, "room 0: level against room 1 (dB)", lvl, 3.0);
+        check(std::fabs(bass) < 3.0, "room 0: share below 300 Hz against room 1 (dB)", bass, 3.0);
+        check(tailDb > 15.0, "room 0: 0.5-1 s after release, quieter than with the room by (dB)", tailDb, 15.0);
     }
 
     // 6. CPU: 8 played voices only (keyboard, no tracking, no learned room)

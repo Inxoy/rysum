@@ -1276,15 +1276,15 @@ public:
 
     /** the Vox humana's level against the sample stops (the network's output is quiet) */
     static constexpr float kVoxGain = 10.0f; // measured: then about as loud as one sample stop
-    static constexpr std::array<const char *, 22> kVoxIds{
+    static constexpr std::array<const char *, 23> kVoxIds{
         "voxOn",   "voxVol",  "voxWind", "voxX",    "voxY",    "voxBright", "voxNoise",  "voxSpread", "voxFollow",
         "voxRoom", "voxAz",   "voxEl",   "voxDist", "voxSend", "inPlays",   "inThresh",  "inConfirm", "inVoices",
-        "voxMotion", "voxRate", "voxDepth", "voxWidth"};
+        "voxMotion", "voxRate", "voxDepth", "voxWidth", "simRoomVox"};
 
 private:
     std::array<std::atomic<int>, 8> voxShown{};
-    std::array<std::atomic<float> *, 22> voxRaw{}; // kVoxIds, read on the audio thread
-    std::array<int, 22> voxIdx{};                  // their index in prmList (modulated values: modVals)
+    std::array<std::atomic<float> *, kVoxIds.size()> voxRaw{}; // kVoxIds, read on the audio thread
+    std::array<int, kVoxIds.size()> voxIdx{};                  // their index in prmList (modulated values: modVals)
     juce::AudioBuffer<float> binBuf; // Ambisonics render buffer in binaural mode
     juce::String binStatus{juce::String::fromUTF8("aus \xe2\x80\x93 Ausgabe oben auf \xe2\x80\x9e"
                                                   "Binaural\xe2\x80\x9c stellen")};

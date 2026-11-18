@@ -296,8 +296,8 @@ void SaalPlan::paint(juce::Graphics &g)
         }
     }
 
-    // the Vox humana: one source, in the room of the audio input (it shares the input's room)
-    if (proc.apvts.getRawParameterValue("voxOn")->load() > 0.5f && params.inputRoom == shownRoom)
+    // the Vox humana: in its own Saal ("Vox" in the strip above), its glyph can be dragged
+    if (voxHere())
     {
         auto raw = [this](const char *id) { return proc.apvts.getRawParameterValue(id)->load(); };
         const Pos centre{raw("voxAz"), raw("voxEl"), raw("voxDist")};
@@ -472,7 +472,7 @@ void SaalPlan::paint(juce::Graphics &g)
     g.drawFittedText(
         drawing() ? U("Gezeichnet \xc2\xb7 Ecken ziehen \xc2\xb7 Doppelklick auf eine Wand: neue "
                       "Ecke \xc2\xb7 Rechtsklick auf eine Ecke: weg")
-                  : U("Draufsicht \xc2\xb7 H\xc3\xb6rer ziehen \xc2\xb7 rot: Reflexionen der "
+                  : U("Draufsicht \xc2\xb7 H\xc3\xb6rer und Vox humana ziehen \xc2\xb7 rot: Reflexionen der "
                       "zuletzt gespielten Pfeife \xc2\xb7 Rechtsklick: Grundriss zeichnen"),
         getLocalBounds().removeFromTop(30).reduced(4, 0), juce::Justification::topLeft, 2);
 }
@@ -488,12 +488,51 @@ void SaalPlan::setListener(juce::Point<float> screen)
             prm->setValueNotifyingHost(prm->convertTo0to1(juce::jlimit(0.0f, 1.0f, v)));
 }
 
+bool SaalPlan::voxHere() const
+{
+    auto raw = [this](const char *id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    return raw("voxOn") > 0.5f && juce::roundToInt(raw("simRoomVox")) == shownRoom;
+}
+
+juce::Point<float> SaalPlan::voxScreen() const
+{
+    auto raw = [this](const char *id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    const auto q = roomPoint(heardNow(), Pos{raw("voxAz"), raw("voxEl"), raw("voxDist")});
+    return toScreen(frame(), q.x, q.y);
+}
+
+void SaalPlan::setVoxPlace(juce::Point<float> screen)
+{
+    // the inverse of roomPoint (box room): direction and distance from the listener, height kept
+    const auto f = frame();
+    const auto L = listenerPos(heardNow());
+    const float x = (screen.x - f.origin.x) / f.scale, y = (f.origin.y - screen.y) / f.scale;
+    const float dx = x - L.x, dy = y - L.y;
+    const float h = std::sqrt(dx * dx + dy * dy);
+    if (h < 0.05f)
+        return;
+    const float el = proc.apvts.getRawParameterValue("voxEl")->load();
+    const float az = juce::radiansToDegrees(std::atan2(-dx, dy));
+    const float dist = h / juce::jmax(0.1f, std::cos(juce::degreesToRadians(el)));
+    for (auto [id, v] : {std::pair<const char *, float>{"voxAz", az}, {"voxDist", juce::jlimit(1.0f, 40.0f, dist)}})
+        if (auto *prm = proc.apvts.getParameter(id))
+            prm->setValueNotifyingHost(prm->convertTo0to1(v));
+}
+
 void SaalPlan::mouseDown(const juce::MouseEvent &e)
 {
     const auto l = listenerPos(heardNow());
     const auto ls = toScreen(frame(), l.x, l.y);
     dragging = ls.getDistanceFrom(e.position) < 16.0f;
     dragVertex = -1;
+    draggingVox = !dragging && !e.mods.isPopupMenu() && voxHere() && voxScreen().getDistanceFrom(e.position) < 14.0f;
+    if (draggingVox)
+    {
+        for (auto *id : {"voxAz", "voxDist"})
+            if (auto *prm = proc.apvts.getParameter(id))
+                prm->beginChangeGesture();
+        return;
+    }
     if (e.mods.isPopupMenu())
     {
         dragging = false;
@@ -546,6 +585,12 @@ void SaalPlan::mouseDown(const juce::MouseEvent &e)
 
 void SaalPlan::mouseDrag(const juce::MouseEvent &e)
 {
+    if (draggingVox)
+    {
+        setVoxPlace(e.position);
+        repaint();
+        return;
+    }
     if (dragging)
     {
         setListener(e.position);
@@ -573,6 +618,11 @@ void SaalPlan::mouseDrag(const juce::MouseEvent &e)
 
 void SaalPlan::mouseUp(const juce::MouseEvent &)
 {
+    if (draggingVox)
+        for (auto *id : {"voxAz", "voxDist"})
+            if (auto *prm = proc.apvts.getParameter(id))
+                prm->endChangeGesture();
+    draggingVox = false;
     if (dragging)
         for (auto *key : {"Lx", "Ly"})
             if (auto *prm = proc.apvts.getParameter(RysumProcessor::roomParamId(shownRoom, key)))
@@ -968,14 +1018,17 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         b.onClick = [this, r] { selectRoom(r); };
         addAndMakeVisible(b);
     }
-    for (int slot = 0; slot <= kNumStops; ++slot)
+    for (int slot = 0; slot < (int)assign.size(); ++slot)
     {
         auto &b = assign[(size_t)slot];
         b.setTooltip(slot < kNumStops
                          ? prettyLabel(kStops[(size_t)kDisplayOrder[(size_t)slot]].label) +
                                U(": in welchem Saal (Klick: n\xc3\xa4"
                                  "chster, Rechtsklick: w\xc3\xa4hlen)")
-                         : U("Eingang (Audio) und Vox humana: in welchem Saal"));
+                     : slot == kNumStops
+                         ? U("Eingang (Audio): in welchem Saal")
+                         : U("Vox humana: in welchem Saal (ihre acht Pfeifen, ihre Reflexionen, ihr Nachhall). "
+                             "Im Grundriss l\xc3\xa4sst sie sich verschieben."));
         b.onClick = [this, slot]
         {
             if (juce::ModifierKeys::currentModifiers.isPopupMenu())
@@ -1253,7 +1306,7 @@ void SaalView::resized()
         }
         auto a = roomsArea.withTrimmedTop(50).removeFromTop(24);
         a.removeFromLeft(64);
-        const int aw = (a.getWidth() - kNumStops * 3) / (kNumStops + 1);
+        const int aw = (a.getWidth() - ((int)assign.size() - 1) * 3) / (int)assign.size();
         for (auto &b : assign)
         {
             b.setBounds(a.removeFromLeft(aw));
@@ -1432,8 +1485,9 @@ void SaalView::selectRoom(int r)
 
 juce::String SaalView::assignId(int slot) const
 {
-    return slot < kNumStops ? RysumProcessor::stopRoomParamId(kDisplayOrder[(size_t)slot])
-                            : juce::String("simRoomIn");
+    return slot < kNumStops    ? RysumProcessor::stopRoomParamId(kDisplayOrder[(size_t)slot])
+           : slot == kNumStops ? juce::String("simRoomIn")
+                               : juce::String("simRoomVox");
 }
 
 void SaalView::showAssignMenu(int slot)
@@ -1513,7 +1567,7 @@ void SaalView::refreshSurfaces()
 
 void SaalView::refresh()
 {
-    for (int slot = 0; slot <= kNumStops; ++slot)
+    for (int slot = 0; slot < (int)assign.size(); ++slot)
     {
         const int r = juce::roundToInt(proc.apvts.getRawParameterValue(assignId(slot))->load());
         if (r != shownAssign[(size_t)slot] || assign[(size_t)slot].getButtonText().isEmpty())
@@ -1737,10 +1791,10 @@ void SaalView::paint(juce::Graphics &g)
         auto lbl2 = roomsArea.withTrimmedTop(50).removeFromTop(24).removeFromLeft(60);
         g.drawText(U("im Saal"), lbl2, juce::Justification::centredLeft);
         const char *shortNames[]{"P 16", "P 8", "Ged", "Okt 4", "Okt 2",
-                                 "Sesq", "Mix", "Tr",  "Ein"};
+                                 "Sesq", "Mix", "Tr",  "Ein", "Vox"};
         g.setFont(A.monoFont(9.5f));
         g.setColour(col::faint);
-        for (int slot = 0; slot <= kNumStops; ++slot)
+        for (int slot = 0; slot < (int)assign.size(); ++slot)
         {
             const auto b = assign[(size_t)slot].getBounds();
             g.drawText(shortNames[slot], b.withY(b.getY() - 16).withHeight(14),

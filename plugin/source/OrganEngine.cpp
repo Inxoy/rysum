@@ -3363,7 +3363,7 @@ void OrganEngine::renderErGroup(int group) noexcept
             const auto &is = vox ? voxSrc[(size_t)juce::jlimit(0, kVoxSources - 1, s.input - kVoxInput)] : inSrc[(size_t)juce::jmin(s.input, 1)];
             if ((vox ? voxRunning : inRunning) && is.erSlot == (int)si)
                 updateSlotTaps(s, w, is.pos, 1.0f, p,
-                               roomsEr[(size_t)juce::jlimit(0, kNumRooms - 1, p.inputRoom)]);
+                               roomsEr[(size_t)juce::jlimit(0, kNumRooms - 1, vox ? p.vox.room : p.inputRoom)]);
             else
             {
                 s.input = -1;
@@ -3545,6 +3545,8 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         used |= 1 << juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)st]);
     if (p.input.on)
         used |= 1 << juce::jlimit(0, kNumRooms - 1, p.inputRoom);
+    if (p.vox.on || voxRunning)
+        used |= 1 << juce::jlimit(0, kNumRooms - 1, p.vox.room);
     roomsUsed = used;
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
@@ -5058,9 +5060,9 @@ void OrganEngine::renderVox(juce::AudioBuffer<float> &out, int n, const EnginePa
                     juce::FloatVectorOperations::addWithMultiply(dst, buf.data(), g0, n);
                 if (std::abs(g1 - g0) > 1.0e-12f)
                     juce::FloatVectorOperations::addWithMultiply(dst, bufRamp.data(), (g1 - g0) * inv, n);
-                if (k == 0 && p.inputRoom > 0 && roomOnNow)
+                if (k == 0 && vp.room > 0 && roomOnNow)
                 {
-                    float *d2 = rt[(size_t)juce::jlimit(0, kNumRooms - 1, p.inputRoom)].send.data() + roomOffset;
+                    float *d2 = rt[(size_t)juce::jlimit(0, kNumRooms - 1, vp.room)].send.data() + roomOffset;
                     if (std::abs(g0) > 1.0e-12f)
                         juce::FloatVectorOperations::addWithMultiply(d2, buf.data(), g0, n);
                     if (std::abs(g1 - g0) > 1.0e-12f)

@@ -1261,6 +1261,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
                                                     NormalisableRange<float>(0.0f, 180.0f, 0.1f), 40.0f, vdeg));
         l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxWidth", 1}, "Vox humana Breite (Pfeifen)",
                                                     NormalisableRange<float>(0.0f, 360.0f, 0.1f), 40.0f, vdeg));
+        // its Saal (page Saal): its own, apart from the audio input's
+        StringArray saals;
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+            saals.add("Saal " + String(r + 1));
+        l.add(std::make_unique<AudioParameterChoice>(ParameterID{"simRoomVox", 1}, "Vox humana im Saal", saals, 0));
     }
     return l;
 }
@@ -2086,6 +2091,7 @@ void RysumProcessor::fillVoxPlace(VoxParams &vp, const float *vals) const noexce
     vp.rate = v(19);
     vp.depth = v(20);
     vp.width = v(21);
+    vp.room = juce::jlimit(0, rysum::kNumRooms - 1, juce::roundToInt(v(22)));
 }
 
 int RysumProcessor::getParamIndex(const juce::String &id) const

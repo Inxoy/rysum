@@ -32,10 +32,14 @@ private:
         return {f.origin.x + x * f.scale, f.origin.y - y * f.scale};
     }
     void setListener(juce::Point<float> screen);
+    // the Vox humana: shown in its Saal, its place dragged there (direction and distance from the listener)
+    bool voxHere() const;
+    juce::Point<float> voxScreen() const;
+    void setVoxPlace(juce::Point<float> screen);
 
     RysumProcessor &proc;
     int &shownRoom; // the room shown (0..3)
-    bool dragging = false;
+    bool dragging = false, draggingVox = false;
     int dragVertex = -1, hoverVertex = -1;
     RoomParams heardNow() const;
     bool drawing() const; // the shown room has the drawn plan: its corners can be edited
@@ -94,13 +98,13 @@ private:
     std::array<ParamRow *, rysum::kNumRooms> formR{};
     // several rooms: which one is edited / shown, and which stop sounds in which room
     std::array<juce::TextButton, rysum::kNumRooms> roomTabs;
-    std::array<juce::TextButton, rysum::kNumStops + 1>
-        assign; // stops in console order, then the input
+    std::array<juce::TextButton, rysum::kNumStops + 2>
+        assign; // stops in console order, then the input, then the Vox humana
     std::array<std::array<ParamRow *, 4>, rysum::kNumRooms> dimsR{}, surfR{};
     std::array<std::array<ParamRow *, 2>, rysum::kNumRooms> lisR{};
     std::array<ParamRow *, 2> gainRows{}, iceRows{};
     juce::Rectangle<int> roomsArea;
-    std::array<int, rysum::kNumStops + 1> shownAssign{};
+    std::array<int, rysum::kNumStops + 2> shownAssign{};
     void selectRoom(int r);
     juce::String assignId(int slot) const;
     void showAssignMenu(int slot);

@@ -259,6 +259,14 @@ public:
                 c.init(early, hop);
             tailConv.init(late, hop);
         }
+        // without its room ("eigener Raum" 0) the pipe keeps its tone: the learned room also holds the
+        // pipe's body (about +35 dB, strongest in the bass); its spectrum, without the time, is a short
+        // filter (minimum phase)
+        {
+            const auto body = bodyFilter(ir, kBodyTaps);
+            for (auto &c : bodyP)
+                c.init(body, hop);
+        }
         fft.init(N);
         spec.assign((size_t)N);
         for (auto &t : tables)
@@ -278,6 +286,7 @@ public:
         }
         drySum.assign((size_t)hop, 0.0f);
         wet.assign((size_t)hop, 0.0f);
+        bodyOut.assign((size_t)hop, 0.0f);
         reset();
     }
 
@@ -293,7 +302,10 @@ public:
             nb.reset();
         for (auto &c : earlyP)
             c.reset();
+        for (auto &c : bodyP)
+            c.reset();
         tailConv.reset();
+        roomRan = bodyRan = false;
         clearDisplay();
         first = true;
     }
@@ -324,7 +336,76 @@ public:
     }
 
     bool noiseOn = true;   // band noise (off for exact tests)
-    float roomMix = 1.0f;  // learned room: 0 = dry, 1 = as trained (dry + convolution)
+    float roomMix = 1.0f;  // learned room: 0 = the pipe alone (its tone, no room), 1 = as trained
+    static constexpr int kBodyTaps = 2048; // the pipe without the room: 43 ms of filter (99 % of it)
+    bool bodyOn = true; // false: room 0 gives the network's raw output (as trained, before the room; tests)
+
+    /** the room's spectrum as a minimum-phase filter of `taps` samples: same tone, no reverberation.
+        |1 + ir| smoothed over 1/6 octave, then the real cepstrum folded (Oppenheim & Schafer) */
+    static std::vector<float> bodyFilter(const std::vector<float> &irIn, int taps)
+    {
+        int n = 1024;
+        while (n < (int)irIn.size() + 1)
+            n *= 2;
+        FFT f(n);
+        Floats a((size_t)n), s((size_t)n);
+        a[0] = 1.0f;
+        for (size_t i = 0; i < irIn.size(); ++i)
+            a[i] += irIn[i];
+        f.forward(a.data(), s.data());
+        const int half = n / 2;
+        std::vector<double> P((size_t)half + 1), cs((size_t)half + 2, 0.0);
+        P[0] = (double)s[0] * s[0];
+        P[(size_t)half] = (double)s[1] * s[1];
+        for (int k = 1; k < half; ++k)
+            P[(size_t)k] = (double)s[(size_t)(2 * k)] * s[(size_t)(2 * k)] +
+                           (double)s[(size_t)(2 * k + 1)] * s[(size_t)(2 * k + 1)];
+        for (int k = 0; k <= half; ++k)
+            cs[(size_t)k + 1] = cs[(size_t)k] + P[(size_t)k];
+        const double r = std::exp2(1.0 / 12.0);
+        auto logMag = [&](int k)
+        {
+            const int lo = std::min(half, (int)std::floor(k / r));
+            const int hi = std::min(half, std::max(lo + 1, (int)std::ceil(k * r)));
+            const double ps = (cs[(size_t)hi + 1] - cs[(size_t)lo]) / (double)(hi + 1 - lo);
+            return (float)(0.5 * std::log(std::max(ps, 1.0e-12)));
+        };
+        s[0] = logMag(0);
+        s[1] = logMag(half);
+        for (int k = 1; k < half; ++k)
+        {
+            s[(size_t)(2 * k)] = logMag(k);
+            s[(size_t)(2 * k + 1)] = 0.0f;
+        }
+        f.inverse(s.data(), a.data()); // the real cepstrum (times n)
+        const float inv = 1.0f / (float)n;
+        a[0] *= inv;
+        for (int i = 1; i < half; ++i)
+            a[(size_t)i] *= 2.0f * inv;
+        a[(size_t)half] *= inv;
+        for (int i = half + 1; i < n; ++i)
+            a[(size_t)i] = 0.0f;
+        f.forward(a.data(), s.data()); // log spectrum of the minimum-phase filter
+        s[0] = std::exp(s[0]);
+        s[1] = std::exp(s[1]);
+        for (int k = 1; k < half; ++k)
+        {
+            const float m = std::exp(s[(size_t)(2 * k)]), ph = s[(size_t)(2 * k + 1)];
+            s[(size_t)(2 * k)] = m * std::cos(ph);
+            s[(size_t)(2 * k + 1)] = m * std::sin(ph);
+        }
+        f.inverse(s.data(), a.data());
+        std::vector<float> b((size_t)taps);
+        const int fade = taps / 4;
+        for (int i = 0; i < taps; ++i)
+        {
+            float w = 1.0f;
+            if (i >= taps - fade)
+                w = 0.5f * (1.0f + std::cos(3.14159265f * (float)(i - (taps - fade)) / (float)fade));
+            b[(size_t)i] = a[(size_t)i] * inv * w;
+        }
+        return b;
+    }
 
     /** one frame: voices (nv <= kMaxVoices) as they are at the frame start, timbre cond -> hop samples.
         out = everything; pipes (optional, kPipes + 1 buffers of hop): every pipe, then the room's tail */
@@ -395,6 +476,20 @@ public:
         // 3. noise, the learned room: every pipe its own, the room's tail from the sum
         std::fill(drySum.begin(), drySum.end(), 0.0f);
         std::fill(out, out + hop, 0.0f);
+        // room r: r (pipe + learned room) + (1 - r) (pipe through its body filter)
+        const float rm = std::min(1.0f, std::max(0.0f, roomMix));
+        const bool useRoom = rm > 0.0f, useBody = rm < 1.0f && bodyOn;
+        if (useRoom && !roomRan) // (coming back: no stale history)
+        {
+            for (auto &c : earlyP)
+                c.reset();
+            tailConv.reset();
+        }
+        if (useBody && !bodyRan)
+            for (auto &c : bodyP)
+                c.reset();
+        roomRan = useRoom;
+        bodyRan = useBody;
         for (int p = 0; p < kPipes; ++p)
         {
             auto &d = dryP[(size_t)p];
@@ -404,18 +499,26 @@ public:
             for (int i = 0; i < hop; ++i)
                 drySum[(size_t)i] += d[(size_t)i];
             float *po = pipes != nullptr ? pipes[p] : nullptr;
-            if (roomMix > 0.0f)
+            if (useRoom)
                 earlyP[(size_t)p].process(d.data(), wet.data());
+            if (useBody)
+                bodyP[(size_t)p].process(d.data(), bodyOut.data());
             for (int i = 0; i < hop; ++i)
             {
-                const float y = d[(size_t)i] + (roomMix > 0.0f ? roomMix * wet[(size_t)i] : 0.0f);
+                float y = 0.0f;
+                if (useRoom)
+                    y += rm * (d[(size_t)i] + wet[(size_t)i]);
+                if (useBody)
+                    y += (1.0f - rm) * bodyOut[(size_t)i];
+                else if (rm < 1.0f)
+                    y += (1.0f - rm) * d[(size_t)i]; // (the network's raw output: tests)
                 out[i] += y;
                 if (po != nullptr)
                     po[i] = y;
             }
         }
         float *to = pipes != nullptr ? pipes[kPipes] : nullptr;
-        if (roomMix > 0.0f)
+        if (useRoom)
         {
             tailConv.process(drySum.data(), wet.data());
             for (int i = 0; i < hop; ++i)
@@ -558,8 +661,9 @@ private:
     std::vector<float> featM, h1, h2, oM, drySum, wet, zeros;
     std::array<std::vector<float>, kPipes> dryP, gNowP, gPrevP;
     std::array<NoiseBank, kPipes> noiseP;
-    std::array<FrameConvolver, kPipes> earlyP;
+    std::array<FrameConvolver, kPipes> earlyP, bodyP;
     FrameConvolver tailConv;
-    bool first = true;
+    std::vector<float> bodyOut;
+    bool first = true, roomRan = false, bodyRan = false;
 };
 } // namespace vox

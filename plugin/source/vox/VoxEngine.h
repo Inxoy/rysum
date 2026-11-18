@@ -107,6 +107,8 @@ public:
     VoiceTracker::Params &trackerParams() noexcept { return tracker.params; }
     void setNoise(bool on) noexcept { synth.noiseOn = on; }
     void setRoomMix(float m) noexcept { synth.roomMix = m; }
+    /** false: room 0 = the network's raw output (the parity tests); true: the pipe through its body */
+    void setBody(bool on) noexcept { synth.bodyOn = on; }
     /** timbre knobs: latent axis i (0, 1 = the two main directions) in standard deviations */
     void setLatent(int i, float v) noexcept
     {

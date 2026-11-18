@@ -159,10 +159,7 @@ private:
         auto noMidi = [](int, juce::MidiBuffer &) {};
 
         // 1. the Vox humana by itself, from the keys: a chord, then a melody
-        resetParams();
-        set("voxOn", 1.0f);
-        render("vox_keys", nullptr,
-               [bps](int b, juce::MidiBuffer &mb)
+        auto keys = [bps](int b, juce::MidiBuffer &mb)
                {
                    const int chord[]{48, 55, 60, 64};
                    if (b == bps / 4)
@@ -180,7 +177,24 @@ private:
                        if (b == on + bps / 3 - 2)
                            mb.addEvent(juce::MidiMessage::noteOff(1, mel[i]), 0);
                    }
-               });
+               };
+        resetParams();
+        set("voxOn", 1.0f);
+        render("vox_keys", nullptr, keys);
+
+        // without the learned room: the same tone, no reverberation (eigener Raum 0, no Saal)
+        resetParams();
+        set("voxOn", 1.0f);
+        set("voxRoom", 0.0f);
+        render("vox_room0_dry", nullptr, keys);
+
+        // without the learned room, in the plugin's Saal 2 (simulated room: reflections and tail)
+        resetParams();
+        set("voxOn", 1.0f);
+        set("voxRoom", 0.0f);
+        set("simOn", 1.0f);
+        set("simRoomVox", 1.0f);
+        render("vox_room0_saal2", nullptr, keys);
 
         // modulated (an LFO on Klangfarbe X): it must keep sounding
         resetParams();

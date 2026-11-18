@@ -109,6 +109,7 @@ struct VoxParams
     float send = 1.0f;                         // room send, linear (1 = like a pipe)
     int motion = 0;                            // Motion: Static .. Jumps (the ones on the sphere)
     float rate = 0.08f, depth = 40.0f;         // Hz, deg: as for the stops
+    int room = 0;                              // which Saal (page Saal) it sounds in
 };
 
 /** free tuning (Scala file, MTS-ESP / MIDI Tuning Standard): the frequency of every MIDI note on

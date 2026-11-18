@@ -719,8 +719,8 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     voxDistRow->setTooltip(juce::String::fromUTF8("Leiser und dumpfer mit der Entfernung, wie eine Pfeife"));
     voxSendRow->setTooltip(juce::String::fromUTF8("Wie viel in den Hall / Saal geht, verglichen mit einer Pfeife"));
     voxRoomRow->setTooltip(juce::String::fromUTF8(
-        "Der Raum, den das Netz mitgelernt hat (die Kirche in Rysum). 0 = trocken: dann klingt nur der "
-        "Raum des Plugins."));
+        "Der Raum, den das Netz mitgelernt hat (die Kirche in Rysum). 0 = trocken: die Pfeifen behalten "
+        "ihren Klang, ohne Nachhall \xe2\x80\x93 dann klingt nur der Saal des Plugins (Seite Saal, \xe2\x80\x9eVox\xe2\x80\x9c)."));
     voxRateRow = std::make_unique<ParamRow>(proc.apvts, "voxRate", "Geschwindigkeit");
     voxDepthRow = std::make_unique<ParamRow>(proc.apvts, "voxDepth", "Tiefe", true);
     voxWidthRow = std::make_unique<ParamRow>(proc.apvts, "voxWidth", "Breite (Pfeifen)", true);
