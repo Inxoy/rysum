@@ -1,0 +1,624 @@
+  ok    calibrated pipe follows the 12-EDO target
+  ok    31-EDO changes the preferred source pipe
+  ok    held pipe follows the 31-EDO target across a source mapping change
+  ok    recorded tuning leaves the short-octave C-sharp silent
+  ok    retuned short-octave C-sharp uses a neighbouring pipe at the target pitch
+  ok    MTS renders the Pythagorean target at A440
+  ok    held MTS note keeps its pitch when switching to Pythagorean A440
+  ok    held Pythagorean note keeps its pitch when switching back to MTS
+  ok    standard range leaves MIDI 24 silent
+  ok    extended range renders MIDI 24 at its target pitch
+  ok    standard range leaves MIDI 108 silent
+  ok    extended range renders MIDI 108 at its target pitch
+encoder
+  ok    order 1, left: W=1 Y=1 Z=0 X=0
+  ok    order 1, zenith: Z=1
+  ok    ACN4 = sqrt(3)/2 cos^2(el) sin(2az)
+  ok    ACN6 = (3 sin^2 el - 1)/2
+  ok    SN3D orthogonality up to order 5 (max err 0.00012)
+  ok    stereo: +90 = left
+  ok    stereo: centre equal power
+convolver
+  ok    IR loaded 
+  AmbiX 1. Ord. · 0.7 s, direct sound at 60 deg
+  ok    direction of the IR's direct sound found
+  ok    not following = the measured room exactly (rel err 0.0000002)
+  ok    whole response exact, all partition sizes (rel err 0.0000003)
+  pipe at -30 deg -> direct sound of the room from -30 deg
+  ok    early reflections turn with the pipe
+  ok    direct sound of the IR at 20 %
+  ok    mono IR lifted to 3rd order (7 sends)
+  diffuse tail energy x(2l+1)/W: l1=1.04 l2=1.05 l3=1.03, corr(W,Y) 0.020
+  ok    enveloping tail: isotropic energies, decorrelated
+  5th order, 4 s IR: build 1.61478 s, 17.3204x realtime
+  ok    5th-order room runs in real time (this slow test machine: ~1x)
+  ok    IR resampled to 44.1 kHz, length 0.700
+tail convolver
+  ok    tail convolver = plain convolution (rel err 0.0000003)
+long late reverb
+  RT 30 / 9.17915 s, response 12.1173 s
+  ok    long tail: the room rings longer than the response holds
+  steepest fall per 50 ms (while above -70 dB): 1.62314 dB, 0.15 s before the end: -76.8583 dB
+  ok    long tail: decays smoothly (no cut)
+  ok    long tail: has died away before the response ends
+motion
+  ok    Rotation moves continuously (max step 0.11 deg)
+  ok    Pendel moves continuously (max step 0.08 deg)
+  ok    Drift moves continuously (max step 0.06 deg)
+  ok    Vertikal moves continuously (max step 0.22 deg)
+  ok    vertical rotation: front -> zenith after a quarter turn
+  ok    vertical rotation: behind after half a turn
+  ok    jumps hold still between jumps
+  ok    about one jump per cycle (9 in 10 cycles)
+  ok    FABIAN set built in (2000 directions) 
+  ok    broken SOFA rejected: kein lesbares SOFA (Fehler 10000)
+  ok    MagLS design order 1 (0.18 s)
+binaural order 1: band error 2.28204 dB rms (gain -7.91833 dB), worst ITD error 53.7475 us, worst ILD error 7.78344 dB
+  ok    order 1: ITDs right
+  ok    MagLS design order 3 (0.21 s)
+binaural order 3: band error 0.980431 dB rms (gain -8.26308 dB), worst ITD error 15.1124 us, worst ILD error 2.35548 dB
+  ok    order 3 close to the measured HRTFs
+  ok    MagLS design order 5 (0.27 s)
+binaural order 5: band error 0.806783 dB rms (gain -7.98611 dB), worst ITD error 14.8033 us, worst ILD error 3.10471 dB
+  ok    order 5 matches the measured HRTFs
+  ok    design with diffuse-field EQ
+binaural decoder vs direct convolution: -134.688 dB
+  ok    decoder = convolution with the filters (128 samples latency)
+head rotation: front L/R 1.47674 dB, head turned left 90 deg: -16.635 dB
+  ok    head rotation turns the scene
+binaural level of a diffuse field per ear: -3.0688 dB (stereo pan: -3 dB)
+  ok    binaural level like stereo
+  ok    design at 44.1 / 96 kHz
+binaural 44.1 / 96 kHz vs 48 kHz: worst band difference 0.0401394 dB
+  ok    resampled filters sound the same
+binaural decoder 5th order: 85.6641 x real time
+  ok    binaural decoder is cheap
+transaural +-90 deg: far ear / near ear -13.0089 dB plain, -28.4326 dB cancelled (design says -34.8532 dB); ITD 0.71701 ms; near ear level change -0.224918 dB
+  ok    transaural: crosstalk cancelled at +-90 deg
+transaural amount 0: tap at 256 = 1 / 1, elsewhere at most 2.63928e-15
+  ok    transaural: amount 0 = the binaural signal, only delayed
+transaural limit 6 dB: side filter peaks at 3.34659 dB
+  ok    transaural: boost limited to 6 dB
+transaural limit 15 dB: side filter peaks at 4.76213 dB
+  ok    transaural: boost limited to 15 dB
+transaural real time: ±90° · Übersprechen -32 dB (ohne -9) · ITD 0.72 ms · +5.3 ms, energy out 7.23799
+  ok    transaural: real-time convolution runs
+transaural +-60 deg: far ear / near ear -12.9349 dB plain, -25.983 dB cancelled (design says -37.0366 dB); ITD 0.536884 ms; near ear level change -0.222831 dB
+  ok    transaural: crosstalk cancelled at +-60 deg
+transaural +-30 deg: far ear / near ear -7.33559 dB plain, -20.3866 dB cancelled (design says -34.6239 dB); ITD 0.240127 ms; near ear level change -0.261245 dB
+  ok    transaural: crosstalk cancelled at +-30 deg
+  ok    allrad: Stereo (±30°) builds
+allrad Stereo (±30°) order 3: ok, 8 triangles, +4 imaginary, energy -5.41516 .. 1.86606 dB, rE error mean 25.7427 max 48.0536 deg, 1.8031 ms
+  ok    allrad: Stereo (±30°) builds
+  ok    allrad: Stereo (±30°) builds
+  ok    allrad: Quadro (±45°, ±135°) builds
+allrad Quadro (±45°, ±135°) order 3: ok, 8 triangles, +2 imaginary, energy -2.14103 .. 1.00807 dB, rE error mean 23.0948 max 45.2561 deg, 2.7115 ms
+  ok    allrad: Quadro (±45°, ±135°) builds
+  ok    allrad: Quadro (±45°, ±135°) builds
+  ok    allrad: 5.1 (ITU, Kanal 4 = LFE frei) builds
+allrad 5.1 (ITU, Kanal 4 = LFE frei) order 3: ok, 10 triangles, +2 imaginary, energy -3.99506 .. 1.8631 dB, rE error mean 25.7422 max 64.1719 deg, 2.9468 ms
+  ok    allrad: 5.1 (ITU, Kanal 4 = LFE frei) builds
+  ok    allrad: 5.1 (ITU, Kanal 4 = LFE frei) builds
+  ok    allrad: 7.1.4 (Kanal 4 = LFE frei) builds
+allrad 7.1.4 (Kanal 4 = LFE frei) order 3: ok, 24 triangles, +1 imaginary, energy -2.6686 .. 0.812367 dB, rE error mean 10.1117 max 42.8829 deg, 4.5036 ms
+  ok    allrad: 7.1.4 (Kanal 4 = LFE frei) builds
+  ok    allrad: 7.1.4 (Kanal 4 = LFE frei) builds
+  ok    allrad: Achteck (vorn links, gegen den Uhrzeigersinn) builds
+allrad Achteck (vorn links, gegen den Uhrzeigersinn) order 3: ok, 16 triangles, +2 imaginary, energy -2.7196 .. 0.821507 dB, rE error mean 19.3174 max 44.5716 deg, 3.3942 ms
+  ok    allrad: Achteck (vorn links, gegen den Uhrzeigersinn) builds
+  ok    allrad: Achteck (vorn links, gegen den Uhrzeigersinn) builds
+  ok    allrad: Würfel (8) builds
+allrad Würfel (8) order 3: ok, 24 triangles, +0 imaginary, energy -0.59644 .. 0.695069 dB, rE error mean 9.06661 max 16.7863 deg, 4.495 ms
+  ok    allrad: Würfel (8) builds
+  ok    allrad: Würfel (8) builds
+  ok    allrad: Achteck + 4 oben (12) builds
+allrad Achteck + 4 oben (12) order 3: ok, 32 triangles, +1 imaginary, energy -2.61935 .. 0.830794 dB, rE error mean 10.1752 max 43.6849 deg, 5.0057 ms
+  ok    allrad: Achteck + 4 oben (12) builds
+  ok    allrad: Achteck + 4 oben (12) builds
+  ok    allrad: Halbkugel 12 + 6 + 1 (19) builds
+allrad Halbkugel 12 + 6 + 1 (19) order 3: ok, 48 triangles, +1 imaginary, energy -2.88661 .. 0.997349 dB, rE error mean 10.271 max 44.0812 deg, 6.6026 ms
+  ok    allrad: Halbkugel 12 + 6 + 1 (19) builds
+  ok    allrad: Halbkugel 12 + 6 + 1 (19) builds
+  ok    allrad: cube, 1st order: even energy, rE towards the source
+  ok    allrad: a source at a loudspeaker comes mostly from it
+allrad 7.1.4 renderer, source at +30 deg: loudest channel 1, LFE 0
+  ok    allrad: renderer routes to the right channels
+  ok    allrad: ring - imaginary loudspeakers above and below
+  ok    allrad: IEM JSON layout round trip
+  ok    allrad: reads IEM AllRADecoder files
+loading D:\RYSUM_plugin\rysum_plugin\rysum-samples
+  ok    library loaded 
+  287 pipes, 2 substituted, 86/101/68 clicks, 3 pulls, 2 wind, 2.0189 s
+  substituted gedackt f <- short sustain, weak loop, replaced by e (own sample unusable)
+  substituted gedackt f# <- unsteady (5.0 dB), replaced by g (own sample unusable)
+01_praestant_scale_stereo: peak -9.72907 dBFS, rms ch0 -25.1097 dB, 106.325x realtime, max voices 4
+  ok    01_praestant_scale_stereo finite
+  ok    01_praestant_scale_stereo not silent
+  ok    01_praestant_scale_stereo faster than realtime
+02_plenum_build_stereo: peak 1.73007 dBFS, rms ch0 -13.2303 dB, 28.8463x realtime, max voices 40
+  ok    02_plenum_build_stereo finite
+  ok    02_plenum_build_stereo not silent
+  ok    02_plenum_build_stereo faster than realtime
+03_plenum_ambix5_motion: peak 5.47808 dBFS, rms ch0 -7.8863 dB, 11.7294x realtime, max voices 48
+  ok    03_plenum_ambix5_motion finite
+  ok    03_plenum_ambix5_motion not silent
+  ok    03_plenum_ambix5_motion faster than realtime
+04_verfall_stereo: peak -1.0904 dBFS, rms ch0 -14.2725 dB, 33.9054x realtime, max voices 25
+  ok    04_verfall_stereo finite
+  ok    04_verfall_stereo not silent
+  ok    04_verfall_stereo faster than realtime
+05_stress_all_keys_ambix5: peak 16.0825 dBFS, rms ch0 0.294665 dB, 1.53956x realtime, max voices 328
+  ok    05_stress_all_keys_ambix5 finite
+  ok    05_stress_all_keys_ambix5 not silent
+  ok    05_stress_all_keys_ambix5 faster than realtime
+06_stress_all_keys_ambix5_clean: peak 15.7046 dBFS, rms ch0 0.0276508 dB, 2.30072x realtime, max voices 328
+  ok    06_stress_all_keys_ambix5_clean finite
+  ok    06_stress_all_keys_ambix5_clean not silent
+  ok    06_stress_all_keys_ambix5_clean faster than realtime
+07_stopwind_sweep_stereo: peak -8.03164 dBFS, rms ch0 -28.433 dB, 100.347x realtime, max voices 4
+  ok    07_stopwind_sweep_stereo finite
+  ok    07_stopwind_sweep_stereo not silent
+  ok    07_stopwind_sweep_stereo faster than realtime
+08_global_wind_ramp_stereo: peak -1.21834 dBFS, rms ch0 -15.0081 dB, 68.7058x realtime, max voices 8
+  ok    08_global_wind_ramp_stereo finite
+  ok    08_global_wind_ramp_stereo not silent
+  ok    08_global_wind_ramp_stereo faster than realtime
+09_rotation_glissando_ambix1: peak -4.89167 dBFS, rms ch0 -13.2426 dB, 122.718x realtime, max voices 3
+  ok    09_rotation_glissando_ambix1 finite
+  ok    09_rotation_glissando_ambix1 not silent
+  ok    09_rotation_glissando_ambix1 faster than realtime
+13_fast_rotation_ambix5: peak -4.23909 dBFS, rms ch0 -13.1406 dB, 80.9734x realtime, max voices 3
+  ok    13_fast_rotation_ambix5 finite
+  ok    13_fast_rotation_ambix5 not silent
+  ok    13_fast_rotation_ambix5 faster than realtime
+10_doppler_ellipse_stereo: peak -5.57767 dBFS, rms ch0 -15.8514 dB, 204.759x realtime, max voices 1
+  ok    10_doppler_ellipse_stereo finite
+  ok    10_doppler_ellipse_stereo not silent
+  ok    10_doppler_ellipse_stereo faster than realtime
+11_tremulant_stereo: peak -10.8894 dBFS, rms ch0 -26.7867 dB, 99.0298x realtime, max voices 4
+  ok    11_tremulant_stereo finite
+  ok    11_tremulant_stereo not silent
+  ok    11_tremulant_stereo faster than realtime
+12_freeze_stereo: peak -4.34655 dBFS, rms ch0 -18.5094 dB, 42.9716x realtime, max voices 8
+  ok    12_freeze_stereo finite
+  ok    12_freeze_stereo not silent
+  ok    12_freeze_stereo faster than realtime
+  freeze: rms 4-5 s -17.0112 dB, 9-10 s -100 dB
+  ok    freeze holds after release and fades when switched off
+pitch praestant a′ @44100: 443.719 Hz (-3.04492 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch gedackt f @44100: 177.498 Hz (-2.96114 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch praestant16 a′ @44100: 221.911 Hz (-2.64107 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch praestant a′ @48000: 443.719 Hz (-3.04525 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch gedackt f @48000: 177.498 Hz (-2.9611 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch praestant16 a′ @48000: 221.911 Hz (-2.64087 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch praestant a′ @96000: 443.719 Hz (-3.04594 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch gedackt f @96000: 177.498 Hz (-2.96105 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+pitch praestant16 a′ @96000: 221.911 Hz (-2.64171 ct vs meantone)
+  ok    pitch within 8 ct of meantone
+tuning 31-EDO step: b-flat' one 31st above a': 453.759 Hz (want 453.752, 0.0263257 ct)
+  ok    tuning: 31-EDO step: b-flat' one 31st above a'
+tuning 31-EDO step: 3 steps below a': 414.786 Hz (want 414.931, -0.605318 ct)
+  ok    tuning: 31-EDO step: 3 steps below a'
+tuning just intonation: e' = 5/4 over c, a' = 5/3: 333.146 Hz (want 332.789, 1.85407 ct)
+  ok    tuning: just intonation: e' = 5/4 over c, a' = 5/3
+tuning harmonic series: b-flat' = 7th partial: 460.943 Hz (want 460.153, 2.97032 ct)
+  ok    tuning: harmonic series: b-flat' = 7th partial
+tuning Maqam Rast: e' a quarter tone low: 323.296 Hz (want 322.95, 1.84992 ct)
+  ok    tuning: Maqam Rast: e' a quarter tone low
+tuning Bohlen-Pierce: 9 steps below a': 207.667 Hz (want 207.393, 2.2931 ct)
+  ok    tuning: Bohlen-Pierce: 9 steps below a'
+31-EDO step: largest shift of a pipe 39.9548 ct
+  ok    31-EDO step tuning picks the nearest pipes
+tuning c': meantone 265.56 Hz, equal 263.974 Hz (-10.3702 ct), +100 ct 99.9244 ct
+  ok    equal temperament moves c' by -10.3 ct
+  ok    pitch +100 ct
+  ok    tempo sync: phase follows the host position
+  ok    wind model 2 at full wind is identical to the classic model (praestant)
+  ok    wind model 2 finite (praestant)
+wind model 2 praestant: full wind -24.1471 dB; at 12 % wind classic -54.9646 dB, new -53.7219 dB; above 2.5 kHz classic -106.298 dB, new -69.4251 dB; 89.2349x realtime
+  ok    wind model 2 adds breath above the pipe at low wind (praestant)
+  ok    a starving pipe stays quieter than at full wind (praestant)
+  ok    wind model 2 at full wind is identical to the classic model (gedackt)
+  ok    wind model 2 finite (gedackt)
+wind model 2 gedackt: full wind -26.8202 dB; at 12 % wind classic -56.6239 dB, new -54.8321 dB; above 2.5 kHz classic -113.248 dB, new -71.5416 dB; 88.0562x realtime
+  ok    wind model 2 adds breath above the pipe at low wind (gedackt)
+  ok    a starving pipe stays quieter than at full wind (gedackt)
+  ok    wind model 2 at full wind is identical to the classic model (trompete)
+  ok    wind model 2 finite (trompete)
+wind model 2 trompete: full wind -21.4381 dB; at 12 % wind classic -54.7171 dB, new -54.7117 dB; above 2.5 kHz classic -80.6364 dB, new -77.4752 dB; 87.0822x realtime
+  ok    wind model 2 adds breath above the pipe at low wind (trompete)
+  ok    a starving pipe stays quieter than at full wind (trompete)
+wind model 2, the mouth tone of c' at a steady 22 % wind: around 759.107 Hz, later 761.342 Hz (5.08877 ct), level -11.082 / -10.6715 dB; its strongest line 17.708 dB above its surroundings
+  ok    wind model 2: steady wind -> the mouth tone stays where it is
+  ok    wind model 2: the mouth tone lies a few partials above the pipe's note
+  ok    wind model 2: the mouth tone is breath with a core of tone, not a clean whistle
+wind model 2, c' struck twice: 760.205 / 763.159 Hz
+  ok    wind model 2: the same pipe has the same mouth tone every time
+wind model 2, c' with falling wind: 775.836 Hz -10.4494 dB -> 529.611 Hz -19.1084 dB
+  ok    wind model 2: falling wind -> the mouth tone comes down and fades
+wind model 2, e' at 22 % wind: 1421.95 Hz (c' 760.205 Hz)
+  ok    wind model 2: neighbouring pipes have their own mouth tones
+wind model 2, 18 pipes sweeping down: 21.4407x realtime, peak -0.0232825 dBFS
+  ok    wind model 2 with 18 pipes faster than realtime
+scala: 31edo parsed 1, C4 261.626 Hz, one step 38.7097 ct, 31 steps 1200 ct
+  ok    scala: 31edo, degree zero at C4 from 12edo A4 = 440 Hz
+scala: just C major on the white keys: c' 264, e' 330, g' 396, c'' 528, c#' 0
+  ok    scala: ratios, .kbm with unmapped keys and reference frequency
+  ok    scala: KBM reference note and frequency are independent of the middle note
+  ok    scala: removing KBM restores the C4 reference
+  ok    scala: a broken file is refused with a message
+free tuning (31-EDO table): worst pitch error 3.25238 ct; a' + one step together: 2 voices; unmapped note: 0; far above: 1; same note on two channels: 2 voices, channel 2 error -2.88901 ct
+  ok    free tuning: every MIDI note sounds at its own pitch (within the recordings' own accuracy)
+  ok    free tuning: two notes on one pipe sound as two voices
+  ok    free tuning: unmapped notes stay silent
+  ok    free tuning: MIDI channels have their own pitches (multi-channel tables)
+modulation: velocity 20 -> 7.23909 dB, 127 -> 16.3383 dB; pitch wheel up: 197.196 ct
+  ok    modulation source: key velocity
+  ok    modulation source: pitch wheel
+MPE: channel 2 bent +2 HT -> 196.878 ct; channel 3 note meanwhile -2.42527 ct; MPE off: -2.83845 ct; pressure on ch 3: ch 2 note 0 dB, ch 3 note 12 dB; poly aftertouch (MPE off) 12 dB
+  ok    MPE: every note channel bends its own note
+  ok    MPE off: pitch bend does not bend (unchanged)
+  ok    MPE: pressure modulates only its own note
+  ok    polyphonic aftertouch as pressure
+lucier: base 'Saal 14 × 28 × 11 m, 880 Eigenmoden bis 90 Hz' in 262.412 ms; builds up to 374.253 ms; contrast gen 1/4/12/30: 6.68195 / 26.7278 / 80.5684 / 203.705 dB; strongest at gen 30: 681.061 221.649 Hz
+  ok    lucier: the room's resonances stand out more with every generation
+  ok    lucier: resonances found
+lucier in the engine: dry -2.30477 dB, all wet (gen 12) -10.5791 dB, peak 0.1892; after switching off -4.04815 dB (dry -4.04815)
+  ok    lucier: output finite and limited
+  ok    lucier: the wet sound is about as loud as the organ
+  ok    lucier: switched off, the organ sounds as before (after the room rang out)
+lucier from a file (44.1 kHz, 100 ms silence before): rysum_lucier_test (2.1 s), starts at the direct sound: 1
+  ok    lucier: impulse response file read, resampled and trimmed
+lucier piece: impulse through one pass, error -139.642 dB, pass 6.144 s
+  ok    lucier piece: one pass = convolution with the room
+lucier piece: contrast gen 0/1/4/12: 5.29903 / 16.545 / 57.717 / 82.2787 dB; rms -4.90091e-11 dB re recording, peak 0.462247; 12 generations of 10 s in 3520.71 ms
+  ok    lucier piece: every generation more of the room's resonances
+  ok    lucier piece: level held, no clipping
+  ok    input: off by default - silent
+input mono at +90 deg: L -4.31457 R -200 dB; at -90 deg: L -151.474 R -4.28629 dB
+  ok    input: placed left / right
+input stereo, only left fed: L -1.29142 R -200 dB
+  ok    input: stereo - left channel on the left
+input in ambisonics at +90 deg: <W,Y>/<W,W> 1, <W,X>/<W,W> 0
+  ok    input: encoded in Ambisonics from the left
+input at 10 m: arrives after 1329 samples (expected ~1329)
+  ok    input: distance delays the sound (Doppler when it moves)
+input with gate: no keys -200 dB, key held -4.22062 dB
+  ok    input: keys open the gate
+input as modulation source: noise 0.725324, silence 0
+  ok    input: loudness as a modulation source
+input on the Praestant in the simulated room: 5.3457 dB
+  ok    input: follows a stop, in the simulated room
+input through Lucier (gen 8, all wet): -0.288695 dB
+  ok    input: through the Lucier passes
+  ok    input: switched off - silent
+rooms: 1.5-3.5 s after the note, Praestant in the small room -200 dB, in room 2 (cathedral) 1.27443 dB
+  ok    rooms: a stop sounds in its own simulated room
+spread: all stops 16 pipes, in turn 4 pipes on 4 stops
+  ok    spread: one pipe per note, every note on another stop
+  ok    spread: by position, the lowest note on the first stop
+  ok    spread: muted pipes are skipped
+per-pipe modulation
+  Tastenlage -> Pfeife: Wind: low note 0 dB, high note -5.67705 dB (against no modulation)
+  ok    per-pipe wind follows the key position
+  LFO Versatz entlang der Tastatur -> Pfeife: Wind: -9.55676 dB / 0 dB
+  ok    LFO Versatz gives the pipes different values
+  Pfeife: Verfall (3 bit) by key position: low -0.21126 dB, high -15.2885 dB
+  ok    per-pipe Verfall
+a stop's own effects
+  level spread (5..95 %): plain 0.969989 dB, own tremulant 5.51431 dB, another stop's 0.969989 dB
+  share above ~6 kHz: plain 0.00214544, own crackle 0.00706365
+  no note: -200 dB, own leaks -22.4312 dB, stop pushed in -200 dB
+  ok    a stop's own tremulant moves only that stop
+  ok    a stop's own crackle
+  ok    a stop's own wind leaks hiss while it is drawn
+  speed spread: two pipes 27.73 deg apart, after 4 s of spread 97.3812 deg; when it was switched on a pipe moved 0.839386 deg
+  ok    a stop's pipes turn at their own speeds, without jumping
+ellipse: dir 90: near 3.04558 m, far 8.95442 m, side 6; two near sides 3.04558 / 3.04558, side 8.95442; tilt 20: near side el 29.6962, far side -9.69616
+  ok    ellipse: the near side follows the direction
+  ok    ellipse form 2: near on both sides
+  ok    ellipse: tilted orbit
+  ok    ellipse: default settings unchanged (older patches sound the same)
+drawn path: at 1/4 az 90, at 5/8 az -135 (between 180 and -90), spread pipe at 1/2: az -180, there-and-back at 3/4: az -180, distance kept 7 m
+  ok    drawn path: pipes follow the path (loop, spread, there and back)
+jumps at 150 Hz: energy above 8 kHz relative to all: glided -57.6102 dB, hard -32.6822 dB
+  ok    hard jumps: they click (and stay finite)
+  ok    rotation at 500 Hz with an ellipse stays finite
+mod level: high -17.2303 dB, low -38.6323 dB
+  ok    LFO -> pipe level (expect 21.6 dB swing)
+mod pitch: 450.016 / 437.625 Hz = 48.3368 ct
+  ok    LFO -> pipe pitch (expect 48 ct)
+mod env->distance: at peak -17.91 dB, later -12.8908 dB
+  ok    per-pipe envelope -> distance
+  ok    global envelope scene renders
+  ok    spread wave scene renders
+  ok    LFO shapes
+  ok    envelope sustain + release
+pipe a' (Praestant) at az -40.7825, el 2.875
+echo: dry az -40.7825, 1st 90.0016 (-18.7126 dB), 2nd -179.998 (-18.7126 dB)
+  ok    echoes: every repeat from the next direction
+  ok    echo level about like the dry sound at 100 %
+partials: whole az -48.8987, above 5x f0 az -89.8827 (pipe -40.7825)
+  ok    upper partials placed away from the pipe
+  ok    partial split keeps the level (W)
+crackle: -42.4987 dB at az -40.7825, el 2.875; after release -83.9838 dB
+  ok    crackle at the pipe
+  ok    crackle fades after the key is released
+leak: -23.2178 dB, az -178.255, directedness 1
+  ok    one wind leak: a point source
+blower all around: directedness 0.0207466, 1st order / W 1.04271
+  ok    diffuse blower
+blower level: omni -48.8816 dB, all around -48.8295 dB
+  ok    diffuse blower keeps the level
+tracker path: pipe band early -36.393 dB (waiting) vs -18.8418 dB, later -16.3783 dB
+  ok    pipes wait for the tracker path
+tracker ticks: first at az -5.09781 el -8.39062, last at az -35.6061 el 1.22995
+  ok    tracker ticks run from the console to the pipe
+own sound at pipe: -32.8075 dB, az -40.7825
+  ok    own sound at the pipe
+  ok    own sounds circling render
+  ok    own sounds folder: trimmed + normalised
+all effects, 8 stops x 6 keys, 3rd order: 9.75218 x real time
+  ok    effects are cheap enough
+room: cube 10 m, alpha 0.2: ray traced 1.22455 s, Eyring 1.19537 s (16.6183 ms, 216000 reflections)
+  ok    ray tracer agrees with Eyring in a diffuse cube
+room: corridor, hard walls, dead floor/ceiling: ray traced 4.27583 s, Eyring 0.326408 s
+  ok    ray tracer: non-diffuse corridor rings longer than Eyring says
+plan: rectangle as polygon, order 1: 6 images, shoebox 6, matched 6
+plan: rectangle as polygon, order 2: 24 images, shoebox 24, matched 24
+plan: rectangle as polygon, order 3: 62 images, shoebox 62, matched 62
+  ok    plan: a rectangular polygon gives the shoebox's mirror images
+  ok    plan: presets are simple polygons
+  ok    plan: a crossed polygon is detected
+  ok    plan: the L is non-convex with 6 walls
+plan: L-shape, 3rd order: 57 visible images, 0 wrong
+  ok    plan: L-shape reflection paths are valid and stay inside
+  ok    plan: listener and sources are kept inside the plan
+plan: ray tracer cube 1.46671 s, cube as polygon 1.46786 s; octagon 1.50623 s (Eyring 1.46989 s, V 1575.59 m3)
+  ok    plan: polygon ray tracer = shoebox ray tracer for a rectangle
+  ok    plan: octagon ray tracing agrees with Eyring
+  ok    plan: L-shape ray tracing gives a decay
+plan: shoebox vs the same rectangle as polygon (engine): difference -138.979 dB
+  ok    plan: the polygon engine matches the shoebox for a rectangle
+plan: L-shape rotating source, 3rd order: reflections rms 0.224487, max 2nd difference 0.0039295 (0.0175044 x rms), 20.2842 x real time
+  ok    plan: L-shape reflections are there and finite
+  ok    plan: no clicks when reflection paths come and go
+pipe sound: Praestant a' attack 120 ms
+Ansprache +1: attack 10.0805 dB, sustain 0 dB; -1: attack -11.0509 dB
+  ok    Ansprache: the attack louder / softer, the sustain unchanged
+Ansprache Schaerfe: highs in the attack 8.96684 dB
+  ok    Ansprache: sharpness lifts the highs of the chiff
+nur Ansprache: attack -0.0706086 dB, sustain -317.871 dB
+  ok    Ansprache: isolated, only the chiff remains
+Ansprache wiederholt: energy after the attack 6.23939 dB more
+  ok    Ansprache: the chiff repeats as a burst
+Abriss: puff -17.38 dB against the release, before it 0
+  ok    Abriss: a puff when the key is let go (and nothing before)
+Obertoene +12 dB: highs 11.649 dB, lows -0.557405 dB
+  ok    Obertoene: the upper partials alone get louder
+  ok    Obertoene: transient shaper finite
+(air off vs on at 40 m: highs 9.32704 dB)
+Luft umkehren (pipe at 40 m): highs 50 % 9.32704 dB, 100 % 14.0032 dB
+  ok    Luft umkehren: distant highs restored and exaggerated
+Klick-Resonanz: tail 273.896 dB over the plain click, at the key's pitch 30.892 dB over a semitone up
+  ok    Klick-Resonanz: the click rings at the key's pitch
+glitch stutter: difference 2.02801 dB, peak -24.2701 dB
+  ok    glitch stutter changes the sound, finite
+glitch splice: difference -29.3425 dB, peak -24.2701 dB
+  ok    glitch splice changes the sound, finite
+glitch zero: difference 2.83173 dB, peak -24.2682 dB
+  ok    glitch zero changes the sound, finite
+glitch clip: difference -8.12755 dB, peak -24.2701 dB
+  ok    glitch clip changes the sound, finite
+per-pipe target Ansprache: route vs by hand max diff 0 (the setting itself changes up to 0.0594448)
+  ok    per-pipe target Ansprache = the parameter by hand
+per-pipe target Ansprache Schaerfe: route vs by hand max diff 0 (the setting itself changes up to 0.0166839)
+  ok    per-pipe target Ansprache Schaerfe = the parameter by hand
+per-pipe target Nur Ansprache: route vs by hand max diff 0 (the setting itself changes up to 0.218056)
+  ok    per-pipe target Nur Ansprache = the parameter by hand
+per-pipe target Ansprache wiederholen: route vs by hand max diff 0 (the setting itself changes up to 0.0485538)
+  ok    per-pipe target Ansprache wiederholen = the parameter by hand
+per-pipe target Abriss: route vs by hand max diff 0 (the setting itself changes up to 0.126773)
+  ok    per-pipe target Abriss = the parameter by hand
+per-pipe target Obertoene ab: route vs by hand max diff 0 (the setting itself changes up to 0.00707023)
+  ok    per-pipe target Obertoene ab = the parameter by hand
+per-pipe target Obertoene Pegel: route vs by hand max diff 0 (the setting itself changes up to 0.00482221)
+  ok    per-pipe target Obertoene Pegel = the parameter by hand
+per-pipe target Obertoene Anschlag: route vs by hand max diff 0 (the setting itself changes up to 0.0167359)
+  ok    per-pipe target Obertoene Anschlag = the parameter by hand
+per-pipe target Luft umkehren: route vs by hand max diff 0 (the setting itself changes up to 0.00977238)
+  ok    per-pipe target Luft umkehren = the parameter by hand
+per-pipe target Wolke Menge: route vs by hand max diff 0 (the setting itself changes up to 0.376911)
+  ok    per-pipe target Wolke Menge = the parameter by hand
+per-pipe target Koernung: route vs by hand max diff 0 (the setting itself changes up to 0.376347)
+  ok    per-pipe target Koernung = the parameter by hand
+per-pipe target Bittiefe: route vs by hand max diff 0 (the setting itself changes up to 0.102979)
+  ok    per-pipe target Bittiefe = the parameter by hand
+per-pipe target Abtastrate: route vs by hand max diff 0 (the setting itself changes up to 0.220322)
+  ok    per-pipe target Abtastrate = the parameter by hand
+per-pipe target glitch stutter: difference 2.00573 dB
+  ok    per-pipe target glitch stutter works
+per-pipe target glitch splice: difference -29.3425 dB
+  ok    per-pipe target glitch splice works
+per-pipe target glitch zero: difference 5.63321 dB
+  ok    per-pipe target glitch zero works
+per-pipe target glitch clip: difference -8.14604 dB
+  ok    per-pipe target glitch clip works
+per-pipe Ansprache from the key position (a' sits a bit above the middle): attack 5.95716 dB
+  ok    per-pipe target: Ansprache follows the key position
+beats major third c'-e' (pure): 0.00988443 Hz
+  ok    beats: major third c'-e' (pure)
+beats fifth c'-g': 2.46116 Hz
+  ok    beats: fifth c'-g'
+beats minor third e'-g': 6.13811 Hz
+  ok    beats: minor third e'-g'
+beats wolf fifth g#-eb': 12.9957 Hz
+  ok    beats: wolf fifth g#-eb'
+beats major third as recorded: 0.99967 Hz
+  ok    beats: the recorded pipes beat where the tuning is pure
+Schwebung motion after 3 s: wolf pipe turned to 312.347 deg, pure third 0.785195 deg
+  ok    Schwebung: the wolf spins, the pure third stands still
+Tonnetz 1/4-comma: c′(0,0) d′(2,0) e′(0,1) f′(-1,0) g′(1,0) a′(-1,1) b′(1,1) eb′(1,-1) g#′(0,2)
+Tonnetz Pythagorean: c′(0,0) d′(2,0) e′(4,0) f′(-1,0) g′(1,0) a′(3,0) b′(5,0) eb′(-3,0) g#′(8,0)
+Tonnetz equal: c′(0,0) d′(2,0) e′(0,1) f′(-1,0) g′(1,0) a′(3,0) b′(1,1) eb′(-3,0) g#′(0,-1)
+  ok    Tonnetz: meantone triad compact, the wolf a seam, Pythagorean a chain of fifths
+  ok    Tonnetz: a layout on the sphere
+difference tone of c'-g': 131.708 Hz, 51.484 dB over the plain fifth at that frequency, ghosts 1, below the listener: yes
+  ok    difference tones: the fifth's ghost an octave below c', under the floor
+ice: all-pass chain, energy arrives at 23.9583 ms (below 300 Hz) and 0.229167 ms (above 4 kHz)
+ice in the Saal: difference -16.915 dB
+  ok    ice: the lows come later (a falling chirp), the Saal changes
+double exposure: the copy comes from 90 deg (plain), -90 deg (mirrored), -2.50448e-06 deg (turned -90)
+  ok    double exposure: delayed, mirrored, turned
+  ok    double exposure in the engine: finite
+long exposure (2 s): trail at 0.5 s -18.9521 dB, at 1.5 s -52.4047 dB (burst = 0 dB), from -0.297157 deg
+  ok    long exposure: a trail where the sound was, fading
+  ok    long exposure in the engine: finite
+space erode 50 %: degree 0 0 dB, 1 0 dB, 2 -6.0206 dB, 3 -332.49 dB; 100 %: degree 1 -332.49 dB
+  ok    space: erosion takes the orders away from the top (1.5 of 3 left)
+space grid (4 directions): heard from az -84.9845 (pipe at -50), 4.90672e-08 deg from a grid direction
+  ok    space: directions snap to the grid
+space crush: error per degree -330.226 / -22.6392 / -11.7498 / -0.475561 dB
+  ok    space: crushing grows with the order, W stays clean
+space dropouts: 558 of 569 frames with a silent channel, W silent 0
+  ok    space: dropouts silence directional channels, never W
+space alias: W 1.7614 dB, change 2.43492 dB, degree 3 4.11756 dB
+  ok    space: aliasing changes the field, not the level
+space weather 2 s: erosion after 3 s 1, degree 1 share early 1, late 0
+  ok    space: weathering erodes the sphere over time
+cloud: dry az -50 rE 1; whole sphere rE 0.111731, level -0.333184 dB; 15 deg: az -49.405 rE 0.98152; half mix level -0.72226 dB, rE 0.793649; grains 4
+  ok    cloud: on the whole sphere the pipe has no direction any more, at about its level
+  ok    cloud: a narrow cloud stays at the pipe
+  ok    cloud: half dry, half grains
+cloud + Raumverfall, 48 pipes, 3rd order: 6.27648 x real time, grains at the end 0
+  ok    cloud + Raumverfall: finite and cheap enough with 48 pipes
+  ok    cloud in stereo works
+room: reflections after 40 minutes of running differ from a fresh start by -300 dB
+  ok    room: early reflections unchanged after a long session
+room: left-wall reflection after 4.10417 ms (expect 4.09074), from az 38.3641 (expect 38.6598), level -15.8953
+  ok    early reflection: right delay and direction
+room: tail (convolution) decay measured 3.21485 s, ray-traced 3.10221 s, critical distance 1.73674 m
+  ok    late reverb decays with the room's decay time (convolution)
+room: tail (FDN) decay measured 2.43914 s, ray-traced 3.10221 s, critical distance 1.73674 m
+  ok    late reverb decays with the room's decay time (FDN)
+room: FDN tail level against the convolution tail: 0.441187 dB
+  ok    room: both late reverb models equally loud
+room: FDN after 12 minutes of running differs from a fresh start by -300 dB
+  ok    room: FDN unchanged after a long session
+room: switching convolution -> FDN while the tail rings: level change -1.32907 dB, 2 s later -54.4986 dB, at 5.8 s -100 dB
+  ok    room: switching the late reverb model while playing has no gap
+  ok    room: after switching the late reverb keeps decaying (no build-up)
+room: switching FDN -> convolution while the tail rings: level change 5.35751 dB, 2 s later -63.7449 dB, at 5.8 s -100 dB
+  ok    room: switching the late reverb model while playing has no gap
+  ok    room: after switching the late reverb keeps decaying (no build-up)
+room: tail impulse response, peaks over local median (99.9 %): 10.1198 dB
+  ok    late reverb is dense (no ringing modes)
+saal dispersion: 250 Hz / 1 kHz arrive after 4 kHz by (ms): dry 0 / 0, direct + reflections 0 / 0, with Eis 0.604167 / 10
+  ok    saal: no dispersion - low, mid and high bands of a click arrive together
+  ok    saal: the dispersion measure sees Eis (lower bands held back)
+room: response swapped while playing: largest level difference to no swap 0.128871 dB (in use: 2)
+  ok    room change: the reverb turns into the new room without a gap
+plan CPU: shoebox, 48 rotating pipes (32 with own reflections), 3rd order: 4.06696 x real time
+plan CPU: cross, 48 rotating pipes (32 with own reflections), 3rd order: 3.64254 x real time
+plan CPU: round, 48 rotating pipes (32 with own reflections), 3rd order: 4.0697 x real time
+  ok    plan: polygon rooms cost about as much as the shoebox
+room on, reflections up to order 2, 18 pipes (18 with own reflections), 3rd-order out: 12.9858 x real time
+  ok    room simulation runs in real time (18 pipes)
+room on, reflections up to order 3, 18 pipes (18 with own reflections), 3rd-order out: 10.4772 x real time
+room on, reflections up to order 2, 48 pipes (42 with own reflections), 3rd-order out: 6.76752 x real time
+room on, reflections up to order 3, 48 pipes (42 with own reflections), 3rd-order out: 4.91639 x real time
+bellows (blower): pressure with one high pipe 0.919397, with 24 pipes 0.263962, level -18.8722 dB; without the bellows 1
+  ok    bellows: big chords pull the shared wind down
+  ok    bellows: the starved organ is quieter
+bellows (Kalkant): fill down to 0 before the first tread at 2.99733 s, up to 0.996754 after it; level before -300 dB, after -14.8027 dB
+  ok    Kalkant: the bellows empties and is lifted by the tread
+  ok    Kalkant: the organ comes back with the tread
+pallet: slow key against fast key, level at 0.1-0.4 s -18.9801 dB, at 2.8-3.4 s -0.0255677 dB
+  ok    pallet: a slow key speaks hesitantly and arrives at the full tone
+listener: the pipe from -40.7825 deg, after 6 m to the right from 35.8951 deg; walking a circle: 26.5485 -> -54.7439 deg
+  ok    listener: walking changes where the pipes are heard
+  ok    listener: arrives where the slider says
+out of sight: 1 corners to bend around; from 5.25 / -7.55 m off the usual place the pipe is hidden, heard from 22.5262 deg over 15.5207 m, 4.27698 dB quieter, cut above 1489.01 Hz
+  ok    out of sight: an L-shaped plan hides the pipe from somewhere, and the way around is longer
+out of sight: 1 pipe(s) heard around the corner; level -28.1148 dB against -23.4442 dB in plain sight
+  ok    out of sight: a pipe behind the corner is heard around it, quieter
+  (largest step at 2.88 s)
+  (largest step at 2.92 s)
+out of sight: walking across the shadow's edge (3 times in or out of sight): largest step 0.470444 dB per 20 ms, the same walk in plain sight 0.47964 dB; shadow: 0.26 in 3.33 out 6.90 in 
+  ok    out of sight: stepping in and out of the shadow does not jump
+out of sight: sharpest 2nd difference 0.00105603 at 5.49158 s, in plain sight 0.00105602 at 5.49158 s
+  ok    out of sight: stepping in and out of the shadow does not click
+out of sight: cross, walking a circle: up to 19 pipes hidden, 39 changes; sharpest 2nd difference 0.152676 at 1.14842 s, without hiding 0.153775 at 1.14842 s
+  ok    out of sight: walking through a cross-shaped church does not click
+out of sight: cross, sharpest 2nd difference walking 0.152676, standing still 0.159924
+  ok    out of sight: walking through the cross is as smooth as standing in it
+room motion Flug (cross plan): 30 of 41 pipes moved, height 0.150077 .. 10.8374 m, 147 impacts, inside the walls: yes
+  ok    room motion: the pipes move freely and stay in the Saal
+  ok    room motion: flying pipes hit the walls / the floor
+room motion Fall (cross plan): 36 of 41 pipes moved, height 0.150005 .. 2.16538 m, 534 impacts, inside the walls: yes
+  ok    room motion: the pipes move freely and stay in the Saal
+  ok    room motion: flying pipes hit the walls / the floor
+room motion Schwarm (cross plan): 38 of 41 pipes moved, height 0.150548 .. 10.8496 m, 111 impacts, inside the walls: yes
+  ok    room motion: the pipes move freely and stay in the Saal
+room motion Stroemung (cross plan): 25 of 41 pipes moved, height 0.15 .. 2.41271 m, 225 impacts, inside the walls: yes
+  ok    room motion: the pipes move freely and stay in the Saal
+impact: slow (1 m/s) peak -36.0953 dB, highs -29.7609 dB; fast (6 m/s) -10.887 dB, highs -22.9972 dB; fast on a curtain -15.8542 dB, highs -29.9079 dB
+  ok    impact: a faster hit is louder and brighter
+  ok    impact: an absorbing wall dulls the knock
+  ok    impact: the struck pipe rings out
+impact: a 3 m/s knock against a pipe at the same distance: knock peak -17.7122 dB, pipe peak -17.8042 dB
+impact: tin highs -11.9817 dB, tail -31.5454 dB; wood highs -30.3648 dB, tail -74.1917 dB
+  ok    impact: a wooden pipe knocks dull and short
+room motion: block 64: pipe at 8.49575 / 23.3965, 66 impacts; block 512: 8.49575 / 23.3965, 66
+  ok    room motion: the same paths at any block size
+room motion: flying pipes in the cross, sharpest 2nd difference 0.0321857, standing pipes 0.0262977, 1 out of sight
+  ok    room motion: flying pipes (reflections, out of sight) do not click
+room motion: 8 stops flocking 6.38953 x real time, rotating (moving too, the old way) 6.7059 x
+  ok    room motion: flocking costs little more than the old motion
+Selbstspiel: off -300 dB, on -7.24476 dB, at most 34 voices
+  ok    Selbstspiel: knocks become notes (and stay few)
+Wachsen & Brechen: zero crossings whole 531, half as long 1062
+  ok    Wachsen & Brechen: half the length sounds an octave higher
+Wachsen & Brechen: after 4 s alone 1.0994 times as long; 187 breaks, shortest 0.250055; switched off, furthest from 1: 0
+  ok    Wachsen & Brechen: pipes left alone grow
+  ok    Wachsen & Brechen: a hard knock breaks a pipe
+  ok    Wachsen & Brechen: switched off, every pipe finds back
+Fluestern: pipe on the left: left - right 5.24074 dB; on the right -5.24074 dB; looked at 0 dB; 15 cm from the left ear 16.6344 dB
+  ok    Fluestern: the near ear is much louder
+  ok    Fluestern: a pipe looked at is in both ears alike
+  ok    Fluestern: off = nothing added
+Fluestern: a carried pipe, 0.199999 m from the head, to the left: left - right 13.9487 dB
+  ok    Fluestern: a carried pipe at the ear
+Unmoeglicher Raum: 1.5 - 3 s after the note: as seen -62.3224 dB, four times the size -30.4118 dB (scale 1 / 4); half a metre from a wall: scale 3.0833
+  ok    Unmoeglicher Raum: a larger room is heard than the one seen
+  ok    Unmoeglicher Raum: the reverb grows near a wall
+Zeit als Entfernung: a second back, error 0; sharpest second difference on the way 0.0132532 (a 220 Hz sine has 0.0008)
+  ok    Zeit als Entfernung: in the present nothing changes
+  ok    Zeit als Entfernung: a second back is a second back
+  ok    Zeit als Entfernung: walking through time does not click
+  ok    Zeit als Entfernung: back in the present, exactly
+wear: after 3 s of a 6 s life 0.501125 (a pipe not played: 0); worn against new 2.77882 dB
+  ok    wear: a pipe ages while it sounds
+  ok    wear: the worn pipe sounds different
+  ok    wear: reset makes all pipes new
+sympathetic pipes: 16 ring along, -6.21346 dB against the pipe; still ringing at the end: 0
+  ok    sympathetic pipes ring along
+  ok    sympathetic pipes fall silent after the note
+pure tuning: fifth c'-g' beats 2.46195 -> 0.0640416 Hz (moved 2.60642 ct), wolf 12.9999 -> 0.357627 Hz (moved 17.3813 ct)
+  ok    pure tuning: the fifth stops beating
+  ok    pure tuning: the wolf is tamed
+Tonnetz walker (fifths from c'): 14 keys sounded, g' 1, d 1; voices left at the end 0
+  ok    Tonnetz walker: walks along the fifths
+  ok    Tonnetz walker: stops when the keys are let go
+Tonnetz walker in free tuning: 13 keys sounded, g' 1; voices left at the end 0
+  ok    Tonnetz walker: walks in free tuning too
+  ok    Tonnetz walker: stops in free tuning when the keys are let go
+ALL OK

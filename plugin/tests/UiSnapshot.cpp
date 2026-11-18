@@ -1553,6 +1553,11 @@ public:
                                     ? juce::String(std::getenv("RYSUM_PATCHES_FROM")).getIntValue()
                                     : 0;
             bool roomsOk = true, knocksOk = true;
+            // (the state before the factory patches: given back afterwards, so the later checks
+            // start from the same state with and without RYSUM_QUICK)
+            juce::MemoryBlock beforePatches;
+            if (!quick)
+                proc->getStateInformation(beforePatches);
             for (auto &f : quick ? juce::Array<juce::File>() : RysumProcessor::getPatchFiles())
             {
                 const int num = f.getFileNameWithoutExtension().getIntValue();
@@ -1832,6 +1837,20 @@ public:
             }
             // back to a plain state for the rest of the test
             proc->setRoute(0, -1, -1);
+            // (after playing the factory patches the last one is still loaded and would sound in
+            // the checks below, which expect the state they have with RYSUM_QUICK)
+            if (!quick)
+            {
+                proc->setStateInformation(beforePatches.getData(), (int)beforePatches.getSize());
+                for (int b = 0; b < 400; ++b)
+                {
+                    if (b % 20 == 0)
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(2);
+                    juce::MidiBuffer none;
+                    buf.clear();
+                    proc->processBlock(buf, none);
+                }
+            }
         }
 
         // modulation: LFO 1 -> global wind (a parameter), LFO 2 -> pipe direction with spread,

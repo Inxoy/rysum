@@ -1,0 +1,21 @@
+concert: the listener joins (player sees 1)  ok
+concert: the listener's controls are the player's (0 differ), the Verlauf came with it (1 lane)  ok
+concert: the listener keeps its own output, place and samples  ok
+concert: saving while listening keeps the listener's own setup (air 0.500, own 0.500)  ok
+concert: Selbstspiel stays off at the listener (0.00)  ok
+concert: the player's built-in room comes (yes), the listener stays where it walked (2.50)  ok
+concert: a held note sounds on through state changes (rms 0.0195, 0.0192), 4 states sent  ok
+concert: two notes 100 ms apart are 100.00 ms apart at the listener  ok
+concert: and they sounded (rms 0.0311)  ok
+concert: the Verlauf clock trails by 0.193 beats, the motion by 0.096 cycles (expected 0.2 / 0.1)  ok
+concert: a stop pulled and a note 2 ms later sound (rms 0.0024 -> 0.0156)  ok
+concert: a pipe thrown by the player flies the same at the listener (moved 6.29 m, at most 0.018 m off in flight, 0.037 m apart at rest)  ok
+concert: the player's knock is heard at the listener (1)  ok
+concert: the player's input comes (switch on), a click and a note played together are -2.94 ms apart at the listener, a tone reaches its input (peak 0.300)  FAIL
+concert: the player sees the listener in the Saal (1 figure, Anna), the listener sees the player (1, not itself)  ok
+concert: a listener's hands - nothing without leave (yes), knocking only with the first (yes, leave seen 1/2), the carried pipe follows its hand at the player (0.00 m off, 0.00 m in its own view), thrown 6.9 m, both see it at the same place (0.02 m)  ok
+concert: an unchanged piece sends no state (0 in 3 s)  ok
+concert: a late listener hears the held chord (rms 0.0015 -> 0.0580)  ok
+concert: the player gone, the listener falls silent (rms 0.00000)  ok
+concert: the listener's own setup is back (air 0.500)  ok
+shutdown: done

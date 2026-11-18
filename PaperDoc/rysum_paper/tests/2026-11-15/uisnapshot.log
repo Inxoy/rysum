@@ -1,0 +1,314 @@
+status: 287 Pfeifen geladen, 2 ersetzt
+bus layout with inputs: ok
+ir: Testkirche_ambix.wav · AmbiX 1. Ord. · 1.1 s
+energy with IR / dry: 1.33132  ok
+typed values: ok
+binaural: FABIAN (TU Berlin) · MagLS 3. Ordnung · diffusfeld-entzerrt · 2000 Richtungen, 48.0 kHz  ok
+binaural Praestant a' (az -40.7825): L/R -3.2609 dB, 36-ch bus: L/R -3.2609 dB, other channels 0  ok
+Halten: latched 1, third strike keeps it until key up 1, released 1, single strike normal 1, switching off releases 1  ok
+on-screen / computer keyboard notes reach the engine: ok
+factory patches: 181  ok
+load factory patch: ok
+save / load patch: ok
+factory warnings: none
+  01 Init: peak -12.4132 dB, rms W -23.2213 dB
+  02 Plenum: peak -6.82887 dB, rms W -19.9705 dB
+  03 Welle durch die Pfeifen: peak -9.92156 dB, rms W -21.9811 dB
+  04 Atmende Wolke: peak -8.65457 dB, rms W -23.2806 dB
+  05 Verfall: peak -9.42315 dB, rms W -21.535 dB
+  06 Gläserne Sprünge: peak -9.84781 dB, rms W -22.6801 dB
+  07 Praestant 16′ Grund: peak -8.81561 dB, rms W -19.8999 dB
+  08 Plenum mit 16′: peak -5.28787 dB, rms W -18.8553 dB
+  09 Tremulant-Flöte: peak -6.53856 dB, rms W -19.7342 dB
+  2 registers floating: peak -11.0482 dB, rms W -22.4989 dB
+  10 Kreisende Mixtur: peak -7.32286 dB, rms W -21.7751 dB
+  11 Werckmeister-Plenum: peak -9.21067 dB, rms W -21.1725 dB
+  12 Schwebung: peak -12.0789 dB, rms W -24.8111 dB
+  13 Sterbende Orgel: peak -11.7433 dB, rms W -24.0627 dB
+  14 Eingefroren: peak -8.81584 dB, rms W -19.4254 dB
+  15 Trompeten-Sprünge im Takt: peak -9.53394 dB, rms W -25.0689 dB
+  16 Glockenausklang: peak -3.06272 dB, rms W -19.3968 dB
+  17 Atem im Tempo: peak -10.7547 dB, rms W -23.8866 dB
+  18 Tiefe Wolke: peak -8.53447 dB, rms W -19.1031 dB
+  19 Raum folgt dem Schwarm: peak -3.80312 dB, rms W -16.2328 dB
+  20 Kathedrale im Kopf: peak -1.15301 dB, rms W -13.5168 dB
+  21 Zentrifuge: peak -4.77348 dB, rms W -19.1937 dB
+  22 Zerbrochene Stimmung: peak -8.34585 dB, rms W -22.018 dB
+  23 Taubenschwarm: peak -10.7398 dB, rms W -24.7862 dB
+  24 Absturz: peak -7.96545 dB, rms W -22.12 dB
+  25 Atem-Maschine: peak -8.83728 dB, rms W -25.1744 dB
+  26 16′ Erdbeben: peak -3.80573 dB, rms W -18.7397 dB
+  27 Kirche dreht sich: peak -5.86687 dB, rms W -18.6966 dB
+  28 Gefrorener Sturm: peak -3.95862 dB, rms W -19.5199 dB
+  29 Bitcrush-Liturgie: peak -8.23053 dB, rms W -22.3934 dB
+  30 Pendel im Takt: peak -7.73693 dB, rms W -19.7572 dB
+  31 Mechanik pur: peak -14.1978 dB, rms W -25.5917 dB
+  32 Glissando-Wolke: peak -5.54799 dB, rms W -19.5711 dB
+  33 Ferne Prozession: peak -8.53266 dB, rms W -21.5783 dB
+  34 Doppler-Karussell: peak -4.79734 dB, rms W -19.3976 dB
+  35 Werkstatt der Orgelbauer: peak -7.53014 dB, rms W -19.7418 dB
+  36 Abstrakten-Ballett: peak -9.61413 dB, rms W -22.8784 dB
+  37 Glut im Holz: peak -8.70062 dB, rms W -19.9698 dB
+  38 Altes Holz knackt: peak -9.07134 dB, rms W -21.518 dB
+  39 Undichte Lade: peak -8.38309 dB, rms W -21.6255 dB
+  40 Schlangengrube: peak -5.70809 dB, rms W -18.6788 dB
+  41 Gespaltene Pfeifen: peak -7.3324 dB, rms W -20.6654 dB
+  42 Obertonkarussell: peak -7.10631 dB, rms W -20.5119 dB
+  43 Echo-Kompass: peak -4.88972 dB, rms W -18.3669 dB
+  44 Spirale nach oben: peak -2.72229 dB, rms W -16.9047 dB
+  45 Tempo-Echos im Kreis: peak -6.80909 dB, rms W -19.1998 dB
+  46 Schrottplatz-Liturgie: peak -5.9855 dB, rms W -19.2527 dB
+  47 Geisterorgel: peak -8.45516 dB, rms W -22.074 dB
+  48 Uhrwerk: peak -6.86773 dB, rms W -18.8265 dB
+  49 Atmender Saal: peak 1.28816 dB, rms W -12.4061 dB
+  50 Wandernder Hörer: peak 0.0183028 dB, rms W -13.3414 dB
+  51 Spiegelkabinett: peak -9.19351 dB, rms W -23.054 dB
+  52 Kathedrale: peak 2.55244 dB, rms W -11.0589 dB
+  53 Flatterflur: peak -5.95672 dB, rms W -18.6597 dB
+  54 Schrumpfender Raum: peak -6.40053 dB, rms W -18.8148 dB
+  55 Glaswände, Samtboden: peak -7.20681 dB, rms W -20.886 dB
+  56 Sterbender Wind: peak -26.4049 dB, rms W -38.9305 dB
+  57 Pfeifende Gedackte: peak -8.0481 dB, rms W -19.2266 dB
+  58 Erlahmendes Gebläse: peak -8.03461 dB, rms W -21.8281 dB
+  59 Lucier – Ich sitze in einem Raum: peak -10.0432 dB, rms W -21.4924 dB
+  60 Lucier – Wachsende Generationen: peak -10.6569 dB, rms W -21.9457 dB
+  61 Lucier – Kammer aus Glas: peak -12.621 dB, rms W -27.3039 dB
+  62 Lucier atmet: peak -9.1755 dB, rms W -21.3306 dB
+  63 Lucier im Dom: peak 1.44535 dB, rms W -14.6721 dB
+  64 Druck – Schwellwerk: peak -19.8313 dB, rms W -32.2461 dB
+  65 Gleiten – Pfeifen wandern: peak -9.77135 dB, rms W -21.6641 dB
+  66 Druck öffnet den Wind: peak -23.1946 dB, rms W -36.2618 dB
+  67 Vibrato unter dem Finger: peak -10.3728 dB, rms W -23.5337 dB
+  68 Szenen – Vom Flüstern zum Plenum: peak -23.5668 dB, rms W -33.9975 dB
+  69 Szenen – Der Raum öffnet sich: peak -7.16152 dB, rms W -18.6848 dB
+  70 Szenen – Wanderung von selbst: peak -6.8729 dB, rms W -20.225 dB
+  71 Szenen – Verfall in vier Stufen: peak -8.86798 dB, rms W -20.5488 dB
+  72 Eingang – Stimme kreist [Eingang]: peak -24.1647 dB, rms W -36.0967 dB
+  73 Eingang – Auf der Mixtur [Eingang]: peak -11.6217 dB, rms W -25.6433 dB
+  74 Eingang – Ich sitze in einem Raum [Eingang]: peak -25.7867 dB, rms W -36.6441 dB
+  75 Eingang – Tasten öffnen die Stimme [Eingang]: peak -16.2974 dB, rms W -30.3073 dB
+  76 Eingang steuert die Orgel [Eingang]: peak -14.845 dB, rms W -27.1641 dB
+  77 Eingang im Spiegelsaal [Eingang]: peak -14.9703 dB, rms W -29.9902 dB
+  78 Eingang – Echo-Kompass [Eingang]: peak -24.0327 dB, rms W -36.5415 dB
+  79 Eingang zerfällt [Eingang]: peak -20.3905 dB, rms W -33.3393 dB
+  80 Lucier – Stück für Orgel: peak -7.7919 dB, rms W -19.7393 dB
+  81 Jeder Ton ein Register: peak -11.4744 dB, rms W -22.8108 dB
+  82 Akkord über die Register: peak -16.0245 dB, rms W -26.5782 dB
+  83 Vier Räume: peak 1.62766 dB, rms W -14.5594 dB
+  84 Verstreute Pfeifen: peak -14.7139 dB, rms W -27.9006 dB
+  85 Nah und fern: peak -8.06462 dB, rms W -20.5633 dB
+  86 Saal – Um die Ecke: peak 0.511959 dB, rms W -12.0554 dB
+  87 Saal – Rotunde (Flüstergalerie): peak 0.278369 dB, rms W -15.0065 dB
+  88 Saal – Kreuzkirche: peak 1.31401 dB, rms W -13.177 dB
+  89 Saal – Fächer: peak 0.610975 dB, rms W -13.1511 dB
+  90 Saal – Der Grundriss atmet: peak 0.62304 dB, rms W -11.9339 dB
+  91 Raumverfall – Verwittern: peak -6.28722 dB, rms W -18.5373 dB, erosion up to 0.07
+  92 Raumverfall – Raster: peak -7.47643 dB, rms W -21.178 dB
+  93 Raumverfall – Kugel aus Sand: peak -8.35225 dB, rms W -20.5181 dB
+  94 Raumverfall – Geisterrichtungen: peak -6.61803 dB, rms W -20.2121 dB
+  95 Raumverfall – Die Kugel atmet aus: peak -6.95595 dB, rms W -20.3819 dB, erosion up to 0.88
+  96 Wolke – Flirrende Mixtur: peak -7.06974 dB, rms W -20.3973 dB, grains up to 27
+  97 Wolke – Die Orgel löst sich auf: peak -5.90691 dB, rms W -18.606 dB, grains up to 175
+  98 Wolke – Chor aus allen Richtungen: peak -11.6168 dB, rms W -23.3733 dB, grains up to 100
+  99 Wolke kreist im Saal: peak 0.479918 dB, rms W -13.619 dB, grains up to 64, erosion up to 0.03
+  100 Ansprache – Weiche Rede: peak -10.0437 dB, rms W -21.498 dB
+  101 Ansprache – Schärfe: peak -11.0067 dB, rms W -23.5211 dB
+  102 Ansprache – Nur das Anblasen: peak -16.1138 dB, rms W -37.7372 dB
+  103 Ansprache – Krähende Pfeife: peak -11.3871 dB, rms W -23.5025 dB
+  104 Abriss – Atem: peak -12.6046 dB, rms W -23.2194 dB
+  105 Abriss – Seufzer im Kirchenschiff: peak -4.37267 dB, rms W -18.1254 dB
+  106 Obertöne – Glasorgel: peak -11.7994 dB, rms W -24.1133 dB
+  107 Obertöne – Unter der Decke: peak -12.1065 dB, rms W -24.9639 dB
+  108 Obertöne – Nadelanschlag: peak -9.38261 dB, rms W -22.647 dB
+  109 Luft umkehren – Ferne Präsenz: peak -8.29108 dB, rms W -20.8251 dB
+  110 Klick-Resonanz – Die Traktur singt: peak -31.9946 dB, rms W -43.9949 dB
+  111 Klick-Resonanz – Tasten wie Glocken: peak -30.853 dB, rms W -42.3071 dB
+  112 Glitch – Stottern: peak -11.5123 dB, rms W -23.89 dB
+  113 Glitch – Bandschnitt: peak -10.0433 dB, rms W -21.502 dB
+  114 Glitch – Harte Kanten: peak -9.81477 dB, rms W -23.2671 dB
+  115 Glitch – Clipping-Gewitter: peak -13.8277 dB, rms W -27.3748 dB
+  116 Atmende Ansprache: peak -11.3871 dB, rms W -23.5458 dB
+  117 Alles zerfällt: peak -8.29145 dB, rms W -22.2348 dB, erosion up to 0.05
+  118 Anschlag – Vom Hauch zum Schrei: peak -8.93613 dB, rms W -23.9631 dB, grains up to 39
+  119 Modrad – Kirche wird Maschine: peak 0.401322 dB, rms W -14.9269 dB, grains up to 40, erosion up to 0.60
+  120 Tonhöhenrad – Atemnot: peak -7.90544 dB, rms W -23.5545 dB
+  121 Druck – Die Pfeife unter dem Finger: peak -22.9298 dB, rms W -37.0708 dB
+  122 Lange Wanderung: peak -6.46897 dB, rms W -20.628 dB, grains up to 159, erosion up to 0.26
+  123 Anschlag – Glas zerspringt: peak -8.28352 dB, rms W -22.8816 dB
+  124 Zufall je Ton – Kein Ton gleich: peak -3.33356 dB, rms W -17.497 dB, grains up to 43
+  125 Modrad – Die Orgel verdunstet: peak -6.09779 dB, rms W -22.6622 dB, grains up to 151, erosion up to 0.85
+  126 Uhrwerk der Traktur: peak -13.0151 dB, rms W -27.8956 dB
+  127 Der Organist hat getrunken: peak -14.9239 dB, rms W -28.2082 dB
+  128 Hüllkurve – Jeder Ton zerfällt: peak -8.78793 dB, rms W -24.7931 dB, grains up to 40
+  129 Modrad – Vier Orgeln: peak -1.49554 dB, rms W -19.0346 dB, grains up to 219, erosion up to 0.35
+  130 Tonhöhenrad – Schwerkraft: peak -2.14662 dB, rms W -19.2123 dB, grains up to 40
+  131 Druck & Gleiten – Kontinuum: peak -21.2497 dB, rms W -37.7716 dB
+  132 Langsame Erosion: peak -8.84719 dB, rms W -22.4118 dB, grains up to 57, erosion up to 0.40
+  133 Anschlag – Explosion: peak -4.95845 dB, rms W -19.5993 dB, grains up to 81, erosion up to 0.70
+  134 Schwebungsraum – Die Stimmung tanzt: peak -9.58184 dB, rms W -23.9001 dB
+  135 Schwebungsraum – Wolfsgeheul: peak -11.5544 dB, rms W -28.1465 dB
+  136 Schwebung als Licht: peak -7.62368 dB, rms W -21.6427 dB, grains up to 94
+  137 Differenztöne – Resultantbass: peak -8.41951 dB, rms W -22.3632 dB
+  138 Differenztöne – Geister zwischen den Pfeifen: peak -9.39091 dB, rms W -23.6926 dB
+  139 Eis-Saal: peak -8.33108 dB, rms W -23.1105 dB
+  140 Eis-Saal – Gefrorene Rotunde: peak -7.16081 dB, rms W -22.0315 dB
+  141 Doppelbelichtung – Spiegelbild: peak -8.77301 dB, rms W -21.4696 dB
+  142 Doppelbelichtung – Echo der Vergangenheit: peak -9.65245 dB, rms W -23.6271 dB
+  143 Belichtung – Lichtspuren: peak -7.38944 dB, rms W -22.6912 dB
+  144 Belichtung – Zwanzig Sekunden: peak -9.51063 dB, rms W -23.2009 dB
+  145 Tonnetz – Die Stimmung als Landkarte: peak -11.1177 dB, rms W -25.2143 dB
+  146 Tonnetz – Die Karte schwebt: peak -11.1246 dB, rms W -23.9864 dB
+  147 Die Stimmung wird Raum: peak -9.8484 dB, rms W -24.5141 dB, grains up to 39
+  148 Kalkant – Der Atem geht aus: peak -8.26359 dB, rms W -24.2346 dB
+  149 Gebläse – Schwere Akkorde: peak -19.258 dB, rms W -32.8539 dB
+  150 Zögernde Tasten: peak -9.89518 dB, rms W -21.4933 dB
+  151 Ventil unter dem Finger (Druck): peak -33.0991 dB, rms W -61.4468 dB
+  152 Gang durch die Orgel: peak -5.80663 dB, rms W -19.902 dB
+  153 Im Kreis um die Pfeifen: peak -13.4803 dB, rms W -24.6476 dB
+  154 Das Stück nutzt die Orgel ab: peak -8.63326 dB, rms W -21.7639 dB
+  155 Mitklingende Pfeifen: peak -9.73171 dB, rms W -21.1096 dB
+  156 Reinheit – Der Akkord rastet ein: peak -12.5055 dB, rms W -23.6099 dB
+  157 Tonnetz-Wanderer – Quintenweg: peak -6.18215 dB, rms W -20.204 dB
+  158 Tonnetz-Wanderer – Heimweh: peak -12.202 dB, rms W -24.3502 dB
+  159 Lebendige Orgel: peak -10.549 dB, rms W -21.7592 dB
+  160 Krypta – Pfeifen im Dunkeln: peak -6.40419 dB, rms W -20.7936 dB, knocks 89, room rysum_krypta.obj (dark)
+  161 Kapelle – Glühwürmchen: peak -6.8108 dB, rms W -21.3979 dB, knocks 21, room rysum_kapelle.obj (dark)
+  162 Hallenkirche – Zinnhagel: peak -5.4022 dB, rms W -20.5124 dB, knocks 699, room rysum_hallenkirche.obj
+  163 Treppenturm – Holz fällt die Stufen hinab: peak -6.80586 dB, rms W -21.132 dB, knocks 979, room rysum_treppenturm.obj
+  164 Rotunde – Billard: peak -7.18769 dB, rms W -21.4124 dB, knocks 6958, room rysum_rotunde.obj
+  165 Kreuzgang – Strömung um den Hof: peak -4.27867 dB, rms W -20.7284 dB, knocks 18, room rysum_kreuzgang.obj
+  166 Rotunde im Dunkeln – Umlaufbahn: peak -7.00561 dB, rms W -21.1679 dB, knocks 315, room rysum_rotunde.obj (dark)
+  167 Fliehende Trompeten: peak -7.60457 dB, rms W -21.3769 dB, knocks 29
+  168 Wachsen und Brechen: peak -6.7294 dB, rms W -20.5999 dB, knocks 315
+  169 Flüstern am Ohr: peak -7.10527 dB, rms W -21.0103 dB, knocks 193
+  170 Hallenkirche – Rückwärts durch die Zeit: peak -6.59074 dB, rms W -26.2969 dB, room rysum_hallenkirche.obj
+  171 Kapelle sehen, Kathedrale hören: peak -6.55536 dB, rms W -20.439 dB, room rysum_kapelle.obj
+  172 Kreuzgang – Die Wand öffnet sich: peak -6.45701 dB, rms W -20.8735 dB, knocks 3, room rysum_kreuzgang.obj
+  173 Hallenkirche im Dunkeln – Lichtorgel: peak -6.32917 dB, rms W -20.8338 dB, knocks 39, room rysum_hallenkirche.obj (dark)
+  174 Modrad – Vom Schweben zum Sturz: peak -5.37215 dB, rms W -20.5421 dB, knocks 544
+  175 Treppenturm im Dunkeln – Selbstspiel: peak -6.64578 dB, rms W -21.1136 dB, knocks 1201, room rysum_treppenturm.obj (dark)
+  LFOMovement: peak -8.82322 dB, rms W -24.1828 dB
+  Pitchdrift: peak -12.0616 dB, rms W -24.0847 dB
+  RotierenderPraestant: peak -9.29571 dB, rms W -22.0142 dB
+  soundscape generator: peak -2.40907 dB, rms W -15.2925 dB
+  Test Patch: peak -9.91109 dB, rms W -21.7785 dB
+all factory patches play: ok
+patches with a room load it: ok
+the 3D Saal's patches knock: ok
+a saved patch keeps its built-in room: ok
+  expression 118 Anschlag – Vom Hauch zum Schrei: velocity 25 -> 120: level 9.8 dB, brightness 0.1 dB; mod wheel 0 -> 127: level 0.1 dB, brightness 0.0 dB, change -6.6 dB; pitch wheel down: change 2.4 dB
+  expression 119 Modrad – Kirche wird Maschine: velocity 25 -> 120: level 0.0 dB, brightness 0.0 dB; mod wheel 0 -> 127: level 2.6 dB, brightness 9.8 dB, change 4.9 dB; pitch wheel down: change 2.3 dB
+  expression 120 Tonhöhenrad – Atemnot: velocity 25 -> 120: level -0.0 dB, brightness 0.2 dB; mod wheel 0 -> 127: level 0.4 dB, brightness 0.2 dB, change -2.7 dB; pitch wheel down: change 0.0 dB
+  expression 121 Druck – Die Pfeife unter dem Finger: velocity 25 -> 120: level -0.2 dB, brightness 0.1 dB; mod wheel 0 -> 127: level 0.1 dB, brightness 0.0 dB, change -0.7 dB; pitch wheel down: change 3.3 dB
+  expression 122 Lange Wanderung: velocity 25 -> 120: level 5.7 dB, brightness -0.5 dB; mod wheel 0 -> 127: level -0.1 dB, brightness 0.5 dB, change -1.8 dB; pitch wheel down: change 2.1 dB
+  expression 123 Anschlag – Glas zerspringt: velocity 25 -> 120: level -0.2 dB, brightness 0.4 dB; mod wheel 0 -> 127: level -1.4 dB, brightness 3.9 dB, change 2.4 dB; pitch wheel down: change 2.2 dB
+  expression 124 Zufall je Ton – Kein Ton gleich: velocity 25 -> 120: level 4.8 dB, brightness 1.0 dB; mod wheel 0 -> 127: level 3.0 dB, brightness -4.3 dB, change 4.8 dB; pitch wheel down: change 3.7 dB
+  expression 125 Modrad – Die Orgel verdunstet: velocity 25 -> 120: level 0.1 dB, brightness -0.0 dB; mod wheel 0 -> 127: level -15.9 dB, brightness 0.4 dB, change 0.1 dB; pitch wheel down: change 2.2 dB
+  expression 126 Uhrwerk der Traktur: velocity 25 -> 120: level -0.2 dB, brightness 0.3 dB; mod wheel 0 -> 127: level -1.1 dB, brightness 0.4 dB, change 1.2 dB; pitch wheel down: change 2.5 dB
+  expression 127 Der Organist hat getrunken: velocity 25 -> 120: level 4.6 dB, brightness 0.7 dB; mod wheel 0 -> 127: level 1.6 dB, brightness -1.1 dB, change 3.3 dB; pitch wheel down: change 3.9 dB
+  expression 128 Hüllkurve – Jeder Ton zerfällt: velocity 25 -> 120: level 0.7 dB, brightness -0.3 dB; mod wheel 0 -> 127: level -0.6 dB, brightness 4.4 dB, change -6.8 dB; pitch wheel down: change 2.3 dB
+  expression 129 Modrad – Vier Orgeln: velocity 25 -> 120: level 2.3 dB, brightness -0.2 dB; mod wheel 0 -> 127: level 1.2 dB, brightness -4.6 dB, change 4.2 dB; pitch wheel down: change 1.3 dB
+  expression 130 Tonhöhenrad – Schwerkraft: velocity 25 -> 120: level 3.8 dB, brightness 0.2 dB; mod wheel 0 -> 127: level -0.4 dB, brightness -0.3 dB, change -3.8 dB; pitch wheel down: change 0.5 dB
+  expression 131 Druck & Gleiten – Kontinuum: velocity 25 -> 120: level -0.0 dB, brightness 0.0 dB; mod wheel 0 -> 127: level -13.8 dB, brightness 1.1 dB, change -2.0 dB; pitch wheel down: change 2.3 dB
+  expression 132 Langsame Erosion: velocity 25 -> 120: level -0.5 dB, brightness 0.1 dB; mod wheel 0 -> 127: level 0.5 dB, brightness -0.2 dB, change -1.5 dB; pitch wheel down: change 2.7 dB
+  expression 133 Anschlag – Explosion: velocity 25 -> 120: level 4.8 dB, brightness 18.9 dB; mod wheel 0 -> 127: level 0.1 dB, brightness -0.1 dB, change 3.0 dB; pitch wheel down: change 3.2 dB
+wind modulated: base 0 range 0 .. 0.399688  ok
+raum shows modulation: silent 41.9716, sounding 47.9429  ok
+slot 20: ok
+not modulated -> NaN: ok
+MIDI learn knob: waiting 1, learned CC 21 ch 2 1, follows 1, range 0.2..0.8, other channel ignored 1  ok
+MIDI learn button: 1111  ok
+learned CC 11 replaces the fixed map: ok
+MIDI assignments in the state 1, saved for new instances 1  ok
+a new instance starts with them: ok
+scala file: loaded 1, tuning 19, free notes 1, in the state 1 (rysum_test_19edo.scl · 19 Stufen · Periode 1200.0 ct)  ok
+MTS SysEx: MIDI Tuning (MTS-ESP) empfangen; note 69 sounds at 466.243 Hz (0.295589 ct from 466.16)  ok
+drawn path: 120 points after the state round trip, pipe 0 at az -6.56216 el 28.0099  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_spieltisch.png
+Spieltisch buttons do not overlap: ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_spieltisch_raumverfall.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_spieltisch_glitch_resonanz.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_raum.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_raum_tonnetz.png
+Raum: Tonnetz and Schwebung buttons ok
+input through the processor: out peak 0.060688, shown sources 2  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_eingang.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_klang.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_klang_transaural.png
+transaural in the plugin: ±90° · Übersprechen -32 dB (ohne -9) · ITD 0.72 ms · +5.3 ms
+loudspeakers 7.1.4: 11 of 12 channels sound, LFE 0, above 12: 0  ok
+loudspeaker layout in the state: ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_lautsprecher.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_mod.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_klang_wind2.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_midi.png
+default look = plugin look (menus, dialogs): ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_menu.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_effekte_ordner.png
+own sounds from a chosen folder: read 2, from the state 1, back to standard 1  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_effekte.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_effekte_stimmung_belichtung.png
+wear in the project state: ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_effekte_lebendige_orgel.png
+living organ in the plugin: bellows pressure down to 0.0679379, listener at 4.90988 / 0.907856 m  ok
+Saal: Nachhall: 1500 Strahlen · T30 2.63 s tief / 1.02 s hoch · Antwort 3.2 s, 1. Ordnung, 4 dekorrelierte Kanäle  ok
+Saal: engine RT 2.63237 s, tail in use 77, 4 sounds with reflections  ok
+Lucier: Saal 12 × 26 × 10 m, 1503 Eigenmoden bis 121 Hz, gen 1, 5 resonances, first 91.8732 Hz, engine level 0.0939924  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal.png
+Lucier piece: mode 1, recorded 2.98667 s, saved 1, reached generation 2, level from gen 1 0.380479, ended 1  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal_stueck.png
+rooms: used mask 3, room 2 RT 2.8801 s, tail in use 16  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal_raeume.png
+Saal plan l: RT 2.63237 s (shoebox 2.63237 s), 10 sounds with reflections, Nachhall: 1500 Strahlen · T30 2.63 s tief / 1.02 s hoch · Antwort 3.2 s, Stereo, 2 dekorrelierte Kanäle
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal_plan_l.png
+Saal plan kreuz: RT 2.63237 s (shoebox 2.63237 s), 8 sounds with reflections, Nachhall: 1500 Strahlen · T30 2.63 s tief / 1.02 s hoch · Antwort 3.2 s, Stereo, 2 dekorrelierte Kanäle
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal_plan_kreuz.png
+Saal plan rund: RT 2.63237 s (shoebox 2.63237 s), 8 sounds with reflections, Nachhall: 1500 Strahlen · T30 2.63 s tief / 1.02 s hoch · Antwort 3.2 s, Stereo, 2 dekorrelierte Kanäle
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal_plan_rund.png
+Saal plan gezeichnet: RT 2.63237 s (shoebox 2.63237 s), 8 sounds with reflections, Nachhall: 1500 Strahlen · T30 2.63 s tief / 1.02 s hoch · Antwort 3.2 s, Stereo, 2 dekorrelierte Kanäle
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal_plan_gezeichnet.png
+drawn floor plan: 5 corners after the state round trip  ok
+MIDI-Tasten: 368 buttons, 0 without a path of their own  ok
+MIDI-Tasten: CC -> page button: "CC 30 · K1"  ok
+MIDI-Tasten: note -> switch: "Note C2 · K10"  not while assigning 1, silent 1, flipped 1, saved 1  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_midi_tasten.png
+MIDI-Tasten: held button follows the MIDI button  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_immersiv.png
+Begehen immersiv: fills the window 1, controls shown 0, afterwards 27  ok
+Zeit als Entfernung (plugin): hearing 4.90796 s back; energy there 4.73938e-07, back in the present 51.3646, then 0 s back  ok
+Hoerraum (plugin): reverb time as seen 2.63237 s, four times the size 10.5246 s, back 2.63512 s  ok
+Fluestern (plugin, binaural): left - right without 3.71485 dB, with 12.7054 dB; the left ear changes by 1.58963 dB  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen.png
+Begehen: view on 1  ok
+Begehen: walked 3.2 m forwards, listener in the engine 3.19992 m  ok
+Begehen: yaw 90  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_gedreht.png
+Begehen: model 192 triangles, 12.8 x 24.8 x 9.2 m  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_modell.png
+Begehen: model after the state round trip loaded  ok
+Begehen: read with Y up 12.8 x 9.2 x 24.8 m  ok
+Begehen: one triangle without a final line end: 1, 1.5 x 2.25 x 0.5  ok
+Begehen: 80000 triangles: 44.9452 ms per frame (1280 px wide)  ok
+Begehen: all stops: 47.7745 ms per frame (geometry 2.6744 ms, 3D total 43.609 ms, raster + shade 40.2 ms, 6 workers, 4588 triangles, 1280 px wide)  ok
+Begehen: adapting, the Saal settles at 538 px wide (3D 7.2148 ms, geometry 1.3894 ms)  ok
+Begehen: adapting, 80,000 triangles settle at 538 px wide (3D 13.3704 ms, geometry 7.2074 ms)  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_alle.png
+Begehen: materials from the absorption (curtain, wood, stone, glass, mirror; curtain darker than stone)  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_vorhang.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_holz.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_glas.png
+Begehen: cross-shaped plan, at -6 / 4.5 m 11 sounding pipes heard around the corner  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_kreuz.png
+room motion: 261 knocks in 3.2 s, output peak -3.08427 dB, body shown yes  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_begehen_flug.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_saal_flug.png
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_effekte_aufprall.png
+Begehen: leaving the view gives the listener back yes  ok
+scenes: at 25 % vol -7 dB trem 0, at 75 % vol -1 dB trem 1 leaks 0.6, master unchanged 1, kept in the state 1  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_spieltisch.png
+dice: changed 1, stops pulled 4, master kept 1, undo restores (worst 0)  ok
+wrote D:\RYSUM_plugin\paper_v12_work\runs\ui\ui_orgel.png
+full screen: 0 0 1920 1080, moved 1, back with Esc 1  ok
+state bytes: 32268  round trip identical
+done
+shutdown: done

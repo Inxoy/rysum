@@ -140,6 +140,28 @@ each pipe before it is placed in space ("pro Pfeife") or to the whole output
 ("Summe"); *Windschwankung* also gets disproportionately wilder towards 100 %. The
 keyboard strip can be clicked to play.
 
+**Vox humana** – a ninth stop without samples: a neural network (NeuralRysum v2, trained on
+renderings of this plugin; see `docs/NeuralRysum_v2_paper.md`) synthesises the organ from the
+held keys, in the plugin's tuning (temperaments, Stimmton, Scala, MTS-ESP). On the Spieltisch it
+has a knob like the other stops with *Lautstärke* and *Wind* (less wind = duller, breathier,
+quieter). *Vox …* opens the rest:
+- the timbre: *Klangfarbe X / Y* (moves through the registrations the network has learned),
+  *Helligkeit*, *Hauch* (noise), *Breite*; *Klangfarbe folgt dem Eingang* lets the audio input's
+  brightness steer the timbre instead of the knobs;
+- *Eingang spielt die Orgel*: the network listens to the audio input (a voice, a guitar, a mix),
+  finds up to 8 notes in it and plays them – on the Vox humana and, as notes on MIDI channel 16
+  folded into the compass, on the pulled sample stops. *Erkennungsschwelle* (higher = fewer, surer
+  notes), *Bestätigung* (how long a pitch must be heard before it starts), *Stimmen* (1–8).
+- On the Raum page it has its own row under the audio input: *Lautstärke*, *Hall-Anteil*,
+  *Richtung*, *Höhe*, *Abstand* and *eigener Raum* (its learned room); drag its symbol in the top
+  view. It is placed like the audio input (rooms, early reflections, everything after the pipes).
+- In the 3D Saal its eight voices are glass pipes as long as the pitch they sing, with collars that
+  light up with the bands of their harmonics (16′, 8′, 5⅓′, 4′ …).
+- All its controls are modulation targets (group *Vox humana*) and can have Verlauf lanes.
+- Weak spots: the lowest octave is detected slowly and sometimes an octave too high, a key repeated
+  quickly becomes one note, a dense mix is reduced to its 8 strongest pitches. CPU: about 4 % of
+  one core played from the keys, 15 % with the input playing it.
+
 **Raum** – every pipe of every stop as a small dot (top view: centre = zenith, edge = horizon,
 outside the circle = below the horizon). Select a stop on the right, then
 - drag a dot to move one pipe,
