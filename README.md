@@ -5,6 +5,8 @@ Sample-based plugin of the Rysum organ (c. 1457, ¼-comma meantone, a′ ≈ 444
 placement in stereo or AmbiX up to 5th order, moving pipes and a degradation
 ("Verfall") section.
 
+![Rysum: the organ page](PaperDoc/rysum_paper/screens/ui_orgel.jpg)
+
 ## 1. Build (Windows, once)
 
 Needs: Visual Studio 2022 (workload "Desktop development with C++") and CMake.
@@ -128,6 +130,8 @@ samples played an octave lower (it comes first in the lists; its parameters are 
 others, so older projects and patches still load). Default volumes are set so all stops start
 about equally loud (measured K-weighted loudness of all pipes, including their default distance).
 
+![Spieltisch page](PaperDoc/rysum_paper/screens/ui_spieltisch.jpg)
+
 **Spieltisch** – click the stop knobs (photos) to pull/push stops. Under every stop:
 *Lautst.* (volume, −48…+12 dB) and *Wind* – how far the stop is drawn: below 100 % the
 pipes get quieter, flatter, unsteady and duller, at 0 % they are silent (move it while
@@ -161,6 +165,10 @@ quieter). *Vox …* opens the rest:
 - Weak spots: the lowest octave is detected slowly and sometimes an octave too high, a key repeated
   quickly becomes one note, a dense mix is reduced to its 8 strongest pitches. CPU: about 4 % of
   one core played from the keys, 15 % with the input playing it.
+
+![Raum page](PaperDoc/rysum_paper/screens/ui_raum.jpg)
+
+![Raum page with the audio input selected](PaperDoc/rysum_paper/screens/ui_eingang.jpg)
 
 **Raum** – every pipe of every stop as a small dot (top view: centre = zenith, edge = horizon,
 outside the circle = below the horizon). Select a stop on the right, then
@@ -225,6 +233,10 @@ outside the circle = below the horizon). Select a stop on the right, then
     the project rate and normalised automatically; changing these settings or the output format
     rebuilds the room in the background (~½ s).
 
+![Saal page](PaperDoc/rysum_paper/screens/ui_saal.jpg)
+
+![The 3D Saal (Begehen)](PaperDoc/rysum_paper/screens/ui_begehen.jpg)
+
 **Saal** – a simulated room instead of the impulse response, made to be played. *Saal an*
 switches it on (the IR on the Raum page pauses meanwhile and comes back when it is off).
 - How it works:
@@ -273,6 +285,8 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
   through it. Patches 49–55 show some of this.
 - CPU: reflections up to 2nd order are the sensible default; 3rd order with many pipes is heavy.
   Up to 48 sounds get their own reflections at a time (all of them still reach the tail).
+
+![Klang page](PaperDoc/rysum_paper/screens/ui_klang.jpg)
 
 **Klang**
 - *Stimmung*: besides the historical temperaments below there are exotic tunings. Twelve notes
@@ -349,6 +363,10 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
 - *Kopfhörer (binaural)*: *Binaural an* switches the output to binaural (and back to
   stereo), order, own SOFA file, head rotation, diffuse-field EQ – see section 2.
 
+![Effekte page](PaperDoc/rysum_paper/screens/ui_effekte.jpg)
+
+![Effekte page, tab Summe](PaperDoc/rysum_paper/screens/ui_effekte_summe.jpg)
+
 **Effekte** – sounds that are easy to locate (short, bright, full of transients) and that
 follow the pipes. Everything is off in older patches.
 - Tab *Summe* (mixing / mastering): the last step of everything that goes out – stereo,
@@ -380,6 +398,8 @@ follow the pipes. Everything is off in older patches.
   (*Drehung*, *Neigung* per repeat), quieter by *Abnahme* and darker by *Dämpfung*. *Im Tempo*
   uses a note value instead of *Zeit*. The little circle shows where the repeats come from
   (top view, front up). Echoes also go into the Hall from their own direction.
+
+![Modulation page](PaperDoc/rysum_paper/screens/ui_mod.jpg)
 
 **Modulation**
 - *LFO 1–4*: shape (sine, triangle, saw, square, random steps, smooth random), *Tempo*
@@ -416,6 +436,8 @@ follow the pipes. Everything is off in older patches.
   are automatable parameters; sources and targets of the slots are saved with the project.
 - **MIDI-Regler** (the second tab of *Zuordnungen*): knobs, faders and buttons of your MIDI
   keyboard on any control of the plugin – see section 4.
+
+![Verlauf page](PaperDoc/rysum_paper/screens/ui_verlauf.jpg)
 
 **Verlauf** – automation over time, like the automation lanes of a DAW, but inside the plugin
 and with things a hand can't do: exact, long, synchronised changes of many controls, textures,
@@ -562,6 +584,8 @@ The project in Reaper still remembers everything on its own, patches are extra.
 
 ### Konzert – playing for listeners on other computers
 
+![Konzert window](PaperDoc/rysum_paper/screens/ui_konzert.jpg)
+
 One person plays, others listen, each on their own computer with the plugin (best the standalone)
 and the samples. **No sound travels over the network, only the playing**: every listener's computer
 renders the organ itself, from wherever they stand and walk in the 3D Saal, with their own output
@@ -652,6 +676,8 @@ All stops and settings are plugin parameters, so they can be automated or
 MIDI-learned in Reaper.
 
 ### Your own knobs and faders (MIDI learn)
+
+![MIDI learn: the Zuordnungen on the Modulation page](PaperDoc/rysum_paper/screens/ui_midi.jpg)
 
 The knobs, faders and pads of a MIDI keyboard send *control change* messages (CC): a
 controller number (0–119) and a value 0–127, on a MIDI channel. A host like Ableton maps
