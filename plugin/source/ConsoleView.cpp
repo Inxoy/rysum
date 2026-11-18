@@ -429,7 +429,13 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
     voxMore.onClick = [this]
     {
         auto panel = std::make_unique<VoxPanel>(proc);
-        juce::CallOutBox::launchAsynchronously(std::move(panel), voxMore.getScreenBounds(), nullptr);
+        // inside the editor (not on the desktop): so its rows find the modulation menu (right-click)
+        auto *host = dynamic_cast<juce::Component *>(findParentComponentOfClass<ModUiAccess>());
+        if (host != nullptr)
+            juce::CallOutBox::launchAsynchronously(std::move(panel), host->getLocalArea(&voxMore, voxMore.getLocalBounds()),
+                                                   host);
+        else
+            juce::CallOutBox::launchAsynchronously(std::move(panel), voxMore.getScreenBounds(), nullptr);
     };
 
     testToneButton.setClickingTogglesState(true);

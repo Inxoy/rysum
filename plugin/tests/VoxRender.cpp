@@ -315,6 +315,39 @@ private:
         shoot(0, "ui_spieltisch.png");
         shoot(1, "ui_raum_vox.png", [&] { if (auto *s = findSpace(editor.get())) s->selectVox(); });
         shoot(2, "ui_saal.png");
+        // the Vox panel opened from the Spieltisch: inside the editor, so its rows have the modulation menu
+        {
+            std::function<juce::Component *(juce::Component *)> findVoxMore = [&](juce::Component *c) -> juce::Component *
+            {
+                if (auto *b = dynamic_cast<juce::TextButton *>(c); b != nullptr && b->getButtonText().startsWith("Vox "))
+                    return b;
+                for (auto *ch : c->getChildren())
+                    if (auto *f = findVoxMore(ch))
+                        return f;
+                return nullptr;
+            };
+            std::function<int(juce::Component *, bool)> rowsWithMenu = [&](juce::Component *c, bool inPanel) -> int
+            {
+                inPanel = inPanel || dynamic_cast<rysum::ui::VoxPanel *>(c) != nullptr;
+                int n = inPanel && dynamic_cast<rysum::ui::ParamRow *>(c) != nullptr &&
+                                c->findParentComponentOfClass<rysum::ui::ModUiAccess>() != nullptr
+                            ? 1
+                            : 0;
+                for (auto *ch : c->getChildren())
+                    n += rowsWithMenu(ch, inPanel);
+                return n;
+            };
+            shoot(0, "ui_spieltisch.png", [&]
+                  {
+                      if (auto *b = dynamic_cast<juce::Button *>(findVoxMore(editor.get())))
+                          b->triggerClick();
+                  });
+            pump(300);
+            writePng(editor->createComponentSnapshot(editor->getLocalBounds(), true, 1.0f), "ui_vox_panel_open.png");
+            std::cout << "vox panel rows with the modulation menu: " << rowsWithMenu(editor.get(), false) << std::endl;
+            juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
+            pump(100);
+        }
         {
             rysum::ui::VoxPanel panel(*proc);
             panel.setLookAndFeel(&lnf.get());
