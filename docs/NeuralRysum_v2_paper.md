@@ -624,7 +624,7 @@ v2 is built into the sample-based Rysum plugin as a ninth stop, *Vox humana 8′
 
 | Page | What it shows |
 |---|---|
-| Spieltisch | the knob *Vox humana* with Lautstärke and Wind, like the other stops; *Vox …* opens the timbre controls (Klangfarbe X/Y, Helligkeit, Hauch, Breite) and the input options (*Eingang spielt die Orgel*, *Klangfarbe folgt dem Eingang*, detection threshold, confirmation time, number of voices); right-click on any of them modulates it, as everywhere else in the plugin |
+| Spieltisch | the knob *Vox humana* with Lautstärke and Wind, like the other stops; *Vox …* opens the timbre controls (Klangfarbe X/Y, Helligkeit, Hauch, Breite) and the input options (*Eingang spielt die Orgel*, *Klangfarbe folgt dem Eingang*, detection threshold, confirmation time, number of voices, Anschlag: Empfindlichkeit and Bereich, Dynamik); right-click on any of them modulates it, as everywhere else in the plugin |
 | Raum | a row under the audio input with its own panel: Lautstärke, Hall-Anteil, Richtung, Höhe, Abstand, the learned room, Breite of its row of pipes, Bewegung, Geschwindigkeit, Tiefe; in the top view its centre (dragged to place it) and its eight pipes where they are |
 | Saal | its own slot *Vox* in the strip of rooms (which of the four simulated Saals it sounds in, apart from the audio input); the symbol and its eight pipes in that Saal's floor plan, where it can be dragged (direction and distance from the listener); in the 3D view its own model (below) |
 | Modulation | all its parameters form the target group *Vox humana*; the engine reads their modulated values, so an LFO on Klangfarbe X glides through the registrations |
@@ -660,6 +660,34 @@ Raum* (0–100 %) therefore blends the trained path with the same tone without i
 - The plugin's own simulated Saal then provides the space.
 - A Saal that holds only the Vox humana is now simulated too. Before, the engine counted only the
   stops and the audio input as users of a room, so such a Saal stayed silent.
+
+**Velocity and pressure per voice.** The estimator says which pitches sound, not how loud they are.
+The plugin measures each voice's level without retraining. The level of a tracked voice is the power
+of its harmonics 1–7 at the pitch it is found at, in the estimator's own spectrum. It rises at once
+and falls in about 80 ms.
+
+A note is confirmed about 5–20 ms after it begins. At that point the long windows (up to 85 ms,
+needed for low pitches) hold only a little of it, and that little sits at the window's weak end:
+measured this way, note-on velocities came out about 20 dB low. So at the note's start the level is
+the input's power over the last 10 ms, shared out between the sounding voices by their harmonic
+power. Until the longest window has filled, the level only rises from there.
+
+The level is mapped to the velocity scale. The top is −6 dB, plus a sensitivity offset, and the
+range below it defaults to 48 dB.
+- **Note-on velocity:** each tracked note goes to the sample stops with its own velocity (1–127).
+- **Polyphonic aftertouch:** while the note sounds, its level goes out as polyphonic aftertouch on
+  channel 16, one value per key, sent when it changes.
+- **Routing:** the plugin's per-pipe modulation sources *Anschlag* and *Druck* therefore act on
+  every pipe the input plays (for example *Druck → Pfeife: Wind*).
+- **Dynamik:** the Vox humana's own voices can follow their velocity (keys) or their level (input),
+  ±15 dB at 100 %, ramped over each frame.
+
+`VoxTest` plays a tone (harmonics at 1/h) at three levels 10 dB apart. It gets velocities 0.52 /
+0.73 / 0.94 against 0.53 / 0.74 / 0.94 expected, and the held level stays within 0.02 of the
+note-on velocity. On 20 s of a full mix the input played 1131 notes with velocities from 5 to 127.
+Harmonics shared by notes of a chord (octaves, fifths) count for each of them, so dense chords are
+measured less exactly. A learned level output of the estimator would solve this (synthetic data
+knows every note's amplitude).
 
 **The 3D model.** The stop has no pipes, so it gets a picture of what the network does. Its eight
 voices are glass pipes, each standing where its own sound is (they move with the stop's motion), each as long as an open 8′ pipe of the pitch
