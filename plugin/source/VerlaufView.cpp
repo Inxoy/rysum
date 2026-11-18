@@ -467,7 +467,7 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::faint);
     juce::String info =
-        param >= 0 ? ModView::paramGroup(P.getParamAt(param)->getParameterID())
+        param >= 0 ? rysum::tr(ModView::paramGroup(P.getParamAt(param)->getParameterID()))
         : pipeT >= 0
             ? (l.spread ? rysum::tr("je Pfeife \xc2\xb7 breitet sich aus ") +
                               juce::String(l.waveSpeed, l.waveSpeed < 10.0f ? 1 : 0) + " m/S."
@@ -2359,11 +2359,11 @@ juce::String VerlaufView::secondsText(double beats) const
 juce::PopupMenu VerlaufView::paramMenu(int base) const
 {
     juce::PopupMenu menu;
-    const juce::StringArray groups{"Register",  rysum::tr("Traktur \xc2\xb7 Ausgang"),
-                                   rysum::tr("Verfall"),   rysum::tr("Klang"),
-                                   rysum::tr("Hall"),      "Saal",
-                                   rysum::tr("Eingang"),   rysum::tr("Effekte"),
-                                   "Modulation", rysum::tr("Summe")};
+    const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
+                                   juce::String::fromUTF8("Verfall"),   juce::String::fromUTF8("Klang"),
+                                   juce::String::fromUTF8("Hall"),      "Saal",
+                                   juce::String::fromUTF8("Eingang"),   juce::String::fromUTF8("Effekte"),
+                                   "Modulation", juce::String::fromUTF8("Summe")};
     std::set<int> taken;
     for (auto &l : proc.getAuto().lanes)
         taken.insert(proc.getParamIndex(l.paramId));
@@ -2381,7 +2381,7 @@ juce::PopupMenu VerlaufView::paramMenu(int base) const
                 ModView::paramGroup(proc.getParamAt(i)->getParameterID()) == grp)
                 sub.addItem(base + i, rysum::trText(proc.getParamAt(i)->getName(64)), true, taken.count(i) > 0);
         if (sub.getNumItems() > 0)
-            menu.addSubMenu(grp, sub);
+            menu.addSubMenu(rysum::tr(grp), sub);
     }
     return menu;
 }
@@ -2863,7 +2863,7 @@ void VerlaufView::showAddMenu()
             bool has = false;
             for (auto &l : set().lanes)
                 has = has || l.paramId == pipeTargetId(t);
-            pipes.addItem(5000 + t, names[t].fromFirstOccurrenceOf("Pfeife: ", false, false), true, has);
+            pipes.addItem(5000 + t, names[t].fromFirstOccurrenceOf(rysum::tr("Pfeife: "), false, false), true, has);
         }
         menu.addSubMenu(rysum::tr("Je Pfeife \xe2\x80\x93 breitet sich im Raum aus"), pipes);
         // timed paths

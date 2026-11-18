@@ -22,7 +22,7 @@ WalkView::Controls& controlsNow()
         {
             c.mouse = juce::jlimit (0.25f, 3.0f, (float) xml->getDoubleAttribute ("maus", 1.0));
             c.walk = juce::jlimit (0.4f, 8.0f, (float) xml->getDoubleAttribute ("gehen", 1.0));
-            c.invertY = xml->getBoolAttribute (rysum::tr("umgekehrt"), false);
+            c.invertY = xml->getBoolAttribute ("umgekehrt", false);
         }
     }
     return c;

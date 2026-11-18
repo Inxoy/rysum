@@ -138,7 +138,7 @@ private:
     juce::Slider volume;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAttachment;
     juce::TextButton folderButton{
-        ((rysum::tr("Samples-Ordner \xe2\x80\xa6")))};
+        juce::String(juce::CharPointer_UTF8("Samples-Ordner \xe2\x80\xa6"))};
     std::unique_ptr<juce::FileChooser> chooser;
     KeyStrip keys;
     // scenes

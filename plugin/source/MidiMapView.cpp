@@ -9,27 +9,27 @@ juce::String paramGroup(const juce::String &id)
     if (id.startsWith("stop") || id.startsWith("vol") || id.startsWith("swind") ||
         id.startsWith("rate") || id.startsWith("depth") || id.startsWith("ellipse") ||
         id.startsWith("motion"))
-        return id == "motionSync" ? rysum::tr("Klang") : rysum::tr("Register");
+        return id == "motionSync" ? juce::String::fromUTF8("Klang") : juce::String::fromUTF8("Register");
     if (id.startsWith("deg") || id.startsWith("spc"))
-        return rysum::tr("Verfall");
+        return juce::String::fromUTF8("Verfall");
     if (id.startsWith("cloud") || id.startsWith("pipe"))
-        return rysum::tr("Register");
+        return juce::String::fromUTF8("Register");
     if (id.startsWith("clickRes"))
-        return rysum::tr("Traktur \xc2\xb7 Ausgang");
+        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
         id == "wind" || id == "master")
-        return rysum::tr("Traktur \xc2\xb7 Ausgang");
+        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id.startsWith("ir"))
-        return rysum::tr("Hall");
+        return juce::String::fromUTF8("Hall");
     if (id.startsWith("fx"))
-        return rysum::tr("Effekte");
+        return juce::String::fromUTF8("Effekte");
     if (id.startsWith("sim"))
         return "Saal";
     if (id.startsWith("bin"))
-        return rysum::tr("Kopfh\xc3\xb6rer");
+        return juce::String::fromUTF8("Kopfh\xc3\xb6rer");
     if (id.startsWith("lfo") || id.startsWith("env") || id.startsWith("mod"))
         return "Modulation";
-    return rysum::tr("Klang");
+    return juce::String::fromUTF8("Klang");
 }
 } // namespace
 
@@ -85,14 +85,14 @@ void RangeBar::mouseDrag(const juce::MouseEvent &e)
 void MidiMapPanel::fillParamMenu(juce::PopupMenu &menu, RysumProcessor &proc)
 {
     const juce::StringArray groups{"Register",
-                                   rysum::tr("Traktur \xc2\xb7 Ausgang"),
-                                   rysum::tr("Klang"),
-                                   rysum::tr("Verfall"),
-                                   rysum::tr("Hall"),
+                                   juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
+                                   juce::String::fromUTF8("Klang"),
+                                   juce::String::fromUTF8("Verfall"),
+                                   juce::String::fromUTF8("Hall"),
                                    "Saal",
-                                   rysum::tr("Effekte"),
+                                   juce::String::fromUTF8("Effekte"),
                                    "Modulation",
-                                   rysum::tr("Kopfh\xc3\xb6rer")};
+                                   juce::String::fromUTF8("Kopfh\xc3\xb6rer")};
     for (auto &grp : groups)
     {
         juce::PopupMenu sub;
@@ -106,7 +106,7 @@ void MidiMapPanel::fillParamMenu(juce::PopupMenu &menu, RysumProcessor &proc)
                 sub.addItem(1 + i, rysum::trText(proc.getParamAt(i)->getName(64)));
         }
         if (sub.getNumItems() > 0)
-            menu.addSubMenu(grp, sub);
+            menu.addSubMenu(rysum::tr(grp), sub);
     }
 }
 

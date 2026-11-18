@@ -186,7 +186,7 @@ const std::vector<std::pair<std::string, std::string>> &pieces()
             for (unsigned char c : de)
                 if (isLetter(c))
                     ++letters;
-            if (letters >= 3 && de.find('|') == std::string::npos)
+            if ((letters >= 3 || (letters >= 2 && de.front() == 0x20)) && de.find('|') == std::string::npos)
                 v.emplace_back(de, e.en);
         }
         std::stable_sort(v.begin(), v.end(), [](const auto &a, const auto &b)

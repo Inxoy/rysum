@@ -24,6 +24,16 @@ public:
 
     void initialise(const juce::String &cmd) override
     {
+        // the language: English unless RYSUM_LANG says otherwise - always forced, so the language
+        // switch tested here never writes this computer's Documents/Rysum/Sprache.xml
+        if (std::getenv("RYSUM_LANG") == nullptr)
+        {
+#if JUCE_WINDOWS
+            _putenv_s("RYSUM_LANG", "en");
+#else
+            setenv("RYSUM_LANG", "en", 1);
+#endif
+        }
         auto args = juce::StringArray::fromTokens(cmd, true);
         if (args.size() < 2)
         {
@@ -4731,34 +4741,62 @@ public:
 
         // the language switch (EN / DE in the header): the interface is made anew, in the other
         // language, on the same page; and back (RYSUM_LANG is set for this run: nothing is saved)
+        // - on the Klang page, on Begehen (the 3D view, its GPU picture) and in full screen
         {
-            auto *c = dynamic_cast<RysumContent *>(editor->getChildComponent(0));
-            const bool wasGerman = rysum::german();
-            if (c != nullptr)
-                c->showView(3);
-            auto *b = c != nullptr ? rysum::ui::findButton(*c, "@sprache") : nullptr;
-            bool ok = b != nullptr;
-            for (int round = 0; round < 2 && ok; ++round)
+            auto switchTwice = [&](int view, bool full) -> bool
             {
-                juce::Component::SafePointer<juce::Component> before(editor->getChildComponent(0));
-                b->triggerClick();
-                juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
-                auto *after = dynamic_cast<RysumContent *>(editor->getChildComponent(0));
-                content = after; // (shoot() paints the content on screen)
-                ok = after != nullptr && before == nullptr && after->currentView() == 3 &&
-                     after->isVisible() && rysum::german() == (round == 0 ? !wasGerman : wasGerman);
-                if (!ok)
-                    std::cout << "  (round " << round << ": new " << (before == nullptr)
-                              << ", view " << (after != nullptr ? after->currentView() : -1)
-                              << ", german " << (int)rysum::german() << ")" << std::endl;
-                if (round == 0 && ok)
-                    shoot(3, wasGerman ? "ui_klang_en.png" : "ui_klang_de.png");
-                b = after != nullptr ? rysum::ui::findButton(*after, "@sprache") : nullptr;
-                ok = ok && b != nullptr;
-            }
-            std::cout << "language switch: built anew in the other language and back "
-                      << (ok ? "  ok" : "  FAIL") << std::endl;
-            content = editor->getChildComponent(0);
+                const bool wasGerman = rysum::german();
+                auto *c = dynamic_cast<RysumContent *>(editor->getChildComponent(0));
+                if (c == nullptr)
+                    return false;
+                c->showView(view);
+                if (full)
+                {
+                    editor->toggleFullscreen();
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+                    if (!editor->isFullscreen())
+                        return false;
+                }
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+                auto *parent = c->getParentComponent();
+                bool ok = parent != nullptr;
+                for (int round = 0; round < 2 && ok; ++round)
+                {
+                    auto *b = rysum::ui::findButton(*c, "@sprache");
+                    if (b == nullptr)
+                        return false;
+                    juce::Component::SafePointer<juce::Component> before(c);
+                    b->triggerClick();
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(400);
+                    c = dynamic_cast<RysumContent *>(parent->getChildComponent(0));
+                    content = c; // (shoot() paints the content on screen)
+                    ok = c != nullptr && before == nullptr && c->currentView() == view &&
+                         (full ? c->isShowing() : c->isVisible()) &&
+                         rysum::german() == (round == 0 ? !wasGerman : wasGerman);
+                    if (!ok)
+                        std::cout << "  (page " << view << (full ? " full screen" : "")
+                                  << ", round " << round << ": new " << (before == nullptr)
+                                  << ", view " << (c != nullptr ? c->currentView() : -1)
+                                  << ", german " << (int)rysum::german() << ")" << std::endl;
+                    if (round == 0 && ok && view == 3 && !full)
+                        shoot(3, wasGerman ? "ui_klang_en.png" : "ui_klang_de.png");
+                }
+                if (full)
+                {
+                    editor->toggleFullscreen();
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+                    ok = ok && !editor->isFullscreen() &&
+                         dynamic_cast<RysumContent *>(editor->getChildComponent(0)) != nullptr;
+                }
+                content = editor->getChildComponent(0);
+                return ok;
+            };
+            const bool onKlang = switchTwice(3, false);
+            const bool onWalk = switchTwice(8, false);
+            const bool inFull = std::getenv("RYSUM_SKIP_FULLSCREEN") != nullptr || switchTwice(0, true);
+            std::cout << "language switch: built anew in the other language and back (Klang "
+                      << onKlang << ", Begehen " << onWalk << ", full screen " << inFull << ")"
+                      << ((onKlang && onWalk && inFull) ? "  ok" : "  FAIL") << std::endl;
         }
 
         // state round trip

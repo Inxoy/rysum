@@ -5,34 +5,34 @@ namespace rysum::ui
 juce::String ModView::paramGroup(const juce::String &id)
 {
     if (id.startsWith("mst"))
-        return rysum::tr("Summe");
+        return juce::String::fromUTF8("Summe");
     if (id.startsWith("vol") || id.startsWith("swind") || id.startsWith("rate") ||
         id.startsWith("depth") || id.startsWith("ellipse"))
-        return rysum::tr("Register");
+        return juce::String::fromUTF8("Register");
     if (id.startsWith("deg") || id.startsWith("spc"))
-        return rysum::tr("Verfall");
+        return juce::String::fromUTF8("Verfall");
     if (id.startsWith("cloud") || id.startsWith("pipe"))
-        return rysum::tr("Register");
+        return juce::String::fromUTF8("Register");
     if (id.startsWith("clickRes"))
-        return rysum::tr("Traktur \xc2\xb7 Ausgang");
+        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
         id == "wind" || id == "master")
-        return rysum::tr("Traktur \xc2\xb7 Ausgang");
+        return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id.startsWith("stop") || id.startsWith("motion") || id.startsWith("jumpHard"))
-        return rysum::tr("Register");
+        return juce::String::fromUTF8("Register");
     if (id.startsWith("ir"))
-        return rysum::tr("Hall");
+        return juce::String::fromUTF8("Hall");
     if (id.startsWith("fx"))
-        return rysum::tr("Effekte");
+        return juce::String::fromUTF8("Effekte");
     if (id.startsWith("sim"))
         return "Saal";
     if (id.startsWith("inp"))
-        return rysum::tr("Eingang");
+        return juce::String::fromUTF8("Eingang");
     if (id.startsWith("vox") || id == "inThresh")
         return "Vox humana";
     if (id.startsWith("lfo") || id.startsWith("env") || id.startsWith("mod"))
         return "Modulation";
-    return rysum::tr("Klang");
+    return juce::String::fromUTF8("Klang");
 }
 
 namespace
@@ -60,7 +60,7 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
         juce::PopupMenu sub;
         for (int t = from; t <= to; ++t)
             sub.addItem(idOffset + t + 1,
-                        pipeNames[t].fromFirstOccurrenceOf("Pfeife: ", false, false));
+                        pipeNames[t].fromFirstOccurrenceOf(rysum::tr("Pfeife: "), false, false));
         menu.addSubMenu(title, sub);
     };
     group(rysum::tr("Pfeife: Ansprache \xc2\xb7 Abriss \xc2\xb7 Obert\xc3\xb6ne"),
@@ -71,11 +71,11 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
     group(rysum::tr("Pfeife: Glitch"), tgtStutter, tgtClip);
     menu.addSeparator();
     menu.addSectionHeader(rysum::tr("Global (ein Wert f\xc3\xbcr alle Pfeifen)"));
-    const juce::StringArray groups{"Register",  rysum::tr("Traktur \xc2\xb7 Ausgang"),
-                                   rysum::tr("Verfall"),   rysum::tr("Klang"),
-                                   rysum::tr("Hall"),      "Saal",
-                                   rysum::tr("Eingang"),   "Vox humana", rysum::tr("Effekte"),
-                                   "Modulation", rysum::tr("Summe")};
+    const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
+                                   juce::String::fromUTF8("Verfall"),   juce::String::fromUTF8("Klang"),
+                                   juce::String::fromUTF8("Hall"),      "Saal",
+                                   juce::String::fromUTF8("Eingang"),   "Vox humana", juce::String::fromUTF8("Effekte"),
+                                   "Modulation", juce::String::fromUTF8("Summe")};
     for (auto &grp : groups)
     {
         juce::PopupMenu sub;
@@ -83,7 +83,7 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
             if (proc.isModTarget(i) && paramGroup(proc.getParamAt(i)->getParameterID()) == grp)
                 sub.addItem(idOffset + 1000 + i, rysum::trText(proc.getParamAt(i)->getName(64)));
         if (sub.getNumItems() > 0)
-            menu.addSubMenu(grp, sub);
+            menu.addSubMenu(rysum::tr(grp), sub);
     }
 }
 
