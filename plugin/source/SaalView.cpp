@@ -199,7 +199,7 @@ void SaalPlan::paint(juce::Graphics &g)
         }
         g.setFont(A.monoFont(10.0f));
         g.setColour(col::mute);
-        g.drawText("vorn",
+        g.drawText(rysum::tr("vorn"),
                    juce::Rectangle<float>(60, 12).withCentre({room.getCentreX(), room.getY() - 14}),
                    juce::Justification::centred);
         g.drawText(
@@ -252,7 +252,7 @@ void SaalPlan::paint(juce::Graphics &g)
         g.drawRect(room.expanded(4.0f), 0.8f);
         g.setFont(A.monoFont(10.0f));
         g.setColour(col::mute);
-        g.drawText("vorn",
+        g.drawText(rysum::tr("vorn"),
                    juce::Rectangle<float>(60, 12).withCentre({room.getCentreX(), room.getY() - 14}),
                    juce::Justification::centred);
         g.drawText(
@@ -440,39 +440,39 @@ void SaalPlan::paint(juce::Graphics &g)
     auto info = getLocalBounds().removeFromBottom(48).removeFromTop(32).reduced(4, 0);
     if (on && shownRoom == 0)
         g.drawFittedText(
-            "V " + juce::String(juce::roundToInt(V)) + U(" m\xc2\xb3 \xc2\xb7 Nachhall ") +
-                juce::String(proc.engine.roomRtLow.load(), 2) + U(" s tief / ") +
-                juce::String(proc.engine.roomRtHigh.load(), 2) + U(" s hoch \xc2\xb7 Hallradius ") +
+            "V " + juce::String(juce::roundToInt(V)) + rysum::tr(" m\xc2\xb3 \xc2\xb7 Nachhall ") +
+                juce::String(proc.engine.roomRtLow.load(), 2) + rysum::tr(" s tief / ") +
+                juce::String(proc.engine.roomRtHigh.load(), 2) + rysum::tr(" s hoch \xc2\xb7 Hallradius ") +
                 juce::String(proc.engine.roomCritDist.load(), 1) + U(" m \xc2\xb7 ") +
                 juce::String(proc.engine.erActive.load()) +
-                U(" Kl\xc3\xa4nge mit eigenen Reflexionen"),
+                rysum::tr(" Kl\xc3\xa4nge mit eigenen Reflexionen"),
             info, juce::Justification::bottomLeft, 2);
     else if (on)
     {
         const bool used = (proc.engine.roomsUsed.load() >> shownRoom) & 1;
         g.drawFittedText(
             "Saal " + juce::String(shownRoom + 1) + U(" \xc2\xb7 V ") +
-                juce::String(juce::roundToInt(V)) + U(" m\xc2\xb3 \xc2\xb7 Nachhall ") +
+                juce::String(juce::roundToInt(V)) + rysum::tr(" m\xc2\xb3 \xc2\xb7 Nachhall ") +
                 juce::String(proc.engine.heard[(size_t)shownRoom].rtLow.load(), 2) +
-                U(" s tief / ") +
-                juce::String(proc.engine.heard[(size_t)shownRoom].rtHigh.load(), 2) + U(" s hoch") +
-                (used ? juce::String() : U(" \xc2\xb7 kein Register in diesem Saal")),
+                rysum::tr(" s tief / ") +
+                juce::String(proc.engine.heard[(size_t)shownRoom].rtHigh.load(), 2) + rysum::tr(" s hoch") +
+                (used ? juce::String() : rysum::tr(" \xc2\xb7 kein Register in diesem Saal")),
             info, juce::Justification::bottomLeft, 2);
     }
     else
         g.drawFittedText(
-            U("Saal aus \xe2\x80\x93 der Hall kommt von der Impulsantwort (Seite Raum)"), info,
+            rysum::tr("Saal aus \xe2\x80\x93 der Hall kommt von der Impulsantwort (Seite Raum)"), info,
             juce::Justification::bottomLeft, 2);
     g.setFont(A.monoFont(9.5f));
     g.setColour(col::faint);
     if (on && shownRoom == 0)
-        g.drawFittedText(proc.getRoomStatus(), getLocalBounds().removeFromBottom(15).reduced(4, 0),
+        g.drawFittedText(rysum::trText(proc.getRoomStatus()), getLocalBounds().removeFromBottom(15).reduced(4, 0),
                          juce::Justification::centredLeft, 1, 0.7f);
     g.setFont(A.monoFont(10.5f));
     g.drawFittedText(
-        drawing() ? U("Gezeichnet \xc2\xb7 Ecken ziehen \xc2\xb7 Doppelklick auf eine Wand: neue "
+        drawing() ? rysum::tr("Gezeichnet \xc2\xb7 Ecken ziehen \xc2\xb7 Doppelklick auf eine Wand: neue "
                       "Ecke \xc2\xb7 Rechtsklick auf eine Ecke: weg")
-                  : U("Draufsicht \xc2\xb7 H\xc3\xb6rer und Vox humana ziehen \xc2\xb7 rot: Reflexionen der "
+                  : rysum::tr("Draufsicht \xc2\xb7 H\xc3\xb6rer und Vox humana ziehen \xc2\xb7 rot: Reflexionen der "
                       "zuletzt gespielten Pfeife \xc2\xb7 Rechtsklick: Grundriss zeichnen"),
         getLocalBounds().removeFromTop(30).reduced(4, 0), juce::Justification::topLeft, 2);
 }
@@ -557,10 +557,10 @@ void SaalPlan::mouseDown(const juce::MouseEvent &e)
         }
         juce::PopupMenu m;
         m.addItem(1,
-                  U("Diesen Grundriss zum Zeichnen \xc3\xbc"
+                  rysum::tr("Diesen Grundriss zum Zeichnen \xc3\xbc"
                     "bernehmen"),
                   !drawing());
-        m.addItem(2, U("Gezeichneten Grundriss zur\xc3\xbc"
+        m.addItem(2, rysum::tr("Gezeichneten Grundriss zur\xc3\xbc"
                        "cksetzen"));
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withMousePosition(),
                         [this](int res)
@@ -699,33 +699,32 @@ static juce::String shapeTip(int s)
     switch (s)
     {
     case shapeBox:
-        return U("Quader \xe2\x80\x93 der Schuhkarton: exakte Spiegelquellen (wie bisher)");
+        return rysum::tr("Quader \xe2\x80\x93 der Schuhkarton: exakte Spiegelquellen (wie bisher)");
     case shapeL:
-        return U("L-Form \xe2\x80\x93 vorn rechts fehlt eine Ecke: Reflexionen um die Ecke, manche "
+        return rysum::tr("L-Form \xe2\x80\x93 vorn rechts fehlt eine Ecke: Reflexionen um die Ecke, manche "
                  "Wege sind verdeckt. Form = Gr\xc3\xb6\xc3\x9f"
                  "e der fehlenden Ecke");
     case shapeFan:
-        return U("F\xc3\xa4"
+        return rysum::tr("F\xc3\xa4"
                  "cher \xe2\x80\x93 vorn (bei der Orgel) schmal, hinten breit: die schr\xc3\xa4gen "
                  "W\xc3\xa4nde lenken den Schall nach hinten. Form = wie stark");
     case shapeHex:
-        return U("Sechseck \xe2\x80\x93 Form = wie spitz die Seiten zulaufen");
+        return rysum::tr("Sechseck \xe2\x80\x93 Form = wie spitz die Seiten zulaufen");
     case shapeOct:
-        return U("Achteck \xe2\x80\x93 ein Zentralbau mit abgeschr\xc3\xa4gten Ecken. Form = "
+        return rysum::tr("Achteck \xe2\x80\x93 ein Zentralbau mit abgeschr\xc3\xa4gten Ecken. Form = "
                  "Gr\xc3\xb6\xc3\x9f"
                  "e der Schr\xc3\xa4gen");
     case shapeRound:
-        return U("Rund \xe2\x80\x93 zw\xc3\xb6lf W\xc3\xa4nde um eine Ellipse: konkav, sammelt den "
+        return rysum::tr("Rund \xe2\x80\x93 zw\xc3\xb6lf W\xc3\xa4nde um eine Ellipse: konkav, sammelt den "
                  "Schall (Fl\xc3\xbcstergalerie). Form = vom gerundeten Rechteck bis zur Ellipse");
     case shapeCross:
-        return U("Kreuz \xe2\x80\x93 Langhaus mit Querschiff vor dem H\xc3\xb6rer (Kreuzkirche). "
+        return rysum::tr("Kreuz \xe2\x80\x93 Langhaus mit Querschiff vor dem H\xc3\xb6rer (Kreuzkirche). "
                  "Form = schmaleres Schiff");
     case shapeApse:
-        return U("Apsis \xe2\x80\x93 das Schiff endet vorn in einer runden Apsis. Form = Breite "
+        return rysum::tr("Apsis \xe2\x80\x93 das Schiff endet vorn in einer runden Apsis. Form = Breite "
                  "der Apsis");
     case shapeDrawn:
-        return U(
-            "Gezeichnet \xe2\x80\x93 ein eigener Grundriss (3 bis 12 Ecken): in der Draufsicht "
+        return rysum::tr("Gezeichnet \xe2\x80\x93 ein eigener Grundriss (3 bis 12 Ecken): in der Draufsicht "
             "Ecken ziehen, Doppelklick auf eine Wand f\xc3\xbcgt eine Ecke ein, "
             "Rechtsklick auf eine Ecke l\xc3\xb6scht sie. Rechtsklick in die Draufsicht \xc3\xbc"
             "bernimmt den gerade gew\xc3\xa4hlten Grundriss zum Weiterzeichnen.");
@@ -778,7 +777,7 @@ void ShapeStrip::paint(juce::Graphics &g)
 {
     g.setFont(Assets::get().monoFont(10.5f));
     g.setColour(col::mute);
-    g.drawText("Grundriss", getLocalBounds().removeFromLeft(62), juce::Justification::centredLeft);
+    g.drawText(rysum::tr("Grundriss"), getLocalBounds().removeFromLeft(62), juce::Justification::centredLeft);
 }
 
 void ShapeStrip::refresh()
@@ -860,7 +859,7 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
 {
     addAndMakeVisible(plan);
     addAndMakeVisible(shapes);
-    walkButton.setTooltip(U("Den Saal in 3D begehen: W A S D und die Maus. Wo du stehst und "
+    walkButton.setTooltip(rysum::tr("Den Saal in 3D begehen: W A S D und die Maus. Wo du stehst und "
                             "hinschaust, h\xc3\xb6rst du; "
                             "ein eigenes Raummodell (OBJ) kann geladen werden."));
     walkButton.onClick = [this]
@@ -870,7 +869,7 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
     };
     addAndMakeVisible(walkButton);
     onButton.setClickingTogglesState(true);
-    onButton.setTooltip(U("Simulierter Saal statt Impulsantwort: fr\xc3\xbche Reflexionen jeder "
+    onButton.setTooltip(rysum::tr("Simulierter Saal statt Impulsantwort: fr\xc3\xbche Reflexionen jeder "
                           "Pfeife (Spiegelquellen) und Nachhall (Strahlenverfolgung). "
                           "Alles modulierbar \xe2\x80\x93 der Raum ist spielbar."));
     onAtt = rysum::ui::attachButton(proc.apvts, "simOn", onButton);
@@ -880,7 +879,7 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         order.addItemList(choice->choices, 1);
     orderAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "simOrder", order);
-    order.setTooltip(U("Fr\xc3\xbche Reflexionen bis zu dieser Ordnung (Quader 1: 6 "
+    order.setTooltip(rysum::tr("Fr\xc3\xbche Reflexionen bis zu dieser Ordnung (Quader 1: 6 "
                        "Spiegelquellen, 2: 24, 3: 62 \xe2\x80\x93 rechenintensiv; "
                        "andere Grundrisse: nur die sichtbaren Wege, h\xc3\xb6"
                        "chstens 62)"));
@@ -921,10 +920,10 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         };
         addAndMakeVisible(b);
     }
-    roomPresets[4]->setButtonText(U("W\xc3\xbcrfel"));
-    roomPresets[3]->setTooltip(U("Lang und schmal, harte W\xc3\xa4nde: Flatterecho"));
+    roomPresets[4]->setButtonText(rysum::tr("W\xc3\xbcrfel"));
+    roomPresets[3]->setTooltip(rysum::tr("Lang und schmal, harte W\xc3\xa4nde: Flatterecho"));
     roomPresets[4]->setTooltip(
-        U("Kleiner, fast verlustfreier W\xc3\xbcrfel: klingt wie ein Instrument"));
+        rysum::tr("Kleiner, fast verlustfreier W\xc3\xbcrfel: klingt wie ein Instrument"));
 
     struct Mat
     {
@@ -968,9 +967,9 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         addAndMakeVisible(b);
     }
     materials[5]->setTooltip(
-        U("Ein unm\xc3\xb6glicher Raum: nichts wird geschluckt (nur die Luft d\xc3\xa4mpft)"));
+        rysum::tr("Ein unm\xc3\xb6glicher Raum: nichts wird geschluckt (nur die Luft d\xc3\xa4mpft)"));
     surfTarget.setTooltip(
-        U("Wof\xc3\xbcr die Material-Kn\xc3\xb6pfe gelten: f\xc3\xbcr alle Fl\xc3\xa4" "chen (sie stellen die Regler) "
+        rysum::tr("Wof\xc3\xbcr die Material-Kn\xc3\xb6pfe gelten: f\xc3\xbcr alle Fl\xc3\xa4" "chen (sie stellen die Regler) "
           "oder f\xc3\xbcr eine einzelne - Boden, Decke, jede Wand kann aus etwas anderem sein. "
           "Eine einzelne Fl\xc3\xa4" "che beh\xc3\xa4lt ihr Material, bis du es noch einmal dr\xc3\xbc" "ckst. "
           "Im 3D-Saal: auf die Fl\xc3\xa4" "che schauen und M dr\xc3\xbc" "cken."));
@@ -980,39 +979,39 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
     for (int r = 0; r < rysum::kNumRooms; ++r)
     {
         auto id = [r](const char *k) { return RysumProcessor::roomParamId(r, k); };
-        dimsR[(size_t)r] = {&row(id("W").toRawUTF8(), "Breite"),
-                            &row(id("L").toRawUTF8(), U("L\xc3\xa4nge")),
-                            &row(id("H").toRawUTF8(), U("H\xc3\xb6he")),
-                            &row(id("Size").toRawUTF8(), U("Gr\xc3\xb6\xc3\x9f"
+        dimsR[(size_t)r] = {&row(id("W").toRawUTF8(), rysum::tr("Breite")),
+                            &row(id("L").toRawUTF8(), rysum::tr("L\xc3\xa4nge")),
+                            &row(id("H").toRawUTF8(), rysum::tr("H\xc3\xb6he")),
+                            &row(id("Size").toRawUTF8(), rysum::tr("Gr\xc3\xb6\xc3\x9f"
                                                            "e (alle Ma\xc3\x9f"
                                                            "e)"))};
-        surfR[(size_t)r] = {&row(id("Abs").toRawUTF8(), U("Absorption W\xc3\xa4nde")),
-                            &row(id("AbsFloor").toRawUTF8(), "Absorption Boden/Decke"),
-                            &row(id("High").toRawUTF8(), U("H\xc3\xb6hend\xc3\xa4mpfung")),
-                            &row(id("Scatter").toRawUTF8(), "Streuung")};
-        formR[(size_t)r] = &row(id("ShapeAmt").toRawUTF8(), U("Form (Grundriss)"));
+        surfR[(size_t)r] = {&row(id("Abs").toRawUTF8(), rysum::tr("Absorption W\xc3\xa4nde")),
+                            &row(id("AbsFloor").toRawUTF8(), rysum::tr("Absorption Boden/Decke")),
+                            &row(id("High").toRawUTF8(), rysum::tr("H\xc3\xb6hend\xc3\xa4mpfung")),
+                            &row(id("Scatter").toRawUTF8(), rysum::tr("Streuung"))};
+        formR[(size_t)r] = &row(id("ShapeAmt").toRawUTF8(), rysum::tr("Form (Grundriss)"));
         formR[(size_t)r]->setTooltip(
-            U("Wie stark der Grundriss vom Quader abweicht (beim Quader und beim gezeichneten "
+            rysum::tr("Wie stark der Grundriss vom Quader abweicht (beim Quader und beim gezeichneten "
               "Grundriss ohne Wirkung). Modulierbar: der Raum verformt sich."));
         lisR[(size_t)r] = {
-            &row(id("Lx").toRawUTF8(), U("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")),
-            &row(id("Ly").toRawUTF8(), U("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)"))};
+            &row(id("Lx").toRawUTF8(), rysum::tr("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")),
+            &row(id("Ly").toRawUTF8(), rysum::tr("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)"))};
     }
-    gainRows = {&row("simEr", U("Fr\xc3\xbche Reflexionen")), &row("simTail", "Nachhall")};
-    iceRows = {&row("simIce", "Eis (Reflexionen)"), &row("simIceLen", U("Eis L\xc3\xa4nge"))};
+    gainRows = {&row("simEr", rysum::tr("Fr\xc3\xbche Reflexionen")), &row("simTail", rysum::tr("Nachhall"))};
+    iceRows = {&row("simIce", rysum::tr("Eis (Reflexionen)")), &row("simIceLen", rysum::tr("Eis L\xc3\xa4nge"))};
     iceRows[0]->setTooltip(
-        U("Die W\xc3\xa4nde werden zu Eis: in jeder fr\xc3\xbchen Reflexion laufen die tiefen "
+        rysum::tr("Die W\xc3\xa4nde werden zu Eis: in jeder fr\xc3\xbchen Reflexion laufen die tiefen "
           "Frequenzen langsamer als die hohen \xe2\x80\x93 "
           "jede Reflexion wird ein fallendes Zirpen aus ihrer eigenen Richtung, wie Schall auf "
           "einem zugefrorenen See. "
           "Sp\xc3\xa4tere Reflexionen (l\xc3\xa4ngere Wege) zirpen st\xc3\xa4rker."));
-    iceRows[1]->setTooltip(U("Wie lang ein Zirpen ist (etwa 5 bis 50 ms)"));
+    iceRows[1]->setTooltip(rysum::tr("Wie lang ein Zirpen ist (etwa 5 bis 50 ms)"));
     // rooms: tabs to edit one, and which stop sounds where
     for (int r = 0; r < rysum::kNumRooms; ++r)
     {
         auto &b = roomTabs[(size_t)r];
         b.setButtonText("Saal " + juce::String(r + 1));
-        b.setTooltip(U("Diesen Saal bearbeiten und anzeigen (Grundriss, Ma\xc3\x9f"
+        b.setTooltip(rysum::tr("Diesen Saal bearbeiten und anzeigen (Grundriss, Ma\xc3\x9f"
                        "e, Oberfl\xc3\xa4"
                        "chen, H\xc3\xb6rer)"));
         b.onClick = [this, r] { selectRoom(r); };
@@ -1023,11 +1022,11 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         auto &b = assign[(size_t)slot];
         b.setTooltip(slot < kNumStops
                          ? prettyLabel(kStops[(size_t)kDisplayOrder[(size_t)slot]].label) +
-                               U(": in welchem Saal (Klick: n\xc3\xa4"
+                               rysum::tr(": in welchem Saal (Klick: n\xc3\xa4"
                                  "chster, Rechtsklick: w\xc3\xa4hlen)")
                      : slot == kNumStops
-                         ? U("Eingang (Audio): in welchem Saal")
-                         : U("Vox humana: in welchem Saal (ihre acht Pfeifen, ihre Reflexionen, ihr Nachhall). "
+                         ? rysum::tr("Eingang (Audio): in welchem Saal")
+                         : rysum::tr("Vox humana: in welchem Saal (ihre acht Pfeifen, ihre Reflexionen, ihr Nachhall). "
                              "Im Grundriss l\xc3\xa4sst sie sich verschieben."));
         b.onClick = [this, slot]
         {
@@ -1070,10 +1069,9 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         if (tailAtt)
             tailAtt->setValueAsCompleteGesture(1.0f);
     };
-    tailConv.setTooltip(U("Nachhall als Faltung: eine aus der Strahlenverfolgung synthetisierte "
+    tailConv.setTooltip(rysum::tr("Nachhall als Faltung: eine aus der Strahlenverfolgung synthetisierte "
                           "Raumantwort \xe2\x80\x93 dicht, ohne Eigenmoden."));
-    tailFdn.setTooltip(U(
-        "Nachhall als R\xc3\xbc"
+    tailFdn.setTooltip(rysum::tr("Nachhall als R\xc3\xbc"
         "ckkopplungsnetz (FDN, 16 Leitungen, langsam moduliert) \xe2\x80\x93 das fr\xc3\xbchere "
         "Modell: "
         "etwas lebendiger, weniger Rechenzeit. Abklingzeit ebenfalls aus der Strahlenverfolgung."));
@@ -1082,7 +1080,7 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
 
     // ---- Lucier mode
     lucOn.setClickingTogglesState(true);
-    lucOn.setTooltip(U("Alvin Lucier, \xe2\x80\x9eI am sitting in a room\xe2\x80\x9c (1969): eine "
+    lucOn.setTooltip(rysum::tr("Alvin Lucier, \xe2\x80\x9eI am sitting in a room\xe2\x80\x9c (1969): eine "
                        "Aufnahme wird in den Raum gespielt und neu aufgenommen, "
                        "immer wieder, bis nur die Resonanzen des Raums \xc3\xbc"
                        "brig sind. Hier live: der ganze Klang geht n-mal durch den Raum."));
@@ -1094,23 +1092,23 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
     lucSourceAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "lucSource", lucSource);
     lucSource.setTooltip(
-        U("Welcher Raum singt: der simulierte Saal (seine Eigenmoden aus den Ma\xc3\x9f"
+        rysum::tr("Welcher Raum singt: der simulierte Saal (seine Eigenmoden aus den Ma\xc3\x9f"
           "en) oder die Impulsantwort von der Seite Raum "
           "(z. B. eine Aufnahme aus der Kirche in Rysum)."));
     addAndMakeVisible(lucSource);
     lucRows = {&row("lucGen", "Generation"),
-               &row("lucGrow", U("Wachsen (Generationen pro Minute)")),
-               &row("lucTime", "Nachklingen je Durchgang"),
-               &row("lucMix", U("Anteil (0 = nur Orgel, 100 = nur Raum)"))};
-    lucRows[0]->setTooltip(U("Wie oft der Klang durch den Raum gegangen ist. Kommazahlen blenden "
+               &row("lucGrow", rysum::tr("Wachsen (Generationen pro Minute)")),
+               &row("lucTime", rysum::tr("Nachklingen je Durchgang")),
+               &row("lucMix", rysum::tr("Anteil (0 = nur Orgel, 100 = nur Raum)"))};
+    lucRows[0]->setTooltip(rysum::tr("Wie oft der Klang durch den Raum gegangen ist. Kommazahlen blenden "
                              "zwischen zwei Durchg\xc3\xa4ngen. Modulierbar."));
     lucRows[1]->setTooltip(
-        U("Die Generation steigt von selbst, solange Lucier an ist \xe2\x80\x93 \xc3\xbc"
+        rysum::tr("Die Generation steigt von selbst, solange Lucier an ist \xe2\x80\x93 \xc3\xbc"
           "ber ein ganzes St\xc3\xbc"
           "ck hinweg. 0 = steht."));
-    lucRows[2]->setTooltip(U("Wie lange jeder Durchgang nachklingt. Kurz: die Resonanzen kommen "
+    lucRows[2]->setTooltip(rysum::tr("Wie lange jeder Durchgang nachklingt. Kurz: die Resonanzen kommen "
                              "schnell und breiter; lang: langsam und ganz schmal."));
-    lucRestart.setTooltip(U("Das Gewachsene zur\xc3\xbc"
+    lucRestart.setTooltip(rysum::tr("Das Gewachsene zur\xc3\xbc"
                             "cksetzen: wieder bei der eingestellten Generation anfangen."));
     lucRestart.onClick = [this] { proc.resetLucierGrowth(); };
     addAndMakeVisible(lucRestart);
@@ -1132,17 +1130,16 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         if (lucModeAtt)
             lucModeAtt->setValueAsCompleteGesture(1.0f);
     };
-    lucModePiece.setTooltip(U("Wie Lucier: aufnehmen (Stimme, Orgel, beides), dann wird die "
+    lucModePiece.setTooltip(rysum::tr("Wie Lucier: aufnehmen (Stimme, Orgel, beides), dann wird die "
                               "Aufnahme wieder und wieder in den Raum gespielt "
                               "und neu aufgenommen \xe2\x80\x93 Generation f\xc3\xbcr Generation, "
                               "jede so lang wie die Aufnahme. Das St\xc3\xbc"
                               "ck spielt sich selbst."));
-    lucModeLive.setTooltip(U("Alles, was gerade klingt, geht sofort n-mal durch den Raum (zum "
+    lucModeLive.setTooltip(rysum::tr("Alles, was gerade klingt, geht sofort n-mal durch den Raum (zum "
                              "Spielen; klingt aus, wenn du aufh\xc3\xb6rst)."));
     addAndMakeVisible(lucModePiece);
     addAndMakeVisible(lucModeLive);
-    lucRec.setTooltip(U(
-        "Aufnahme starten. Nochmal klicken: Aufnahme beenden \xe2\x80\x93 dann beginnt das "
+    lucRec.setTooltip(rysum::tr("Aufnahme starten. Nochmal klicken: Aufnahme beenden \xe2\x80\x93 dann beginnt das "
         "St\xc3\xbc"
         "ck: erst die Aufnahme selbst, "
         "dann Generation 1, 2, 3 \xe2\x80\xa6 (h\xc3\xb6"
@@ -1155,19 +1152,19 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         else
             proc.lucierRecord();
     };
-    lucPlay.setTooltip(U("Das St\xc3\xbc"
+    lucPlay.setTooltip(rysum::tr("Das St\xc3\xbc"
                          "ck mit der letzten Aufnahme von vorn spielen"));
     lucPlay.onClick = [this] { proc.lucierPlay(); };
-    lucStop.setTooltip(U("Anhalten (Aufnahme bzw. St\xc3\xbc"
+    lucStop.setTooltip(rysum::tr("Anhalten (Aufnahme bzw. St\xc3\xbc"
                          "ck)"));
     lucStop.onClick = [this] { proc.lucierStop(); };
     lucLoad.setTooltip(
-        U("Eine eigene Aufnahme (WAV/AIFF/FLAC, bis 20 Minuten) als Ausgang des St\xc3\xbc"
+        rysum::tr("Eine eigene Aufnahme (WAV/AIFF/FLAC, bis 20 Minuten) als Ausgang des St\xc3\xbc"
           "cks"));
     lucLoad.onClick = [this]
     {
         lucChooser = std::make_unique<juce::FileChooser>(
-            U("Aufnahme f\xc3\xbcr das Lucier-St\xc3\xbc"
+            rysum::tr("Aufnahme f\xc3\xbcr das Lucier-St\xc3\xbc"
               "ck"),
             RysumProcessor::getPatchFolder().getParentDirectory().getChildFile("Lucier"),
             "*.wav;*.aif;*.aiff;*.flac");
@@ -1185,12 +1182,12 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
                                     repaint(lucBox);
                                 });
     };
-    lucExport.setTooltip(U("Das ganze St\xc3\xbc"
+    lucExport.setTooltip(rysum::tr("Das ganze St\xc3\xbc"
                            "ck (Aufnahme und alle Generationen) in eine WAV-Datei rechnen "
                            "\xe2\x80\x93 im Hintergrund, schneller als Echtzeit"));
     lucExport.onClick = [this]
     {
-        lucChooser = std::make_unique<juce::FileChooser>(U("St\xc3\xbc"
+        lucChooser = std::make_unique<juce::FileChooser>(rysum::tr("St\xc3\xbc"
                                                            "ck speichern"),
                                                          RysumProcessor::getPatchFolder()
                                                              .getParentDirectory()
@@ -1216,13 +1213,13 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         lucRecSrc.addItemList(choice->choices, 1);
     lucRecSrcAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "lucRecSrc", lucRecSrc);
-    lucRecSrc.setTooltip(U("Was aufgenommen wird: alles, was Rysum gerade spielt, oder nur der "
+    lucRecSrc.setTooltip(rysum::tr("Was aufgenommen wird: alles, was Rysum gerade spielt, oder nur der "
                            "Audio-Eingang (Seite Raum)"));
     addAndMakeVisible(lucRecSrc);
-    pieceRows = {&row("lucGen", U("Generationen (dann ist das St\xc3\xbc"
+    pieceRows = {&row("lucGen", rysum::tr("Generationen (dann ist das St\xc3\xbc"
                                   "ck aus)")),
-                 &row("lucGap", "Pause zwischen den Generationen"),
-                 &row("lucMix", U("Anteil (0 = nur live, 100 = nur Wiedergabe)"))};
+                 &row("lucGap", rysum::tr("Pause zwischen den Generationen")),
+                 &row("lucMix", rysum::tr("Anteil (0 = nur live, 100 = nur Wiedergabe)"))};
     updateLucierMode();
 }
 
@@ -1262,7 +1259,7 @@ juce::String SaalView::pieceStatus() const
     const int st = pc.state.load();
     const double recLen = (double)pc.getRecording().size() / juce::jmax(1.0, pc.recordingRate());
     if (st == rysum::LucierPiece::stRecording)
-        return U("Aufnahme l\xc3\xa4uft  ") + mmss((double)pc.recPos.load() / sr);
+        return rysum::tr("Aufnahme l\xc3\xa4uft  ") + mmss((double)pc.recPos.load() / sr);
     juce::String s;
     if (st == rysum::LucierPiece::stPlaying)
     {
@@ -1270,17 +1267,17 @@ juce::String SaalView::pieceStatus() const
         const double pos = (double)pc.playPos.load() / sr;
         const double gap = proc.apvts.getRawParameterValue("lucGap")->load();
         const double left = (recLen + gap) * (double)(last - g) + juce::jmax(0.0, recLen - pos);
-        s << mmss(pos) << " / " << mmss(recLen) << U(" \xc2\xb7 noch ") << mmss(left);
+        s << mmss(pos) << " / " << mmss(recLen) << rysum::tr(" \xc2\xb7 noch ") << mmss(left);
         if (pc.computingGen.load() >= 0)
-            s << U(" \xc2\xb7 rechne ") << pc.computingGen.load();
+            s << rysum::tr(" \xc2\xb7 rechne ") << pc.computingGen.load();
     }
     else if (st == rysum::LucierPiece::stFinished)
-        s = U("Das St\xc3\xbc"
+        s = rysum::tr("Das St\xc3\xbc"
               "ck ist zu Ende.");
     else if (recLen > 0.0)
-        s = U("Aufnahme ") + mmss(recLen) + U(" \xc2\xb7 bereit");
+        s = rysum::tr("Aufnahme ") + mmss(recLen) + rysum::tr(" \xc2\xb7 bereit");
     else
-        s = U("Noch keine Aufnahme");
+        s = rysum::tr("Noch keine Aufnahme");
     if (pc.exportProgress.load() >= 0.0f)
         s << U(" \xc2\xb7 WAV ") << juce::roundToInt(pc.exportProgress.load() * 100.0f) << " %";
     return s;
@@ -1529,13 +1526,13 @@ void SaalView::refreshSurfaces()
         surfListShape = now.shape;
         surfListN = walls;
         surfTarget.clear(juce::dontSendNotification);
-        surfTarget.addItem(U("alle Fl\xc3\xa4" "chen"), 1);
-        surfTarget.addItem("Boden", 2 + rysum::kSurfFloor);
-        surfTarget.addItem("Decke", 2 + rysum::kSurfCeiling);
-        const juce::StringArray boxNames{U("R\xc3\xbc" "ckwand"), "rechte Wand", "Vorderwand",
-                                         "linke Wand"};
+        surfTarget.addItem(rysum::tr("alle Fl\xc3\xa4" "chen"), 1);
+        surfTarget.addItem(rysum::tr("Boden"), 2 + rysum::kSurfFloor);
+        surfTarget.addItem(rysum::tr("Decke"), 2 + rysum::kSurfCeiling);
+        const juce::StringArray boxNames{U("R\xc3\xbc" "ckwand"), rysum::tr("rechte Wand"), rysum::tr("Vorderwand"),
+                                         rysum::tr("linke Wand")};
         for (int i = 0; i < walls; ++i)
-            surfTarget.addItem(box ? boxNames[i] : "Wand " + juce::String(i + 1),
+            surfTarget.addItem(box ? boxNames[i] : rysum::tr("Wand ") + juce::String(i + 1),
                                2 + rysum::kSurfWall0 + i);
         surfTarget.setSelectedId(keep <= 2 + rysum::kSurfWall0 + walls - 1 ? keep : 1,
                                  juce::dontSendNotification);
@@ -1597,7 +1594,7 @@ void SaalView::refresh()
         auto &pc = proc.getLucierPiece();
         const bool rec = pc.state.load() == rysum::LucierPiece::stRecording;
         lucRec.setToggleState(rec, juce::dontSendNotification);
-        lucRec.setButtonText(rec ? U("Aufnahme fertig") : U("Aufnehmen"));
+        lucRec.setButtonText(rec ? rysum::tr("Aufnahme fertig") : rysum::tr("Aufnehmen"));
         lucPlay.setEnabled(!pc.getRecording().empty() && !rec);
         lucPlay.setToggleState(pc.state.load() == rysum::LucierPiece::stPlaying,
                                juce::dontSendNotification);
@@ -1624,7 +1621,7 @@ void SaalView::paintLucier(juce::Graphics &g)
     auto &A = Assets::get();
     const auto &lv = proc.getLucierView();
     const bool on = proc.apvts.getRawParameterValue("lucOn")->load() > 0.5f;
-    drawSectionTitle(g, lucBox, "Lucier", U("\xe2\x80\x9eIch sitze in einem Raum\xe2\x80\x9c"));
+    drawSectionTitle(g, lucBox, "Lucier", rysum::tr("\xe2\x80\x9eIch sitze in einem Raum\xe2\x80\x9c"));
     const bool piece = pieceMode();
     auto &pc = proc.getLucierPiece();
     if (piece)
@@ -1636,15 +1633,15 @@ void SaalView::paintLucier(juce::Graphics &g)
             st == rysum::LucierPiece::stPlaying || st == rysum::LucierPiece::stFinished;
         g.setColour(playingNow ? col::ink : col::mute);
         g.setFont(A.romanFont(26.0f));
-        const juce::String big = st == rysum::LucierPiece::stRecording ? U("Aufnahme")
+        const juce::String big = st == rysum::LucierPiece::stRecording ? rysum::tr("Aufnahme")
                                  : playingNow ? juce::String(pc.playingGen.load()) + " / " +
                                                     juce::String(pc.lastGen.load())
                                               : U("\xe2\x80\x93");
         g.drawText(big, r.removeFromLeft(150), juce::Justification::centredLeft);
         g.setFont(A.monoFont(11.0f));
         g.setColour(st == rysum::LucierPiece::stRecording ? col::rubric.brighter(0.5f) : col::dim);
-        g.drawText(st == rysum::LucierPiece::stRecording     ? U("sprich, spiel \xe2\x80\xa6")
-                   : playingNow && pc.playingGen.load() == 0 ? U("die Aufnahme selbst")
+        g.drawText(st == rysum::LucierPiece::stRecording     ? rysum::tr("sprich, spiel \xe2\x80\xa6")
+                   : playingNow && pc.playingGen.load() == 0 ? rysum::tr("die Aufnahme selbst")
                                                              : U("Generation"),
                    r, juce::Justification::centredLeft);
         g.setFont(A.monoFont(10.5f));
@@ -1663,8 +1660,8 @@ void SaalView::paintLucier(juce::Graphics &g)
                    juce::Justification::centredLeft);
         g.setFont(A.monoFont(11.0f));
         g.setColour(col::dim);
-        g.drawText(gen < 1.5f ? U("Durchgang \xc2\xb7 der Raum, wie er ist")
-                              : U("Durchg\xc3\xa4nge durch den Raum"),
+        g.drawText(gen < 1.5f ? rysum::tr("Durchgang \xc2\xb7 der Raum, wie er ist")
+                              : rysum::tr("Durchg\xc3\xa4nge durch den Raum"),
                    r, juce::Justification::centredLeft);
     }
     // the room's response after n passes (log frequency, 50 dB)
@@ -1735,7 +1732,7 @@ void SaalView::paintLucier(juce::Graphics &g)
               << " Hz " << names[((mi % 12) + 12) % 12] << (ct >= 0 ? "+" : "") << ct;
         }
         if (s.isEmpty())
-            s = on ? U("berechne \xe2\x80\xa6") : U("aus");
+            s = on ? rysum::tr("berechne \xe2\x80\xa6") : rysum::tr("aus");
         if (lv.status.isNotEmpty())
         {
             s = lv.status;
@@ -1744,12 +1741,12 @@ void SaalView::paintLucier(juce::Graphics &g)
         g.drawFittedText(s, r.removeFromTop(17), juce::Justification::centredLeft, 1, 0.8f);
         g.setFont(A.monoFont(10.0f));
         g.setColour(col::mute);
-        g.drawFittedText(lv.what, r, juce::Justification::centredLeft, 1, 0.8f);
+        g.drawFittedText(rysum::trText(lv.what), r, juce::Justification::centredLeft, 1, 0.8f);
     }
     g.setFont(A.sansFont(12.0f));
     g.setColour(col::mute);
     if (piece && lucNoteArea.getHeight() > 20)
-        g.drawFittedText(U("Aufnehmen, sprechen oder spielen, nochmal klicken: die Aufnahme kommt "
+        g.drawFittedText(rysum::tr("Aufnehmen, sprechen oder spielen, nochmal klicken: die Aufnahme kommt "
                            "aus dem Raum zur\xc3\xbc"
                            "ck, wird neu aufgenommen, "
                            "wieder abgespielt \xe2\x80\xa6 jede Generation so lang wie die "
@@ -1758,7 +1755,7 @@ void SaalView::paintLucier(juce::Graphics &g)
                          lucNoteArea, juce::Justification::topLeft,
                          juce::jmax(1, lucNoteArea.getHeight() / 16));
     else if (lucNoteArea.getHeight() > 20)
-        g.drawFittedText(U("Jeder Durchgang filtert den Klang noch einmal mit dem Raum: seine "
+        g.drawFittedText(rysum::tr("Jeder Durchgang filtert den Klang noch einmal mit dem Raum: seine "
                            "st\xc3\xa4rksten Resonanzen bleiben, alles andere verschwindet. "
                            "Lautsprecher und Mikrofon sind wie bei Lucier Teil jedes Durchgangs. "
                            "Die Resonanzen werden so laut gehalten wie die Orgel."),
@@ -1776,20 +1773,20 @@ void SaalView::paint(juce::Graphics &g)
     }
     const bool on = proc.readParams().room.on;
     drawSectionTitle(g, saalBox, "Saal",
-                     on ? U("simuliert \xc2\xb7 statt der Impulsantwort") : juce::String("aus"));
+                     on ? rysum::tr("simuliert \xc2\xb7 statt der Impulsantwort") : rysum::tr("aus"));
     drawSectionTitle(g, dimBox,
-                     U("Ma\xc3\x9f"
+                     rysum::tr("Ma\xc3\x9f"
                        "e \xc2\xb7 Saal ") +
                          juce::String(editRoom + 1),
-                     "modulierbar");
+                     rysum::tr("modulierbar"));
     {
         // the rooms strip: labels
         g.setFont(A.monoFont(10.5f));
         g.setColour(col::mute);
         auto lbl = roomsArea.withTrimmedTop(4).removeFromTop(24).removeFromLeft(60);
-        g.drawText(U("R\xc3\xa4ume"), lbl, juce::Justification::centredLeft);
+        g.drawText(rysum::tr("R\xc3\xa4ume"), lbl, juce::Justification::centredLeft);
         auto lbl2 = roomsArea.withTrimmedTop(50).removeFromTop(24).removeFromLeft(60);
-        g.drawText(U("im Saal"), lbl2, juce::Justification::centredLeft);
+        g.drawText(rysum::tr("im Saal"), lbl2, juce::Justification::centredLeft);
         const char *shortNames[]{"P 16", "P 8", "Ged", "Okt 4", "Okt 2",
                                  "Sesq", "Mix", "Tr",  "Ein", "Vox"};
         g.setFont(A.monoFont(9.5f));
@@ -1797,19 +1794,19 @@ void SaalView::paint(juce::Graphics &g)
         for (int slot = 0; slot < (int)assign.size(); ++slot)
         {
             const auto b = assign[(size_t)slot].getBounds();
-            g.drawText(shortNames[slot], b.withY(b.getY() - 16).withHeight(14),
+            g.drawText(rysum::tr(shortNames[slot]), b.withY(b.getY() - 16).withHeight(14),
                        juce::Justification::centred);
         }
     }
     drawSectionTitle(g, surfBox,
-                     U("Oberfl\xc3\xa4"
+                     rysum::tr("Oberfl\xc3\xa4"
                        "chen \xc2\xb7 Saal ") +
                          juce::String(editRoom + 1));
-    drawSectionTitle(g, levelBox, U("H\xc3\xb6rer \xc2\xb7 Pegel"));
+    drawSectionTitle(g, levelBox, rysum::tr("H\xc3\xb6rer \xc2\xb7 Pegel"));
     g.setColour(col::mute);
     g.setFont(A.monoFont(11.0f));
     g.drawText(
-        "Nachhall:",
+        rysum::tr("Nachhall:"),
         juce::Rectangle<int>(tailConv.getX() - 70, tailConv.getY(), 64, tailConv.getHeight()),
         juce::Justification::centredRight);
     paintLucier(g);

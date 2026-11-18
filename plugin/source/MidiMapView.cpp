@@ -9,27 +9,27 @@ juce::String paramGroup(const juce::String &id)
     if (id.startsWith("stop") || id.startsWith("vol") || id.startsWith("swind") ||
         id.startsWith("rate") || id.startsWith("depth") || id.startsWith("ellipse") ||
         id.startsWith("motion"))
-        return id == "motionSync" ? juce::String("Klang") : juce::String("Register");
+        return id == "motionSync" ? juce::String::fromUTF8("Klang") : juce::String::fromUTF8("Register");
     if (id.startsWith("deg") || id.startsWith("spc"))
-        return "Verfall";
+        return juce::String::fromUTF8("Verfall");
     if (id.startsWith("cloud") || id.startsWith("pipe"))
-        return "Register";
+        return juce::String::fromUTF8("Register");
     if (id.startsWith("clickRes"))
         return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id == "click" || id == "clickBlend" || id == "releaseClick" || id == "stopPull" ||
         id == "wind" || id == "master")
         return juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang");
     if (id.startsWith("ir"))
-        return "Hall";
+        return juce::String::fromUTF8("Hall");
     if (id.startsWith("fx"))
-        return "Effekte";
+        return juce::String::fromUTF8("Effekte");
     if (id.startsWith("sim"))
         return "Saal";
     if (id.startsWith("bin"))
         return juce::String::fromUTF8("Kopfh\xc3\xb6rer");
     if (id.startsWith("lfo") || id.startsWith("env") || id.startsWith("mod"))
         return "Modulation";
-    return "Klang";
+    return juce::String::fromUTF8("Klang");
 }
 } // namespace
 
@@ -86,11 +86,11 @@ void MidiMapPanel::fillParamMenu(juce::PopupMenu &menu, RysumProcessor &proc)
 {
     const juce::StringArray groups{"Register",
                                    juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
-                                   "Klang",
-                                   "Verfall",
-                                   "Hall",
+                                   juce::String::fromUTF8("Klang"),
+                                   juce::String::fromUTF8("Verfall"),
+                                   juce::String::fromUTF8("Hall"),
                                    "Saal",
-                                   "Effekte",
+                                   juce::String::fromUTF8("Effekte"),
                                    "Modulation",
                                    juce::String::fromUTF8("Kopfh\xc3\xb6rer")};
     for (auto &grp : groups)
@@ -103,10 +103,10 @@ void MidiMapPanel::fillParamMenu(juce::PopupMenu &menu, RysumProcessor &proc)
                 continue; // the output format belongs to the track; the switch for the fixed CCs
                           // stays manual
             if (paramGroup(id) == grp)
-                sub.addItem(1 + i, proc.getParamAt(i)->getName(64));
+                sub.addItem(1 + i, rysum::trText(proc.getParamAt(i)->getName(64)));
         }
         if (sub.getNumItems() > 0)
-            menu.addSubMenu(grp, sub);
+            menu.addSubMenu(rysum::tr(grp), sub);
     }
 }
 
@@ -115,15 +115,14 @@ MidiMapPanel::MidiMapPanel(RysumProcessor &p) : proc(p)
     for (int i = 0; i < RysumProcessor::kNumMidiMaps; ++i)
     {
         auto &R = rows[(size_t)i];
-        R.learn.setTooltip(juce::String::fromUTF8(
-            "Klicken, dann den Regler am Keyboard bewegen (nochmal klicken: abbrechen)"));
+        R.learn.setTooltip(rysum::tr("Klicken, dann den Regler am Keyboard bewegen (nochmal klicken: abbrechen)"));
         R.learn.onClick = [this, i]
         {
             proc.learnMidi(proc.getLearningSlot() == i ? -1 : i);
             sync();
         };
         fillParamMenu(*R.target.getRootMenu(), proc);
-        R.target.setTextWhenNothingSelected("Ziel");
+        R.target.setTextWhenNothingSelected(rysum::tr("Ziel"));
         R.target.onChange = [this, i]
         {
             if (updating)
@@ -153,13 +152,13 @@ MidiMapPanel::MidiMapPanel(RysumProcessor &p) : proc(p)
             list.repaint(rows[(size_t)i].area);
         };
         R.range.setTooltip(
-            juce::String::fromUTF8("Bereich, den der Regler \xc3\xbc"
+            rysum::tr("Bereich, den der Regler \xc3\xbc"
                                    "berstreicht. Linke Raute = Regler unten, rechte = Regler oben "
                                    "(vertauschen kehrt die Richtung um). Doppelklick: ganzer "
                                    "Bereich, Shift: 5-%-Schritte."));
         R.toggle.setClickingTogglesState(false);
         R.toggle.setTooltip(
-            juce::String::fromUTF8("Taster: jeder Druck schaltet zwischen den beiden Enden des "
+            rysum::tr("Taster: jeder Druck schaltet zwischen den beiden Enden des "
                                    "Bereichs um (f\xc3\xbcr Kn\xc3\xb6pfe / Pads). "
                                    "Aus: der Regler stellt den Wert direkt ein."));
         R.toggle.onClick = [this, i]
@@ -169,7 +168,7 @@ MidiMapPanel::MidiMapPanel(RysumProcessor &p) : proc(p)
             proc.setMidiMap(i, m);
             sync();
         };
-        R.clear.setTooltip("Zuordnung entfernen");
+        R.clear.setTooltip(rysum::tr("Zuordnung entfernen"));
         R.clear.onClick = [this, i]
         {
             proc.clearMidiMap(i);
@@ -185,8 +184,7 @@ MidiMapPanel::MidiMapPanel(RysumProcessor &p) : proc(p)
     view.setScrollBarThickness(6);
     view.setSingleStepSizes(kRowH, kRowH);
     addAndMakeVisible(view);
-    buttonsLearn.setTooltip(juce::String::fromUTF8(
-        "Jeden Knopf der Oberfl\xc3\xa4"
+    buttonsLearn.setTooltip(rysum::tr("Jeden Knopf der Oberfl\xc3\xa4"
         "che auf eine MIDI-Taste legen (Pad, Taster, Klaviertaste): Knopf anklicken, MIDI-Taste "
         "dr\xc3\xbc"
         "cken. Auch mit Strg+M. Schalter mit Parameter stehen danach in dieser Liste; alle "
@@ -239,7 +237,7 @@ juce::String MidiMapPanel::rangeText(int slot, float norm) const
 {
     const auto m = proc.getMidiMap(slot);
     if (auto *prm = proc.getParamAt(m.param))
-        return prm->getText(norm, 24);
+        return rysum::trText(prm->getText(norm, 24));
     return {};
 }
 
@@ -253,7 +251,7 @@ void MidiMapPanel::sync()
         const auto m = proc.getMidiMap(i);
         juce::String l;
         if (learning == i)
-            l = juce::String::fromUTF8("bewegen \xe2\x80\xa6");
+            l = rysum::tr("bewegen \xe2\x80\xa6");
         else if (m.cc >= 0)
             l = RysumProcessor::triggerName(m.cc, m.channel);
         else
@@ -300,22 +298,22 @@ void MidiMapPanel::paint(juce::Graphics &g)
     auto &A = Assets::get();
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::faint);
-    g.drawText("Regler", header.withTrimmedLeft(22).withWidth(96),
+    g.drawText(rysum::tr("Regler"), header.withTrimmedLeft(22).withWidth(96),
                juce::Justification::centredLeft);
-    g.drawText("Ziel", header.withTrimmedLeft(126).withWidth(120),
+    g.drawText(rysum::tr("Ziel"), header.withTrimmedLeft(126).withWidth(120),
                juce::Justification::centredLeft);
     const int last = proc.getLastController();
     juce::String t;
     if (last < 0)
-        t = "noch kein Regler empfangen";
+        t = rysum::tr("noch kein Regler empfangen");
     else
-        t = juce::String::fromUTF8("zuletzt: CC ") + juce::String(last & 0xff) +
-            juce::String::fromUTF8(" \xc2\xb7 Kanal ") + juce::String((last >> 8) & 0xff) +
-            juce::String::fromUTF8(" \xc2\xb7 Wert ") + juce::String((last >> 16) & 0xff);
+        t = rysum::tr("zuletzt: CC ") + juce::String(last & 0xff) +
+            rysum::tr(" \xc2\xb7 Kanal ") + juce::String((last >> 8) & 0xff) +
+            rysum::tr(" \xc2\xb7 Wert ") + juce::String((last >> 16) & 0xff);
     g.setColour(last < 0 ? col::faint : col::dim);
     g.drawText(t, header.withTrimmedRight(14), juce::Justification::centredRight);
     g.setColour(col::faint);
-    g.drawText(juce::String::fromUTF8("Strg+M  \xc2\xb7  Pads und Tasten, die zugeordnet sind, "
+    g.drawText(rysum::tr("Strg+M  \xc2\xb7  Pads und Tasten, die zugeordnet sind, "
                                       "spielen keine Pfeife mehr"),
                footNote, juce::Justification::centredLeft);
 }

@@ -57,6 +57,29 @@ public:
     }
 };
 
+/** the interface language in the header: EN over DE, the current one lit; a click switches */
+class LanguageButton : public juce::Button
+{
+public:
+    LanguageButton() : juce::Button("Sprache") {}
+    void paintButton(juce::Graphics &g, bool over, bool down) override
+    {
+        using namespace rysum::ui;
+        auto r = getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(over || down ? col::dim : col::border);
+        g.drawRect(r, 1.0f);
+        const bool de = rysum::german();
+        const int h = getHeight() / 2;
+        g.setFont(Assets::get().monoFont(10.0f));
+        g.setColour(!de ? (over ? col::white : col::ink) : col::faint);
+        g.drawText("EN", getLocalBounds().withHeight(h).withTrimmedTop(2),
+                   juce::Justification::centred);
+        g.setColour(de ? (over ? col::white : col::ink) : col::faint);
+        g.drawText("DE", getLocalBounds().withTrimmedTop(h).withTrimmedBottom(2),
+                   juce::Justification::centred);
+    }
+};
+
 /** fixed 1280 x 720 design, scaled as a whole when the window is resized */
 namespace rysum::ui
 {
@@ -213,12 +236,19 @@ public:
     void askSavePatch();
     /** set by the editor: switches the full-screen view on / off */
     std::function<void()> onToggleFullscreen;
+    /** set by the editor: the language was switched (the editor builds the interface anew) */
+    std::function<void()> onLanguageChanged;
+    /** the page on screen (for showView) */
+    int currentView() const
+    {
+        return current;
+    }
     void setFullscreenShown(bool on)
     {
         fullButton.active = on;
-        fullButton.setTooltip(on ? juce::String::fromUTF8("Zur\xc3\xbc"
+        fullButton.setTooltip(on ? rysum::tr("Zur\xc3\xbc"
                                                           "ck ins Fenster (Esc)")
-                                 : juce::String("Vollbild (F11)"));
+                                 : rysum::tr("Vollbild (F11)"));
         fullButton.repaint();
     }
 
@@ -262,6 +292,7 @@ private:
     int keysVelocity = 100;
     void updatePlayButtons();
     FullscreenButton fullButton;
+    LanguageButton langButton;
     juce::ComboBox outputChoice;
     juce::TextButton patchPrev{juce::String::fromUTF8("\xe2\x97\x80")},
         patchNext{juce::String::fromUTF8("\xe2\x96\xb6")}, patchName, patchSave{"Speichern"};
@@ -324,8 +355,11 @@ private:
         assets; // fonts + images, alive while an editor exists
     juce::SharedResourcePointer<rysum::ui::LookAndFeel>
         lnf; // also the default look (context menus, dialogs)
-    RysumContent content;
+    std::unique_ptr<RysumContent> content;
     juce::TooltipWindow tooltips{this, 600};
+    void connectContent();
+    /** the language changed: the interface is made anew, on the same page */
+    void rebuildContent();
 
     /** the interface on a whole screen: a borderless window the content moves into (and back) */
     class FullscreenWindow : public juce::Component

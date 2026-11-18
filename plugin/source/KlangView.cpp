@@ -42,11 +42,11 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
             temperamentAtt->setValueAsCompleteGesture(static_cast<float>(id - 1));
     };
     temperamentAtt->sendInitialUpdate();
-    temperament.setTooltip(u8("Originalstimmung spielt die Aufnahmen in ihrer Tonh\xc3\xb6he. "
+    temperament.setTooltip(rysum::tr("Originalstimmung spielt die Aufnahmen in ihrer Tonh\xc3\xb6he. "
                               "Bei den Stufen-Stimmungen spielt jede Taste die n\xc3\xa4"
                               "chstgelegene aufgenommene Pfeife."));
     addAndMakeVisible(temperament);
-    scalaLoad.setTooltip(u8("Eine Skala im Scala-Format (.scl) laden \xe2\x80\x93 danach optional "
+    scalaLoad.setTooltip(rysum::tr("Eine Skala im Scala-Format (.scl) laden \xe2\x80\x93 danach optional "
                             "eine Tastenzuordnung (.kbm). "
                             "Jede MIDI-Note bekommt ihre eigene Tonh\xc3\xb6he; es spielt die "
                             "aufgenommene Pfeife, die ihr am n\xc3\xa4"
@@ -55,7 +55,7 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     scalaLoad.onClick = [this]
     {
         chooser = std::make_unique<juce::FileChooser>(
-            u8("Scala-Skala (.scl) oder Tastenzuordnung (.kbm)"),
+            rysum::tr("Scala-Skala (.scl) oder Tastenzuordnung (.kbm)"),
             juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), "*.scl;*.kbm");
         chooser->launchAsync(juce::FileBrowserComponent::openMode |
                                  juce::FileBrowserComponent::canSelectFiles,
@@ -67,7 +67,7 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
                              });
     };
     kbmClear.setTooltip(
-        u8("Tastenzuordnung entfernen: Stufe 0 auf C4 (MIDI 60), 261,625565 Hz bei A4 = 440 Hz"));
+        rysum::tr("Tastenzuordnung entfernen: Stufe 0 auf C4 (MIDI 60), 261,625565 Hz bei A4 = 440 Hz"));
     kbmClear.onClick = [this]
     {
         proc.clearKbm();
@@ -75,9 +75,9 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     };
     addAndMakeVisible(scalaLoad);
     addAndMakeVisible(kbmClear);
-    mtsFollow = &toggle("mtsContinuous", u8("T\xc3\xb6ne folgen"));
+    mtsFollow = &toggle("mtsContinuous", rysum::tr("T\xc3\xb6ne folgen"));
     mtsFollow->setTooltip(
-        u8("MTS-ESP: gehaltene T\xc3\xb6ne folgen einer ge\xc3\xa4nderten Stimmung sofort. Aus: "
+        rysum::tr("MTS-ESP: gehaltene T\xc3\xb6ne folgen einer ge\xc3\xa4nderten Stimmung sofort. Aus: "
            "jeder Ton beh\xc3\xa4lt die Tonh\xc3\xb6he seines Anschlags."));
 
     loadPresetTuning.setClickingTogglesState(true);
@@ -85,11 +85,11 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     { proc.loadPresetTuning.store(loadPresetTuning.getToggleState()); };
     addAndMakeVisible(loadPresetTuning);
     extendedRange.setClickingTogglesState(true);
-    extendedRange.setTooltip("MIDI 24 bis 108 in umgestimmten Modi.");
+    extendedRange.setTooltip(rysum::tr("MIDI 24 bis 108 in umgestimmten Modi."));
     extendedRange.onClick = [this] { proc.extendedRange.store(extendedRange.getToggleState()); };
     addAndMakeVisible(extendedRange);
 
-    pitch = &row("pitch", "Stimmton");
+    pitch = &row("pitch", rysum::tr("Stimmton"));
     pitch->slider.setDoubleClickReturnValue(true, kStimmton440Detent);
     scalaReference.setFont(Assets::get().sansFont(14.0f));
     scalaReference.setBorderSize(juce::BorderSize<int>(0));
@@ -101,58 +101,57 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     scalaReferenceValue.setColour(juce::Label::textColourId, col::dim);
     scalaReferenceValue.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(scalaReferenceValue);
-    detune = &row("detune", u8("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
-    detune->setDisabledValueText("Original", "Verstimmung");
+    detune = &row("detune", rysum::tr("Verstimmung (zuf\xc3\xa4llig je Pfeife)"));
+    detune->setDisabledValueText("Original", rysum::tr("Verstimmung"));
 
     tremOn = &toggle("tremOn", "Tremulant");
     tremRate = &row("tremRate", "Tempo");
-    tremDepth = &row("tremDepth", "Tiefe");
+    tremDepth = &row("tremDepth", rysum::tr("Tiefe"));
 
     freezeOn = &toggle("freeze", "Freeze");
-    freezeOn->setTooltip(u8(
-        "An: losgelassene T\xc3\xb6ne frieren als Kornwolke ein. Aus: sie klingen aus. (CC 66)"));
-    smear = &row("freezeSmear", "Verwischen");
-    release = &row("freezeRelease", "Ausklang beim Ausschalten");
+    freezeOn->setTooltip(rysum::tr("An: losgelassene T\xc3\xb6ne frieren als Kornwolke ein. Aus: sie klingen aus. (CC 66)"));
+    smear = &row("freezeSmear", rysum::tr("Verwischen"));
+    release = &row("freezeRelease", rysum::tr("Ausklang beim Ausschalten"));
 
-    dsfOn = &toggle("dsfOn", "Testton an");
-    dsfOn->setTooltip("Referenzton: folgt MIDI und globaler Stimmung, oder kontinuierlich mit "
-                      "eigener Hz-Frequenz.");
+    dsfOn = &toggle("dsfOn", rysum::tr("Testton an"));
+    dsfOn->setTooltip(rysum::tr("Referenzton: folgt MIDI und globaler Stimmung, oder kontinuierlich mit "
+                      "eigener Hz-Frequenz."));
     dsfMidi = &toggle("dsfMidi", "MIDI");
-    dsfMidi->setTooltip("An: letzte gehaltene MIDI-Note, globale Stimmung und eigene Feinstimmung. "
+    dsfMidi->setTooltip(rysum::tr("An: letzte gehaltene MIDI-Note, globale Stimmung und eigene Feinstimmung. "
                         "Aus: kontinuierliche Frequenz in Hz. Originalstimmung verwendet das "
-                        "ausgewaehlte Register oder die nominale Referenz.");
+                        "ausgewaehlte Register oder die nominale Referenz."));
     const auto &registerParam =
         *static_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("dsfRegister"));
     dsfRegister.addItemList(registerParam.choices, 1);
     dsfRegister.setTooltip(
-        "Referenz in Originalstimmung: gemessenes Register oder 1/4-Komma MT bei A = 444,5 Hz.");
+        rysum::tr("Referenz in Originalstimmung: gemessenes Register oder 1/4-Komma MT bei A = 444,5 Hz."));
     addAndMakeVisible(dsfRegister);
     dsfRegisterAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "dsfRegister", dsfRegister);
-    dsfOffset = &row("dsfOffset", "Feinstimmung");
-    dsfFrequency = &row("dsfFrequency", "Frequenz");
+    dsfOffset = &row("dsfOffset", rysum::tr("Feinstimmung"));
+    dsfFrequency = &row("dsfFrequency", rysum::tr("Frequenz"));
     dsfOffset->slider.fineDragIncrement = 0.01;
     dsfOffset->slider.setDoubleClickReturnValue(true, 0.0);
     dsfFrequency->slider.fineDragIncrement = 0.1;
-    dsfOffset->setTooltip("0.01 Cent je Pixel oder Mausradschritt. Alt-Ziehen: grob; Doppelklick: "
-                          "0 Cent; Wert anklicken: Eingabe.");
-    dsfFrequency->setTooltip("0.1 Hz je Pixel oder Mausradschritt. Alt-Ziehen: grob; Wert "
-                             "anklicken: genaue Hz-Eingabe.");
-    dsfSpectrum = &row("dsfSpectrum", "Spektrum");
-    dsfSpectrum->setTooltip("0 = Sinus; 100 % = volles integriertes DSF-Spektrum mit bis zu 1024 "
-                            "Teiltoenen. Gleichmaessigere Helligkeitsregelung.");
-    dsfMixtur = &row("dsfMixtur", "Mixtur (x Grundton)");
-    dsfMixtur->setTooltip("MIDI: 1 bis 9 mal Grundfrequenz nach Oktavlage. Mit Klangfarbe 0 einen "
-                          "einzelnen harmonischen Teilton pruefen.");
-    dsfFootage = &row("dsfFootage", "Oktavlage");
-    dsfFootage->setTooltip("MIDI: 32 / 16 / 8 / 4 / 2 Fuss. 8 Fuss ist die globale Tonhoehe; "
-                           "manuelle Hz bleiben absolut.");
+    dsfOffset->setTooltip(rysum::tr("0.01 Cent je Pixel oder Mausradschritt. Alt-Ziehen: grob; Doppelklick: "
+                          "0 Cent; Wert anklicken: Eingabe."));
+    dsfFrequency->setTooltip(rysum::tr("0.1 Hz je Pixel oder Mausradschritt. Alt-Ziehen: grob; Wert "
+                             "anklicken: genaue Hz-Eingabe."));
+    dsfSpectrum = &row("dsfSpectrum", rysum::tr("Spektrum"));
+    dsfSpectrum->setTooltip(rysum::tr("0 = Sinus; 100 % = volles integriertes DSF-Spektrum mit bis zu 1024 "
+                            "Teiltoenen. Gleichmaessigere Helligkeitsregelung."));
+    dsfMixtur = &row("dsfMixtur", rysum::tr("Mixtur (x Grundton)"));
+    dsfMixtur->setTooltip(rysum::tr("MIDI: 1 bis 9 mal Grundfrequenz nach Oktavlage. Mit Klangfarbe 0 einen "
+                          "einzelnen harmonischen Teilton pruefen."));
+    dsfFootage = &row("dsfFootage", rysum::tr("Oktavlage"));
+    dsfFootage->setTooltip(rysum::tr("MIDI: 32 / 16 / 8 / 4 / 2 Fuss. 8 Fuss ist die globale Tonhoehe; "
+                           "manuelle Hz bleiben absolut."));
     dsfPartials = &row("dsfPartials", "Number of Harmonic Partials");
-    dsfLevel = &row("dsfLevel", "Pegel");
+    dsfLevel = &row("dsfLevel", rysum::tr("Pegel"));
 
     // two loudspeakers (transaural): the binaural signal with the crosstalk cancelled
     trOn.setClickingTogglesState(false);
-    trOn.setTooltip(u8("Schaltet die Ausgabe auf Transaural: der Kopfh\xc3\xb6rer-Klang \xc3\xbc"
+    trOn.setTooltip(rysum::tr("Schaltet die Ausgabe auf Transaural: der Kopfh\xc3\xb6rer-Klang \xc3\xbc"
                        "ber zwei Lautsprecher, "
                        "das \xc3\x9c"
                        "bersprechen zum jeweils anderen Ohr wird ausgel\xc3\xb6scht. Ordnung, HRTF "
@@ -164,25 +163,25 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
                 proc.isTransaural() ? 0.0f : (float)RysumProcessor::kTransauralOutput));
     };
     addAndMakeVisible(trOn);
-    trAngle = &row("trAngle", "Lautsprecher bei");
-    trAngle->setTooltip(u8("Wo die beiden Lautsprecher stehen, von vorn gemessen (symmetrisch). "
+    trAngle = &row("trAngle", rysum::tr("Lautsprecher bei"));
+    trAngle->setTooltip(rysum::tr("Wo die beiden Lautsprecher stehen, von vorn gemessen (symmetrisch). "
                            "90\xc2\xb0 = links und rechts, "
                            "einander gegen\xc3\xbc"
                            "ber, du in der Mitte zwischen ihnen."));
-    trAmount = &row("trAmount", u8("\xc3\x9c"
+    trAmount = &row("trAmount", rysum::tr("\xc3\x9c"
                                    "bersprechen aus"));
     trAmount->setTooltip(
-        u8("0 % = einfach der Kopfh\xc3\xb6rer-Klang auf die Lautsprecher, 100 % = das \xc3\x9c"
+        rysum::tr("0 % = einfach der Kopfh\xc3\xb6rer-Klang auf die Lautsprecher, 100 % = das \xc3\x9c"
            "bersprechen ganz ausgel\xc3\xb6scht "
            "(das Bild wird r\xc3\xa4umlicher, aber empfindlicher f\xc3\xbcr die Sitzposition)"));
-    trBoost = &row("trBoost", u8("h\xc3\xb6"
+    trBoost = &row("trBoost", rysum::tr("h\xc3\xb6"
                                  "chste Anhebung"));
-    trBoost->setTooltip(u8("Die Ausl\xc3\xb6schung hebt die Tiefen im Seitensignal an (der Kopf "
+    trBoost->setTooltip(rysum::tr("Die Ausl\xc3\xb6schung hebt die Tiefen im Seitensignal an (der Kopf "
                            "ist klein gegen\xc3\xbc"
                            "ber langen Wellen). "
                            "Mehr = genauer, aber mehr Bass-Hub und Schwanken bei Kopfbewegung."));
-    trEq = &toggle("trSideEq", "Seitenklang ausgleichen");
-    trEq->setTooltip(u8("Nimmt auch die Klangf\xc3\xa4rbung der Lautsprecher-Richtung heraus (die "
+    trEq = &toggle("trSideEq", rysum::tr("Seitenklang ausgleichen"));
+    trEq->setTooltip(rysum::tr("Nimmt auch die Klangf\xc3\xa4rbung der Lautsprecher-Richtung heraus (die "
                         "Ohrmuschel h\xc3\xb6rt sie von der Seite): "
                         "die Ohren bekommen den Kopfh\xc3\xb6rer-Klang, nicht "
                         "Kopfh\xc3\xb6rer-Klang mal Seite. Gegl\xc3\xa4ttet, h\xc3\xb6"
@@ -190,11 +189,11 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
                         "10 dB."));
 
     doppler = &row("doppler", "Doppler");
-    distAmount = &row("distAmount", u8("Entfernung \xe2\x86\x92 Lautst\xc3\xa4rke"));
-    air = &row("air", u8("Luft (H\xc3\xb6hen in der Ferne)"));
-    airInvert = &row("airInvert", u8("Luft umkehren"));
+    distAmount = &row("distAmount", rysum::tr("Entfernung \xe2\x86\x92 Lautst\xc3\xa4rke"));
+    air = &row("air", rysum::tr("Luft (H\xc3\xb6hen in der Ferne)"));
+    airInvert = &row("airInvert", rysum::tr("Luft umkehren"));
     airInvert->setTooltip(
-        u8("Gibt fernen Pfeifen die H\xc3\xb6hen zur\xc3\xbc"
+        rysum::tr("Gibt fernen Pfeifen die H\xc3\xb6hen zur\xc3\xbc"
            "ck, die die Luft ihnen nimmt: 50 % = wie nah, 100 % = unnat\xc3\xbcrlich "
            "pr\xc3\xa4sent \xe2\x80\x93 je ferner, desto heller."));
 
@@ -204,11 +203,11 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
         binOrder.addItemList(choice->choices, 1);
     binOrderAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "binOrder", binOrder);
-    binOrder.setTooltip(u8("Ambisonics-Ordnung vor dem Kopfh\xc3\xb6rer-Decoder: h\xc3\xb6her = "
+    binOrder.setTooltip(rysum::tr("Ambisonics-Ordnung vor dem Kopfh\xc3\xb6rer-Decoder: h\xc3\xb6her = "
                            "sch\xc3\xa4rfer geortet, braucht mehr Rechenzeit"));
     addAndMakeVisible(binOrder);
     binOn.setClickingTogglesState(false);
-    binOn.setTooltip(u8("Schaltet die Ausgabe auf Binaural (Kopfh\xc3\xb6rer) bzw. zur\xc3\xbc"
+    binOn.setTooltip(rysum::tr("Schaltet die Ausgabe auf Binaural (Kopfh\xc3\xb6rer) bzw. zur\xc3\xbc"
                         "ck auf Stereo"));
     binOn.onClick = [this]
     {
@@ -218,10 +217,10 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     };
     addAndMakeVisible(binOn);
     sofaLoad.setTooltip(
-        u8("Eigene HRTF im SOFA-Format (SimpleFreeFieldHRIR), z. B. eine individuell gemessene"));
+        rysum::tr("Eigene HRTF im SOFA-Format (SimpleFreeFieldHRIR), z. B. eine individuell gemessene"));
     sofaLoad.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser>("HRTF im SOFA-Format", proc.getSofaFile(),
+        chooser = std::make_unique<juce::FileChooser>(rysum::tr("HRTF im SOFA-Format"), proc.getSofaFile(),
                                                       "*.sofa");
         chooser->launchAsync(juce::FileBrowserComponent::openMode |
                                  juce::FileBrowserComponent::canSelectFiles,
@@ -232,10 +231,10 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
                              });
     };
     sofaReset.setTooltip(
-        u8("Eingebaute HRTF: FABIAN-Kunstkopf der TU Berlin (Brinkmann et al. 2017, CC BY 4.0)"));
+        rysum::tr("Eingebaute HRTF: FABIAN-Kunstkopf der TU Berlin (Brinkmann et al. 2017, CC BY 4.0)"));
     sofaReset.onClick = [this] { proc.setSofaFile({}); };
     addAndMakeVisible(sofaLoad);
-    speakersButton.setTooltip(u8("Ausgabe auf ein Lautsprecher-Layout (AllRAD wie im IEM "
+    speakersButton.setTooltip(rysum::tr("Ausgabe auf ein Lautsprecher-Layout (AllRAD wie im IEM "
                                  "AllRADecoder): Layout, Ordnung, Test"));
     speakersButton.onClick = [this]
     {
@@ -244,12 +243,12 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     };
     addAndMakeVisible(speakersButton);
     addAndMakeVisible(sofaReset);
-    yaw = &row("binYaw", "Kopfdrehung");
+    yaw = &row("binYaw", rysum::tr("Kopfdrehung"));
     yaw->slider.setTooltip(
-        u8("Dreht die ganze Szene um den H\xc3\xb6rer, als ob du den Kopf drehst (modulierbar)"));
+        rysum::tr("Dreht die ganze Szene um den H\xc3\xb6rer, als ob du den Kopf drehst (modulierbar)"));
     dfEq = &toggle("binDfEq", "Diffusfeld-Entzerrung");
     dfEq->setTooltip(
-        u8("Gleicht die mittlere Klangf\xc3\xa4rbung der HRTF aus (f\xc3\xbcr "
+        rysum::tr("Gleicht die mittlere Klangf\xc3\xa4rbung der HRTF aus (f\xc3\xbcr "
            "diffusfeld-abgestimmte Kopfh\xc3\xb6rer). Aus: Kunstkopf-Klang wie gemessen."));
 
     // wind model of the stops (what a half-drawn stop does)
@@ -275,9 +274,9 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
         if (windAtt)
             windAtt->setValueAsCompleteGesture(1.0f);
     };
-    windClassic.setTooltip(u8("Ein halb gezogenes Register (Wind-Regler je Register) wird leiser, "
+    windClassic.setTooltip(rysum::tr("Ein halb gezogenes Register (Wind-Regler je Register) wird leiser, "
                               "tiefer, dumpfer und unruhig."));
-    windUnstable.setTooltip(u8("Wie klassisch, und bei wenig Wind dazu ein Schneidenton: jede "
+    windUnstable.setTooltip(rysum::tr("Wie klassisch, und bei wenig Wind dazu ein Schneidenton: jede "
                                "Pfeife pfeift auf ihre eigene Art, ruhig bei ruhigem Wind, "
                                "tiefer und leiser, wenn der Wind sinkt. Die M\xc3\xbcndung zischt, "
                                "ganz wenig Wind l\xc3\xa4sst die Ansprache stocken. "
@@ -285,10 +284,10 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     addAndMakeVisible(windClassic);
     addAndMakeVisible(windUnstable);
 
-    midiOn = &toggle("midiCC", "MIDI-CC an");
-    midiOn->setTooltip(u8("Schaltet die feste CC-Belegung (Liste unten). Eigene Zuordnungen (MIDI "
+    midiOn = &toggle("midiCC", rysum::tr("MIDI-CC an"));
+    midiOn->setTooltip(rysum::tr("Schaltet die feste CC-Belegung (Liste unten). Eigene Zuordnungen (MIDI "
                           "lernen) gelten immer."));
-    midiMapButton.setTooltip(u8("Drehregler, Fader und Taster deines Keyboards auf beliebige "
+    midiMapButton.setTooltip(rysum::tr("Drehregler, Fader und Taster deines Keyboards auf beliebige "
                                 "Regler legen (Seite Modulation)"));
     midiMapButton.onClick = [this]
     {
@@ -297,16 +296,16 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
     };
     addAndMakeVisible(midiMapButton);
     mpeOn = &toggle("mpe", "MPE");
-    mpeOn->setTooltip(u8("MPE (z. B. Lumatone, Linnstrument, Seaboard, Osmose): jede Note auf "
+    mpeOn->setTooltip(rysum::tr("MPE (z. B. Lumatone, Linnstrument, Seaboard, Osmose): jede Note auf "
                          "ihrem eigenen MIDI-Kanal (2\xe2\x80\x93"
                          "16) "
                          "mit eigener Tonh\xc3\xb6henbeugung; Druck und Gleiten (CC 74) sind "
                          "Modulationsquellen je Ton. "
                          "Kanal 1 gilt f\xc3\xbcr alle (Tonh\xc3\xb6henrad als Modulationsquelle). "
                          "Bleibt beim Patch-Wechsel erhalten."));
-    mpeBend = &row("mpeBend", u8("MPE-Beugung (ganzer Ausschlag)"));
-    syncOn = &toggle("motionSync", "Bewegung im Tempo");
-    syncOn->setTooltip(u8("Geschwindigkeiten gelten bei 120 BPM, laufen mit dem Projekttempo und "
+    mpeBend = &row("mpeBend", rysum::tr("MPE-Beugung (ganzer Ausschlag)"));
+    syncOn = &toggle("motionSync", rysum::tr("Bewegung im Tempo"));
+    syncOn->setTooltip(rysum::tr("Geschwindigkeiten gelten bei 120 BPM, laufen mit dem Projekttempo und "
                           "rasten auf die Taktposition ein."));
     refresh();
 }
@@ -478,11 +477,11 @@ void KlangView::refresh()
                               .upToFirstOccurrenceOf(" (MIDI", false, false);
         const auto midi = reference.fromFirstOccurrenceOf("(MIDI", true, false)
                               .upToFirstOccurrenceOf("\n", false, false);
-        scalaReference.setText("Stimmton " + midi, juce::dontSendNotification);
+        scalaReference.setText(rysum::tr("Stimmton ") + midi, juce::dontSendNotification);
         scalaReferenceValue.setText(note + " = " + reference.fromFirstOccurrenceOf("\n", false, false),
                                     juce::dontSendNotification);
     }
-    pitch->setDisabledValueText("Originalstimmung");
+    pitch->setDisabledValueText(rysum::tr("Originalstimmung"));
     pitch->setEnabled(!original && !mts);
     pitch->setAlpha(original || mts ? 0.5f : 1.0f);
     detune->setEnabled(!original);
@@ -535,36 +534,36 @@ void KlangView::paint(juce::Graphics &g)
         g.setOpacity(0.07f);
         drawCover(g, A.wall, getLocalBounds().toFloat(), 0.6f);
     }
-    drawSectionTitle(g, tuneBox, "Stimmung");
+    drawSectionTitle(g, tuneBox, rysum::tr("Stimmung"));
     {
         g.setFont(A.monoFont(10.5f));
         g.setColour(proc.getTuningStatus().startsWith("Fehler") ? col::rubric.brighter(0.4f)
                                                                 : col::dim);
-        g.drawFittedText(proc.getTuningStatus(), tuningStatusArea, juce::Justification::topLeft, 4);
+        g.drawFittedText(rysum::trText(proc.getTuningStatus()), tuningStatusArea, juce::Justification::topLeft, 4);
     }
-    drawSectionTitle(g, tremBox, "Tremulant", "CC 1 = Tiefe");
+    drawSectionTitle(g, tremBox, "Tremulant", rysum::tr("CC 1 = Tiefe"));
     const int fz = proc.engine.frozenVoices.load();
     drawSectionTitle(g, freezeBox, "Freeze",
-                     fz > 0 ? juce::String(fz) + " eingefroren" : juce::String("CC 66"));
-    drawSectionTitle(g, dsfBox, "Testton",
+                     fz > 0 ? juce::String(fz) + rysum::tr(" eingefroren") : juce::String("CC 66"));
+    drawSectionTitle(g, dsfBox, rysum::tr("Testton"),
                      proc.getReferenceToneFrequency() > 0.0
                          ? juce::String(proc.getReferenceToneFrequency(), 6) + " Hz"
-                         : "Referenz");
-    drawSectionTitle(g, distBox, u8("Entfernung \xc2\xb7 Doppler"));
+                         : rysum::tr("Referenz"));
+    drawSectionTitle(g, distBox, rysum::tr("Entfernung \xc2\xb7 Doppler"));
     drawSectionTitle(g, midiBox, "MIDI");
-    drawSectionTitle(g, binBox, u8("Kopfh\xc3\xb6rer (binaural)"),
-                     proc.isHeadphones()   ? juce::String("aktiv")
-                     : proc.isTransaural() ? juce::String(u8("f\xc3\xbcr Transaural"))
-                                           : juce::String("aus"));
-    drawSectionTitle(g, trBox, "Zwei Lautsprecher",
-                     proc.isTransaural() ? juce::String(u8("transaural \xc2\xb7 aktiv"))
+    drawSectionTitle(g, binBox, rysum::tr("Kopfh\xc3\xb6rer (binaural)"),
+                     proc.isHeadphones()   ? rysum::tr("aktiv")
+                     : proc.isTransaural() ? juce::String(rysum::tr("f\xc3\xbcr Transaural"))
+                                           : rysum::tr("aus"));
+    drawSectionTitle(g, trBox, rysum::tr("Zwei Lautsprecher"),
+                     proc.isTransaural() ? juce::String(rysum::tr("transaural \xc2\xb7 aktiv"))
                                          : juce::String("transaural"));
     {
         g.setFont(A.monoFont(10.0f));
         g.setColour(proc.isTransaural() ? col::dim : col::mute);
         const auto st = proc.isTransaural()
-                            ? proc.getTransauralStatus()
-                            : juce::String(u8("Lautsprecher links und rechts einander gegen\xc3\xbc"
+                            ? rysum::trText(proc.getTransauralStatus())
+                            : juce::String(rysum::tr("Lautsprecher links und rechts einander gegen\xc3\xbc"
                                               "ber, du dazwischen"));
         g.drawFittedText(st.replace(juce::String::fromUTF8(" \xc2\xb7 "), "\n"), trStatusArea,
                          juce::Justification::topLeft, 4);
@@ -573,16 +572,16 @@ void KlangView::paint(juce::Graphics &g)
     g.setFont(A.monoFont(11.0f));
     g.setColour(col::dim);
     {
-        drawSectionTitle(g, windBox, "Registerwind", "Windmodell");
+        drawSectionTitle(g, windBox, rysum::tr("Registerwind"), rysum::tr("Windmodell"));
         const bool unstable = windUnstable.getToggleState();
         g.setFont(A.sansFont(11.5f));
         g.setColour(col::mute);
         g.drawFittedText(
-            unstable ? u8("Bei wenig Wind pfeift jede Pfeife ihren Schneidenton: ruhig bei ruhigem "
+            unstable ? rysum::tr("Bei wenig Wind pfeift jede Pfeife ihren Schneidenton: ruhig bei ruhigem "
                           "Wind, "
                           "tiefer und leiser, wenn der Wind sinkt; die M\xc3\xbcndung zischt. "
                           "Voller Wind: unver\xc3\xa4ndert.")
-                     : u8("Ein halb gezogenes Register wird leiser, tiefer, dumpfer und unruhig."),
+                     : rysum::tr("Ein halb gezogenes Register wird leiser, tiefer, dumpfer und unruhig."),
             windText, juce::Justification::topLeft, 4);
     }
     g.setFont(A.monoFont(11.0f));
@@ -597,7 +596,7 @@ void KlangView::paint(juce::Graphics &g)
         "CC 64       Haltepedal",
     };
     for (auto *l : lines)
-        g.drawText(u8(l), midiText.removeFromTop(18), juce::Justification::centredLeft);
+        g.drawText(rysum::tr(l), midiText.removeFromTop(18), juce::Justification::centredLeft);
 
     {
         auto r = binStatusArea;
@@ -606,11 +605,11 @@ void KlangView::paint(juce::Graphics &g)
         const auto hrtf = proc.getSofaFile() == juce::File()
                               ? juce::String("HRTF: FABIAN (TU Berlin)")
                               : "HRTF: " + proc.getSofaFile().getFileName();
-        g.drawFittedText(hrtf + "\n" + proc.getBinauralStatus(), r.removeFromTop(34),
+        g.drawFittedText(hrtf + "\n" + rysum::trText(proc.getBinauralStatus()), r.removeFromTop(34),
                          juce::Justification::topLeft, 3);
         g.setFont(A.sansFont(11.5f));
         g.setColour(col::faint);
-        g.drawFittedText(u8("Wie der IEM BinauralDecoder: MagLS-Decoder aus der HRTF berechnet. "
+        g.drawFittedText(rysum::tr("Wie der IEM BinauralDecoder: MagLS-Decoder aus der HRTF berechnet. "
                             "FABIAN: Brinkmann et al., TU Berlin, CC BY 4.0."),
                          r, juce::Justification::bottomLeft, 3);
     }

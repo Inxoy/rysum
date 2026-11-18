@@ -70,7 +70,7 @@ void SpeakerMap::paint(juce::Graphics &g)
     g.drawLine(c.x - 1.5f * R, c.y, c.x + 1.5f * R, c.y);
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::mute);
-    g.drawText(U("vorn \xc2\xb7 0\xc2\xb0"),
+    g.drawText(rysum::tr("vorn \xc2\xb7 0\xc2\xb0"),
                juce::Rectangle<float>(120, 14).withCentre({c.x, c.y - 1.5f * R - 8}),
                juce::Justification::centred);
     g.setColour(col::faint);
@@ -80,7 +80,7 @@ void SpeakerMap::paint(juce::Graphics &g)
                  "90\xc2\xb0"),
                juce::Rectangle<float>(40, 14).withCentre({c.x + R + 18, c.y - 9}),
                juce::Justification::centred);
-    g.drawText(U("Horizont"), juce::Rectangle<float>(70, 12).withCentre({c.x + 38, c.y + R + 8}),
+    g.drawText(rysum::tr("Horizont"), juce::Rectangle<float>(70, 12).withCentre({c.x + 38, c.y + R + 8}),
                juce::Justification::centredLeft);
     g.drawText(U("\xe2\x88\x92"
                  "30\xc2\xb0"),
@@ -186,7 +186,7 @@ SpeakerRow::SpeakerRow()
         l.setColour(juce::Label::textWhenEditingColourId, col::white);
         l.setColour(juce::Label::backgroundWhenEditingColourId, col::bg);
         l.setColour(juce::Label::outlineWhenEditingColourId, col::rubric);
-        l.setTooltip(U("Doppelklick: Wert eingeben"));
+        l.setTooltip(rysum::tr("Doppelklick: Wert eingeben"));
         l.onTextChange = [this, f]
         {
             if (onEdit)
@@ -196,7 +196,7 @@ SpeakerRow::SpeakerRow()
         addAndMakeVisible(l);
     }
     imag.setClickingTogglesState(true);
-    imag.setTooltip(U("Imagin\xc3\xa4rer Lautsprecher: hilft nur beim Aufteilen (L\xc3\xbc"
+    imag.setTooltip(rysum::tr("Imagin\xc3\xa4rer Lautsprecher: hilft nur beim Aufteilen (L\xc3\xbc"
                       "cken, z. B. unten), sein Signal wird verworfen"));
     imag.onClick = [this]
     {
@@ -268,7 +268,7 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
     };
     map.onMoveDone = [this] { applyLayout(); };
 
-    presets.setTextWhenNothingSelected(U("Vorlage \xe2\x80\xa6"));
+    presets.setTextWhenNothingSelected(rysum::tr("Vorlage \xe2\x80\xa6"));
     {
         int id = 1;
         for (auto &l : speakerPresets())
@@ -286,16 +286,16 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
         }
         presets.setSelectedId(0, juce::dontSendNotification);
     };
-    presets.setTooltip(U("Eine fertige Anordnung \xc3\xbc"
+    presets.setTooltip(rysum::tr("Eine fertige Anordnung \xc3\xbc"
                          "bernehmen (ersetzt die jetzige)"));
     addAndMakeVisible(presets);
 
     loadJson.setTooltip(
-        U("Lautsprecher-Layout aus dem IEM AllRADecoder / SimpleDecoder (JSON) laden"));
+        rysum::tr("Lautsprecher-Layout aus dem IEM AllRADecoder / SimpleDecoder (JSON) laden"));
     loadJson.onClick = [this]
     {
         chooser = std::make_unique<juce::FileChooser>(
-            "Lautsprecher-Layout (IEM JSON)",
+            rysum::tr("Lautsprecher-Layout (IEM JSON)"),
             RysumProcessor::speakerDefaultFile().getParentDirectory(), "*.json");
         chooser->launchAsync(
             juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -316,16 +316,16 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
                 }
                 else
                     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-                                                           "Lautsprecher",
+                                                           rysum::tr("Lautsprecher"),
                                                            f.getFileName() + ": " + err);
             });
     };
-    saveJson.setTooltip(U("Als JSON speichern \xe2\x80\x93 im Format der IEM Plug-in Suite "
+    saveJson.setTooltip(rysum::tr("Als JSON speichern \xe2\x80\x93 im Format der IEM Plug-in Suite "
                           "(AllRADecoder liest es auch)"));
     saveJson.onClick = [this]
     {
         chooser = std::make_unique<juce::FileChooser>(
-            "Lautsprecher-Layout speichern",
+            rysum::tr("Lautsprecher-Layout speichern"),
             RysumProcessor::speakerDefaultFile().getParentDirectory().getChildFile(
                 (edit.name.isNotEmpty() ? juce::File::createLegalFileName(edit.name)
                                         : juce::String("Layout")) +
@@ -347,7 +347,7 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
     addAndMakeVisible(loadJson);
     addAndMakeVisible(saveJson);
 
-    onButton.setTooltip(U("Ausgabe auf die Lautsprecher (AllRAD) bzw. zur\xc3\xbc"
+    onButton.setTooltip(rysum::tr("Ausgabe auf die Lautsprecher (AllRAD) bzw. zur\xc3\xbc"
                           "ck auf Stereo"));
     onButton.onClick = [this]
     {
@@ -361,11 +361,11 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
         order.addItemList(choice->choices, 1);
     orderAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         proc.apvts, "spkOrder", order);
-    order.setTooltip(U("Ambisonics-Ordnung vor dem Decoder: h\xc3\xb6her = sch\xc3\xa4rfer, wenn "
+    order.setTooltip(rysum::tr("Ambisonics-Ordnung vor dem Decoder: h\xc3\xb6her = sch\xc3\xa4rfer, wenn "
                        "genug Lautsprecher da sind"));
     addAndMakeVisible(order);
     distComp.setClickingTogglesState(true);
-    distComp.setTooltip(U("N\xc3\xa4here Lautsprecher leiser und sp\xc3\xa4ter, als st\xc3\xbcnden "
+    distComp.setTooltip(rysum::tr("N\xc3\xa4here Lautsprecher leiser und sp\xc3\xa4ter, als st\xc3\xbcnden "
                           "alle so weit weg wie der fernste (Spalte Abstand)"));
     distAtt = rysum::ui::attachButton(
         proc.apvts, "spkDistComp", distComp);
@@ -397,8 +397,7 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
         applyLayout();
     };
     testBtn.setClickingTogglesState(true);
-    testBtn.setTooltip(U(
-        "Rauschen aus dem gew\xc3\xa4hlten Lautsprecher (direkt auf seinen Kanal, etwa \xe2\x88\x92"
+    testBtn.setTooltip(rysum::tr("Rauschen aus dem gew\xc3\xa4hlten Lautsprecher (direkt auf seinen Kanal, etwa \xe2\x88\x92"
         "20 dBFS) \xe2\x80\x93 "
         "nur wenn die Ausgabe auf Lautsprecher steht"));
     testBtn.onClick = [this]
@@ -407,7 +406,7 @@ SpeakerView::SpeakerView(RysumProcessor &p) : proc(p), map(p)
         proc.speakerTest = testBtn.getToggleState() ? selected : -1;
     };
     tourBtn.setClickingTogglesState(true);
-    tourBtn.setTooltip(U("Das Rauschen wandert jede Sekunde zum n\xc3\xa4"
+    tourBtn.setTooltip(rysum::tr("Das Rauschen wandert jede Sekunde zum n\xc3\xa4"
                          "chsten Lautsprecher"));
     tourBtn.onClick = [this]
     {
@@ -586,9 +585,9 @@ void SpeakerView::paint(juce::Graphics &g)
     int real = 0;
     for (auto &s : edit.speakers)
         real += s.imaginary ? 0 : 1;
-    drawSectionTitle(g, headBox, U("Lautsprecher \xc2\xb7 AllRAD"),
-                     proc.isSpeakers() ? juce::String("aktiv")
-                                       : U("aus \xe2\x80\x93 Ausgabe steht auf etwas anderem"));
+    drawSectionTitle(g, headBox, rysum::tr("Lautsprecher \xc2\xb7 AllRAD"),
+                     proc.isSpeakers() ? rysum::tr("aktiv")
+                                       : rysum::tr("aus \xe2\x80\x93 Ausgabe steht auf etwas anderem"));
 
     // list header
     g.setFont(A.monoFont(10.5f));
@@ -598,9 +597,9 @@ void SpeakerView::paint(juce::Graphics &g)
     const char *names[]{"Kanal", "Azimut", "Elevation", "Abstand", "Gain"};
     const int w[]{52, 76, 76, 70, 70};
     for (int f = 0; f < 5; ++f)
-        g.drawText(names[f], h.removeFromLeft(w[f]), juce::Justification::centredRight);
+        g.drawText(rysum::tr(names[f]), h.removeFromLeft(w[f]), juce::Justification::centredRight);
     h.removeFromLeft(14);
-    g.drawText(U("imagin\xc3\xa4r"), h.removeFromLeft(64), juce::Justification::centred);
+    g.drawText(rysum::tr("imagin\xc3\xa4r"), h.removeFromLeft(64), juce::Justification::centred);
 
     // what the decoder looks like
     juce::AttributedString as;
@@ -609,30 +608,30 @@ void SpeakerView::paint(juce::Graphics &g)
     auto body = [&](const juce::String &t, juce::Colour c = col::dim)
     { as.append(t, A.sansFont(12.5f), c); };
     if (d != nullptr && d->error.isNotEmpty())
-        body(U("Fehler: ") + d->error + "\n", col::rubric.brighter(0.5f));
+        body(rysum::tr("Fehler: ") + rysum::trText(d->error) + "\n", col::rubric.brighter(0.5f));
     else if (d != nullptr)
     {
         const int have = proc.getTotalNumOutputChannels();
-        body(juce::String(real) + " Lautsprecher" +
+        body(juce::String(real) + rysum::tr(" Lautsprecher") +
                  (d->addedImaginary > 0 ? " (+" + juce::String(d->addedImaginary) +
-                                              U(" imagin\xc3\xa4r erg\xc3\xa4nzt)")
+                                              rysum::tr(" imagin\xc3\xa4r erg\xc3\xa4nzt)")
                                         : juce::String()) +
                  U(" \xc2\xb7 ") + juce::String(d->triangles.size()) +
-                 U(" Dreiecke \xc2\xb7 Kan\xc3\xa4le bis ") + juce::String(d->numOutChannels) +
-                 U(" \xc2\xb7 Ausgang hat ") + juce::String(have) + "\n",
+                 rysum::tr(" Dreiecke \xc2\xb7 Kan\xc3\xa4le bis ") + juce::String(d->numOutChannels) +
+                 rysum::tr(" \xc2\xb7 Ausgang hat ") + juce::String(have) + "\n",
              have < d->numOutChannels ? col::white : col::dim);
-        body(U("Energie im Bereich der Lautsprecher: ") + juce::String(d->energyMinDb, 1) +
+        body(rysum::tr("Energie im Bereich der Lautsprecher: ") + juce::String(d->energyMinDb, 1) +
              U(" \xe2\x80\xa6 +") + juce::String(d->energyMaxDb, 1) +
-             U(" dB \xc2\xb7 Richtungsfehler (rE) \xc3\x98 ") +
+             rysum::tr(" dB \xc2\xb7 Richtungsfehler (rE) \xc3\x98 ") +
              juce::String(juce::roundToInt(d->angleErrMean)) + U("\xc2\xb0, max ") +
              juce::String(juce::roundToInt(d->angleErrMax)) + U("\xc2\xb0\n"));
         const int rec = juce::jmax(1, (int)std::floor(std::sqrt((double)real)) - 1);
-        body(U("Faustregel: Ordnung bis etwa ") + juce::String(rec) + U(" f\xc3\xbcr ") +
+        body(rysum::tr("Faustregel: Ordnung bis etwa ") + juce::String(rec) + rysum::tr(" f\xc3\xbcr ") +
              juce::String(real) +
-             U(" Lautsprecher \xe2\x80\x93 h\xc3\xb6her geht, wird aber nicht "
+             rysum::tr(" Lautsprecher \xe2\x80\x93 h\xc3\xb6her geht, wird aber nicht "
                "sch\xc3\xa4rfer.\n\n"));
     }
-    body(U("Wie der IEM AllRADecoder: eine dichte virtuelle Kugel (5000 Richtungen) wird mit "
+    body(rysum::tr("Wie der IEM AllRADecoder: eine dichte virtuelle Kugel (5000 Richtungen) wird mit "
            "max-rE dekodiert und per VBAP "
            "auf die echten Lautsprecher verteilt. Wo keine sind (unten, hinten), helfen "
            "imagin\xc3\xa4re Lautsprecher, "

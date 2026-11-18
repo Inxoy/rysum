@@ -145,7 +145,7 @@ public:
     void setTestMode (bool on) { testMode = on; if (on) { resScale = 1.0f; resLevel = 0; } }
     float frameMs() const noexcept { return lastFrameMs; }
     float geometryMs() const noexcept { return geoMs; }
-    juce::String renderSize() const { return juce::String (rast.width()) + " x " + juce::String (rast.height()) + " (Stufe " + juce::String (resLevel) + ")"; }
+    juce::String renderSize() const { return juce::String (rast.width()) + " x " + juce::String (rast.height()) + rysum::tr(" (Stufe ") + juce::String (resLevel) + ")"; }
     int renderWidth() const noexcept { return rast.width(); }
     // ---- who draws the picture: the graphics card (OpenGL) or the processor
     /** the choice of this machine (Documents/Rysum/Grafik.xml; the environment variable RYSUM_GPU = 0 / 1

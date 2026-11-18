@@ -4,7 +4,11 @@ namespace rysum::ui
 {
 OrganView::OrganView()
 {
-    lines.addLines(juce::String::fromUTF8(RysumData::orgel_txt, RysumData::orgel_txtSize));
+    // the page in the interface language (resources/orgel.txt, orgel_en.txt)
+    if (rysum::german())
+        lines.addLines(juce::String::fromUTF8(RysumData::orgel_txt, RysumData::orgel_txtSize));
+    else
+        lines.addLines(juce::String::fromUTF8(RysumData::orgel_en_txt, RysumData::orgel_en_txtSize));
 }
 
 void OrganView::resized()
@@ -36,7 +40,7 @@ void OrganView::paint(juce::Graphics &g)
         g.drawRect(p, 1);
         g.setFont(A.monoFont(11.0f));
         g.setColour(col::mute);
-        g.drawText(juce::String::fromUTF8("Prospektpfeifen \xc2\xb7 Blei, gotische Spitzlabien"),
+        g.drawText(rysum::tr("Prospektpfeifen \xc2\xb7 Blei, gotische Spitzlabien"),
                    photoCol.removeFromBottom(18), juce::Justification::centredLeft);
     }
 

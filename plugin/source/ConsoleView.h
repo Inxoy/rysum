@@ -28,8 +28,7 @@ public:
     VoxTile() : juce::Button("Vox humana")
     {
         setClickingTogglesState(true);
-        setTooltip(juce::String::fromUTF8(
-            "Vox humana 8\xe2\x80\xb2 \xe2\x80\x93 ein neuronales Register (NeuralRysum): ein Netz, das die "
+        setTooltip(rysum::tr("Vox humana 8\xe2\x80\xb2 \xe2\x80\x93 ein neuronales Register (NeuralRysum): ein Netz, das die "
             "Rysumer Orgel spielen gelernt hat, synthetisiert jeden Ton. Spielt mit den Tasten und, mit "
             "\xe2\x80\x9e" "Eingang spielt die Orgel\xe2\x80\x9c, mit dem, was am Eingang erklingt."));
     }

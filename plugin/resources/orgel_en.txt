@@ -1,0 +1,30 @@
+@middle
+# Die Orgel zu Rysum
+> Church of Rysum · Krummhörn, East Frisia · c. 1440 / 1457
+## History
+One of the oldest playable organs in the world and the oldest instrument of its kind in Northern Europe that still has most of its original pipes. It was probably built by Master Harmannus of Groningen. According to the chronicle of Eggerik Beninga, the farmers of Rysum paid for it with their ten best cows, which were taken across the Ems to Groningen – traditionally dated 1457, according to Hajo van Lengen rather around 1440.
+Originally the organ stood on the rood screen in the choir and was a Blockwerk: all ranks sounded together, only the Praestant in the façade could be played on its own – with the lever above the music desk, which still works that way today. The pipes of thickly hammered lead sound dark and penetrating.
+## Rebuilds
+- 1513 · Inscription on the gallery (Victor Frese, Pastor Edo Eissink)
+- c. 1680 · Joachim Kayser: seven turned stop knobs
+- 1736–38 · Matthias Amoor: compass extended, pull-down pedal, Gedackt from older pipes
+- 1941 · Karl Puchar: three stops replaced by factory-made pipes
+- 1959/60 · Jürgen Ahrend and Gerhard Brunzema (adviser Cornelius H. Edskes): Sesquialtera, Mixtur and Trompete new in hammered lead; keyboard, action, windchest and wedge bellows after the original; the pedal removed
+- 1996–2009 · Hendrik Ahrend: cleaned, façade pipes re-tinned
+@right
+## Specification
+| Praestant 8′ | façade, Gothic · lever
+| Gedackt 8′ | from older pipes, 1736–38
+| Octave 4′ | Gothic
+| Octave 2′ | Gothic
+| Sesquialtera II | Ahrend 1959/60
+| Mixtur III–IV | Ahrend 1959/60
+| Trompete 8′ | Ahrend 1959/60
+## Data
+- One manual, short octave (C – a″, 41 keys), no pedal
+- ¼-comma meantone, pure thirds · a′ ≈ 444.5 Hz
+- Slider chest, wedge bellows, 70 mm water column
+- Doors of oak (felled c. 1480) with sun, moon and stars
+[photos]
+## This plugin
+~ Every pipe recorded one by one in the church of Rysum, the photos too. There is no Praestant 16′ on the organ: in the plugin it is the Praestant pipes an octave lower. Fonts: IM Fell DW Pica, UnifrakturMaguntia, IBM Plex (SIL OFL) · HRTF: FABIAN, TU Berlin (CC BY 4.0) · MTS-ESP: ODDSound (0BSD) · JUCE. Sources: Wikipedia “Rysum organ”; Vox Humana Journal (2018).

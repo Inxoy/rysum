@@ -9,8 +9,8 @@ namespace
 const double kGridBeats[]{0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0};
 juce::StringArray gridNames()
 {
-    return {"Raster aus", "Raster 1/16", "Raster 1/8", "Raster 1/4", "Raster 1/2",
-            "Raster 1 Takt", "Raster 2 Takte", "Raster 4 Takte"};
+    return {"Raster aus", rysum::tr("Raster 1/16"), rysum::tr("Raster 1/8"), rysum::tr("Raster 1/4"), rysum::tr("Raster 1/2"),
+            rysum::tr("Raster 1 Takt"), rysum::tr("Raster 2 Takte"), rysum::tr("Raster 4 Takte")};
 }
 juce::String beatsText(double b)
 {
@@ -64,7 +64,7 @@ void FreeRow::paint(juce::Graphics &g)
     auto r = getLocalBounds().removeFromTop(16);
     g.setColour(isEnabled() ? col::dim : col::faint);
     g.setFont(Assets::get().romanFont(11.5f));
-    g.drawText(title, r, juce::Justification::centredLeft);
+    g.drawText(rysum::tr(title), r, juce::Justification::centredLeft);
     g.setFont(Assets::get().monoFont(10.0f));
     g.drawText(format ? format(slider.getValue()) : juce::String(slider.getValue(), 2), r,
                juce::Justification::centredRight);
@@ -295,8 +295,7 @@ void VerlaufTimeline::paint(juce::Graphics &g)
             g.setColour(col::faint);
             g.setFont(A.monoFont(13.0f));
             g.drawFittedText(
-                juce::String::fromUTF8(
-                    "Noch keine Spur.\n\xe2\x80\x9e+ Spur\xe2\x80\x9c w\xc3\xa4hlt einen Regler, "
+                rysum::tr("Noch keine Spur.\n\xe2\x80\x9e+ Spur\xe2\x80\x9c w\xc3\xa4hlt einen Regler, "
                     "Rechtsklick auf einen Regler \xe2\x86\x92 Im Verlauf automatisieren \xe2\x80\x93 "
                     "oder: \xe2\x97\x8f Aufnahme an, \xe2\x96\xb6, und einen Regler bewegen: er bekommt "
                     "seine Spur, und die Bewegung wird aufgeschrieben."),
@@ -381,7 +380,7 @@ void VerlaufTimeline::paintRuler(juce::Graphics &g, juce::Rectangle<int> r)
             g.setColour(hot ? col::rubric.brighter(0.4f) : col::rubric.withAlpha(0.85f));
             g.fillRect(f);
             g.setColour(col::white);
-            g.drawText(s.markers[(size_t)i].name, f.withTrimmedLeft(4.0f), juce::Justification::centredLeft, false);
+            g.drawText(rysum::tr(s.markers[(size_t)i].name), f.withTrimmedLeft(4.0f), juce::Justification::centredLeft, false);
         }
     }
     // labels: bars and beats (the unit of every lane setting: 4 beats = 1 bar), at least ~70 px
@@ -419,12 +418,12 @@ void VerlaufTimeline::paintRuler(juce::Graphics &g, juce::Rectangle<int> r)
     // left: what the clock is (and what the band is)
     g.setColour(col::faint);
     g.setFont(A.monoFont(9.0f));
-    g.drawText(juce::String::fromUTF8("Marken \xc2\xb7 A\xe2\x80\x93"
+    g.drawText(rysum::tr("Marken \xc2\xb7 A\xe2\x80\x93"
                                       "B"),
                juce::Rectangle<int>(10, r.getY(), kHeaderW - 20, kMarkH), juce::Justification::centredLeft);
     g.setFont(A.romanFont(11.0f));
-    g.drawText(host ? juce::String::fromUTF8("Takt.Schlag \xc2\xb7 Host")
-                    : juce::String::fromUTF8("Takt.Schlag \xc2\xb7 eigene Uhr ") +
+    g.drawText(host ? rysum::tr("Takt.Schlag \xc2\xb7 Host")
+                    : rysum::tr("Takt.Schlag \xc2\xb7 eigene Uhr ") +
                           (owner.tempoLane() != nullptr ? juce::String("(Tempo-Spur)")
                                                         : juce::String(s.tempo, 0) + " BPM"),
                juce::Rectangle<int>(10, r.getY() + kMarkH, kHeaderW - 20, kRulerH - kMarkH),
@@ -468,23 +467,23 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
     g.setFont(A.monoFont(10.0f));
     g.setColour(col::faint);
     juce::String info =
-        param >= 0 ? ModView::paramGroup(P.getParamAt(param)->getParameterID())
+        param >= 0 ? rysum::tr(ModView::paramGroup(P.getParamAt(param)->getParameterID()))
         : pipeT >= 0
-            ? (l.spread ? juce::String::fromUTF8("je Pfeife \xc2\xb7 breitet sich aus ") +
+            ? (l.spread ? rysum::tr("je Pfeife \xc2\xb7 breitet sich aus ") +
                               juce::String(l.waveSpeed, l.waveSpeed < 10.0f ? 1 : 0) + " m/S."
-                        : juce::String("je Pfeife"))
-        : pathS >= 0 ? juce::String("Fahrplan der Bahn")
-        : tempoL     ? (P.isAutoHostClock() ? juce::String::fromUTF8("ruht \xe2\x80\x93 die Uhr ist die des Hosts")
-                                            : juce::String::fromUTF8("eigene Uhr \xc2\xb7 20 bis 300 BPM"))
-                     : juce::String::fromUTF8("(unbekannter Regler)");
+                        : rysum::tr("je Pfeife"))
+        : pathS >= 0 ? rysum::tr("Fahrplan der Bahn")
+        : tempoL     ? (P.isAutoHostClock() ? rysum::tr("ruht \xe2\x80\x93 die Uhr ist die des Hosts")
+                                            : rysum::tr("eigene Uhr \xc2\xb7 20 bis 300 BPM"))
+                     : rysum::tr("(unbekannter Regler)");
     if (l.solo)
         info = juce::String::fromUTF8("SOLO \xc2\xb7 ") + info;
     else if (anySolo && !tempoL)
-        info = juce::String::fromUTF8("stumm (Solo) \xc2\xb7 ") + info;
+        info = rysum::tr("stumm (Solo) \xc2\xb7 ") + info;
     if (l.loop)
-        info << juce::String::fromUTF8(" \xc2\xb7 Schleife ") << beatsText(l.length);
+        info << rysum::tr(" \xc2\xb7 Schleife ") << beatsText(l.length);
     if (l.reverse)
-        info << juce::String::fromUTF8(" \xc2\xb7 r\xc3\xbc"
+        info << rysum::tr(" \xc2\xb7 r\xc3\xbc"
                                        "ckw.");
     if (std::abs(l.speed - 1.0f) > 1.0e-3f)
         info << juce::String::fromUTF8(" \xc2\xb7 \xc3\x97") << juce::String(l.speed, 2);
@@ -521,7 +520,7 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
         g.setColour(over ? col::white : col::border);
         g.drawRect(br, 1);
         g.setColour(active ? (b == 1 ? col::white : col::bg) : (over ? col::white : col::dim));
-        const juce::String label = b == 0   ? juce::String(l.on ? "an" : "aus")
+        const juce::String label = b == 0   ? juce::String(l.on ? rysum::tr("an") : rysum::tr("aus"))
                                    : b == 1 ? juce::String::fromUTF8("\xe2\x97\x8f")
                                             : juce::String::fromUTF8("\xe2\x80\xa6");
         g.setFont(b == 0 ? A.monoFont(10.0f) : A.sansFont(b == 1 ? 11.0f : 14.0f));
@@ -613,8 +612,8 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
         g.setColour(col::faint);
         g.setFont(A.monoFont(10.0f));
         g.drawText(owner.tool == VerlaufView::toolPoints
-                       ? juce::String::fromUTF8("klicken: Punkt setzen")
-                       : juce::String::fromUTF8("ziehen: zeichnen"),
+                       ? rysum::tr("klicken: Punkt setzen")
+                       : rysum::tr("ziehen: zeichnen"),
                    c.reduced(10, 0), juce::Justification::centredLeft);
     }
     else
@@ -705,11 +704,11 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
             g.setColour(selected ? col::rubric.brighter(0.3f) : (hot ? col::white : col::ink));
             drawLozenge(g, {x, y}, hot || selected ? 4.5f : 3.5f, hot || selected ? 6.0f : 5.0f);
             // the section's shape and its variation, beside its first point
-            juce::String tag = pt.shape != asCurve ? autoShapeNames()[pt.shape] : juce::String();
+            juce::String tag = pt.shape != asCurve ? rysum::tr(autoShapeNames()[pt.shape]) : juce::String();
             if (pt.chance < 1.0f)
                 tag << (tag.isEmpty() ? "" : " ") << juce::roundToInt(pt.chance * 100.0f) << " %";
             if (pt.every > 1)
-                tag << (tag.isEmpty() ? "" : " ") << "jedes " << pt.every << ".";
+                tag << (tag.isEmpty() ? "" : " ") << rysum::tr("jedes ") << pt.every << ".";
             if (pt.vary > 0.0f)
                 tag << (tag.isEmpty() ? "" : " ") << juce::String::fromUTF8("\xc2\xb1") << juce::roundToInt(pt.vary * 100.0f) << " %";
             if (tag.isNotEmpty() && (sel || pt.chance < 1.0f || pt.every > 1 || pt.vary > 0.0f) && r.getHeight() >= 40)
@@ -758,14 +757,14 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
             at = {xOfBeat(VerlaufView::beatOfLocal(l, pt.t)), yOfValue(c, pt.v)};
             txt = owner.timeText(VerlaufView::beatOfLocal(l, pt.t)) + "   " + owner.valueText(li, pt.v);
             if (owner.selPts.size() > 1)
-                txt << "   (" << (int)owner.selPts.size() << " Punkte)";
+                txt << "   (" << (int)owner.selPts.size() << rysum::tr(" Punkte)");
             strong = true;
         }
         else if (dragLane == li && (drag == Drag::bend || (drag == Drag::line && dragMoved)) &&
                  owner.selPoint >= 0 && owner.selPoint < (int)l.pts.size())
         {
             at = hover;
-            txt = "Biegung " + juce::String(juce::roundToInt(l.pts[(size_t)owner.selPoint].bend * 100.0f)) + " %";
+            txt = rysum::tr("Biegung ") + juce::String(juce::roundToInt(l.pts[(size_t)owner.selPoint].bend * 100.0f)) + " %";
             strong = true;
         }
         else if (hoverLane == li && hover.x > (float)kHeaderW && drag == Drag::none && !onLowerEdge(li, (int)hover.y))
@@ -860,91 +859,91 @@ juce::String VerlaufTimeline::hintText() const
     switch (drag)
     {
     case Drag::point:
-        return U("Ziehen: Zeit und Wert") + sep + U("Umschalt: ohne Raster") + sep + U("Strg: nur der Wert") +
-               (owner.selPts.size() > 1 ? sep + U("alle gew\xc3\xa4hlten Punkte gehen mit") : juce::String());
+        return rysum::tr("Ziehen: Zeit und Wert") + sep + rysum::tr("Umschalt: ohne Raster") + sep + rysum::tr("Strg: nur der Wert") +
+               (owner.selPts.size() > 1 ? sep + rysum::tr("alle gew\xc3\xa4hlten Punkte gehen mit") : juce::String());
     case Drag::box:
-        return U("Rahmen: die Punkte darin w\xc3\xa4hlen") + sep + U("Umschalt: zur Auswahl dazu");
+        return rysum::tr("Rahmen: die Punkte darin w\xc3\xa4hlen") + sep + rysum::tr("Umschalt: zur Auswahl dazu");
     case Drag::line:
     case Drag::bend:
-        return U("Nach oben oder unten ziehen: den Abschnitt biegen");
+        return rysum::tr("Nach oben oder unten ziehen: den Abschnitt biegen");
     case Drag::pencil:
-        return U("Stift: der Strich ersetzt die Punkte unter ihm");
+        return rysum::tr("Stift: der Strich ersetzt die Punkte unter ihm");
     case Drag::stairs:
-        return U("Treppe: je Rasterfeld eine Stufe");
+        return rysum::tr("Treppe: je Rasterfeld eine Stufe");
     case Drag::resize:
-        return U("Ziehen: die H\xc3\xb6he der Spur");
+        return rysum::tr("Ziehen: die H\xc3\xb6he der Spur");
     case Drag::seek:
-        return U("Ziehen: die Uhr stellen");
+        return rysum::tr("Ziehen: die Uhr stellen");
     case Drag::marker:
-        return U("Ziehen: die Marke verschieben") + sep + U("Umschalt: ohne Raster");
+        return rysum::tr("Ziehen: die Marke verschieben") + sep + rysum::tr("Umschalt: ohne Raster");
     case Drag::cycleA:
     case Drag::cycleB:
     case Drag::cycleNew:
-        return U("Ziehen: den wiederholten Abschnitt (A\xe2\x80\x93"
+        return rysum::tr("Ziehen: den wiederholten Abschnitt (A\xe2\x80\x93"
                  "B) legen");
     case Drag::pan:
-        return U("Ziehen: die Ansicht verschieben");
+        return rysum::tr("Ziehen: die Ansicht verschieben");
     default:
         break;
     }
     juce::String selTail;
     if (owner.selPts.size() > 1)
         selTail = sep + juce::String((int)owner.selPts.size()) +
-                  U(" Punkte gew\xc3\xa4hlt: ziehen verschiebt alle, Entf l\xc3\xb6scht, Strg+C / Strg+V "
+                  rysum::tr(" Punkte gew\xc3\xa4hlt: ziehen verschiebt alle, Entf l\xc3\xb6scht, Strg+C / Strg+V "
                     "kopiert, Esc hebt auf");
     const auto hk = hoverKind();
     if ((hk == Hover::point || hk == Hover::line || hk == Hover::empty) && hoverLane != owner.selLane &&
         owner.proc.getAuto().lanes[(size_t)hoverLane].height <= 0)
-        return U("Klicken w\xc3\xa4hlt diese Spur") + sep + U("dann: Punkte setzen, ziehen, zeichnen");
+        return rysum::tr("Klicken w\xc3\xa4hlt diese Spur") + sep + rysum::tr("dann: Punkte setzen, ziehen, zeichnen");
     switch (hk)
     {
     case Hover::band:
-        return U("Marken: Doppelklick setzt eine (M: an der Uhr)") + sep +
-               U("ziehen legt den wiederholten Abschnitt A\xe2\x80\x93"
+        return rysum::tr("Marken: Doppelklick setzt eine (M: an der Uhr)") + sep +
+               rysum::tr("ziehen legt den wiederholten Abschnitt A\xe2\x80\x93"
                  "B") +
-               sep + U("Bild auf / ab: zur vorigen / n\xc3\xa4"
+               sep + rysum::tr("Bild auf / ab: zur vorigen / n\xc3\xa4"
                        "chsten Marke") +
-               sep + U("Rechtsklick: Men\xc3\xbc");
+               sep + rysum::tr("Rechtsklick: Men\xc3\xbc");
     case Hover::marker:
-        return U("Marke: klicken springt dorthin") + sep + U("ziehen verschiebt") + sep +
-               U("Doppelklick: umbenennen") + sep + U("Rechtsklick: Men\xc3\xbc");
+        return rysum::tr("Marke: klicken springt dorthin") + sep + rysum::tr("ziehen verschiebt") + sep +
+               rysum::tr("Doppelklick: umbenennen") + sep + rysum::tr("Rechtsklick: Men\xc3\xbc");
     case Hover::cycleEdge:
-        return U("Ziehen: Anfang oder Ende des wiederholten Abschnitts") + sep +
-               U("A\xe2\x80\x93"
+        return rysum::tr("Ziehen: Anfang oder Ende des wiederholten Abschnitts") + sep +
+               rysum::tr("A\xe2\x80\x93"
                  "B oben in der Leiste schaltet ihn an / aus");
     case Hover::ruler:
         return owner.proc.isAutoHostClock()
-                   ? U("Lineal: Takt.Schlag des Hosts \xe2\x80\x93 die Uhr stellt der Host")
-                   : U("Lineal: klicken oder ziehen stellt die Uhr") + sep + U("Leertaste: Start / Halt");
+                   ? rysum::tr("Lineal: Takt.Schlag des Hosts \xe2\x80\x93 die Uhr stellt der Host")
+                   : rysum::tr("Lineal: klicken oder ziehen stellt die Uhr") + sep + rysum::tr("Leertaste: Start / Halt");
     case Hover::header:
-        return U("Spurkopf: klicken w\xc3\xa4hlt die Spur (ihre Einstellungen unten links)") + sep +
-               U("Rechtsklick: Men\xc3\xbc") + sep + U("unteren Rand ziehen: H\xc3\xb6he");
+        return rysum::tr("Spurkopf: klicken w\xc3\xa4hlt die Spur (ihre Einstellungen unten links)") + sep +
+               rysum::tr("Rechtsklick: Men\xc3\xbc") + sep + rysum::tr("unteren Rand ziehen: H\xc3\xb6he");
     case Hover::headerButton:
-        return U("an / aus: die Spur wirkt oder nicht") + sep + U("\xe2\x97\x8f: aufnahmebereit") + sep +
-               U("\xe2\x80\xa6: Men\xc3\xbc (Schleife, H\xc3\xb6he, L\xc3\xb6schen \xe2\x80\xa6)");
+        return rysum::tr("an / aus: die Spur wirkt oder nicht") + sep + rysum::tr("\xe2\x97\x8f: aufnahmebereit") + sep +
+               rysum::tr("\xe2\x80\xa6: Men\xc3\xbc (Schleife, H\xc3\xb6he, L\xc3\xb6schen \xe2\x80\xa6)");
     case Hover::edge:
-        return U("Unteren Rand ziehen: die H\xc3\xb6he der Spur") + sep + U("Doppelklick: wieder automatisch");
+        return rysum::tr("Unteren Rand ziehen: die H\xc3\xb6he der Spur") + sep + rysum::tr("Doppelklick: wieder automatisch");
     case Hover::point:
-        return U("Punkt: ziehen verschiebt") + sep + U("Doppelklick l\xc3\xb6scht") + sep +
-               U("Umschalt + Klick: zur Auswahl") + sep + U("Rechtsklick: Form") + selTail;
+        return rysum::tr("Punkt: ziehen verschiebt") + sep + rysum::tr("Doppelklick l\xc3\xb6scht") + sep +
+               rysum::tr("Umschalt + Klick: zur Auswahl") + sep + rysum::tr("Rechtsklick: Form") + selTail;
     case Hover::line:
-        return U("Linie: klicken w\xc3\xa4hlt den Abschnitt (seine Form unten rechts)") + sep +
-               U("ziehen biegt ihn") + sep + U("Alt + Klick: hier einen Punkt setzen") + selTail;
+        return rysum::tr("Linie: klicken w\xc3\xa4hlt den Abschnitt (seine Form unten rechts)") + sep +
+               rysum::tr("ziehen biegt ihn") + sep + rysum::tr("Alt + Klick: hier einen Punkt setzen") + selTail;
     case Hover::empty:
         if (owner.tool == VerlaufView::toolPencil)
-            return U("Stift: ziehen zeichnet frei und ersetzt die Punkte unter dem Strich") + sep + U("Strg+Z: zur\xc3\xbc"
+            return rysum::tr("Stift: ziehen zeichnet frei und ersetzt die Punkte unter dem Strich") + sep + rysum::tr("Strg+Z: zur\xc3\xbc"
                                                                                                      "ck");
         if (owner.tool == VerlaufView::toolStairs)
-            return U("Treppe: ziehen setzt je Rasterfeld eine Stufe (Raster oben)") + sep + U("Strg+Z: zur\xc3\xbc"
+            return rysum::tr("Treppe: ziehen setzt je Rasterfeld eine Stufe (Raster oben)") + sep + rysum::tr("Strg+Z: zur\xc3\xbc"
                                                                                               "ck");
-        return U("Klicken: Punkt setzen") + sep + U("ziehen: Rahmen um Punkte") + sep + U("Strg + Mausrad: Zoom") +
-               sep + U("Umschalt + Mausrad: Zeit") + sep + U("Mausrad: Spuren rollen") + selTail;
+        return rysum::tr("Klicken: Punkt setzen") + sep + rysum::tr("ziehen: Rahmen um Punkte") + sep + rysum::tr("Strg + Mausrad: Zoom") +
+               sep + rysum::tr("Umschalt + Mausrad: Zeit") + sep + rysum::tr("Mausrad: Spuren rollen") + selTail;
     default:
         break;
     }
-    return U("Leertaste: eigene Uhr starten / anhalten") + sep + U("Strg+Z / Strg+Y: zur\xc3\xbc"
+    return rysum::tr("Leertaste: eigene Uhr starten / anhalten") + sep + rysum::tr("Strg+Z / Strg+Y: zur\xc3\xbc"
                                                                    "ck / wieder") +
-           sep + U("Strg+A: alle Punkte der Spur") + selTail;
+           sep + rysum::tr("Strg+A: alle Punkte der Spur") + selTail;
 }
 
 juce::String VerlaufTimeline::getTooltip()
@@ -955,12 +954,12 @@ juce::String VerlaufTimeline::getTooltip()
     {
         const auto r = laneRect(li);
         if (headerButton(r, 0).contains(p))
-            return juce::String::fromUTF8("Spur an / aus (aus: der Regler steht, wie er von Hand gestellt ist)");
+            return rysum::tr("Spur an / aus (aus: der Regler steht, wie er von Hand gestellt ist)");
         if (headerButton(r, 1).contains(p))
-            return juce::String::fromUTF8("Aufnahmebereit: mit \xe2\x97\x8f Aufnahme und laufender Uhr wird das "
+            return rysum::tr("Aufnahmebereit: mit \xe2\x97\x8f Aufnahme und laufender Uhr wird das "
                                           "Bewegen des Reglers in diese Spur geschrieben");
         if (headerButton(r, 2).contains(p))
-            return juce::String::fromUTF8("Men\xc3\xbc der Spur: Schleife, R\xc3\xbc"
+            return rysum::tr("Men\xc3\xbc der Spur: Schleife, R\xc3\xbc"
                                           "ckw\xc3\xa4rts, H\xc3\xb6he, verschieben, leeren, l\xc3\xb6schen");
     }
     return {};
@@ -1542,22 +1541,22 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         b.setTooltip(tip);
         addAndMakeVisible(b);
     };
-    toggle(pieceButton, juce::String::fromUTF8("St\xc3\xbc"
+    toggle(pieceButton, rysum::tr("St\xc3\xbc"
                                                "cke: neu, \xc3\xb6"
                                                "ffnen, speichern (Strg+S), die mitgelieferten und "
                                                "die eigenen (Dokumente/Rysum/St\xc3\xbc"
                                                "cke)"));
     pieceButton.onClick = [this] { showPieceMenu(); };
-    toggle(onButton, juce::String::fromUTF8("Alle Spuren an / aus (aus: die Regler gelten wie von Hand gestellt)"));
+    toggle(onButton, rysum::tr("Alle Spuren an / aus (aus: die Regler gelten wie von Hand gestellt)"));
     onButton.setClickingTogglesState(true);
     onButton.onClick = [this]
     {
         set().on = onButton.getToggleState();
         changed();
     };
-    toggle(clockHost, juce::String::fromUTF8("Die Uhr folgt der Songposition des Hosts (Takte). Ohne Host "
+    toggle(clockHost, rysum::tr("Die Uhr folgt der Songposition des Hosts (Takte). Ohne Host "
                                              "(Standalone) l\xc3\xa4uft die eigene Uhr."));
-    toggle(clockOwn, juce::String::fromUTF8("Die eigene Uhr des Plugins, unabh\xc3\xa4ngig vom Host: \xe2\x96\xb6 / "
+    toggle(clockOwn, rysum::tr("Die eigene Uhr des Plugins, unabh\xc3\xa4ngig vom Host: \xe2\x96\xb6 / "
                                             "\xe2\x96\xa0 / \xe2\x8f\xae oder die erste Taste starten sie."));
     clockHost.setRadioGroupId(7101);
     clockOwn.setRadioGroupId(7101);
@@ -1571,9 +1570,9 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         set().clock = 1;
         changed();
     };
-    toggle(playButton, "Eigene Uhr starten");
-    toggle(stopButton, "Eigene Uhr anhalten");
-    toggle(homeButton, juce::String::fromUTF8("Zur\xc3\xbc"
+    toggle(playButton, rysum::tr("Eigene Uhr starten"));
+    toggle(stopButton, rysum::tr("Eigene Uhr anhalten"));
+    toggle(homeButton, rysum::tr("Zur\xc3\xbc"
                                               "ck an den Anfang"));
     playButton.onClick = [this] { proc.autoPlay(true); };
     stopButton.onClick = [this]
@@ -1584,7 +1583,7 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         proc.autoPlay(false);
     };
     homeButton.onClick = [this] { proc.autoSeek(0.0); };
-    toggle(cycleButton, juce::String::fromUTF8("A\xe2\x80\x93"
+    toggle(cycleButton, rysum::tr("A\xe2\x80\x93"
                                                "B: die eigene Uhr wiederholt den Abschnitt im Band \xc3\xbc"
                                                "ber dem Lineal (dort ziehen, oder Rechtsklick auf eine Marke: "
                                                "bis zur n\xc3\xa4"
@@ -1596,7 +1595,7 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         set().cycle = cycleButton.getToggleState();
         changed();
     };
-    toggle(keyStart, juce::String::fromUTF8("Die eigene Uhr startet von selbst mit der ersten gespielten Taste "
+    toggle(keyStart, rysum::tr("Die eigene Uhr startet von selbst mit der ersten gespielten Taste "
                                             "(statt mit \xe2\x96\xb6)"));
     keyStart.setClickingTogglesState(true);
     keyStart.onClick = [this]
@@ -1604,7 +1603,7 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         set().startOnKey = keyStart.getToggleState();
         changed();
     };
-    toggle(recButton, juce::String::fromUTF8("Aufnahme: bewegt man w\xc3\xa4hrend die Uhr l\xc3\xa4uft einen Regler, "
+    toggle(recButton, rysum::tr("Aufnahme: bewegt man w\xc3\xa4hrend die Uhr l\xc3\xa4uft einen Regler, "
                                              "wird die Bewegung in seine Spur geschrieben (Spuren mit \xe2\x97\x8f im "
                                              "Kopf). Ein Regler ohne Spur bekommt beim Anfassen eine. Ohne Aufnahme "
                                              "gibt die Spur nach, solange man den Regler h\xc3\xa4lt."));
@@ -1615,20 +1614,20 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
             pushUndo();
         proc.setAutoRecord(recButton.getToggleState());
     };
-    toggle(toolPts, juce::String::fromUTF8("Punkte: klicken setzt, ziehen verschiebt, ein Rahmen w\xc3\xa4hlt mehrere, "
+    toggle(toolPts, rysum::tr("Punkte: klicken setzt, ziehen verschiebt, ein Rahmen w\xc3\xa4hlt mehrere, "
                                            "Klick auf die Linie w\xc3\xa4hlt den Abschnitt (ziehen biegt ihn), "
                                            "Doppelklick l\xc3\xb6scht - die Zeile unter den Spuren sagt, was wo geht"));
-    toggle(toolPen, juce::String::fromUTF8("Stift: freihand zeichnen, ersetzt die Punkte unter dem Strich"));
-    toggle(toolStair, juce::String::fromUTF8("Treppe: je Rasterfeld eine Stufe zeichnen"));
+    toggle(toolPen, rysum::tr("Stift: freihand zeichnen, ersetzt die Punkte unter dem Strich"));
+    toggle(toolStair, rysum::tr("Treppe: je Rasterfeld eine Stufe zeichnen"));
     for (auto *b : {&toolPts, &toolPen, &toolStair})
         b->setRadioGroupId(7102);
     toolPts.onClick = [this] { tool = toolPoints; hintChanged(); };
     toolPen.onClick = [this] { tool = toolPencil; hintChanged(); };
     toolStair.onClick = [this] { tool = toolStairs; hintChanged(); };
     toolPts.setToggleState(true, juce::dontSendNotification);
-    toggle(zoomIn, juce::String::fromUTF8("N\xc3\xa4her (Strg + Mausrad)"));
-    toggle(zoomOut, "Weiter (Strg + Mausrad)");
-    toggle(zoomAll, juce::String::fromUTF8("Alle Punkte zeigen"));
+    toggle(zoomIn, rysum::tr("N\xc3\xa4her (Strg + Mausrad)"));
+    toggle(zoomOut, rysum::tr("Weiter (Strg + Mausrad)"));
+    toggle(zoomAll, rysum::tr("Alle Punkte zeigen"));
     auto zoom = [this](double k)
     {
         auto &s = set();
@@ -1653,10 +1652,10 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         s.viewLen = juce::jlimit(4.0, 4096.0, end * 1.05);
         timeline.repaint();
     };
-    toggle(undoButton, juce::String::fromUTF8("Letzte \xc3\x84nderung zur\xc3\xbc"
+    toggle(undoButton, rysum::tr("Letzte \xc3\x84nderung zur\xc3\xbc"
                                               "cknehmen (Strg+Z, Strg+Y: wiederholen)"));
     undoButton.onClick = [this] { undo(); };
-    toggle(addButton, juce::String::fromUTF8("Eine Spur f\xc3\xbcr einen Regler anlegen"));
+    toggle(addButton, rysum::tr("Eine Spur f\xc3\xbcr einen Regler anlegen"));
     addButton.onClick = [this] { showAddMenu(); };
     gridBox.addItemList(gridNames(), 1);
     gridBox.onChange = [this]
@@ -1666,11 +1665,11 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         set().grid = kGridBeats[juce::jlimit(0, 7, gridBox.getSelectedItemIndex())];
         timeline.repaint();
     };
-    gridBox.setTooltip(juce::String::fromUTF8("Raster f\xc3\xbcr Punkte und Treppen (Umschalt beim Ziehen: ohne)"));
+    gridBox.setTooltip(rysum::tr("Raster f\xc3\xbcr Punkte und Treppen (Umschalt beim Ziehen: ohne)"));
     addAndMakeVisible(gridBox);
 
     tempoRow.format = [](double v) { return juce::String(v, 1) + " BPM"; };
-    tempoRow.slider.setTooltip(juce::String::fromUTF8("Tempo der eigenen Uhr: 60 BPM = ein Schlag je Sekunde"));
+    tempoRow.slider.setTooltip(rysum::tr("Tempo der eigenen Uhr: 60 BPM = ein Schlag je Sekunde"));
     tempoRow.onDragStart = [this] { pushUndo(); };
     tempoRow.onChange = [this](double v)
     {
@@ -1685,10 +1684,10 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
     // (beats, as the ruler counts them: 4 beats = 1 bar)
     auto beatsFmt = [](double v)
     {
-        juce::String t = beatsText(v) + juce::String::fromUTF8(" Schl\xc3\xa4ge");
+        juce::String t = beatsText(v) + rysum::tr(" Schl\xc3\xa4ge");
         if (v >= 4.0 && std::abs(v / 4.0 - std::round(v / 4.0)) < 1.0e-6)
             t << juce::String::fromUTF8(" \xc2\xb7 ") << juce::String((int)std::round(v / 4.0))
-              << ((int)std::round(v / 4.0) == 1 ? " Takt" : " Takte");
+              << ((int)std::round(v / 4.0) == 1 ? rysum::tr(" Takt") : rysum::tr(" Takte"));
         return t;
     };
     lenRow.format = beatsFmt;
@@ -1709,19 +1708,19 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
     laneEdit(lenRow, [](AutoLane &l, double v) { l.length = v; });
     laneEdit(speedRow, [](AutoLane &l, double v) { l.speed = (float)v; });
     laneEdit(offsetRow, [](AutoLane &l, double v) { l.offset = v; });
-    lenRow.slider.setTooltip(juce::String::fromUTF8("Die L\xc3\xa4nge der Schleife (und des r\xc3\xbc"
+    lenRow.slider.setTooltip(rysum::tr("Die L\xc3\xa4nge der Schleife (und des r\xc3\xbc"
                                                     "ckw\xc3\xa4rts gelesenen Bereichs), in Schl\xc3\xa4gen der Spur"));
-    speedRow.slider.setTooltip(juce::String::fromUTF8("Zeitdehnung: \xc3\x97 2 = doppelt so schnell, \xc3\x97 0,5 = halb so "
+    speedRow.slider.setTooltip(rysum::tr("Zeitdehnung: \xc3\x97 2 = doppelt so schnell, \xc3\x97 0,5 = halb so "
                                                       "schnell. Spuren mit verschiedenen L\xc3\xa4ngen und Tempi "
                                                       "laufen gegeneinander."));
-    offsetRow.slider.setTooltip(juce::String::fromUTF8("Wo die Spur auf der Uhr beginnt"));
+    offsetRow.slider.setTooltip(rysum::tr("Wo die Spur auf der Uhr beginnt"));
     for (auto *b : {&loopButton, &revButton})
     {
         b->setClickingTogglesState(true);
         addAndMakeVisible(*b);
     }
-    loopButton.setTooltip(juce::String::fromUTF8("Die Spur wiederholt ihre L\xc3\xa4nge immer wieder"));
-    revButton.setTooltip(juce::String::fromUTF8("Die Spur wird von hinten gelesen"));
+    loopButton.setTooltip(rysum::tr("Die Spur wiederholt ihre L\xc3\xa4nge immer wieder"));
+    revButton.setTooltip(rysum::tr("Die Spur wird von hinten gelesen"));
     loopButton.onClick = [this]
     {
         if (!validLane(selLane))
@@ -1738,7 +1737,7 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         set().lanes[(size_t)selLane].reverse = revButton.getToggleState();
         changed();
     };
-    clearButton.setTooltip(juce::String::fromUTF8("Alle Punkte dieser Spur l\xc3\xb6schen"));
+    clearButton.setTooltip(rysum::tr("Alle Punkte dieser Spur l\xc3\xb6schen"));
     clearButton.onClick = [this]
     {
         if (!validLane(selLane))
@@ -1752,16 +1751,13 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
 
     // spreading through the room (per-pipe lanes)
     spreadButton.setClickingTogglesState(true);
-    spreadButton.setTooltip(juce::String::fromUTF8(
-        "Die Geste breitet sich vom Ursprung (rechts im Plan) durch den Raum aus: jede Pfeife h\xc3\xb6rt "
+    spreadButton.setTooltip(rysum::tr("Die Geste breitet sich vom Ursprung (rechts im Plan) durch den Raum aus: jede Pfeife h\xc3\xb6rt "
         "sie, wenn die Front bei ihr ankommt. Aus: alle Pfeifen zugleich."));
     inwardButton.setClickingTogglesState(true);
-    inwardButton.setTooltip(juce::String::fromUTF8(
-        "Die Front l\xc3\xa4uft von weit drau\xc3\x9f"
+    inwardButton.setTooltip(rysum::tr("Die Front l\xc3\xa4uft von weit drau\xc3\x9f"
         "en (25 m) auf den Ursprung zu: die fernen Pfeifen zuerst"));
-    waveRow.format = [](double v) { return juce::String(v, v < 10.0 ? 1 : 0) + " m / Schlag"; };
-    waveRow.slider.setTooltip(juce::String::fromUTF8(
-        "Wie schnell die Front l\xc3\xa4uft. Langsam: aus einer Geste wird ein Kanon im Raum. "
+    waveRow.format = [](double v) { return juce::String(v, v < 10.0 ? 1 : 0) + rysum::tr(" m / Schlag"); };
+    waveRow.slider.setTooltip(rysum::tr("Wie schnell die Front l\xc3\xa4uft. Langsam: aus einer Geste wird ein Kanon im Raum. "
         "(Schall: etwa 170 m je Schlag bei 60 BPM.)"));
     spreadButton.onClick = [this]
     {
@@ -1811,14 +1807,14 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         };
         addAndMakeVisible(b);
     }
-    shapeButtons[asCurve].setTooltip("Gerade oder gebogene Linie zum Punkt danach");
-    shapeButtons[asStep].setTooltip(juce::String::fromUTF8("H\xc3\xa4lt den Wert bis zum Punkt danach, dann springt er"));
-    shapeButtons[asWave].setTooltip(juce::String::fromUTF8("Die Linie plus eine Sinuswelle (Tempo: Wellen je Schlag)"));
-    shapeButtons[asJitter].setTooltip(juce::String::fromUTF8("Die Linie plus weiches zuf\xc3\xa4lliges Wandern "
+    shapeButtons[asCurve].setTooltip(rysum::tr("Gerade oder gebogene Linie zum Punkt danach"));
+    shapeButtons[asStep].setTooltip(rysum::tr("H\xc3\xa4lt den Wert bis zum Punkt danach, dann springt er"));
+    shapeButtons[asWave].setTooltip(rysum::tr("Die Linie plus eine Sinuswelle (Tempo: Wellen je Schlag)"));
+    shapeButtons[asJitter].setTooltip(rysum::tr("Die Linie plus weiches zuf\xc3\xa4lliges Wandern "
                                                              "(jedes Mal gleich)"));
-    shapeButtons[asStairs].setTooltip(juce::String::fromUTF8("Die Linie in Stufen (Tempo: Stufen je Schlag)"));
+    shapeButtons[asStairs].setTooltip(rysum::tr("Die Linie in Stufen (Tempo: Stufen je Schlag)"));
     bendRow.format = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
-    rateRow.format = [](double v) { return juce::String(v, v < 1.0 ? 2 : 1) + juce::String::fromUTF8(" / Schlag"); };
+    rateRow.format = [](double v) { return juce::String(v, v < 1.0 ? 2 : 1) + rysum::tr(" / Schlag"); };
     depthRow.format = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
     auto segEdit = [this](FreeRow &row, std::function<void(AutoPoint &, double)> fn)
     {
@@ -1844,19 +1840,18 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
     everyRow.format = [](double v)
     {
         const int n = juce::roundToInt(v);
-        return n <= 1 ? juce::String("jedes Mal") : juce::String("jedes ") + juce::String(n) + ".";
+        return n <= 1 ? rysum::tr("jedes Mal") : rysum::tr("jedes ") + juce::String(n) + ".";
     };
     varyRow.format = [](double v) { return juce::String::fromUTF8("\xc2\xb1 ") + juce::String(juce::roundToInt(v * 100.0)) + " %"; };
     segEdit(chanceRow, [](AutoPoint &p, double v) { p.chance = (float)v; });
     segEdit(everyRow, [](AutoPoint &p, double v) { p.every = juce::jlimit(1, 8, juce::roundToInt(v)); });
     segEdit(varyRow, [](AutoPoint &p, double v) { p.vary = (float)v; });
-    chanceRow.slider.setTooltip(juce::String::fromUTF8(
-        "Wie wahrscheinlich der Abschnitt sich bei einem Durchgang bewegt \xe2\x80\x93 sonst bleibt der Wert "
+    chanceRow.slider.setTooltip(rysum::tr("Wie wahrscheinlich der Abschnitt sich bei einem Durchgang bewegt \xe2\x80\x93 sonst bleibt der Wert "
         "stehen. Jeder Durchgang einer Schleife w\xc3\xbcrfelt neu (und beim n\xc3\xa4"
         "chsten Mal an derselben Stelle gleich)."));
-    everyRow.slider.setTooltip(juce::String::fromUTF8("Der Abschnitt bewegt sich nur bei jedem n-ten Durchgang der "
+    everyRow.slider.setTooltip(rysum::tr("Der Abschnitt bewegt sich nur bei jedem n-ten Durchgang der "
                                                       "Schleife, sonst bleibt der Wert stehen."));
-    varyRow.slider.setTooltip(juce::String::fromUTF8("Der Wert dieses Punkts wandert von Durchgang zu Durchgang um "
+    varyRow.slider.setTooltip(rysum::tr("Der Wert dieses Punkts wandert von Durchgang zu Durchgang um "
                                                      "bis zu so viel."));
 
     addAndMakeVisible(timeline);
@@ -1883,14 +1878,14 @@ juce::String VerlaufView::laneName(int lane) const
             return {};
         const auto &id = proc.getAuto().lanes[(size_t)lane].paramId;
         if (id == kAutoTempoId)
-            return juce::String::fromUTF8("Tempo der eigenen Uhr");
+            return rysum::tr("Tempo der eigenen Uhr");
         if (const int t = autoPipeTarget(id); t >= 0)
             return pipeTargetNames()[t];
         if (const int s = autoPathStop(id); s >= 0)
-            return "Bahn: " + juce::String::fromUTF8(kStops[(size_t)s].label);
+            return rysum::tr("Bahn: ") + rysum::tr(kStops[(size_t)s].label);
         return id;
     }
-    return proc.getParamAt(p)->getName(64);
+    return rysum::trText(proc.getParamAt(p)->getName(64));
 }
 
 juce::String VerlaufView::valueText(int lane, float v) const
@@ -1908,12 +1903,12 @@ juce::String VerlaufView::valueText(int lane, float v) const
             return (o > 0 ? "+" : "") + juce::String(o) + " %";
         }
         if (autoPathStop(id) >= 0)
-            return juce::String(juce::roundToInt(v * 100.0f)) + " % der Bahn";
+            return juce::String(juce::roundToInt(v * 100.0f)) + rysum::tr(" % der Bahn");
     }
     if (p < 0)
         return juce::String(juce::roundToInt(v * 100.0f)) + " %";
     auto *prm = proc.getParamAt(p);
-    return prm->getText(autoQuantise(v, proc.autoSteps(p)), 64);
+    return rysum::trText(prm->getText(autoQuantise(v, proc.autoSteps(p)), 64));
 }
 
 juce::String VerlaufView::timeText(double beats) const
@@ -2193,10 +2188,10 @@ void VerlaufView::renameMarker(int i)
 {
     if (i < 0 || i >= (int)set().markers.size())
         return;
-    auto *w = new juce::AlertWindow("Marke", juce::String::fromUTF8("Name der Marke"), juce::MessageBoxIconType::NoIcon, this);
+    auto *w = new juce::AlertWindow(rysum::tr("Marke"), rysum::tr("Name der Marke"), juce::MessageBoxIconType::NoIcon, this);
     w->addTextEditor("name", set().markers[(size_t)i].name);
     w->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    w->addButton("Abbrechen", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->addButton(rysum::tr("Abbrechen"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
     juce::Component::SafePointer<VerlaufView> safe(this);
     w->enterModalState(true,
                        juce::ModalCallbackFunction::create(
@@ -2220,22 +2215,22 @@ void VerlaufView::showMarkerMenu(int i, double beat)
     const auto &s = set();
     if (i >= 0)
     {
-        m.addSectionHeader("Marke " + s.markers[(size_t)i].name);
-        m.addItem(1, "Hierhin springen");
-        m.addItem(2, "Umbenennen");
-        m.addItem(3, juce::String::fromUTF8("Bis zur n\xc3\xa4"
+        m.addSectionHeader(rysum::tr("Marke ") + s.markers[(size_t)i].name);
+        m.addItem(1, rysum::tr("Hierhin springen"));
+        m.addItem(2, rysum::tr("Umbenennen"));
+        m.addItem(3, rysum::tr("Bis zur n\xc3\xa4"
                                             "chsten Marke wiederholen"),
                   i + 1 < (int)s.markers.size());
-        m.addItem(4, juce::String::fromUTF8("L\xc3\xb6schen"));
+        m.addItem(4, rysum::tr("L\xc3\xb6schen"));
     }
     else
     {
-        m.addItem(10, "Marke hier setzen");
-        m.addItem(11, "Marke an der Uhr setzen  (M)");
+        m.addItem(10, rysum::tr("Marke hier setzen"));
+        m.addItem(11, rysum::tr("Marke an der Uhr setzen  (M)"));
         m.addSeparator();
-        m.addItem(12, juce::String::fromUTF8("Wiederholung beginnt hier (A)"));
-        m.addItem(13, juce::String::fromUTF8("Wiederholung endet hier (B)"));
-        m.addItem(14, juce::String::fromUTF8("Wiederholung an"), true, s.cycle);
+        m.addItem(12, rysum::tr("Wiederholung beginnt hier (A)"));
+        m.addItem(13, rysum::tr("Wiederholung endet hier (B)"));
+        m.addItem(14, rysum::tr("Wiederholung an"), true, s.cycle);
     }
     juce::Component::SafePointer<VerlaufView> safe(this);
     m.showMenuAsync(juce::PopupMenu::Options(),
@@ -2365,28 +2360,28 @@ juce::PopupMenu VerlaufView::paramMenu(int base) const
 {
     juce::PopupMenu menu;
     const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),
-                                   "Verfall",   "Klang",
-                                   "Hall",      "Saal",
-                                   "Eingang",   "Effekte",
-                                   "Modulation", "Summe"};
+                                   juce::String::fromUTF8("Verfall"),   juce::String::fromUTF8("Klang"),
+                                   juce::String::fromUTF8("Hall"),      "Saal",
+                                   juce::String::fromUTF8("Eingang"),   juce::String::fromUTF8("Effekte"),
+                                   "Modulation", juce::String::fromUTF8("Summe")};
     std::set<int> taken;
     for (auto &l : proc.getAuto().lanes)
         taken.insert(proc.getParamIndex(l.paramId));
     juce::PopupMenu switches;
     for (int i = 0; i < proc.getNumParams(); ++i)
         if (proc.isAutoTarget(i) && !proc.isModTarget(i))
-            switches.addItem(base + i, proc.getParamAt(i)->getName(64), true, taken.count(i) > 0);
+            switches.addItem(base + i, rysum::trText(proc.getParamAt(i)->getName(64)), true, taken.count(i) > 0);
     if (switches.getNumItems() > 0)
-        menu.addSubMenu(juce::String::fromUTF8("Schalter (Register, Bewegung, Freeze \xe2\x80\xa6)"), switches);
+        menu.addSubMenu(rysum::tr("Schalter (Register, Bewegung, Freeze \xe2\x80\xa6)"), switches);
     for (auto &grp : groups)
     {
         juce::PopupMenu sub;
         for (int i = 0; i < proc.getNumParams(); ++i)
             if (proc.isModTarget(i) && proc.isAutoTarget(i) &&
                 ModView::paramGroup(proc.getParamAt(i)->getParameterID()) == grp)
-                sub.addItem(base + i, proc.getParamAt(i)->getName(64), true, taken.count(i) > 0);
+                sub.addItem(base + i, rysum::trText(proc.getParamAt(i)->getName(64)), true, taken.count(i) > 0);
         if (sub.getNumItems() > 0)
-            menu.addSubMenu(grp, sub);
+            menu.addSubMenu(rysum::tr(grp), sub);
     }
     return menu;
 }
@@ -2590,7 +2585,7 @@ void VerlaufView::fillLane(int kind)
 void VerlaufView::pieceError(const juce::String &message)
 {
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-                                           juce::String::fromUTF8("St\xc3\xbc"
+                                           rysum::tr("St\xc3\xbc"
                                                                   "ck"),
                                            message, "OK", this);
 }
@@ -2617,16 +2612,16 @@ void VerlaufView::whenPieceSafe(std::function<void()> then)
         return;
     }
     const auto name = proc.getPieceName().isNotEmpty() ? proc.getPieceName()
-                                                       : juce::String::fromUTF8("Das unbenannte St\xc3\xbc"
+                                                       : rysum::tr("Das unbenannte St\xc3\xbc"
                                                                                 "ck");
     auto opts = juce::MessageBoxOptions()
                     .withIconType(juce::MessageBoxIconType::QuestionIcon)
-                    .withTitle(juce::String::fromUTF8("St\xc3\xbc"
+                    .withTitle(rysum::tr("St\xc3\xbc"
                                                       "ck ge\xc3\xa4ndert"))
-                    .withMessage(name + juce::String::fromUTF8(" hat ungespeicherte \xc3\x84nderungen."))
-                    .withButton("Speichern")
-                    .withButton("Verwerfen")
-                    .withButton("Abbrechen")
+                    .withMessage(name + rysum::tr(" hat ungespeicherte \xc3\x84nderungen."))
+                    .withButton(rysum::tr("Speichern"))
+                    .withButton(rysum::tr("Verwerfen"))
+                    .withButton(rysum::tr("Abbrechen"))
                     .withAssociatedComponent(this);
     juce::Component::SafePointer<VerlaufView> safe(this);
     juce::AlertWindow::showAsync(opts,
@@ -2664,9 +2659,9 @@ void VerlaufView::savePieceAs(std::function<void()> then)
 {
     auto folder = RysumProcessor::getPieceFolder();
     folder.createDirectory();
-    const auto name = proc.getPieceName().isNotEmpty() ? proc.getPieceName() : juce::String::fromUTF8("Neues St\xc3\xbc"
+    const auto name = proc.getPieceName().isNotEmpty() ? proc.getPieceName() : rysum::tr("Neues St\xc3\xbc"
                                                                                                      "ck");
-    chooser = std::make_unique<juce::FileChooser>(juce::String::fromUTF8("St\xc3\xbc"
+    chooser = std::make_unique<juce::FileChooser>(rysum::tr("St\xc3\xbc"
                                                                          "ck speichern"),
                                                   folder.getChildFile(name + RysumProcessor::kPieceExtension),
                                                   juce::String("*") + RysumProcessor::kPieceExtension);
@@ -2708,24 +2703,24 @@ void VerlaufView::openPieceFile(const juce::File &f)
 void VerlaufView::showPieceMenu()
 {
     juce::PopupMenu m;
-    m.addItem(1, juce::String::fromUTF8("Neues St\xc3\xbc"
+    m.addItem(1, rysum::tr("Neues St\xc3\xbc"
                                         "ck"));
-    m.addItem(2, juce::String::fromUTF8("\xc3\x96"
+    m.addItem(2, rysum::tr("\xc3\x96"
                                         "ffnen \xe2\x80\xa6"));
-    m.addItem(3, juce::String::fromUTF8("Speichern  (Strg+S)"), !set().lanes.empty() || proc.getPieceFile() != juce::File());
-    m.addItem(4, juce::String::fromUTF8("Speichern unter \xe2\x80\xa6"));
-    m.addItem(5, juce::String::fromUTF8("Ordner zeigen"));
+    m.addItem(3, rysum::tr("Speichern  (Strg+S)"), !set().lanes.empty() || proc.getPieceFile() != juce::File());
+    m.addItem(4, rysum::tr("Speichern unter \xe2\x80\xa6"));
+    m.addItem(5, rysum::tr("Ordner zeigen"));
     m.addSeparator();
     const auto own = RysumProcessor::getPieceFiles();
-    m.addSectionHeader(juce::String::fromUTF8("Meine St\xc3\xbc"
+    m.addSectionHeader(rysum::tr("Meine St\xc3\xbc"
                                               "cke"));
     if (own.isEmpty())
-        m.addItem(-1, juce::String::fromUTF8("(noch keine \xe2\x80\x93 \xe2\x80\x9eSpeichern unter\xe2\x80\x9c legt "
+        m.addItem(-1, rysum::tr("(noch keine \xe2\x80\x93 \xe2\x80\x9eSpeichern unter\xe2\x80\x9c legt "
                                              "sie hier ab)"),
                   false);
     for (int i = 0; i < own.size() && i < 200; ++i)
         m.addItem(200 + i, own[i].getFileNameWithoutExtension(), true, own[i] == proc.getPieceFile());
-    m.addSectionHeader("Mitgeliefert");
+    m.addSectionHeader(rysum::tr("Mitgeliefert"));
     const auto factory = RysumProcessor::factoryPieceNames();
     for (int i = 0; i < factory.size(); ++i)
         m.addItem(100 + i, factory[i], true,
@@ -2749,7 +2744,7 @@ void VerlaufView::showPieceMenu()
                         else if (r == 2)
                         {
                             safe->chooser = std::make_unique<juce::FileChooser>(
-                                juce::String::fromUTF8("St\xc3\xbc"
+                                rysum::tr("St\xc3\xbc"
                                                        "ck \xc3\xb6"
                                                        "ffnen"),
                                 RysumProcessor::getPieceFolder(),
@@ -2856,9 +2851,9 @@ void VerlaufView::showAddMenu()
 {
     juce::PopupMenu menu;
     const int base = 1;
-    menu.addSectionHeader("Uhr");
-    menu.addItem(7000, juce::String::fromUTF8("Tempo der eigenen Uhr"), true, tempoLane() != nullptr);
-    menu.addSectionHeader(juce::String::fromUTF8("Im Raum"));
+    menu.addSectionHeader(rysum::tr("Uhr"));
+    menu.addItem(7000, rysum::tr("Tempo der eigenen Uhr"), true, tempoLane() != nullptr);
+    menu.addSectionHeader(rysum::tr("Im Raum"));
     {
         // per-pipe targets: the gesture spreads through the room from an origin
         juce::PopupMenu pipes;
@@ -2868,9 +2863,9 @@ void VerlaufView::showAddMenu()
             bool has = false;
             for (auto &l : set().lanes)
                 has = has || l.paramId == pipeTargetId(t);
-            pipes.addItem(5000 + t, names[t].fromFirstOccurrenceOf("Pfeife: ", false, false), true, has);
+            pipes.addItem(5000 + t, names[t].fromFirstOccurrenceOf(rysum::tr("Pfeife: "), false, false), true, has);
         }
-        menu.addSubMenu(juce::String::fromUTF8("Je Pfeife \xe2\x80\x93 breitet sich im Raum aus"), pipes);
+        menu.addSubMenu(rysum::tr("Je Pfeife \xe2\x80\x93 breitet sich im Raum aus"), pipes);
         // timed paths
         juce::PopupMenu paths;
         for (int k = 0; k < kNumStops; ++k)
@@ -2879,11 +2874,11 @@ void VerlaufView::showAddMenu()
             bool has = false;
             for (auto &l : set().lanes)
                 has = has || l.paramId == autoPathLaneId(st);
-            paths.addItem(6000 + st, juce::String::fromUTF8(kStops[(size_t)st].label), true, has);
+            paths.addItem(6000 + st, rysum::tr(kStops[(size_t)st].label), true, has);
         }
-        menu.addSubMenu(juce::String::fromUTF8("Fahrplan einer gezeichneten Bahn"), paths);
+        menu.addSubMenu(rysum::tr("Fahrplan einer gezeichneten Bahn"), paths);
     }
-    menu.addSectionHeader(juce::String::fromUTF8("Regler"));
+    menu.addSectionHeader(rysum::tr("Regler"));
     {
         const auto pm = paramMenu(base);
         for (juce::PopupMenu::MenuItemIterator it(pm); it.next();)
@@ -2892,7 +2887,7 @@ void VerlaufView::showAddMenu()
     if ((int)set().lanes.size() >= kMaxAutoLanes)
     {
         menu.clear();
-        menu.addItem(-1, juce::String::fromUTF8("Alle 16 Spuren belegt"), false);
+        menu.addItem(-1, rysum::tr("Alle 16 Spuren belegt"), false);
     }
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&addButton),
                        [safe = juce::Component::SafePointer<VerlaufView>(this), base](int r)
@@ -2916,59 +2911,59 @@ void VerlaufView::showLaneMenu(int lane)
         return;
     juce::PopupMenu m;
     const auto &l = set().lanes[(size_t)lane];
-    m.addItem(1, "Spur an", true, l.on);
-    m.addItem(2, juce::String::fromUTF8("Aufnahmebereit (\xe2\x97\x8f)"), true, l.armed);
-    m.addItem(3, "Schleife", true, l.loop);
-    m.addItem(4, juce::String::fromUTF8("R\xc3\xbc"
+    m.addItem(1, rysum::tr("Spur an"), true, l.on);
+    m.addItem(2, rysum::tr("Aufnahmebereit (\xe2\x97\x8f)"), true, l.armed);
+    m.addItem(3, rysum::tr("Schleife"), true, l.loop);
+    m.addItem(4, rysum::tr("R\xc3\xbc"
                                         "ckw\xc3\xa4rts"),
               true, l.reverse);
     m.addSeparator();
     const bool collapsed = l.height > 0 && l.height <= VerlaufTimeline::kMinLaneH;
-    m.addItem(9, collapsed ? "Aufklappen" : "Einklappen");
-    m.addItem(10, juce::String::fromUTF8("H\xc3\xb6he automatisch"), l.height > 0);
-    m.addItem(7, "Spur nach oben", lane > 0);
-    m.addItem(8, "Spur nach unten", lane + 1 < (int)set().lanes.size());
-    m.addItem(11, juce::String::fromUTF8("Solo (nur Solo-Spuren wirken)"), true, l.solo);
+    m.addItem(9, collapsed ? rysum::tr("Aufklappen") : rysum::tr("Einklappen"));
+    m.addItem(10, rysum::tr("H\xc3\xb6he automatisch"), l.height > 0);
+    m.addItem(7, rysum::tr("Spur nach oben"), lane > 0);
+    m.addItem(8, rysum::tr("Spur nach unten"), lane + 1 < (int)set().lanes.size());
+    m.addItem(11, rysum::tr("Solo (nur Solo-Spuren wirken)"), true, l.solo);
     m.addSeparator();
     // editing tools
     {
         const bool several = lane == selLane && selPts.size() >= 2;
         juce::PopupMenu tr;
-        tr.addSectionHeader(several ? juce::String((int)selPts.size()) + juce::String::fromUTF8(" gew\xc3\xa4hlte Punkte")
-                                    : juce::String("alle Punkte der Spur"));
-        tr.addItem(101, juce::String::fromUTF8("Zeitlich dehnen (\xc3\x97 2)"));
-        tr.addItem(102, juce::String::fromUTF8("Zeitlich stauchen (\xc3\x97 \xc2\xbd)"));
-        tr.addItem(104, juce::String::fromUTF8("Zeitlich umkehren"));
-        tr.addItem(103, juce::String::fromUTF8("Werte spiegeln (oben \xe2\x86\x94 unten)"));
-        tr.addItem(105, juce::String::fromUTF8("Werte zur Mitte (\xc3\x97 \xc2\xbd)"));
-        tr.addItem(106, juce::String::fromUTF8("Werte auseinander (\xc3\x97 1,5)"));
-        tr.addItem(107, juce::String::fromUTF8("Aufs Raster"));
-        tr.addItem(108, juce::String::fromUTF8("Ein wenig daneben (Zufall)"));
-        m.addSubMenu(several ? juce::String::fromUTF8("Auswahl bearbeiten") : juce::String::fromUTF8("Punkte bearbeiten"),
+        tr.addSectionHeader(several ? juce::String((int)selPts.size()) + rysum::tr(" gew\xc3\xa4hlte Punkte")
+                                    : rysum::tr("alle Punkte der Spur"));
+        tr.addItem(101, rysum::tr("Zeitlich dehnen (\xc3\x97 2)"));
+        tr.addItem(102, rysum::tr("Zeitlich stauchen (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(104, rysum::tr("Zeitlich umkehren"));
+        tr.addItem(103, rysum::tr("Werte spiegeln (oben \xe2\x86\x94 unten)"));
+        tr.addItem(105, rysum::tr("Werte zur Mitte (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(106, rysum::tr("Werte auseinander (\xc3\x97 1,5)"));
+        tr.addItem(107, rysum::tr("Aufs Raster"));
+        tr.addItem(108, rysum::tr("Ein wenig daneben (Zufall)"));
+        m.addSubMenu(several ? rysum::tr("Auswahl bearbeiten") : rysum::tr("Punkte bearbeiten"),
                      tr, lane == selLane && !l.pts.empty());
         juce::PopupMenu fill;
-        fill.addSectionHeader(l.loop ? juce::String::fromUTF8("in die Schleife") : juce::String::fromUTF8("in den sichtbaren Bereich"));
-        fill.addItem(201, juce::String::fromUTF8("Welle (eine je Takt)"));
-        fill.addItem(202, juce::String::fromUTF8("Zufallsweg"));
-        fill.addItem(203, juce::String::fromUTF8("Zufallsstufen"));
-        fill.addItem(204, juce::String::fromUTF8("Rampe hinauf"));
-        fill.addItem(205, juce::String::fromUTF8("Rampe hinab"));
+        fill.addSectionHeader(l.loop ? rysum::tr("in die Schleife") : rysum::tr("in den sichtbaren Bereich"));
+        fill.addItem(201, rysum::tr("Welle (eine je Takt)"));
+        fill.addItem(202, rysum::tr("Zufallsweg"));
+        fill.addItem(203, rysum::tr("Zufallsstufen"));
+        fill.addItem(204, rysum::tr("Rampe hinauf"));
+        fill.addItem(205, rysum::tr("Rampe hinab"));
         juce::PopupMenu eu;
         const char *eus[]{"3 aus 8", "5 aus 8", "5 aus 16", "7 aus 16", "9 aus 16"};
         for (int i = 0; i < 5; ++i)
             eu.addItem(210 + i, eus[i]);
-        fill.addSubMenu(juce::String::fromUTF8("Euklidischer Rhythmus (je Rasterfeld)"), eu);
-        m.addSubMenu(juce::String::fromUTF8("F\xc3\xbcllen"), fill, lane == selLane);
-        m.addSubMenu(juce::String::fromUTF8("Kopie f\xc3\xbcr einen anderen Regler"), paramMenu(1000),
+        fill.addSubMenu(rysum::tr("Euklidischer Rhythmus (je Rasterfeld)"), eu);
+        m.addSubMenu(rysum::tr("F\xc3\xbcllen"), fill, lane == selLane);
+        m.addSubMenu(rysum::tr("Kopie f\xc3\xbcr einen anderen Regler"), paramMenu(1000),
                      lane == selLane && (int)set().lanes.size() < kMaxAutoLanes);
         bool varies = false;
         for (auto &p : l.pts)
             varies = varies || p.chance < 1.0f || p.every > 1 || p.vary > 0.0f;
-        m.addItem(12, juce::String::fromUTF8("Variationen neu w\xc3\xbcrfeln"), varies);
+        m.addItem(12, rysum::tr("Variationen neu w\xc3\xbcrfeln"), varies);
     }
     m.addSeparator();
-    m.addItem(5, "Punkte leeren", !l.pts.empty());
-    m.addItem(6, juce::String::fromUTF8("Spur l\xc3\xb6schen (Strg+Z holt sie zur\xc3\xbc"
+    m.addItem(5, rysum::tr("Punkte leeren"), !l.pts.empty());
+    m.addItem(6, rysum::tr("Spur l\xc3\xb6schen (Strg+Z holt sie zur\xc3\xbc"
                                         "ck)"));
     m.showMenuAsync(juce::PopupMenu::Options(),
                     [safe = juce::Component::SafePointer<VerlaufView>(this), lane](int r)
@@ -3041,25 +3036,25 @@ void VerlaufView::showPointMenu(int lane, int point)
     selPoint = point;
     syncControls();
     juce::PopupMenu m;
-    m.addSectionHeader(juce::String::fromUTF8("Abschnitt ab diesem Punkt"));
+    m.addSectionHeader(rysum::tr("Abschnitt ab diesem Punkt"));
     for (int k = 0; k < kNumAutoShapes; ++k)
         m.addItem(10 + k, autoShapeNames()[k], true, l.pts[(size_t)point].shape == k);
-    m.addItem(20, "Biegung aufheben", std::abs(l.pts[(size_t)point].bend) > 1.0e-4f);
+    m.addItem(20, rysum::tr("Biegung aufheben"), std::abs(l.pts[(size_t)point].bend) > 1.0e-4f);
     if (lane == selLane && selPts.size() >= 2)
     {
         juce::PopupMenu tr;
-        tr.addItem(101, juce::String::fromUTF8("Zeitlich dehnen (\xc3\x97 2)"));
-        tr.addItem(102, juce::String::fromUTF8("Zeitlich stauchen (\xc3\x97 \xc2\xbd)"));
-        tr.addItem(104, juce::String::fromUTF8("Zeitlich umkehren"));
-        tr.addItem(103, juce::String::fromUTF8("Werte spiegeln (oben \xe2\x86\x94 unten)"));
-        tr.addItem(105, juce::String::fromUTF8("Werte zur Mitte (\xc3\x97 \xc2\xbd)"));
-        tr.addItem(106, juce::String::fromUTF8("Werte auseinander (\xc3\x97 1,5)"));
-        tr.addItem(107, juce::String::fromUTF8("Aufs Raster"));
-        tr.addItem(108, juce::String::fromUTF8("Ein wenig daneben (Zufall)"));
-        m.addSubMenu(juce::String((int)selPts.size()) + juce::String::fromUTF8(" gew\xc3\xa4hlte Punkte"), tr);
+        tr.addItem(101, rysum::tr("Zeitlich dehnen (\xc3\x97 2)"));
+        tr.addItem(102, rysum::tr("Zeitlich stauchen (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(104, rysum::tr("Zeitlich umkehren"));
+        tr.addItem(103, rysum::tr("Werte spiegeln (oben \xe2\x86\x94 unten)"));
+        tr.addItem(105, rysum::tr("Werte zur Mitte (\xc3\x97 \xc2\xbd)"));
+        tr.addItem(106, rysum::tr("Werte auseinander (\xc3\x97 1,5)"));
+        tr.addItem(107, rysum::tr("Aufs Raster"));
+        tr.addItem(108, rysum::tr("Ein wenig daneben (Zufall)"));
+        m.addSubMenu(juce::String((int)selPts.size()) + rysum::tr(" gew\xc3\xa4hlte Punkte"), tr);
     }
     m.addSeparator();
-    m.addItem(1, juce::String::fromUTF8("Punkt l\xc3\xb6schen"));
+    m.addItem(1, rysum::tr("Punkt l\xc3\xb6schen"));
     m.showMenuAsync(juce::PopupMenu::Options(),
                     [safe = juce::Component::SafePointer<VerlaufView>(this), lane, point](int r)
                     {
@@ -3240,35 +3235,35 @@ void VerlaufView::paint(juce::Graphics &g)
     const bool host = proc.isAutoHostClock();
     // the piece on the page (and whether it has changed since it was saved), then the clock
     juce::String right = proc.getPieceName().isNotEmpty() ? proc.getPieceName()
-                                                          : juce::String::fromUTF8("Unbenanntes St\xc3\xbc"
+                                                          : rysum::tr("Unbenanntes St\xc3\xbc"
                                                                                    "ck");
     if (proc.isPieceChanged() && !s.lanes.empty())
-        right << juce::String::fromUTF8(" (ge\xc3\xa4ndert)");
+        right << rysum::tr(" (ge\xc3\xa4ndert)");
     right << juce::String::fromUTF8("  \xc2\xb7  ") << timeText(proc.getAutoNow());
-    right << (host ? juce::String::fromUTF8("  \xc2\xb7  folgt dem Host") : juce::String::fromUTF8("  \xc2\xb7  eigene Uhr"));
+    right << (host ? rysum::tr("  \xc2\xb7  folgt dem Host") : rysum::tr("  \xc2\xb7  eigene Uhr"));
     if (proc.isAutoRecord())
-        right << juce::String::fromUTF8("  \xc2\xb7  Aufnahme");
-    drawSectionTitle(g, titleBox, "Verlauf", right);
-    drawSectionTitle(g, laneBox, "Spur",
-                     validLane(selLane) ? laneName(selLane) : juce::String::fromUTF8("keine gew\xc3\xa4hlt"));
+        right << rysum::tr("  \xc2\xb7  Aufnahme");
+    drawSectionTitle(g, titleBox, rysum::tr("Verlauf"), right);
+    drawSectionTitle(g, laneBox, rysum::tr("Spur"),
+                     validLane(selLane) ? laneName(selLane) : rysum::tr("keine gew\xc3\xa4hlt"));
     juce::String segRight;
     if (validLane(selLane))
     {
         const auto &l = s.lanes[(size_t)selLane];
         if (selPts.size() > 1)
-            segRight = juce::String((int)selPts.size()) + juce::String::fromUTF8(" Punkte gew\xc3\xa4hlt \xc2\xb7 "
+            segRight = juce::String((int)selPts.size()) + rysum::tr(" Punkte gew\xc3\xa4hlt \xc2\xb7 "
                                                                                   "Form gilt ab Punkt ") +
                        juce::String(selPoint + 1);
         else if (selPoint >= 0 && selPoint + 1 < (int)l.pts.size())
-            segRight = "von Punkt " + juce::String(selPoint + 1) + juce::String::fromUTF8(" bis ") +
+            segRight = rysum::tr("von Punkt ") + juce::String(selPoint + 1) + rysum::tr(" bis ") +
                        juce::String(selPoint + 2) + "  (" + timeText(beatOfLocal(l, l.pts[(size_t)selPoint].t)) +
                        ")";
         else if (selPoint >= 0 && selPoint < (int)l.pts.size())
-            segRight = juce::String::fromUTF8("nach dem letzten Punkt \xe2\x80\x93 der Wert bleibt");
+            segRight = rysum::tr("nach dem letzten Punkt \xe2\x80\x93 der Wert bleibt");
         else
-            segRight = juce::String::fromUTF8("auf eine Linie klicken");
+            segRight = rysum::tr("auf eine Linie klicken");
     }
-    drawSectionTitle(g, segBox, "Abschnitt", segRight);
+    drawSectionTitle(g, segBox, rysum::tr("Abschnitt"), segRight);
     // a frame around the timeline
     g.setColour(col::border);
     g.drawRect(timeline.getBounds().expanded(1), 1);
@@ -3499,7 +3494,7 @@ void OriginPad::paint(juce::Graphics &g)
     {
         g.setColour(col::faint);
         g.setFont(A.monoFont(9.5f));
-        g.drawFittedText(juce::String::fromUTF8("alle Pfeifen\nzugleich"), getLocalBounds().reduced(8),
+        g.drawFittedText(rysum::tr("alle Pfeifen\nzugleich"), getLocalBounds().reduced(8),
                          juce::Justification::centredBottom, 2);
     }
 }
