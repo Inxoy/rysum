@@ -1,0 +1,135 @@
+% ---------------------------------------------------------------------
+\subsection{The living organ (\fn{OrganLive.cpp})}
+\label{sec:math-live}
+\S\ref{sec:live} describes what the tab does; these are the update rules, all run once per control block of $\Delta t$.
+
+\paragraph{The walking listener (\fn{updateLive}).} The listener's offset $(x,y)$ in metres is the place set on the
+page plus a walk with the phase $\phi = 2\pi\Phi$, $\Phi \mathrel{+}= f_w\Delta t$, and the size $s$: a circle
+$(s\sin\phi,\ s\cos\phi)$, left--right $(s\sin\phi, 0)$, forward--back $(0, s\sin\phi)$, or a figure eight
+$(s\sin\phi,\ \tfrac s2\sin2\phi)$ (a 1:2 Lissajous curve), plus the camera of the 3D view when it walks. The actual place
+glides towards the target with $\tau = \SI{120}{ms}$ (\SI{40}{ms} while walking in 3D, \SI{20}{ms} for the height), so a
+changed shape or a typed value makes the listener walk there quickly instead of jumping. Every pipe is then heard from
+the walked place (\fn{heardFrom}): its position relative to the listener is recomputed, never nearer than a metre or than
+it was.
+
+\paragraph{The bellows (\ui{Balg}).} Every held pipe asks for wind in proportion to its stop's wind and its pallet
+opening, and low pipes much more than high ones:
+\begin{equation}
+  q = \sum_{\text{held}} w_\mathrm{stop}\;o_\mathrm{pallet}\;\operatorname{clamp}_{[0.35,\,3]}\sqrt{\SI{261.6}{Hz}/f}.
+\end{equation}
+With a \emph{blower} the pressure $P$ obeys
+\begin{equation}
+  \frac{dP}{dt} = \frac{(1-P) - \pi P}{\tau},\qquad \pi = \frac{3b^2q}{24},\quad \tau = \max(0.03,\ 0.1\,V_b)\ \mathrm{s},
+\end{equation}
+a supply that refills what is missing while the demand $\pi$ (\ui{Balg} $b$) drains in proportion to the pressure; it
+settles at $P^* = 1/(1+\pi)$: a big chord pulls the pressure down for as long as it sounds. With a \emph{Kalkant} the
+bellows holds a volume $V\in[0,1]$ that is lifted linearly to 1 within \SI{0.3}{s} by every tread (at a rate per minute,
+or on the beat of the host) and sinks by $b\,(q/12)/V_b$ per second as the pipes use it (twelve middle pipes empty a
+bellows of size $V_b$ in $V_b$ seconds at full amount). The weight on the bellows keeps the pressure up until the
+bellows is nearly empty: $P$ glides ($\tau = \SI{40}{ms}$) towards $\operatorname{smoothstep}(V/0.3)$. Every pipe's wind
+(\S\ref{sec:math-voice}) is multiplied by $\min(1,P)$. Each tread is also heard: two cascaded one-pole low-passes at
+\SI{140}{Hz} on white noise plus a sine that falls from 82 to \SI{36}{Hz}, decaying with $\tau = \SI{110}{ms}$, from below
+the console.
+
+\paragraph{The pallet (\ui{Ventil}).} Driven by velocity $v$, a pallet with the amount $\Pi$ opens over
+$T = 1.6\,\Pi\,(1-v)^2$ seconds, starting at $\max\bigl(0.1,\ 1-\Pi(0.3+0.7(1-v)^2)\bigr)$ and rising linearly: a slow
+key opens it slowly, and the pipe starves at first, which the wind model turns into a soft, low, breathy start. Driven
+by MPE pressure or slide $t$, the opening follows $t$ with $\tau=\SI{12}{ms}$ and the pipe's wind is $1-\Pi(1-o)$.
+
+\paragraph{Wear (\ui{Verschleiß}).} Every pipe keeps how long it has sounded, $u \mathrel{+}= \Delta t/(60\,T_w)$ while held,
+with $T_w$ the lifetime in minutes; the per-pipe wear $w_r = \min(1, u\cdot\text{amount})$ enters the degradation, the
+wobble ($0.45w_r^2$) and the pitch ($38w_r^2$ cents, mostly flat) of \S\ref{sec:math-voice}.
+
+\paragraph{Pulling chords pure (\ui{Reinheit}, \fn{updatePure}).} For the held notes with pitches $c_i$ in cents, each pair
+$(i,j)$ with $c_j > c_i$ is compared with a table of just intervals $J$ (unison, 16/15, 10/9, 9/8, 7/6, 6/5, 5/4, 4/3,
+7/5, 45/32, 3/2, 8/5, 5/3, 7/4, 16/9, 9/5, 15/8, octave), each with a consonance weight $w_J$ and a reach $R_J$ in cents. The
+pair is tied to the interval with the highest score $w_J(1 - |J - d_{ij}|/R_J)$, where $d_{ij} = (c_j-c_i)\bmod 1200$, if
+that score is positive; the spring has the stiffness $w_J$ and wants the correction $e_{ij} = J - d_{ij}$. The
+corrections $\delta_i$ minimise
+\begin{equation}
+  E(\boldsymbol\delta) = \sum_{\text{springs}} w_{ij}\bigl(\delta_j - \delta_i - e_{ij}\bigr)^2 + 0.06\sum_i \delta_i^2 ,
+\end{equation}
+pairs pulling towards purity and a weak spring to the temperament so that the chord stays where it is. Setting
+$\partial E/\partial\delta_k = 0$ gives
+\begin{equation}
+  \delta_k = \frac{\sum_{j} w_{kj}\,(\delta_j \pm e_{kj})}{0.06 + \sum_j w_{kj}},
+\end{equation}
+which is iterated 24 times in place (Gauss--Seidel; the matrix is symmetric and diagonally dominant thanks to the
+$0.06$, so it converges). The mean is subtracted so the chord does not drift as a whole, each $\delta$ is clamped to
+$\pm\SI{60}{ct}$, and every pipe glides to $\text{amount}\cdot\delta$ with $\tau = T_\mathrm{pure}/3$. The system is
+solved again only when the set of held notes changes (detected by a 64-bit FNV hash of the notes).
+
+\paragraph{Pipes that ring along (\fn{updateSympathy}).} About twenty times a second the partials in the air are
+listed: for every held pipe of frequency $f$ the partials $nf$, $n = 1\dots6$, with the strength $g/n$. Every silent pipe
+of every stop at frequency $f_p$ collects
+\begin{equation}
+  W_p = \sum_{\text{partials } i} s_i\,\Bigl(1 - \frac{|1200\log_2(f_i/f_p)|}{25}\Bigr)^+ ,
+\end{equation}
+the partials within \SI{25}{ct} of its own pitch, the nearer the more. The strongest few become resonators: a two-pole
+filter $y_n = g\,x_n + 2R\cos\omega_p\,y_{n-1} - R^2y_{n-2}$ at the pipe's pitch, fed with the sum of all sounding pipes,
+with $R = e^{-1/(0.145\,T f_s)}$ so that its ring decays by \SI{60}{dB} in the time $T$ ($R^{Tf_s} = e^{-1/0.145} = 10^{-3}$),
+and the input gain $g \propto (1-R)\cdot2\sin\omega_p$, which is the inverse of the resonator's peak gain, so a partial
+exactly at the pipe's pitch comes out as loud as it went in. Each resonator sounds at its own pipe's place. Since its
+input contains all sounding pipes, only the partials near $\omega_p$ pass, which is exactly sympathetic resonance; pure
+intervals wake more pipes than impure ones, because their partials coincide.
+
+\paragraph{The Tonnetz walker (\fn{stepWalker}).} The walker keeps a lattice position $(a,b)$ (fifths, major thirds) from the
+key struck last and on every step moves to one of the six neighbours $(\pm1,0)$, $(0,\pm1)$, $\pm(1,-1)$ (fifth, major
+third, minor third up or down; never straight back). In the homesick mode it draws two directions and takes, with
+probability $3/4$, the one nearer home in the hexagonal norm $a^2 + b^2 + ab$ (the distance on a triangular lattice); the
+spiral mode runs legs of lengths $1,1,2,2,3,3,\dots$ in the turn order fifth, third, back, back. The new pitch class is
+$(m_0 + 7a + 4b)\bmod 12$; the key chosen is the one of that class minimising $|m - m_\mathrm{want}| + 0.35|m - m_0|$,
+where the stride and the place of origin both count, so the walk stays in the compass.
+
+% ---------------------------------------------------------------------
+\subsection{Degradation of the space (\fn{SpatialDegrade.h})}
+\label{sec:math-spacedeg}
+\fn{SpaceEroder} works on the Ambisonic channels after the pipes are summed.
+\begin{itemize}[nosep]
+  \item \emph{Erosion}: with the erosion $e\in[0,1]$ (the slider plus the weathering, which grows by $1/T_w$ per second while
+    something sounds and recedes four times as fast in silence) the effective order is $o = L(1-e)$, and the channels of
+    degree $l$ get the weight $\operatorname{clamp}_{[0,1]}(o - (l-1))$, ramped across the block. The orders fade from the
+    top, continuously: at $o = 2.5$ the third order is at half level. Since the directional sharpness of a field is set
+    by its highest order, the image blurs smoothly towards the omnidirectional $W$.
+  \item \emph{Bit depth and hold rate per order}: degree $l$ is quantised with $B_l = 16 - (16-B)\,l/L$ bits and held at
+    the rate $f_l = 48000\,(f_h/48000)^{l/L}$ (between 60\,Hz and $f_s$): the finer the spatial detail, the coarser its
+    signal, as if the directions were stored with less care than the sound.
+  \item \emph{Dropouts}: every 64 samples a channel can drop out with the probability $3d^2\cdot64/f_s$ for
+    \SIrange{50}{400}{ms} (30\,\% of the time the whole order with it), with \SI{5}{ms} ramps.
+  \item \emph{Spatial aliasing}: the field is decoded to $K = \max(4, \mathrm{round}((L+1)^2(1-0.85\alpha)))$ directions of a
+    Fibonacci sphere and encoded again, $\mathbf M = \tfrac1K\sum_k \mathbf y_k(\mathbf w\circ\mathbf y_k)^{\mathsf T}$ with
+    $w_c = 2l+1$. With at least $(L+1)^2$ well-spread points $\mathbf M\approx\mathbf I$; with fewer, higher harmonics fold
+    onto lower ones and phantom directions appear. The grid turns at $7^\circ$ per second (the matrix is rebuilt every
+    1024 samples), so the ghosts wander.
+  \item \emph{Direction grid}: before encoding, every pipe's direction snaps to the nearest of
+    $N = \operatorname{clamp}_{[4,64]}\mathrm{round}(64(1-g)^2 + 4g)$ Fibonacci directions (largest dot product), so the
+    pipes crowd into a few points of the sphere.
+\end{itemize}
+
+% ---------------------------------------------------------------------
+\subsection{Photographic operations and ice (\fn{SpaceFx.h})}
+\label{sec:math-spacefx}
+\paragraph{Mirroring a field (\fn{mirrorSign}).} A mirror image of an Ambisonic field is a sign per channel, from the
+symmetries of the harmonics. Left--right ($\varphi\to-\varphi$) flips the sine harmonics, $m<0$. Front--back
+($\varphi\to\pi-\varphi$) uses $\cos m(\pi-\varphi) = (-1)^m\cos m\varphi$ and $\sin m(\pi-\varphi) = -(-1)^m\sin m\varphi$.
+Up--down ($\vartheta\to-\vartheta$) uses $P_l^m(-x) = (-1)^{l+m}P_l^m(x)$. \ui{Doppelbelichtung} lays such a turned
+and mirrored copy of the field from a few seconds ago over the present.
+
+\paragraph{Long exposure (\fn{LongExposure}).} The field is decoded to 24 directions $\mathbf v_d$ (a Fibonacci sphere
+turned by $17^\circ$), $x_d = \sum_c\tfrac{2l+1}{24}Y_c(\mathbf v_d)\,a_c$; every direction keeps its own trail, a comb
+filter with damped feedback followed by two all-passes, and the trails are encoded back to their directions. The comb
+length $\ell_d$ is 30--\SI{71}{ms}, spread by an irrational stride ($u\cdot7.31 \bmod 1$) so the directions have no common
+pitch; its feedback $g_d = 10^{-3\ell_d/(Tf_s)}$ makes the trail fade by \SI{60}{dB} in $T$; a one-pole in the loop at
+700\,Hz--\SI{16}{kHz} (\ui{Helligkeit}) darkens it at every pass. The input gain $\sqrt{1-g_d^2}$ keeps the steady level of
+the trail near the input's ($\sum g^{2n} = 1/(1-g^2)$). The all-passes, $t = v + 0.6\,b$, $v' = b - 0.6\,t$ with the delayed
+value $b$, have a flat magnitude and only smear the comb's echoes in time.
+
+\paragraph{Dispersion (\ui{Eis}, \fn{DispersionBank}).} Every reflection channel passes a cascade of up to 96 first-order
+all-passes $H(z) = (a + z^{-1})/(1 + az^{-1})$, computed as $y = ax + s$, $s \leftarrow x - ay$. Each has the group delay
+\begin{equation}
+  \tau(\omega) = \frac{1-a^2}{1 + 2a\cos\omega + a^2}\ \text{samples},
+\end{equation}
+which for $a<0$ is $(1-a)/(1+a)$ at low frequencies and $(1+a)/(1-a)$ at the Nyquist frequency: the lows are held back more
+than the highs (at $a=-0.5$: 3 samples against $1/3$), and through $N$ stages the difference adds up. A click becomes a
+falling chirp, highs first, lows later: the sound of reflections over frozen lakes and long springs, now from the direction
+of every reflection.
