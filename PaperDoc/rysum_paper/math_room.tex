@@ -1,0 +1,163 @@
+% ---------------------------------------------------------------------
+\subsection{The simulated room: surfaces and early reflections (\fn{RoomSim.h})}
+\label{sec:math-saal}
+The \ui{Saal} (\S\ref{sec:room}) is computed from geometry. Coordinates are metres with $x$ to the right (0 at the left
+wall), $y$ to the front (0 at the back wall), $z$ up (0 at the floor); the listener faces $+y$ at the ear height of
+\SI{1.6}{m} (or half the height in a room lower than \SI{3.2}{m}).
+
+\paragraph{Absorption in two bands (\fn{SurfAbs}).} Every surface has an energy absorption coefficient $\alpha$ in a
+low/mid band and a high band. A surface that follows the sliders takes $\alpha_\mathrm{lo}$ from \ui{Absorption Wände}
+or \ui{Boden/Decke}; a surface with a material of its own takes it from the table (stone 0.02, plaster 0.05, wood 0.12,
+glass 0.04, curtain 0.5, mirror 0 as a wall). The high band adds a share of what is left,
+\begin{equation}
+  \alpha_\mathrm{hi} = \min\bigl(0.99,\ \alpha_\mathrm{lo} + 0.6\,\eta\,(1-\alpha_\mathrm{lo})\bigr),
+\end{equation}
+with the \ui{Höhendämpfung} $\eta$ (or the material's own value): highs are always absorbed at least as much as
+lows, as by every real material. Air absorbs energy at the rate $m$ per metre, $m_\mathrm{lo} = 0.0002$ and
+$m_\mathrm{hi} = 0.004 + 0.012A$ with the \ui{Luft} amount $A$.
+
+\paragraph{Image sources (\fn{imageSources}).} In a rectangular room a reflection off a wall is the same as a straight
+path from the source's mirror image behind that wall \citep{allen1979image}. Along one axis of length $D$ with the
+source at $s$, the image after $m$ reflections lies at
+\begin{equation}
+  x_m = mD + \begin{cases} s, & m \text{ even}\\ D - s, & m\text{ odd}\end{cases},\qquad m\in\mathbb Z,
+\end{equation}
+(\fn{imageCoord}); an even number of mirrorings restores the orientation, an odd number flips it. A three-dimensional
+image is a triple $(m_x,m_y,m_z)$ with $|m_x|+|m_y|+|m_z| = k \le K$ reflections, $K\le3$: 6 images of order 1, 18 of
+order 2 and 38 of order 3 (62 in all). For each axis the image's path hits the wall at 0 $\lceil |m|/2\rceil$ times
+and the wall at $D$ $\lfloor |m|/2\rfloor$ times if $m<0$, the other way round if $m>0$ (\fn{axisHits}), so every hit
+can be charged to the right surface.
+
+\paragraph{The gain of a reflection (\fn{updateSlotTaps}).} An image at distance $r$ from the listener, whose path hits
+surfaces $i_1,\dots,i_k$, is heard after the delay $(r - r_d)/c$ relative to the direct sound ($r_d$ the direct distance;
+the dry pipe is already the direct sound, so all reflections are delayed relative to it) with the amplitude
+\begin{equation}
+  g = g_\mathrm{base}\, g_d(r)\, g_\mathrm{ER}\,\prod_{j=1}^{k}\sqrt{1-\alpha_{\mathrm{lo},i_j}}\;\cdot\;\bigl(\sqrt{1-\sigma}\bigr)^{k},
+\end{equation}
+where $\sqrt{1-\alpha}$ is the pressure reflection factor of a surface that absorbs the energy share $\alpha$, $g_d$ the
+distance law of \S\ref{sec:math-motion}, and $\sigma$ the \ui{Streuung}: the share $\sigma$ of the energy is scattered at
+every hit and goes to the diffuse tail instead, so the specular image keeps $1-\sigma$ of the energy per reflection. The
+highs are treated as a shelf relative to the lows,
+\begin{equation}
+  \rho = \prod_j \sqrt{\frac{1-\alpha_{\mathrm{hi},i_j}}{1-\alpha_{\mathrm{lo},i_j}}}\;\cdot\;e^{-\frac12(m_\mathrm{hi}-m_\mathrm{lo})\,r},
+\end{equation}
+(the second factor the extra air absorption of the highs over the path, as an amplitude: half the energy rate). Each tap
+is rendered as $y = \mathrm{LP}(x) + \rho\,(x - \mathrm{LP}(x))$ with a one-pole low-pass at \SI{2.5}{kHz}: the band
+below passes with the gain $g$, the band above with $g\rho$. Its direction is encoded with \fn{encodeAmbiXDir} from the
+vector to the image, $(\cos\varphi,\sin\varphi) = (\Delta y, -\Delta x)/\rho_{xy}$ (the listener faces $+y$ and
+azimuth is positive to the left), at up to third order for first-order reflections and at first order for later ones,
+which are many, quieter and more diffuse. Reflections later than the delay buffer are faded out linearly over its last
+15\,\% (they belong to the tail anyway).
+
+\paragraph{Moving sources.} The delay of a tap is read from a ring buffer with linear interpolation,
+$x = b + f(a-b)$ between the two neighbouring samples, and ramped linearly across the block from the old delay $d_0$ to
+the new one $d_1$, like the gains. A delay that changes smoothly is the Doppler shift of the reflection: every image
+moves when the pipe moves and its pitch changes with its own radial speed. The integer and fractional parts of the
+read position are kept apart (an integer clock and a float offset), because a single float clock would lose the
+fraction after a few minutes of running and alias. A tap whose inputs did not change is not recomputed: the key of the
+computation (source direction and distance, the room's dimensions and materials, the listener and the order) is
+compared with the stored one.
+
+\paragraph{Polygon rooms.} In a floor plan that is not a rectangle the images are found by mirroring over the wall
+lines in the plan, $\mathbf p' = \mathbf p - 2(\mathbf n\cdot\mathbf p + c)\,\mathbf n$ for a wall with inward normal
+$\mathbf n$ and offset $c$ (\fn{reflectOver}), for every sequence of up to three walls, combined with the floor and
+ceiling images in $z$. A path is valid only if every reflection point lies on its wall segment and, in a non-convex
+plan, if no other wall blocks one of its legs (\fn{planPathPoints}, \fn{planBlocked}). Since this search is expensive
+it runs only when the source moved noticeably; in between, each tap keeps its path and only recomputes its image
+position, and paths that appear or disappear fade in or out over \SI{25}{ms}, like a reflection sliding past the end of
+a wall.
+
+\paragraph{Around a corner (\fn{diffractedPath}, \fn{diffractionLoss}).} When a wall of the plan lies between pipe and
+listener, the direct sound takes the shortest way around one or two reflex corners of the plan (moved \SI{5}{cm} into
+the room) that both can see. It is heard from the direction of the first corner, from the distance of the whole way,
+and loses level by Maekawa's rule for the insertion loss of a barrier \citep{maekawa1968}, from the Fresnel number
+$N = 2\delta/\lambda$ of the detour $\delta$ (the way around minus the straight line), evaluated at \SI{250}{Hz}:
+\begin{equation}
+  L_\mathrm{loss} = \min\Bigl(26,\ 10\log_{10}(1+20N) + 4b\Bigr)\ \mathrm{dB},\qquad
+  N = \frac{2\delta\cdot\SI{250}{Hz}}{c},\qquad
+  f_c = 250\Bigl(4 + \frac{3}{29.2\,\delta}\Bigr)\,\mathrm{Hz},
+\end{equation}
+with the bend $b\in[0,1]$ ($0$--$180^\circ$) adding a little for a sharp turn. Above $f_c$, where the loss would be
+\SI{6}{dB} higher, the low-pass of \S\ref{sec:math-voice} sets in, so the highs are lost first, as the detour counts in
+wavelengths. At the edge of the shadow $\delta = 0$ and nothing is lost: stepping past a corner never makes the sound jump.
+
+% ---------------------------------------------------------------------
+\subsection{The simulated room: decay and tail (\fn{RoomSim.h}, \fn{RoomTail.cpp})}
+\label{sec:math-tail}
+
+\paragraph{Eyring's formula (\fn{eyringRt}).} For a quick estimate (the page shows it) the reverberation time per band is
+\begin{equation}
+  T_{60} = \frac{0.161\,V}{-S\ln(1-\bar\alpha) + 4mV},\qquad \bar\alpha = \frac{\sum_i\alpha_iS_i}{S},
+\end{equation}
+with the volume $V$, the total surface $S$ (in a polygon room the plan's area twice and the walls' lengths times the
+height) and the area-weighted mean absorption \citep{eyring1930}. $-\ln(1-\bar\alpha)$ instead of Sabine's
+$\bar\alpha$ accounts for the fact that energy is lost in discrete reflections, not continuously, which matters in
+absorbent rooms; $4mV$ is the air. The constant $0.161 = 24\ln 10/c$ (in s/m) comes from $c = \SI{343}{m/s}$. The
+mean free path, used for the onset of the tail and the FDN, is $\bar\ell = 4V/S$.
+
+\paragraph{Ray tracing (\fn{traceRoom}).} Eyring assumes a diffuse field and evenly spread absorption, which a long nave
+with a dead floor and hard walls violates. So the decay actually used is measured by tracing 3000--4000 rays from
+where an organ would stand ($W/2$, $3L/4$, $\min(H/2, \SI{4}{m})$) in uniformly random directions ($z$ uniform in
+$[-1,1]$, azimuth uniform, which is uniform on the sphere by Archimedes' theorem). Each ray carries an energy per band,
+starting at 1. Between two hits it travels $\ell$ metres in $\ell/c$ seconds and deposits its energy times the time
+spent into bins of \SI{5}{ms}; at the end of the segment it loses $e^{-m\ell}$ to the air and a factor $1-\alpha$ of the
+surface it hits. It then continues specularly ($\mathbf d \leftarrow \mathbf d - 2(\mathbf d\cdot\mathbf n)\mathbf n$),
+or with the probability $\sigma$ diffusely, in a cosine-weighted (Lambert) direction around the normal,
+\begin{equation}
+  \mathbf d = \sqrt{u_1}\cos(2\pi u_2)\,\mathbf t_1 + \sqrt{u_1}\sin(2\pi u_2)\,\mathbf t_2 + \sqrt{1-u_1}\,\mathbf n,
+\end{equation}
+which draws directions with a density proportional to $\cos\theta$ (Malley's method: uniform on the disc, lifted to the
+hemisphere). A ray ends after 4000 hits, \SI{30}{s}, or when both energies are below $10^{-7}$. The same seed is used
+every time, so modulating the room does not make the decay jump randomly.
+
+\paragraph{From the energy to $T_{30}$ (\fn{fitDecay}).} The summed energy per bin $e_b$ is integrated backwards,
+$S_b = \sum_{b'\ge b} e_{b'}$ (Schroeder's backward integration, which turns the noisy ensemble decay into a smooth,
+monotone curve), converted to $\mathrm{dB} = 10\log_{10}(S_b/S_0)$, and a straight line is fitted by least squares
+to the part between $-5$ and \SI{-35}{dB}. With the slope $k$ in dB per second, $T = -60/k$: the $T_{30}$ of room
+acoustics, extrapolated to 60 dB.
+
+\paragraph{The synthetic tail (\fn{TailIR::build}).} The late reverberation is a response synthesised from the two
+decay times $T_\mathrm{lo}$, $T_\mathrm{hi}$ ($T_\mathrm{hi}\le T_\mathrm{lo}$ enforced). For every output channel
+$c$ (up to second order: a diffuse field needs no more) a noise $\nu_c$ is made from four uniform numbers,
+$\nu = 0.866\sum_{i=1}^4 b_i$, which by the central limit theorem is close to Gaussian with unit variance
+($\operatorname{Var}(b) = 1/3$, so $4\cdot\tfrac13\cdot0.866^2 \approx 1$). It is split at \SI{1500}{Hz} by a biquad
+low-pass into $\nu_\mathrm{lo}$ and $\nu_\mathrm{hi} = \nu-\nu_\mathrm{lo}$ (the two always sum to the original) and each
+band decays with its own time:
+\begin{equation}
+  h_c(t) = w_l\,\Bigl(\nu_{\mathrm{lo}}(t)\,e^{-6.9078\,t/T_\mathrm{lo}} + \nu_\mathrm{hi}(t)\,e^{-6.9078\,t/T_\mathrm{hi}}\Bigr),
+  \qquad t \ge t_0,
+\end{equation}
+where $6.9078 = \ln 10^3$ makes the amplitude fall by $\SI{60}{dB}$ in $T$. The tail starts at $t_0 = \bar\ell/(2c)$,
+after the first reflections, and fades in by a raised cosine over one mean free time $\bar\ell/c$. The channel weight
+$w_l = 1/\sqrt{2l+1}$ gives a diffuse field its SN3D energy ratios, as in \S\ref{sec:math-ir}; the seed is fixed per
+channel, so the channels are uncorrelated with each other and the same from one rebuild to the next (a modulated room
+changes its envelopes, not its noise, and a held chord's reverb does not jump). The response is made long enough to
+decay by \SI{75}{dB}; if that would exceed the maximum length, the decay is bent smoothly: from 35\,\% of the length on, an
+extra loss growing with the square of the time, $\Delta(u) = (75 - 60\,t_\mathrm{len}/T)\,u^2$ dB with $u$ the
+fraction of the remaining span, brings it to $-75$ dB exactly at the end without a corner. The response is normalised to
+unit energy in $W$ and run through the three-stage partitioned convolution of \S\ref{sec:math-partconv}
+(blocks 256, 2048, 8192).
+
+\paragraph{The feedback delay network (\fn{renderFdn}).} The earlier tail, still selectable (\ui{FDN}), is a recursive
+reverberator \citep{jot1991fdn} with 16 delay lines of lengths
+\begin{equation}
+  d_j = \frac{\bar\ell}{c}\,f_s\,\rho_j,\qquad \rho_j\in\{0.53, 0.59, 0.67, \dots, 1.41, 1.49\},
+\end{equation}
+spread around the mean free time with mutually prime-like ratios, so their echoes do not line up. Each line's output
+is split at \SI{1500}{Hz} by a one-pole low-pass and each band is attenuated by the gain that makes it decay with its
+band's ray-traced time,
+\begin{equation}
+  g_{j} = 10^{-3 d_j / (f_s T)},
+\end{equation}
+(60 dB per $T$, distributed over the line's length: a signal that has circulated for $T$ seconds has passed through
+gains whose product is $10^{-3}$). The sixteen outputs are mixed by a fixed random orthogonal matrix $\mathbf A$
+(16 random rows made orthonormal by Gram--Schmidt): an orthogonal matrix preserves energy, so the loop's decay is set
+by the gains alone, and a dense random one mixes every line into every other at once (a Hadamard matrix left isolated
+modes around 1.5--\SI{2}{kHz}). The input, delayed by half a mean free time, enters every line with $\pm0.25$. Every
+delay is modulated by $\pm8$ samples (at \SI{48}{kHz}) with its own rate in $[0.3,1.2]$\,Hz, computed with a rotating
+phasor $(c,s)\leftarrow(c\cos\omega - s\sin\omega,\ s\cos\omega + c\sin\omega)$ that is renormalised once per block,
+which smears the modes so no frequency rings. Line $j$ is heard from a direction of a 16-point Fibonacci sphere
+(azimuth $137.508^\circ j$, the golden angle, $\sin\vartheta = 1 - 2(j+\frac12)/16$), so the tail surrounds the
+listener. The output level is $\sqrt{1-\bar g^2}$ times a constant, which keeps the reverb's energy roughly independent
+of the decay time ($\sum_n \bar g^{2n} = 1/(1-\bar g^2)$). When the room changes, the delays, the pre-delay and the gain
+glide with a time constant of \SI{80}{ms}.
