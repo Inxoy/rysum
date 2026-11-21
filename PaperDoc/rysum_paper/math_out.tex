@@ -1,0 +1,170 @@
+% ---------------------------------------------------------------------
+\subsection{Headphones: the MagLS binaural decoder (\fn{Binaural.cpp})}
+\label{sec:math-binaural}
+The Ambisonic field $a_k(t)$, $k = 0\dots K-1$, $K=(L+1)^2$, is turned into the two ear signals by $2K$ filters,
+$e(t) = \sum_k d_{e,k} * a_k$ for $e\in\{\text{left},\text{right}\}$. \fn{BinauralFilters::design} computes these
+filters from a set of head-related impulse responses (FABIAN or a SOFA file) by the magnitude least-squares method
+\citep{schoerkhuber2018magls}, the method of the IEM BinauralDecoder. It runs once on a background thread.
+
+\paragraph{Directions and weights.} A set with more than 3000 directions is thinned to about 3000 by taking, for each
+point of a Fibonacci lattice $\bigl(\arccos(1 - 2\frac{i+1/2}{n}),\ \pi(1+\sqrt5)(i+\frac12)\bigr)$, the nearest
+measured direction (the lattice spreads points almost evenly). Measured grids are rarely uniform (dense at the
+horizon, sparse below), so every direction $i$ gets a quadrature weight inversely proportional to the number of
+directions in a spherical cap around it that would hold about 12 points of an even grid,
+\begin{equation}
+  w_i \propto \frac{1}{\#\{j : \mathbf u_i\cdot\mathbf u_j > 1 - 2\cdot\min(\tfrac12, 12/Q)\}},\qquad \sum_i w_i = 1,
+\end{equation}
+so a region measured twice as densely counts as much as a sparse one, not twice as much.
+
+\paragraph{The least-squares projection.} With the matrix $\mathbf Y\in\mathbb R^{Q\times K}$ of the plugin's own
+encoder at the measured directions ($Y_{ik} = Y_k(\varphi_i,\vartheta_i)$, so the decoder fits exactly what is
+encoded) and $\mathbf W = \operatorname{diag}(w_i)$, the coefficients that best explain a function $t_i$ given on the
+directions are the weighted least-squares solution
+\begin{equation}
+  \mathbf d = \bigl(\mathbf Y^{\mathsf T}\mathbf W\mathbf Y + \lambda\mathbf I\bigr)^{-1}\mathbf Y^{\mathsf T}\mathbf W\,\mathbf t,
+  \qquad \lambda = 10^{-3}\,\operatorname{tr}(\mathbf Y^{\mathsf T}\mathbf W\mathbf Y)/K .
+\end{equation}
+The matrix $\mathbf P = (\mathbf Y^{\mathsf T}\mathbf W\mathbf Y+\lambda\mathbf I)^{-1}\mathbf Y^{\mathsf T}\mathbf W$ is
+computed once by a Cholesky factorisation (the regularised normal matrix is symmetric positive definite) and then
+applied at every frequency and ear; the small Tikhonov term $\lambda$ keeps it well conditioned where the grid has
+holes.
+
+\paragraph{The bulk delay.} The time until the sound reaches the nearer ear is the same for all directions and carries
+no information. It is found as the earliest sample over all HRIRs where $|h|$ exceeds 10\,\% of that HRIR's peak,
+minus two samples, $\tau_b$, and removed from every spectrum by $H(f)\,e^{+i2\pi f\tau_b}$ before the fit. It is put
+back afterwards as $\tau_b + \SI{0.5}{ms}$, the half millisecond being headroom for the slight pre-ringing of the
+fitted filters. Without this the phase above the cut-off (below) would put the high frequencies at $t=0$, before the
+low ones, and the filter would wrap around its end.
+
+\paragraph{Magnitude least squares.} Below the frequency $f_c$ at which the order $L$ can still describe the head,
+\begin{equation}
+  f_c = \operatorname{clamp}_{[500,\,4000]}\Bigl(\frac{L\,c}{2\pi r_h}\Bigr),\qquad r_h = \SI{8.75}{cm},
+\end{equation}
+($kr \le L$, the usual rule for the order needed for a sphere of radius $r$), the HRTFs are fitted as they are,
+$\mathbf d(f) = \mathbf P\,\mathbf h(f)$. Above it a low order cannot follow the fast changes of phase with
+direction, and a complex fit would cancel itself into a quiet, dull sound. MagLS fits only the magnitude there and lets
+the phase be whatever is smoothest: the target at bin $b$ is
+\begin{equation}
+  t_i(f_b) = |h_i(f_b)|\cdot\frac{\hat h_i(f_{b-1})}{|\hat h_i(f_{b-1})|},\qquad
+  \hat h_i(f) = \sum_k Y_{ik}\,d_k(f),
+\end{equation}
+the measured magnitude with the phase the fit itself had one bin lower. Going up bin by bin, the phase continues
+smoothly from the last exact bin, which is what makes the solution converge. After the fit the coefficients of a bin
+above $f_c$ are scaled by $g = \operatorname{clamp}_{[0.25,4]}\sqrt{E_T/E_D}$, the ratio of the diffuse-field energies
+of the target and of the fit, $E = \sum_i w_i|h_i|^2$: a low-order fit loses energy where it smooths, and this puts it
+back (the diffuse-field covariance constraint of the MagLS paper, in its simplest scalar form). DC and Nyquist are
+made real.
+
+\paragraph{Diffuse-field equalisation.} Optionally (\ui{Diffusfeld-Entzerrung}) the average of both ears' diffuse-field
+energy is smoothed over a third of an octave (bins $b/1.1225\dots1.1225b$), compared with its mean between 200 and
+\SI{1000}{Hz}, and the inverse, clamped to $\pm\SI{12}{dB}$ and held constant below \SI{150}{Hz}, is applied as a
+\emph{minimum-phase} filter. The minimum-phase version of a magnitude $|E(f)|$ is obtained through the real cepstrum:
+$c = \mathcal F^{-1}\{\ln|E|\}$, fold it onto positive time ($c_0$, $2c_n$ for $0<n<N/2$, $c_{N/2}$, zero after),
+transform and exponentiate, $E_\mathrm{min} = \exp\bigl(\mathcal F\{\text{folded } c\}\bigr)$. A minimum-phase filter adds
+no latency and no pre-ringing, which a linear-phase equaliser of this resolution would.
+
+\paragraph{Level and length.} All filters are scaled so that the diffuse-field energy of each ear between 300 Hz and
+\SI{3}{kHz}, $\mathbf d^{\mathsf H}(\mathbf Y^{\mathsf T}\mathbf W\mathbf Y)\mathbf d$ averaged over the band, is $\tfrac12$:
+the same $-\SI{3}{dB}$ per ear as an equal-power stereo pan, so switching from stereo to headphones does not change
+the loudness. The filters are cut to 512 samples at \SI{48}{kHz} (\SI{10.7}{ms}) with a raised-cosine fade over the
+last eighth, and resampled when the host runs at another rate. At run time they are one lag-1 stage of
+\fn{PartitionedConvolution} with blocks of 128 samples, $K$ inputs and two outputs.
+
+\paragraph{Turning the head (\fn{AmbiYawRotator}).} Before decoding, the field is turned by the head's yaw $\psi$
+from the 3D view (and, since 15 November, the AmbiX outputs too): turning the head to the left turns the scene to the
+right, so the rotation of \S\ref{sec:math-ir} is applied with the angle $-\psi$. The angle is interpolated across the
+block, $\psi(i) = \psi_0 + \operatorname{wrap}(\psi_1-\psi_0)\,(i+1)/N$, and the $\cos m\psi$, $\sin m\psi$ are built by the
+angle-addition recurrence from one $\sin/\cos$ pair per sample; wrapping the difference makes a turn through
+$\pm180^\circ$ take the short way.
+
+% ---------------------------------------------------------------------
+\subsection{Two loudspeakers: crosstalk cancellation (\fn{Transaural.h})}
+\label{sec:math-transaural}
+Over two loudspeakers at $\pm\alpha$ each ear hears both. With the near-ear and far-ear HRTFs $H_n$, $H_f$ of the
+speaker direction and the ratio $R = H_f/H_n$, the symmetric path from the speakers $(s_L, s_R)$ to the ears is
+\begin{equation}
+  \begin{pmatrix} e_L \\ e_R \end{pmatrix} = H_n \begin{pmatrix} 1 & R \\ R & 1 \end{pmatrix}
+  \begin{pmatrix} s_L \\ s_R \end{pmatrix}.
+\end{equation}
+The matrix has the eigenvectors $(1,1)$ and $(1,-1)$ with the eigenvalues $1+R$ and $1-R$, so its inverse splits into a
+\emph{sum} and a \emph{difference} filter: with $m = (b_L+b_R)/2$ and $s = (b_L-b_R)/2$ of the binaural pair,
+\begin{equation}
+  s_L = C_s m + C_d s,\quad s_R = C_s m - C_d s,\qquad C_s \approx \frac{1}{1+R},\quad C_d \approx \frac{1}{1-R}.
+\end{equation}
+Two convolutions instead of four, and the common factor $1/H_n$ (the colour of the speakers' own direction) is left out
+or treated separately (below).
+
+\paragraph{The ratio $R$ (\fn{TransauralFilters::design}).} $R$ is measured from the HRTF set at $\pm\alpha$ (both
+speakers, averaged). Its phase contains the interaural time difference $\tau$, found as the lag of the maximum of the
+cross-correlation of the near-ear and far-ear impulse responses (within \SI{1.5}{ms}), refined to a fraction of a
+sample by fitting a parabola through the maximum and its neighbours,
+$\delta = \tfrac12(a-c)/(a-2b+c)$. The delay is taken out, $R\,e^{+i2\pi f\tau}$, the remainder smoothed over a twelfth
+of an octave as a complex number (real and imaginary parts: sound bending round the head changes its delay with
+frequency, and a pure delay alone cancels only about \SI{6}{dB}), limited to $|R|\le0.97$, and the delay put back.
+
+\paragraph{Regularised inversion.} At low frequencies the head is small against the wavelength, $R\to1$ and
+$1/(1-R)$ grows without limit. The inverse is therefore regularised,
+\begin{equation}
+  C_x = \frac{\overline{X}}{|X|^2 + \beta},\qquad X\in\{1+R,\ 1-R\},\qquad \beta = \frac{1}{4g^2},
+\end{equation}
+which is the exact inverse where $|X|\gg\sqrt\beta$ and has the maximum gain $\max_{|X|}|X|/(|X|^2+\beta) = 1/(2\sqrt\beta) = g$
+at $|X| = \sqrt\beta$: no frequency is boosted by more than the chosen \ui{höchste Anhebung} $g$. The filters are blended
+to 1 (no processing) outside the band where cancellation can work, $C\leftarrow 1 + a\,b(f)(C-1)$ with the amount $a$ and
+a band window $b(f)$ rising by a raised cosine from 40 to \SI{80}{Hz} and falling from 12 to \SI{18}{kHz}. With
+\ui{Seitenklang ausgleichen} both filters are also multiplied by the inverse of the near-ear magnitude, smoothed over a
+third of an octave and normalised at 500\,Hz--\SI{2}{kHz}, clamped to $\pm\SI{10}{dB}$: it is the same for both ears,
+so it commutes with the matrix. Finally both are delayed by 256 samples (\SI{5.3}{ms}) so their non-causal part fits,
+transformed to 1024-sample filters with raised-cosine fades at both ends, and run as two FIR convolutions on $m$ and
+$s$. The design reports the remaining crosstalk, the ratio of far-ear to near-ear energy between 250\,Hz and
+\SI{6}{kHz} computed with the truncated filters against the \emph{unsmoothed} measured $R$:
+$e_\mathrm{near/far} = \tfrac12\bigl((1+R)C_s \pm (1-R)C_d\bigr)$.
+
+% ---------------------------------------------------------------------
+\subsection{Loudspeakers: the AllRAD decoder (\fn{Speakers.cpp})}
+\label{sec:math-allrad}
+\fn{buildAllRad} computes a matrix $\mathbf D\in\mathbb R^{S\times K}$ that maps the Ambisonic channels to $S$
+loudspeakers, by All-Round Ambisonic Decoding \citep{zotter2012allrad}: decode to a dense, uniform virtual layout,
+where Ambisonic decoding is well behaved, and pan each virtual loudspeaker onto the real ones with VBAP
+\citep{pulkki1997vbap}, which works for any layout.
+
+\paragraph{Triangulation.} The loudspeaker directions $\mathbf u_s$ are triangulated by their convex hull: a triangle
+$(i,j,k)$ belongs to the hull if all other points lie on one side of its plane, tested with the normal
+$\mathbf n = (\mathbf u_j-\mathbf u_i)\times(\mathbf u_k-\mathbf u_i)$ (brute force over all triples, fine for up to about
+a hundred loudspeakers). If no loudspeaker is above $20^\circ$ (or below $-20^\circ$), an \emph{imaginary} one is added
+at the pole; if some directions are still not covered by any triangle (only frontal loudspeakers, say), another
+imaginary one is added in the middle of the uncovered part, up to eight times. Imaginary loudspeakers are part of the
+triangulation but their signal is discarded, so sound from a direction without loudspeakers is not forced onto the
+nearest ones at full level.
+
+\paragraph{VBAP.} For a direction $\mathbf p$ and a triangle with the matrix $\mathbf M = [\mathbf u_i\ \mathbf u_j\
+\mathbf u_k]$, the gains are $\mathbf g = \mathbf M^{-1}\mathbf p$; the inverse is stored per triangle from the cross
+products, $\mathbf M^{-1} = [\mathbf u_j\times\mathbf u_k,\ \mathbf u_k\times\mathbf u_i,\ \mathbf u_i\times\mathbf u_j]^{\mathsf T}/
+\det\mathbf M$. The triangle that contains $\mathbf p$ is the one whose three gains are all non-negative; the gains
+are normalised to unit energy, $\mathbf g/\lVert\mathbf g\rVert$.
+
+\paragraph{The virtual decoder with max-$r_E$.} 5000 virtual loudspeakers $\mathbf v_j$ on a Fibonacci lattice
+($z_j = 1-2\frac{j+1/2}{5000}$, azimuth $j\cdot\pi(3-\sqrt5)$, the golden angle) are decoded by sampling, each weighted
+with the max-$r_E$ window \citep{zotter2019}:
+\begin{equation}
+  D_{s,k} = \sum_j g_{s}(\mathbf v_j)\; w_{l(k)}\; Y_k(\mathbf v_j),\qquad
+  w_l = (2l+1)\,P_l\bigl(\cos\theta_E\bigr),\quad \theta_E = \frac{137.9^\circ}{L+1.51}.
+\end{equation}
+For a plane wave of SN3D coefficients $Y_k(\mathbf p)$, the signal of virtual loudspeaker $j$ is then
+$\sum_l w_l P_l(\cos\gamma_j)$ by the addition theorem (the factor $2l+1$ turns the SN3D product sum into the
+full-normalised one), with $\gamma_j$ the angle between $\mathbf v_j$ and $\mathbf p$: a panning lobe around
+$\mathbf p$. The weights $P_l(\cos\theta_E)$ shape that lobe so that the energy vector $\mathbf r_E$ is as long as
+possible, i.e.\ the sound is as concentrated as the order allows, at the cost of slightly wider main lobes than the
+plain (\enquote{basic}) decoder. The Legendre polynomials are evaluated by Bonnet's recurrence
+$P_k = \bigl((2k-1)xP_{k-1}-(k-1)P_{k-2}\bigr)/k$.
+
+\paragraph{Normalisation and quality.} The decoder is scaled so that the energy $\sum_s(\mathbf D\mathbf y(\mathbf p))_s^2$
+of a plane wave, averaged over the directions where real loudspeakers are (VBAP energy on imaginary ones at most half),
+is one: as loud as the stereo and binaural outputs. The page shows the spread of that energy over directions and the
+localisation error, the angle between $\mathbf p$ and the energy vector $\mathbf r_E = \sum_s e_s\mathbf u_s$ with
+$e_s = (\mathbf D\mathbf y)_s^2$, the direction a listener in the centre perceives at high frequencies.
+
+\paragraph{Distance compensation and switching (\fn{SpeakerRenderer}).} With loudspeakers at different radii $r_s$
+the farthest one sets the time: loudspeaker $s$ is delayed by $(r_\mathrm{max}-r_s)/c$ and scaled by $r_s/r_\mathrm{max}$
+(the $1/r$ law), so all wavefronts arrive together and equally loud. A new decoder (another layout or order) is
+crossfaded linearly over \SI{30}{ms} against the old one, channel by channel, including loudspeakers that only the old
+one had.

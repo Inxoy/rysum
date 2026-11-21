@@ -1,0 +1,176 @@
+% ---------------------------------------------------------------------
+\subsection{Partitioned convolution (\fn{PartConv.h}, \fn{FastFFT.h})}
+\label{sec:math-partconv}
+Every long filter in Rysum (the impulse-response room, the room tail of the \ui{Saal}, the binaural and transaural
+filters) is a convolution $y = x * h$ with a response of up to ten seconds, i.e.\ up to $4.8\cdot10^5$ taps at
+\SI{48}{kHz}. Done directly that is about $10^{11}$ multiplications per second and channel; done with one FFT of the
+whole length it has a latency of ten seconds. \fn{PartitionedConvolution} is the usual way between the two
+\citep{gardner1995}: uniformly partitioned overlap-save, with the work of each block spread over time.
+
+\paragraph{Uniformly partitioned overlap-save.} The response is cut into $P$ partitions of $B$ samples,
+$h_q[n] = h[qB+n]$, $n = 0\dots B-1$, each zero-padded to $N = 2B$ and transformed once when the room is loaded:
+$H_q = \mathcal F_N\{h_q, 0_B\}$ (\fn{RealFFT::forwardScaled}, which includes the factor $1/N$ of the inverse
+transform). The input is collected in blocks $x_j$ of $B$ samples; at the end of each block the window of the last two
+blocks is transformed, $X_j = \mathcal F_N\{x_{j-1}, x_j\}$, and stored in a \emph{frequency-domain delay line} (FDL)
+that keeps the last $P$ spectra. The output block is
+\begin{equation}
+  y_j = \text{last $B$ samples of}\ \mathcal F_N^{-1}\Bigl\{\sum_{q=0}^{P-1} X_{j-q}\cdot H_q\Bigr\}.
+\end{equation}
+The product of two spectra of length $2B$ is a \emph{circular} convolution of length $2B$; since $h_q$ has only $B$
+non-zero samples, the circular wrap-around falls entirely into the first $B$ output samples, and the last $B$ are the
+exact linear convolution of the window with $h_q$ (this is why it is called overlap-\emph{save}: the first half is
+thrown away). Summing over $q$ with the delayed spectra $X_{j-q}$ adds the contribution of each partition $qB$
+samples later. The cost per block is one forward FFT per input, one inverse FFT per output and $P$ complex
+multiply-adds of $B+1$ bins per input--output pair (\fn{multiplyAdd}, PFFFT's \code{zconvolve\_accumulate}
+\citep{pffft}, in PFFFT's internal bin order, which is never converted because nothing but products and sums is done
+in the frequency domain).
+
+\paragraph{Spreading the work.} If all $P$ products were done when a block is complete, one audio callback in every
+$B/b$ (for a host block $b$) would carry the whole load: a CPU spike that can cause a dropout even though the
+average load is small. The class therefore counts the work of the coming block in \emph{units} (one partition
+product; an inverse FFT counts as 4) and, after every \fn{push} of $n$ samples, does as many as are due,
+\begin{equation}
+  u_\mathrm{done} \ge \Bigl\lceil U\cdot\frac{p}{B}\Bigr\rceil ,
+\end{equation}
+where $p$ is the position in the block and $U$ the total. Only products whose input spectra already exist can be
+done in advance: $X_{j-q}$ for $q\ge1$ is known during block $j$, $X_j$ only at its end.
+\begin{itemize}[nosep]
+  \item \emph{Lag 1}: all products with $q\ge 1$ are spread over block $j$; at the boundary the product with the
+    newest spectrum ($q=0$) is added and the inverse FFT done, and the result is played during block $j+1$. The output
+    is the response delayed by one block.
+  \item \emph{Lag 2}: the stage is used for a part of the response that is silent for its first $2B$ samples, so even
+    the newest partition it needs is a block old: everything, including the inverse FFT, is spread over the block
+    before, and the boundary only swaps buffers.
+\end{itemize}
+Changes of the response (\fn{setTerms}) take effect at the next block boundary, never in the middle of a sum, so a
+room can be swapped without a half-and-half block. Each output is a sum of \emph{terms} (input $k$ convolved with
+partitions $q_0\dots q_0+Q-1$ of a response, with an optional sign), which is what lets one stage compute the
+rotation sums of the next subsection.
+
+\paragraph{Non-uniform partitions.} Small partitions keep the latency low but make many products; large partitions
+make few products but need a long wait. The impulse-response room uses three stages in parallel, each a
+\fn{PartitionedConvolution} fed with the same inputs:
+\begin{center}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+stage & $B$ & lag & covers (samples of the response, after the delay of one block) & partitions \\
+\midrule
+A & 512 & 1 & $[0,\ 3584)$ & 7 \\
+B & 2048 & 2 & $[3584,\ 15872)$ & 6 \\
+C & 8192 & 2 & $[15872,\ \infty)$ & as many as needed \\
+\bottomrule
+\end{tabular}
+\end{center}
+The boundaries follow from the lags: a lag-2 stage with block $b$ can start where the response delayed by one
+stage-A block has been silent for $2b$ samples, $2b - 512$, i.e.\ $3584 = 2\cdot2048-512$ and $15872 = 2\cdot 8192 - 512$.
+For a response of \SI{10}{s} ($4.8\cdot10^5$ samples) uniform partitions of 512 need 938 products per block of 512
+samples; the three stages need $7+6+57 = 70$ partitions. A product in stage B or C is four or sixteen times larger
+than one in stage A but is also done only once every four or sixteen blocks, so per sample each partition costs about
+the same, and the work drops from 938 to about 70 units (\S\ref{sec:perf} gives the counts for a \SI{3}{s} response
+and the measurements). What is paid for it is the larger FFTs of the later stages, which cost
+$O(\log B)$ more per sample, and the memory for their spectra. The three stages run in lock-step: \fn{Convolver::process} always advances by the
+largest number of samples that brings no stage past its own block boundary.
+
+% ---------------------------------------------------------------------
+\subsection{The impulse-response room (\fn{Convolver.cpp})}
+\label{sec:math-ir}
+This is the function behind \S\ref{sec:ir}. It turns a recorded response, mono, stereo or Ambisonic, into a room in
+which every pipe's early reflections come from that pipe's own direction, without a convolution per pipe.
+
+\paragraph{Reading the file (\fn{Convolver::create}).} A file with $(L+1)^2$ channels is read as AmbiX of order $L$
+(at most 5); any other number of channels as mono or stereo (more than two: the first two). First-order FuMa
+($W,X,Y,Z$) becomes AmbiX by reordering to $W,Y,Z,X$ and multiplying $W$ by $\sqrt2$ (FuMa stores $W$ at
+$-\SI{3}{dB}$); N3D becomes SN3D by dividing degree $l$ by $\sqrt{2l+1}$. The response is resampled to the host rate
+with a four-point Lagrange interpolator, trailing chunks of 256 samples below $10^{-4}$ of the peak
+($\SI{-80}{dB}$) are cut, and the response is scaled so that the energy of its omnidirectional channel is one,
+$\sum_n w[n]^2 = 1$: rooms of different loudness then have the same reverb level for the same send. A response that
+has died away ends with a linear fade of at most \SI{50}{ms}; one that still sounds where the ten-second limit cut it
+ends with a fade $\bigl(\tfrac12+\tfrac12\cos\pi t\bigr)^2$ of up to \SI{2}{s}, which has no corner at its start and
+falls ever faster, so the cut is not heard as one.
+
+\paragraph{The direct sound and its direction.} The direct sound is taken to be the largest $|w[n]|$, at $t_d$. For
+an Ambisonic response its direction is read from the first-order intensity over \SI{-0.5}{}\dots\SI{+2}{ms} around it:
+\begin{equation}
+  \varphi_0 = \operatorname{atan2}\Bigl(\sum_n w[n]\,Y[n],\ \sum_n w[n]\,X[n]\Bigr)
+\end{equation}
+(ACN channel 1 is $Y$, channel 3 is $X$). A plane wave from $\varphi_s$ is encoded as $W = s$, $X = s\cos\varphi_s$,
+$Y = s\sin\varphi_s$, so the two sums are $E\cos\varphi_s$ and $E\sin\varphi_s$ with the energy $E$ of the window, and
+their angle is the direction the direct sound came from (the two sums are the first-order intensity vector, with the
+sign of the encoding convention). Reflections inside the short window bias it only slightly, as they are weaker. The whole response is then turned by
+$-\varphi_0$ (\fn{rotateYaw}, below), so its direct sound points to the front. A mono or stereo response (the omni
+signal $w$ being the file or the mid of the stereo pair) has no direction; its early part is encoded as a point source
+in front, $A_c[n] = w[n]\,Y_c(0,0)$, up to the output order. Around $t_d$ (from \SI{-1}{} to \SI{+3}{ms}, with
+raised-cosine edges of \SI{0.5}{ms}) the response is scaled by \ui{Direktschall der IR} (default $0.2$): the dry pipes
+are already the direct sound, and a second copy of it from the loudspeaker's direction would pull every pipe there.
+
+\paragraph{Early and late.} The response is split \SI{80}{ms} after the direct sound, rounded to a partition of 512,
+with a quarter-cosine crossfade over one partition: the early part is multiplied by $c(n) = \cos(\tfrac\pi2 t)$ and
+the late part by $1-c(n)$. For the omni channel both parts contain the same samples, so the two weights sum to one
+and $W$ is reproduced exactly; the split only decides which samples are rotated per pipe and which are shared.
+
+\paragraph{Rotation about the vertical axis (\fn{rotateYaw}).} Turning a sound field by an angle $\alpha$ about the
+vertical axis moves every direction from $\varphi$ to $\varphi+\alpha$. The elevation part $N_l^mP_l^m(\sin\vartheta)$
+of each harmonic does not change, and the azimuth part only mixes the pair $(m,-m)$:
+\begin{equation}
+  \begin{pmatrix} a'_{l,m} \\ a'_{l,-m}\end{pmatrix} =
+  \begin{pmatrix} \cos m\alpha & -\sin m\alpha \\ \sin m\alpha & \cos m\alpha \end{pmatrix}
+  \begin{pmatrix} a_{l,m} \\ a_{l,-m}\end{pmatrix},\qquad m = 1\dots l,
+\end{equation}
+which follows from $\cos m(\varphi-\alpha) = \cos m\varphi\cos m\alpha + \sin m\varphi\sin m\alpha$ and the same for
+the sine: a field that \emph{contained} a source at $\varphi_s$ now contains it at $\varphi_s+\alpha$. Channels with
+$m=0$ are unchanged. The cost is a $2\times2$ rotation per channel pair and sample, with no interpolation and no loss.
+
+\paragraph{The rotation per pipe, moved before the convolution.} What should come out of the room for pipe $p$ at
+azimuth $\varphi_p$ with signal $s_p$ is its signal convolved with the early response turned by $\varphi_p$. Summed over
+all pipes, channel $(l,m)$ with $m>0$ of the early part is
+\begin{align}
+  e_{l,m} &= \sum_p \bigl(\cos(m\varphi_p)\,h_{l,m} - \sin(m\varphi_p)\,h_{l,-m}\bigr) * s_p
+           = h_{l,m} * C_m - h_{l,-m} * S_m, \\
+  e_{l,-m} &= h_{l,m} * S_m + h_{l,-m} * C_m,\qquad e_{l,0} = h_{l,0} * C_0,
+\end{align}
+with the \emph{circular-harmonic sends}
+\begin{equation}
+  C_0 = \sum_p s_p,\qquad C_m = \sum_p \cos(m\varphi_p)\,s_p,\qquad S_m = \sum_p \sin(m\varphi_p)\,s_p,\qquad m = 1\dots L.
+\end{equation}
+Because convolution is linear, the cosines and sines, which depend on the pipe, can be applied to the pipe's
+signal before the convolution, and the responses, which do not, after. Instead of one convolution per pipe there are
+$2L+1$ sends; each output channel with $m\neq0$ is the sum of two terms and each with $m=0$ of one, which is exactly
+the term structure of \fn{PartitionedConvolution} (the minus sign is a term with \code{negate}). The engine builds
+the sends in \fn{renderRange} by the angle-addition recurrence for $\cos m\varphi_p$, $\sin m\varphi_p$, with the gains
+ramped across the block like every other gain; the input order is $C_0, C_1, S_1, C_2, S_2,\dots$. With \ui{folgt
+Pfeifen} off, every $\varphi_p$ is the same fixed angle and the room is simply the measured one, turned.
+
+Two properties follow from the construction. The rotation is about the vertical axis only: a pipe above the listener
+gets the early reflections of a pipe on the horizon at its azimuth (a rotation that also tilts would mix all
+$2l+1$ channels of a degree and need $(L+1)^2$ sends). And for a mono response the early part is the omni response
+placed at each pipe's direction: each pipe is heard with its own coloured, delayed copy coming from where it stands,
+but the reflections are not spread around it, because a mono file contains no directions to spread.
+
+\paragraph{The late part (\fn{diffuseCopy}).} The late part is fed by $C_0$ alone: after \SI{80}{ms} a real room's
+field is nearly diffuse and no longer depends much on where the source stood. Its omni channel is the measured
+tail $w_\mathrm{late}$. Every other channel $c$ of degree $l$ is
+\begin{equation}
+  h_c^\mathrm{late} = \sqrt{1-\varepsilon}\;h_c^\mathrm{measured} \;+\; \sqrt{\varepsilon}\;
+  \sqrt{\frac{E_W}{(2l+1)\,E_{d_c}}}\;d_c ,
+\end{equation}
+where $\varepsilon$ is \ui{Umhüllung}, $E_W$ the energy of the omni tail, the first term exists only for channels the
+file has, and $d_c$ is a \emph{random-phase copy} of the omni tail made with its own seed per channel:
+\begin{enumerate}[nosep]
+  \item cut $w_\mathrm{late}$ into frames of 1024 samples with a hop of 256, each multiplied by a Hann window;
+  \item transform each frame, keep every bin's magnitude $|W_k|$ and replace its phase by a uniformly random one;
+  \item transform back, multiply by the Hann window again and overlap-add; a squared Hann window at 75\,\% overlap
+    sums to $1.5$, hence the division by $1.5$.
+\end{enumerate}
+The copy has the same spectrogram as the measured tail (the same decay at every frequency, the same colour) but
+its fine structure is new, so copies with different seeds are mutually uncorrelated. Uncorrelated channels with
+equal statistics are what a diffuse field looks like in the spherical-harmonic domain, and in SN3D the expected
+energy of a channel of degree $l$ in an isotropic field is $1/(2l+1)$ of the omni channel's, which is the factor in
+the formula. The blend uses square roots so that it preserves energy ($(\sqrt{1-\varepsilon})^2+(\sqrt\varepsilon)^2 = 1$
+for uncorrelated parts). This is also what lifts a mono, stereo or first-order response to the full fifth order: the
+missing channels are synthesised, the measured ones kept as far as \ui{Umhüllung} allows.
+
+\paragraph{Stereo output.} For a stereo output the room is computed at first order and the field is turned into two
+virtual cardioid microphones pointing left and right, $L = \tfrac12(W+Y)$, $R = \tfrac12(W-Y)$; a stereo response on
+a stereo output is played as recorded instead, left and right as they are. The whole wet signal is delayed by one
+block of 512 samples (\SI{10.7}{ms} at \SI{48}{kHz}) by the lag-1 stage; since the response's own direct sound is
+turned down and the first reflections of a church arrive later than that, the delay is not audible as such.
