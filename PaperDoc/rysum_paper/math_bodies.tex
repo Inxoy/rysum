@@ -1,0 +1,114 @@
+% ---------------------------------------------------------------------
+\subsection{Pipes as bodies in the room (\fn{OrganBodies.cpp})}
+\label{sec:math-bodies}
+In the room motions (\S\ref{sec:roommotion}) every pipe is a point with a position $\mathbf x$ and a velocity $\mathbf v$
+in the Saal.
+
+\paragraph{Integration (\fn{stepBodies}).} The bodies advance in fixed steps of $h = 1/480$\,s, counted in whole samples
+and with the remainder carried to the next block, so the paths and the impacts are the same at every host block size
+and sample rate (a variable step would make the bounces differ from run to run). Each step is a semi-implicit
+(symplectic) Euler step, $\mathbf v \leftarrow \mathbf v + \mathbf a\,h$, then $\mathbf x \leftarrow \mathbf x + \mathbf v\,h$
+with the \emph{new} velocity, which, unlike the explicit Euler method, does not gain energy in an orbit or a bounce. A
+stalled host never makes the bodies catch up more than 2400 steps (five seconds), and the speed is limited to
+$1.5\cdot\SI{40}{m/s}$. The \ui{Geschwindigkeit} $v_0$ of the stop is $10$\,m/s per Hz of its motion rate.
+
+\paragraph{The modes.}
+\begin{itemize}[nosep]
+  \item \ui{Flug}: no force; the speed returns towards $v_0$, $\mathbf v \leftarrow \mathbf v\bigl(1 + (v_0/|\mathbf v| - 1)\min(1, 2h)\bigr)$,
+    and the walls are perfectly elastic.
+  \item \ui{Fall}: gravity $a_z = -\SI{9.81}{m/s^2}$, a little air drag ($0.05$ per second horizontally), friction $4$ per
+    second while on the floor; a pipe resting longer than $0.8$--\SI{2.3}{s} is thrown up again with $v_z\approx v_0$.
+    The coefficient of restitution of floor and walls is $0.3+0.65\,d$ with the depth $d$.
+  \item \ui{Schwarm}: Reynolds' three rules of flocking \citep{reynolds1987}: cohesion $0.6(\bar{\mathbf x}-\mathbf x)$
+    towards the flock's centre, alignment $1.5(\bar{\mathbf v}-\mathbf v)$ with its mean velocity, and separation
+    $0.16(1/r^2 - 1)\,\mathbf r$ from neighbours closer than \SI{1}{m} (evaluated every eighth step per pipe, staggered,
+    since it is quadratic in the number of pipes), plus a random push proportional to the depth; the speed is then
+    pulled towards $v_0$.
+  \item \ui{Strömung}: the pipe relaxes towards the velocity of a slow current
+    $\mathbf u(\mathbf x,t)$, made of a few sines of the normalised coordinates and of time (smooth in space and
+    time, and divergence-free: $u_x$ depends only on $y,z$, $u_y$ only on $x,z$ and $u_z$ only on $x,y$, so
+$\nabla\cdot\mathbf u = 0$ and the current neither gathers nor scatters the pipes), with the rate
+    $\min(1,1.5h)$ per step, plus turbulence proportional to the depth.
+  \item \ui{Schweben}: a damped spring back to the place where it started,
+    $\mathbf a = k(\mathbf x_0 - \mathbf x) - c\,\mathbf v + \text{noise}$, with $k = 2.5(1-d)^2$ and
+    $c = 0.35 + 1.6(1-d)$: at full depth nothing calls it back.
+\end{itemize}
+
+\paragraph{The player and the hands.} The player attracts or repels the pipes with a softened gravity,
+\begin{equation}
+  a = \frac{30\,F\,R^2}{r^2 + 0.3R^2},
+\end{equation}
+(force $F$, range $R$), which is $\approx 30F R^2/r^2$ far away but finite at the player; in the orbiting mode the
+tangential velocity is steered towards $v_c = \sqrt{a\,r_h}$, the speed of a circular orbit under that acceleration
+($v^2/r = a$), so the pipes circle instead of falling in; the wake mode makes nearby pipes take on the player's velocity
+with the weight $6FR^2/(r^2+R^2)$. A carried pipe's velocity relaxes (at the rate 30 per second) towards
+$14(\mathbf x_\mathrm{hand} - \mathbf x)$ (at most \SI{25}{m/s}), so it follows the hand closely and keeps the hand's speed
+when let go: it is thrown. Arranging moves a pipe by the spring $16\,\Delta\mathbf x - 8\mathbf v$ (critically damped:
+$c^2 = 4k$), calling home by $9\,\Delta\mathbf x - 6\mathbf v$ (also critical, $36 = 4\cdot9$), so both arrive without
+overshooting. A whirlwind sets the tangential speed $6(1 - r/7)$ within \SI{7}{m}, with a slight inward pull and a lift
+$\propto(1-r/7)^2$.
+
+\paragraph{Collisions.} A pipe stands with its whole length between floor and ceiling ($z\in[\ell/2, H-\ell/2]$) and
+keeps \SI{0.25}{m} from the walls. At a wall with the inward normal $\mathbf n$ the normal velocity $v_n = \mathbf v\cdot\mathbf n<0$ is
+reflected with the restitution $e$, $\mathbf v \leftarrow \mathbf v - (1+e)\,v_n\mathbf n$, and the overshoot of the position is
+mirrored back by the factor $e$ as well. The speed of the hit $|v_n|$ and the absorption of the surface are passed to
+the knock.
+
+% ---------------------------------------------------------------------
+\subsection{The knock (\fn{startImpact}, \fn{renderImpacts})}
+\label{sec:math-impact}
+An impact is synthesised by modal synthesis: a short contact force excites a few resonators that stand for the struck
+pipe's modes, plus a little noise and the thump of the wall.
+
+\paragraph{The contact.} With the speed of the hit $v$ and the absorption $\alpha$ of the surface, the level is
+$g = 0.045\,L\,(v/3)^{1.25}(1-0.65\alpha)$ (louder with speed somewhat faster than proportionally; a soft wall takes much
+of it) and the contact lasts
+\begin{equation}
+  T_c = \Bigl(0.0003 + \frac{0.003}{1+v}\Bigr)(1+3\alpha)\ \mathrm{s}
+\end{equation}
+(three times longer for the wooden Gedackt): a fast hit on a hard surface is short. The force is a raised-cosine pulse
+of length $T_c$ and area $g$. Its spectrum is flat up to about $1/T_c$ and falls off above, so a short contact excites high
+modes and a long one does not; the code scales each mode of frequency $f$ by $1/(1+(fT_c)^2)$, which is this low-pass
+character in its simplest form. Noise low-passed at $f_c = (700 + 11000\min(1,v/6))(1-0.7\alpha)$\,Hz is added during the
+contact (the clatter of a fast hit).
+
+\paragraph{The modes of the tube.} A pipe hit from the side rings like a free bar in bending. The Euler--Bernoulli beam
+with free ends has its modes at the ratios $1 : 2.756 : 5.404 : 8.933$ (the squares of the roots of
+$\cos\beta\cosh\beta = 1$, relative to the first). The fundamental is taken as $f_1 = 300\,\ell^{-1.5}$\,Hz for a
+pipe of length $\ell$ (0.7 times that for wood), so long pipes ring low. Each mode is a two-pole resonator,
+\begin{equation}
+  y_n = 2R\cos\omega\,y_{n-1} - R^2y_{n-2} + g_m\sin\omega\cdot x_n,\qquad R = e^{-6.91/(T_{60}f_s)},
+\end{equation}
+whose impulse response is $R^n\sin((n+1)\omega)/\sin\omega$; the factor $\sin\omega$ makes its amplitude independent of the
+frequency. The decay times fall with the mode number ($T_{60}\cdot 1, 0.7, 0.5, 0.35$; wood rings only $0.12$ as long, brass
+$1.2$ times), and a last resonator at the pipe's own note sounds faintly ($0.25$), since a struck pipe also speaks a
+little. The Gedackt gets a dry resonance of its hollow box, $700\sqrt{0.05/r}$\,Hz with $T_{60} = \SI{70}{ms}$. Unless a
+pipe hit a pipe, the wall itself adds a thump: noise through a one-pole at 110\,Hz (floor) or \SI{180}{Hz} (wall) with
+$\tau = \SI{30}{ms}$. The knock is placed where it happened, seen from the listener, and sent to the room.
+
+% ---------------------------------------------------------------------
+\subsection{Beats and difference tones (\fn{updateBeats})}
+\label{sec:math-beats}
+For every pair of sounding pipes $f_1\le f_2$ the engine looks for the lowest pair of partials that nearly coincide:
+for $m = 1\dots6$ it takes $n = \mathrm{round}(mf_2/f_1)\le8$ and the beat $b = |nf_1 - mf_2|$, keeping the pair with the
+smallest product $nm$ whose beat is below \SI{35}{Hz} (the simplest ratio that beats audibly; the product $nm$ is a
+common measure of how simple a ratio is). Every pipe takes the fastest beat it is part of, smoothed with
+$\tau = \SI{250}{ms}$, and the source \ui{Schwebung} is $\log_2(1+b)/\log_2 33$ (32\,Hz $=1$). In the motion
+\ui{Schwebung} a pipe turns by $360^\circ\cdot\rho\,b\,\Delta t$ per block: its beat becomes its speed around the
+listener, so a pure chord stands still and an impure one spins.
+
+Difference tones (\ui{Geister}) are $f_d = f_2 - f_1$ for pairs with $16\,\mathrm{Hz}\le f_d\le 1.02f_1$, below the lower
+pipe, as the resultant bass of organ builders; their weight is $\sqrt{g_1g_2}$ times a blend between 1 and the
+consonance $\min(1, 6/nm)$, and the strongest few are played.
+
+% ---------------------------------------------------------------------
+\subsection{Wandering echoes (\fn{renderEchoes})}
+\label{sec:math-echoes}
+The dry organ ($W$, or the mid of the stereo pair) is written to a ring buffer. Repeat $r = 1\dots N$ reads it at the
+delay $r\,D$ (with $D$ in seconds or in note values of the tempo; a changed $D$ glides with $\tau = \SI{120}{ms}$, read with
+linear interpolation, which makes the glide a tape-like pitch bend instead of a click), with the gain
+$G\,\phi^{r-1}$ (level $G$, \ui{Abnahme} $\phi$) and a one-pole low-pass at
+$\max\bigl(250,\ 18000\,(1-0.85\delta)^r\bigr)$\,Hz, darker each time. It is encoded from the direction
+$(r\,\Delta\varphi,\ r\,\Delta\vartheta)$, turning by \ui{Drehung} and tilting by \ui{Neigung} per repeat, and also sent to
+the room from that direction with the circular-harmonic weights of \S\ref{sec:math-ir}. All repeats read the same
+buffer: there is no feedback loop, so the echoes cannot build up, and each one can come from its own place.
