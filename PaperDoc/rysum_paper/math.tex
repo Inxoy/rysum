@@ -1,0 +1,266 @@
+% =====================================================================
+% Mathematical reference: the signal processing, function by function.
+% Included from main.tex (\input{math}). Every formula here was read off the source code of
+% the commit named in the text; the function names are those of plugin/source.
+% =====================================================================
+\section{Mathematical reference}
+\label{sec:math}
+% =====================================================================
+
+The sections before describe what each part of Rysum does and why. This section goes one level deeper: it takes the
+source code function by function and writes down what each one computes, term by term, and what every term is there for.
+It is meant as a companion for reading the code, so the subsections follow the source files (\fn{Common.h},
+\fn{Spatial.h}, \dots) in the order a signal passes through them, from the key to the loudspeaker. Where a function was
+already described with its formula in an earlier section, that section is named and only what was left out is added.
+Everything was read off the code of 21~November 2026 (commit \code{bfc83f3}).
+
+\paragraph{Conventions.} $f_s$ is the host's sample rate and $n$ the sample index. Most quantities that are not audio
+(positions, gains, filter coefficients) are \emph{control-rate}: they are computed once every 64 samples and held or
+ramped in between; where a function runs at another rate it says so. Angles in the code are degrees; in the formulas
+they are radians unless a unit is given. Azimuth $\varphi$ is measured from the front, positive to the left;
+elevation $\vartheta$ from the horizon, positive upwards (the AmbiX convention). A cent is $1/1200$ of an octave, so a
+shift of $c$ cents multiplies a frequency by $2^{c/1200}$. $\operatorname{clamp}_{[a,b]}(x)=\min(b,\max(a,x))$.
+Decibels are converted by
+\begin{equation}
+  g(\mathrm{dB}) = \begin{cases} 0, & \mathrm{dB}\le -99,\\ 10^{\mathrm{dB}/20}, & \text{otherwise,}\end{cases}
+\end{equation}
+(\fn{dbToGain}); the cut-off at $-99$ makes the bottom of every level slider a true silence instead of
+$10^{-5}$.
+
+% ---------------------------------------------------------------------
+\subsection{Random numbers (\fn{XorShift})}
+\label{sec:math-rng}
+All randomness that happens on the audio thread comes from one generator, Marsaglia's 32-bit xorshift
+\citep{marsaglia2003xorshift}. Its state $s$ (never 0) is updated by three shift-and-exclusive-or steps,
+\begin{equation}
+  s \leftarrow s \oplus (s \ll 13),\qquad s \leftarrow s \oplus (s \gg 17),\qquad s \leftarrow s \oplus (s \ll 5),
+\end{equation}
+which walk through all $2^{32}-1$ non-zero states. A uniform number in $[0,1)$ is made from the upper 24 bits,
+$u = \lfloor s/2^{8}\rfloor\cdot 2^{-24}$ (24 bits because that is the mantissa of a 32-bit float, so every value
+is exactly representable), and a bipolar one as $b=2u-1$. The generator costs three shifts and has no memory
+beyond one integer, so every pipe, every image source and every grain can own one. Most callers seed it
+deterministically from what they belong to (a pipe's stop and key, a pass number, a channel), which is why two
+renders of the same project are identical (\S\ref{sec:verification}) and why a random layout does not change when
+the project is reopened.
+
+% ---------------------------------------------------------------------
+\subsection{Pitch and tuning (\fn{Common.h}, \fn{Scala.h})}
+\label{sec:math-tuning}
+
+\paragraph{The recorded pitch (\fn{meantoneHz}).} The organ stands in quarter-comma meantone at
+$a' = A_4 = \SI{444.5}{Hz}$ (measured). The table $c_\mathrm{mt}[0..11]$ holds the pitch classes in cents above C
+($0, 76.0, 193.2, 310.3, 386.3, 503.4, 579.5, 696.6, 772.6, 889.7, 1006.8, 1082.9$), and a MIDI note $k$ sounds at
+\begin{equation}
+  f_\mathrm{mt}(k) = A_4 \cdot 2^{\,\lfloor k/12\rfloor - 5 \;+\; (c_\mathrm{mt}[k \bmod 12]-c_\mathrm{mt}[9])/1200}.
+\end{equation}
+$\lfloor k/12\rfloor-5$ counts octaves from the octave of $A_4$ (MIDI 69 lies in octave $5$), and subtracting
+$c_\mathrm{mt}[9]$ (A) anchors the table at $a'$, so $f_\mathrm{mt}(69)=A_4$ exactly. This is the pitch every sample
+is assumed to have; all other tunings are expressed as a shift from it.
+
+\paragraph{Meantone temperaments (\fn{temperamentCents}).} The family of regular meantones is generated from one
+tempered fifth. With the pure fifth $F_0 = 1200\log_2(3/2) = \SI{701.955}{ct}$, the syntonic comma
+$\kappa_s = 1200\log_2(81/80) = \SI{21.506}{ct}$ and the Pythagorean comma $\kappa_p = 12F_0 - 8400 =
+\SI{23.460}{ct}$, the fifth is $F = F_0 - \delta$ with $\delta = \kappa_s/4$ (quarter-comma), $\kappa_s/5$,
+$\kappa_s/3$, $2\kappa_s/7$ or $\kappa_p/6$. Each pitch class is then reached by a number $j$ of fifths up or down from
+C and folded into the octave, $c = (jF) \bmod 1200$, with
+\begin{equation}
+  j = (0,\,7,\,2,\,-3,\,4,\,-1,\,6,\,1,\,8,\,3,\,-2,\,5)\quad\text{for}\quad (\mathrm{C},\mathrm{C}\sharp,\mathrm{D},\mathrm{E}\flat,\dots,\mathrm{B}).
+\end{equation}
+The chain runs from $\mathrm{E}\flat$ ($j=-3$) to $\mathrm{G}\sharp$ ($j=8$), so the eleven fifths inside it are
+tempered and the twelfth, $\mathrm{G}\sharp$--$\mathrm{E}\flat$, takes the whole error: the wolf, $\SI{737.6}{ct}$ in
+quarter-comma. Quarter-comma makes the major third pure, since $4F - 2400 = 4F_0 - \kappa_s - 2400 = 1200\log_2(5/4)$.
+Well temperaments (Werckmeister III, Kirnberger III, Vallotti), Pythagorean, equal and Maqam Rast are stored as
+fixed tables; just intonation 5-limit, 7-limit and the harmonic series as ratios $r$ per pitch class, converted by
+$1200\log_2 r$; and 12-out-of-$N$ equal divisions ($N = 31, 19, 53$) as the step numbers $s_i$ that lie nearest to
+meantone or just intonation, $c_i = 1200\,s_i/N$.
+
+\paragraph{From temperament to shift (\fn{temperamentShift}).} The samples cannot be re-recorded, so a temperament
+$c[\cdot]$ is applied as a shift per pitch class that keeps $a'$ fixed:
+\begin{equation}
+  \Delta_i = \bigl(c[i]-c[9]\bigr) - \bigl(c_\mathrm{mt}[i]-c_\mathrm{mt}[9]\bigr).
+\end{equation}
+The first bracket is where pitch class $i$ should lie relative to A, the second where it was recorded; the
+difference is the transposition the sample of that pitch class needs. The shifts are small (at most about $\SI{21}{ct}$ for equal
+temperament and $\SI{27}{ct}$ for Pythagorean tuning), so resampling by $2^{\Delta/1200}$ does not audibly change the
+pipe's timbre.
+
+\paragraph{Step tunings (\fn{steppedTuningCents}, \fn{makeKeyTuning}).} In the tunings where every MIDI note is one
+step of size $q$ ($q = 1200/31$, $1200/19$, $50$, the Bohlen--Pierce step $1200\log_2 3/13 = \SI{146.3}{ct}$, or Carlos
+Alpha $\SI{77.965}{ct}$) the target of note $k$ is $t(k) = (k-69)\,q$ cents from $a'$. In the just Bohlen--Pierce scale
+the period is the tritave $3{:}1$: with $d = (k-69) \bmod 13$ and $o = \lfloor (k-69)/13\rfloor$,
+$t(k) = 1200\bigl(\log_2 r_d + o\log_2 3\bigr)$ for the thirteen ratios $r_d$ ($1, 27/25, 25/21, \dots, 25/9$).
+Because such a tuning can move a key by many semitones, the key does not play its own pipe. Every key $k$ is given
+the recorded pipe $s^*$ whose meantone pitch lies nearest to the target,
+\begin{equation}
+  s^*(k) = \arg\min_s \bigl|\,1200\log_2\!\bigl(f_\mathrm{mt}(s)/A_4\bigr) - t(k)\bigr|,\qquad
+  \Delta_k = t(k) - 1200\log_2\!\bigl(f_\mathrm{mt}(s^*)/A_4\bigr),
+\end{equation}
+so no pipe is ever transposed by more than half the distance to its neighbour (except beyond the organ's compass).
+The \code{KeyTuning} record holds $s^*(k)$ and $\Delta_k$ for all 41 keys.
+
+\paragraph{Stimmton.} The \ui{Stimmton} parameter is an additional transposition $c_S$ (stored in tenths of a cent).
+Its detent at \SI{440}{Hz} is replaced by the exact value $1200\log_2(440/444.5) = \SI{-17.617}{ct}$
+(\fn{effectiveStimmtonCents}), so that "440" really is 440 and not $444.5\cdot 2^{-17.6/1200} = \SI{440.004}{Hz}$.
+
+% ---------------------------------------------------------------------
+\subsection{The Ambisonics encoder (\fn{encodeAmbiX})}
+\label{sec:math-encoder}
+Every source in Rysum (a pipe, an image source of the room, an echo, the input) is placed by multiplying its
+signal with the real spherical harmonics of its direction, up to order $L\le 5$, giving $(L+1)^2$ channels in ACN
+order with SN3D normalisation and no Condon--Shortley phase (AmbiX \citep{nachbar2011ambix}):
+\begin{equation}
+  Y_l^m(\varphi,\vartheta) = N_l^{|m|}\,P_l^{|m|}(\sin\vartheta)\cdot
+  \begin{cases}\cos(m\varphi), & m\ge 0\\ \sin(|m|\varphi), & m<0\end{cases},\qquad
+  N_l^m = \sqrt{(2-\delta_{m0})\,\frac{(l-m)!}{(l+m)!}},
+\end{equation}
+written to channel $\mathrm{ACN} = l^2+l+m$. The normalisation $N_l^m$ is computed once into a table
+(\fn{Sn3dTable}); SN3D makes the largest value of every harmonic about 1 and $Y_0^0 = 1$, so the W channel carries
+the mono signal unchanged.
+
+\paragraph{No trigonometry per order.} Because the function is called for every pipe every 64 samples and for every
+image source of the room, it avoids all trigonometric calls except one $\sin/\cos$ pair for each angle. The associated
+Legendre functions are built by the standard recurrences in $x = \sin\vartheta$, $c = \cos\vartheta = \sqrt{1-x^2}$:
+\begin{align}
+  P_m^m &= (2m-1)\,c\,P_{m-1}^{m-1}, & P_0^0 &= 1, \\
+  P_{m+1}^m &= (2m+1)\,x\,P_m^m, \\
+  P_l^m &= \frac{(2l-1)\,x\,P_{l-1}^m - (l+m-1)\,P_{l-2}^m}{l-m}, & l &\ge m+2,
+\end{align}
+(the diagonal, the first off-diagonal, and the three-term recurrence in $l$), and the multiples of the azimuth by
+the angle-addition theorem,
+\begin{equation}
+  \cos m\varphi = \cos(m-1)\varphi\cos\varphi - \sin(m-1)\varphi\sin\varphi,\qquad
+  \sin m\varphi = \sin(m-1)\varphi\cos\varphi + \cos(m-1)\varphi\sin\varphi.
+\end{equation}
+For 5th order this is 36 values for two $\sin/\cos$ pairs and about 60 multiplications. The variant
+\fn{encodeAmbiXDir} takes the four cosines and sines directly, which the room simulation uses since it already has
+the direction as a vector: for an image source at $(x,y,z)$ relative to the listener,
+$\cos\varphi = x/\rho$, $\sin\varphi = y/\rho$ with $\rho = \sqrt{x^2+y^2}$, and $\sin\vartheta = z/r$,
+$\cos\vartheta=\rho/r$, without a single trigonometric call.
+
+\paragraph{Stereo (\fn{encodeStereo}).} For the stereo output a source is panned with the equal-power law on the
+lateral component only: $p = \sin\varphi \in [-1,1]$ ($+1$ = left), $\alpha = (1-p)\,\pi/4 \in [0,\pi/2]$, and
+\begin{equation}
+  (g_L, g_R) = (\cos\alpha,\ \sin\alpha),\qquad g_L^2+g_R^2 = 1.
+\end{equation}
+Using $\sin\varphi$ instead of $\varphi$ folds front and back onto the same pan, which is what a stereo pair can
+represent; the power sum is constant, so a pipe does not get louder or softer as it travels across.
+
+% ---------------------------------------------------------------------
+\subsection{Positions and motion (\fn{Spatial.h})}
+\label{sec:math-motion}
+A pipe's place is $(\varphi,\vartheta,d)$ with the distance $d$ clamped to $[\SI{0.5}{m},\SI{60}{m}]$. Its
+\emph{base} position comes from the layout; \fn{applyMotion} turns it into the position of the moment from a
+\emph{phase} $\Phi$, measured in cycles. The engine integrates the phase from the speed, $\Phi_{n+1} = \Phi_n +
+v\,\Delta t$, instead of computing $v\,t$, so a change of speed never makes the pipe jump, and a negative speed runs
+the same path backwards. (The per-pipe speed spread $\Phi_k = \Phi(1+\sigma r_k)+o_k$ is described in
+\S\ref{sec:motion}.) With the fractional phase $\phi = \Phi - \lfloor\Phi\rfloor$:
+
+\begin{description}[style=nextline]
+  \item[Rotation] $\varphi \leftarrow \operatorname{wrap}(\varphi_0 + 2\pi\phi)$, where
+    $\operatorname{wrap}$ folds an angle into $[-180^\circ,180^\circ)$.
+  \item[Vertical] the pipe turns about the left--right axis (front $\to$ up $\to$ back $\to$ down). The direction is
+    taken to Cartesian coordinates $x = \cos\vartheta\cos\varphi$, $y = \cos\vartheta\sin\varphi$, $z = \sin\vartheta$,
+    rotated about $y$ by $a = 2\pi\phi$,
+    $x' = x\cos a - z\sin a$, $z' = x\sin a + z\cos a$, and returned as $\varphi = \operatorname{atan2}(y,x')$,
+    $\vartheta = \arcsin z'$.
+  \item[Pendel] $\varphi \leftarrow \varphi_0 + D\sin(2\pi\Phi)$ with the depth $D$ in degrees.
+  \item[Drift] three smooth random functions (below) with different seeds move azimuth, elevation and distance:
+    $\varphi \leftarrow \varphi_0 + D\,\nu_1(\Phi)$, $\vartheta \leftarrow \vartheta_0 + 0.4D\,\nu_2(\Phi)$,
+    $d \leftarrow d_0\,\bigl(1 + 0.4\,\tfrac{D}{180}\,\nu_3(0.7\Phi)\bigr)$. Elevation and distance move less than
+    azimuth because the ear resolves them less well and a large change of distance would be heard as a change of
+    level.
+  \item[Sprünge] the phase plus a per-pipe offset $o\in[0,1)$ is cut into whole cycles, $i = \lfloor\Phi+o\rfloor$; a
+    generator seeded from the pipe and $i$ gives three numbers $b_{1,2,3}\in[-1,1]$, and
+    $\varphi = \varphi_0 + Db_1$, $\vartheta = \vartheta_0 + 0.5Db_2$, $d = d_0(1+0.6\tfrac{D}{180}b_3)$. The place
+    stays constant during a cycle and changes abruptly at its end; because $o$ differs per pipe, the pipes jump at
+    different moments, not all on the beat.
+  \item[Gezeichnet] the pipe follows the drawn path (below) at $u = \phi + s\,\kappa$, where $\kappa\in[0,1]$ is the
+    pipe's place among its stop's pipes and $s$ the spread (\ui{Verteilung}): at $s=1$ the pipes are distributed over
+    the whole path like the carriages of a train. For a path drawn as \ui{hin und zurück},
+    $u \leftarrow 1 - |1-2u|$, a triangle wave that runs to the end and back.
+\end{description}
+
+\paragraph{Smooth noise (\fn{smoothNoise}).} The drift needs a random function of time that is smooth, bounded and
+different for every pipe, without state. It is a sum of three sines whose frequencies $f_i$ and phases $p_i$ are
+drawn once from the seed ($f_1\in[0.55,1.05)$, $f_2\in[1.13,1.83)$, $f_3\in[0.31,0.61)$):
+\begin{equation}
+  \nu(t) = \frac{\sin(2\pi f_1 t+p_1) + 0.6\sin(2\pi f_2 t+p_2) + 0.8\sin(2\pi f_3 t+p_3)}{2.4}\in[-1,1].
+\end{equation}
+The frequencies are incommensurate, so the sum does not repeat audibly; the divisor $2.4 = 1+0.6+0.8$ bounds it.
+
+\paragraph{Drawn paths (\fn{MotionPath::at}).} A drawn path is a list of up to 256 unit vectors $\mathbf{p}_i$ with
+the time $u_i\in[0,1]$ at which each was drawn, so the speed of the drawing is kept. For a time $u$ the enclosing
+pair $u_{i}\le u<u_{i+1}$ is found by bisection and the vector interpolated linearly,
+$\mathbf{p} = \mathbf{p}_i + \tfrac{u-u_i}{u_{i+1}-u_i}(\mathbf{p}_{i+1}-\mathbf{p}_i)$, then converted back to
+$\varphi = \operatorname{atan2}(p_y,p_x)$, $\vartheta = \operatorname{atan2}(p_z, \sqrt{p_x^2+p_y^2})$. Interpolating
+the vectors (a chord through the sphere) instead of the angles avoids the wrong way round at $\pm180^\circ$, and
+$\operatorname{atan2}$ does not need the interpolated vector to have unit length.
+
+\paragraph{Orbit shape.} After the motion, an ellipse and a tilt can bend the orbit. With the angle from the
+near side $\psi = \varphi - \varphi_e$ and $q\in\{1,2,3,4\}$ lobes,
+\begin{equation}
+  \vartheta \leftarrow \vartheta + T\cos\psi\cos\vartheta,\qquad
+  d \leftarrow d\,\bigl(1 - e\cos\vartheta\,\cos(q\psi)\bigr),
+\end{equation}
+with the tilt $T$ in degrees and the eccentricity $e\in[0,0.9]$. With $q=1$ the listener sits at one focus: the
+pipe comes nearest at $\psi=0$ and is farthest opposite. With $q=2$ the listener is at the centre and the pipe comes
+near twice per turn, with $q=3,4$ the orbit is a rounded triangle or square. The factor $\cos\vartheta$ makes both
+effects vanish towards the zenith, where azimuth has no meaning.
+
+\paragraph{Distance (\fn{distanceGain}).} The level of a pipe falls with distance relative to the reference
+distance $d_0 = \SI{4}{m}$:
+\begin{equation}
+  g_d = \operatorname{clamp}_{[0,4]}\Bigl(\bigl(d_0/\max(d,\SI{0.5}{m})\bigr)^{a}\Bigr),
+\end{equation}
+where $a\in[0,1]$ (\ui{Entfernung} $\to$ \ui{Lautstärke}) blends from no distance law ($a=0$) to the physical
+$1/r$ of a point source ($a=1$). The limit of 4 ($\SI{+12}{dB}$) stops a pipe that flies through the listener from
+exploding in level. Air absorption and the Doppler shift are described with the sample playback
+(\S\ref{sec:math-voice}).
+
+\paragraph{Pipe size (\fn{pipeSize}).} The length of a pipe follows its footage: an 8′ C is
+$\SI{2.44}{m}$ and every semitone shortens it by $2^{-1/12}$,
+\begin{equation}
+  \ell = 2.44\,\tfrac{F}{8}\,2^{-k/12}\ \text{m},\qquad \ell \leftarrow \ell/2\ \text{for a stopped pipe},\qquad
+  r = \ell\cdot\begin{cases}0.035,&\text{open}\\0.07,&\text{stopped}\end{cases},
+\end{equation}
+($F$ the footage, $k$ the key index; $\ell\in[0.12,6]$, $r\in[0.012,0.13]$). A stopped pipe sounds an octave lower
+than an open one of the same length, so the Gedackt is drawn half as long and twice as wide. The 3D view draws
+these sizes, and the bodies in the room use them for their collisions and their knock (\S\ref{sec:roommotion}).
+
+% ---------------------------------------------------------------------
+\subsection{Layouts (\fn{generateLayout}, \fn{tonnetzPlaces})}
+\label{sec:math-layouts}
+A layout writes the base position of all 41 pipes of a stop from width $W$, centre $\varphi_c$, elevation
+$\vartheta_c$, spread $S$ and distance $d$. Let $\rho_k\in[0,1]$ be the rank of key $k$ by pitch ($0$ = lowest).
+\begin{description}[style=nextline]
+  \item[Gehäuse C/C\#] as in an organ case: the C side (even MIDI numbers) to the left, the C\# side to the right,
+    bass in the middle and treble outside, $\varphi = \varphi_c \pm \tfrac{W}{2}(0.06+0.94\rho_k)$,
+    $\vartheta = \vartheta_c + \tfrac{S}{2}(0.5-\rho_k)$.
+  \item[Tonhöhe] a line from left (low) to right (high): $\varphi = \varphi_c + W/2 - \rho_k W$.
+  \item[Streuung] uniformly random in the rectangle $\varphi_c\pm W/2$, $\vartheta_c\pm S$, with
+    $d \leftarrow d(1+0.45b)$; the generator is seeded with the stop and the layout type, so the same scatter comes
+    back every time.
+  \item[Ring, Spirale] $\varphi = \varphi_c + 360^\circ\rho_k$ (one turn); the spiral makes two turns
+    ($720^\circ\rho_k$), climbs from $\vartheta_c-S$ to $\vartheta_c+S$ and comes nearer, $d\leftarrow d(1.5-\rho_k)$.
+  \item[Zone] all pipes in a small patch, $\pm0.075W$ by $\pm 0.3S$.
+\end{description}
+
+\paragraph{Tonnetz.} This layout places each key at a point $(a,b)$ of the lattice of fifths ($a$) and major thirds
+($b$) \emph{of the tuning in use}. First the tuning's own fifth $F$ and third $T$ are found: for a twelve-note tuning
+the medians of its twelve fifths $c[i+7]-c[i]$ and twelve thirds $c[i+4]-c[i]$ (the median ignores the wolf),
+for a step tuning the multiples of the step nearest to the pure intervals, $F = q\,\mathrm{round}(701.955/q)$. Each
+key with pitch class $p$ (in cents) then takes the lattice point of least cost
+\begin{equation}
+  (a,b) = \arg\min_{|a|\le 8,\,|b|\le 2}\ \Bigl[\,|a|\,w_F + |b|\,w_T + \tfrac13\,\varepsilon(a,b)\Bigr],\qquad
+  \varepsilon = \min\bigl(e,\,1200-e\bigr),\quad e = \bigl|((aF+bT)\bmod 1200) - p\bigr|,
+\end{equation}
+with the weights $w_F = 0.5 + |F-701.955|/4$ and $w_T = 0.5+|T-386.314|/4$. A pure interval is cheap, an impure one
+expensive, so in quarter-comma meantone (pure thirds) the notes are reached by thirds and the lattice is compact,
+while in Pythagorean tuning (pure fifths) they line up along a chain of fifths; $\varepsilon$ makes sure the point
+actually lands on the pitch. The point is drawn at
+$\varphi = \varphi_c - \sigma s_F(a + b/2)$, $\vartheta = \vartheta_c + \sigma s_T b + 3^\circ(o-4)$ with the scale
+$\sigma = 26^\circ W/120^\circ$, the octave $o$, and $s_{F,T} = 0.7 + |{\cdot}-\text{pure}|/10$: impure intervals are
+drawn longer, so the geometry shows the tuning. The half step $b/2$ in azimuth makes the lattice triangular, as the
+Tonnetz is usually drawn. $\mathrm{G}\sharp$ and $\mathrm{E}\flat$ end on opposite edges: the wolf is the seam.
+
+\input{math_voice}

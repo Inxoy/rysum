@@ -1,0 +1,257 @@
+% ---------------------------------------------------------------------
+\subsection{One sounding pipe (\fn{OrganEngine::renderRange})}
+\label{sec:math-voice}
+A \emph{voice} is one pipe that sounds: it reads the pipe's mono sample, shapes it sample by sample, and adds it to
+the output with gains that put it in its place. This subsection follows one voice through one block in the order of
+the code. Many small filters below are the same one-pole low-pass, so it is defined once:
+\begin{equation}
+  y_n = y_{n-1} + a\,(x_n - y_{n-1}),\qquad a = 1 - e^{-2\pi f_c/f_s}.
+  \label{eq:onepole}
+\end{equation}
+This is the impulse-invariant discretisation of an $RC$ low-pass with corner $f_c$; its step response reaches
+$1-1/e$ after $f_s/(2\pi f_c)$ samples. The same update with $a = 1-e^{-T/\tau}$, applied once every $T$ seconds,
+is an exponential glide with time constant $\tau$; the code uses it wherever a value must move smoothly instead of
+jumping (for example $a=0.03$ every 16 samples is $\tau = -16/(f_s\ln 0.97) \approx \SI{11}{ms}$ at \SI{48}{kHz}).
+
+\paragraph{Starting a voice (\fn{startVoice}).} A free voice is taken; if all are busy, the oldest voice whose key is
+already released is stolen, and only if every voice is held, the oldest of all. The stolen voice is not cut: it
+fades out linearly over \SI{5}{ms} while the new note starts. The voice is given a fixed random detune
+$\rho\in[-1,1]$ seeded by stop and key (so the same pipe is always out of tune the same way), the key position
+$\kappa = 2k/40-1\in[-1,1]$ as a modulation source, and its loop crossfade length
+\begin{equation}
+  X = \operatorname{clamp}\bigl(\min(1440,\ L/3),\ 16,\ \ell_s\bigr)\ \text{samples of the file},
+\end{equation}
+with the loop $[\ell_s,\ell_e)$ of length $L = \ell_e-\ell_s$: at most \SI{30}{ms} at the file rate of
+\SI{48}{kHz}, at most a third of the loop, and never longer than the part before the loop.
+
+\paragraph{The reading rate.} The playback rate in samples of the file per output sample is
+\begin{equation}
+  r_n = \underbrace{\frac{f_\mathrm{file}}{f_s}\,\rho_\mathrm{native}\,\rho_\mathrm{cal}}_{r_0}
+        \cdot 2^{\,c_n/1200}\cdot D_n ,
+\end{equation}
+where $f_\mathrm{file}/f_s$ converts the file's \SI{48}{kHz} to the host rate, $\rho_\mathrm{native}$ is the pipe's
+static transposition (0.5 for the Praestant~16′, which reads the 8′ samples an octave lower, and the shift of a
+substituted pipe), $\rho_\mathrm{cal}$ the optional correction of the recorded pitch to the nominal one
+(\fn{samplePlaybackRate}; 1 when it is off), $D_n$ the Doppler factor and $c_n$ the sum of all pitch offsets in cents,
+re-evaluated every 16 samples:
+\begin{multline}
+  c = \underbrace{\Delta_k + c_S + \delta\rho}_{\text{tuning}}
+     \;+\; \underbrace{c_\ell + c_\mathrm{pure} + 38\,w_r^2\,\sigma_w(0.4+0.6|\rho|)}_{\text{length, pure tuning, wear}}
+     \;+\; \underbrace{c_\mathrm{wind} + c_\mathrm{wob} + c_\mathrm{gust} + c_\mathrm{trem}}_{\text{wind}}\\
+     \;+\; \underbrace{c_\mathrm{mod}(n) + c_\mathrm{MPE}}_{\text{modulation}} .
+\end{multline}
+$\Delta_k$ is the key's tuning shift (\S\ref{sec:math-tuning}), $c_S$ the \ui{Stimmton}, $\delta$ the
+\ui{Verstimmung} (each pipe detuned by its own $\delta\rho$). $c_\ell = -1200\log_2\lambda$ follows the pipe's length
+factor $\lambda$ (\ui{Wachsen \& Brechen}: a pipe twice as long sounds an octave lower; it glides with
+$\tau=\SI{30}{ms}$, so a pipe that breaks while sounding jumps without a click). $c_\mathrm{pure}$ comes from
+\ui{Reinheit} and the wear term from \ui{Verschleiß} of the living organ (\S\ref{sec:live}); $\sigma_w=-1$ for
+60\,\% of the pipes, because worn pipes mostly go flat. The modulation term is interpolated linearly across the
+block from its value at the start to the value at the end, $c_\mathrm{mod}(n) = c_0 + (c_1-c_0)\,n/N$, so a pitch LFO
+produces a smooth glide instead of a staircase of 64-sample steps. The MPE bend glides with
+$a=0.2$ per 16 samples ($\tau\approx\SI{1.5}{ms}$).
+
+\paragraph{The wind terms.} With the stop wind $w$ (the stop's \ui{Wind} slider plus its modulation, times the
+bellows pressure and the pallet opening of the living organ, smoothed with $\tau\approx\SI{11}{ms}$) and the lack of
+wind $\ell = 1-w$, the classic model of \S\ref{sec:stopwind} gives
+$c_\mathrm{wind} = -75\,\ell^{3/2} + 35\,\ell^2 b(t)$ and the level factor $a = w^{1.6}(1+0.4\,\ell\,b(t))$, with the
+breathing $b(t)$ a \fn{Wobble} (below) advanced at $1+3\ell$ times its own speed. The exponent $1.6$ makes the level
+fall faster than linearly: a half-drawn stop is about $\SI{-10}{dB}$, not $\SI{-6}{dB}$. Then:
+\begin{itemize}[nosep]
+  \item \emph{Windschwankung} with the amount $A = \alpha\omega + 0.45w_r^2$ (the degradation amount times the
+    wobble, plus wear): $c_\mathrm{wob} = (30A + 320A^4)\,u(t)$, level $\times\max(0, 1 + (0.3A+0.6A^4)u(t))$, speed
+    $1+5A^3$. The quartic term is negligible up to about half and dominates near the top, which is why the slider
+    gets disproportionately wilder towards 100\,\%: at $A=0.5$ the pitch swings $\pm\SI{35}{ct}$, at $A=1$ by
+    $\pm\SI{350}{ct}$.
+  \item \emph{Gusts} of the global wind above 35\,\%: $\tau_g = \bigl(\max(0,(W-0.35)/0.65)\bigr)^2$,
+    $c_\mathrm{gust} = 190\,\tau_g\,\nu(t)$ and level $\times\max(0.05,\,1+0.75\tau_g\nu(t))$, where $\nu$ is one
+    \fn{smoothNoise} (\S\ref{sec:math-motion}, seed 4242) run at $0.5+6\tau_g$ times its speed. One curve is
+    computed for all pipes (one value per 16 samples), because the pipes share one wind chest and must shake together.
+  \item \emph{Tremulant}: the wave $q(\theta) = \bigl(\sin\theta + 0.25\sin(2\theta+0.7)\bigr)/1.2$ with
+    $\theta = 2\pi f_\mathrm{trem} t$, shared by all pipes; with the depth $D$ (the global one plus the stop's own)
+    $c_\mathrm{trem} = 16D\,q$ and level $\times(1+0.32D\,q)$. The second harmonic with its phase offset makes the
+    wave asymmetric, as the beat of a real tremulant valve is.
+\end{itemize}
+The wind also closes a one-pole low-pass (\ref{eq:onepole}) with $f_c = 250 + 16000\,w^2$\,Hz (bypassed above
+$w=0.995$), so a starving pipe gets duller.
+
+\paragraph{Wobble (\fn{Wobble}).} The slow random movements of the wind are sums of three sines with random rates
+$f_1\in[0.15,0.55)$, $f_2\in[0.7,1.9)$, $f_3\in[2.5,5.5)$\,Hz and random phases, drawn once per voice:
+\begin{equation}
+  u(t) = \bigl(\sin 2\pi\Phi_1 + 0.5\sin 2\pi\Phi_2 + 0.15\sin 2\pi\Phi_3\bigr)/1.65,\qquad
+  \Phi_i \mathrel{+}= f_i\,s\,\Delta t,
+\end{equation}
+where the phases are integrated, so the speed factor $s$ can change without a jump. The weights fall with the
+frequency: the movement is mostly slow with a little faster flutter on top, as wind is.
+
+\paragraph{Reading the sample (\fn{readSample}).} The sample is read at the fractional position $p = i + f$ with
+four-point cubic Hermite interpolation (Catmull--Rom): the cubic through $x_0, x_1$ whose slopes at the two points
+are the central differences $(x_1-x_{-1})/2$ and $(x_2-x_0)/2$,
+\begin{gather}
+  y = \bigl((c_3 f + c_2) f + c_1\bigr) f + x_0,\\
+  c_1 = \tfrac12(x_1 - x_{-1}),\quad c_2 = x_{-1} - \tfrac52 x_0 + 2x_1 - \tfrac12 x_2,\quad
+  c_3 = \tfrac12(x_2 - x_{-1}) + \tfrac32(x_0 - x_1).
+\end{gather}
+It reproduces quadratics exactly, is continuous in value and slope from one interval to the next, and costs four
+multiply-adds in Horner form. Its slight attenuation towards the Nyquist frequency is harmless because the pipes are
+read at nearly their own rate. There is no anti-alias filter: the only transposition upwards is the tuning shift
+(at most a few tens of cents), which moves next to nothing above $f_s/2$.
+
+\paragraph{The loop.} While the voice is held and the position comes within $X$ of the loop end $\ell_e$, the
+reader fades linearly into the same place one loop earlier,
+\begin{equation}
+  x = (1-t)\,s(p) + t\,s(p-L),\qquad t = \frac{p - (\ell_e - X)}{X},
+\end{equation}
+and at $p\ge\ell_e$ jumps back by $L$, to where the fade has arrived. A linear (equal-gain) fade keeps the amplitude
+because the loop points were chosen where the signal is highly correlated with itself (\S\ref{sec:loop}); an
+equal-power fade would bulge by up to $\SI{3}{dB}$ for correlated signals.
+
+\paragraph{Release (\fn{releaseVoice}).} When the key goes up, the reader fades over $N_r = 0.04f_s$ samples
+from wherever it is into a second reader that starts \SI{40}{ms} before the recorded release point $p_\mathrm{rel}$,
+\begin{equation}
+  x = (1-g)\,s(p) + g\,s(p_\mathrm{rel}-0.04 f_\mathrm{file} + j\,r),\qquad g = j/N_r,\quad j = 0\dots N_r,
+\end{equation}
+and then continues from the second reader without the loop, so the note ends with the recorded sound of its pallet
+closing. With the glitch \ui{Nulldurchgang} $z$ the fade is shortened to $0.04f_s(1-0.995z)$: a hard cut.
+
+\paragraph{Attack shaping (\ui{Ansprache}).} With the onset $p_a$ and the end of the measured attack $p_b$ of the
+pipe, the envelope $e = \tfrac12 + \tfrac12\cos(\pi u)$, $u = (p-p_a)/(p_b-p_a)$ clamped to $[0,1]$, falls from 1 to 0
+over the attack. It is a function of the read position, not of time, so it stays on the attack also when the pipe
+is transposed or the reader is slowed. The four controls act as
+\begin{equation}
+  x \leftarrow \bigl(x + 3s\,e\,(x - \mathrm{LP}_{\SI{2.5}{kHz}}\,x)\bigr)\,(1+3g^+e)\,(1-g^-e)\,\bigl(1-q(1-e)\bigr)
+\end{equation}
+(sharpness $s$, gain $g = g^+-g^-$, \ui{Nur Ansprache} $q$). The repeated chiff is a second reader over
+$[p_a, p_a + \ell_c]$, $\ell_c = \min(p_b-p_a,\, 0.09f_\mathrm{file})$, windowed by a Hann window of its length in output
+samples $\ell_c/r$, the $i$-th repeat scaled by $0.82^i$, with a random pause of $0.55$--$0.95$ burst lengths between
+repeats.
+
+\paragraph{Freeze (\fn{grainSample}).} A frozen voice becomes a granular cloud read from the pipe's sustain (the loop
+if there is one, else from \SI{0.1}{s} after the attack to the release). Every $\tfrac13\ell_g\cdot U(0.7,1.3)$
+samples a new grain starts at a uniformly random place, with the length $\ell_g = (0.06 + 0.5\,s)f_s$ and its own
+rate factor $2^{25 s\,b/1200}$, $b\in[-1,1]$, so up to $\pm25$ cents at full smear $s$. Each grain is windowed by a
+Hann window; on average three overlap, and Hann windows at a hop of a third of their length sum to $1.5$, hence the
+division by $1.5$. The change from the normal reader to the cloud is a linear crossfade over \SI{150}{ms}.
+
+\paragraph{The filters after the reader.} The signal then passes the wind low-pass and the air low-pass in series,
+both of type (\ref{eq:onepole}). The air corner falls with the distance $d$:
+\begin{equation}
+  f_\mathrm{air} = \operatorname{clamp}_{[1200,\,20000]}\Bigl(\frac{\SI{20}{kHz}}{1 + A\,d/\SI{5}{m}}\Bigr)\cdot 2^{6m_b},
+\end{equation}
+with the amount $A$ (\ui{Luft}) and the brightness modulation $m_b$ (6 octaves per unit). Real air absorbs high
+frequencies exponentially with distance and more the higher they are; a one-pole whose corner falls as $1/d$ is a
+cheap stand-in that gets the direction of the effect right. \ui{Luft umkehren} $\iota$ mixes
+$y = y_\mathrm{air} + 2\iota\,(y_\mathrm{wind} - y_\mathrm{air})$: at $\iota = \tfrac12$ the highs the air took are
+given back exactly, at $\iota = 1$ they are added twice, so far pipes become \emph{brighter} than near ones. The level
+factor $a$ of the wind terms is applied here, and, in the unstable wind model, the mouth tone of
+\S\ref{sec:windchaos} is added after its own pass through the air filter (it belongs to the pipe and is as far
+away).
+
+\paragraph{The upper-partial layer.} A second-order Butterworth high-pass splits off the partials above $f_h$. It is
+the state-variable filter in the trapezoidal (topology-preserving) form \citep{zavalishin2012}, which keeps its
+analogue response up to $0.45f_s$ and can be retuned per sample without becoming unstable:
+\begin{gather}
+  g = \tan(\pi f_h/f_s),\quad k = \sqrt2,\quad a_1 = \frac{1}{1+g(g+k)},\quad a_2 = g a_1,\quad a_3 = g a_2,\\
+  v_3 = x - s_2,\quad v_1 = a_1 s_1 + a_2 v_3,\quad v_2 = s_2 + a_2 s_1 + a_3 v_3,\quad
+  s_1 \leftarrow 2v_1 - s_1,\quad s_2 \leftarrow 2v_2 - s_2,\\
+  h = x - k v_1 - v_2 .
+\end{gather}
+$v_1$ is the band-pass and $v_2$ the low-pass output, $h$ the high-pass, and $k=\sqrt2 = 1/Q$ makes it Butterworth.
+The output is $x + (G\,t - 1)h$: the layer is replaced by itself times the gain $G$ and the transient factor
+$t = \operatorname{clamp}_{[0.2,5]}\bigl((E_f/E_s)^{1.5\sigma}\bigr)$, where $E_f$ and $E_s$ are peak followers of
+$|h|$ with attack and release time constants of $0.7$/\SI{6}{ms} and $25$/\SI{120}{ms}. During an attack the fast
+follower runs ahead of the slow one, $E_f/E_s>1$, so $\sigma>0$ lifts the beginnings and $\sigma<0$ keeps the
+sustained surface.
+
+\paragraph{Release puff (\ui{Abriss}).} When the pallet closes, white noise passes a one-pole low-pass at $2.5f_c$ and
+a two-pole resonator
+\begin{equation}
+  y_n = x_n + 2R\cos\omega\,y_{n-1} - R^2 y_{n-2},\qquad \omega = 2\pi f_c/f_s,\qquad R = e^{-\pi f_c/(1.4 f_s)},
+\end{equation}
+whose poles at $Re^{\pm i\omega}$ give a peak at $f_c$ with the bandwidth $f_c/1.4$, i.e.\ $Q\approx1.4$. Its gain is
+scaled by $1-R$, which normalises the peak gain $\approx 1/(1-R)$ of the resonator, so pipes of all pitches puff
+equally loud; the envelope decays by the factor $e^{-1/(\tau f_s)}$ per sample.
+
+\paragraph{Random events: crackle and glitches.} Crackle, stutter and clip bursts arrive as Poisson processes: the
+waiting time to the next event is drawn as $T = -\ln(u)/\lambda$ seconds with $u$ uniform, which is exponentially
+distributed with mean $1/\lambda$ and makes the events independent of each other (no hidden rhythm). The rates are
+$\lambda = $ \ui{Dichte} for crackle, $2.5\,g_s^2$ per second for stutter and $3\,g_c^2$ for clipping (the squares keep
+the lower half of the sliders sparse). A crackle is a burst of white noise of amplitude $0.2+0.8u^2$ (mostly small,
+sometimes large) decaying with the time constant \ui{Länge}. A stutter repeats a slice of \SIrange{20}{150}{ms}
+one to five times by setting the reader back. A clip burst lasts \SIrange{8}{78}{ms} and drives the signal by a factor
+$\delta\in[4,\,4+30g_c]$ into a hard limit at $\pm0.02$, with the make-up gain $1.5/\sqrt\delta$. A tape splice
+(\ui{Klebestelle}) at every loop return adds a tick of noise decaying as $e^{-j/(0.0006f_s)}$ and a dip of depth
+$0.85g$ that recovers linearly over \SI{12}{ms}.
+
+\paragraph{Into the output.} The finished block $x_n$ ($n = 0\dots N-1$) is added to every output channel $c$ with a
+gain that moves linearly from the previous block's value $g_c^0$ to this block's $g_c^1$ (the encoder gains of
+\S\ref{sec:math-encoder} times all level factors). Since
+\begin{equation}
+  o_c[n] \mathrel{+}= x_n\bigl(g_c^0 + \Delta g_c\,n\bigr) = g_c^0\,x_n + \Delta g_c\,(n\,x_n),
+\end{equation}
+the product $n\,x_n$ is computed once per voice and the update of each of up to 36 channels is two vectorised
+multiply-adds. The ramp removes the zipper noise that switching gains every 64 samples would cause, and it is why a
+pipe can circle at \SI{500}{Hz}: between control points its direction is interpolated. For \ui{Sprünge} set to hard the
+gains are held constant and switched at the exact sample of each jump, so the jumps click as intended.
+
+\paragraph{The gains of one voice (\fn{updateVoiceSpatial}).} Once per control block the voice computes its position
+(layout, motion, modulation offsets $\varphi \mathrel{+}= 180^\circ m_\varphi$, $\vartheta \mathrel{+}= 90^\circ m_\vartheta$,
+$d \mathrel{*}= 2^{3m_d}$), moves it by the walk of the listener, and from it the gain
+\begin{equation}
+  g = g_\mathrm{stop}\cdot 10^{36m_L/20}\cdot g_d(d)\cdot 10^{-h/20}\cdot\cos\bigl(\tfrac\pi2 c_\mathrm{mix}\bigr),
+\end{equation}
+the product of the stop's level, the level modulation ($\pm\SI{36}{dB}$ per unit), the distance law, the loss $h$ in
+dB when the pipe is hidden behind a corner of the floor plan (\S\ref{sec:plans}), and the equal-power share left to
+the dry pipe when part of it dissolves into the grain cloud. The send to the room uses the much flatter law $g_d$ with
+the exponent $0.35a$: the reverberant field of a room hardly depends on the distance to the source. Behind a corner
+the direct sound also passes an extra low-pass whose coefficient glides over \SI{30}{ms},
+$a \leftarrow a + (a^* - a)(1 - e^{-N/(0.03f_s)})$, because switching it at once would make a clear signal jump to a
+dull one.
+
+\paragraph{Doppler.} The radial speed is the change of distance per control block,
+$v_r = (d_n - d_{n-1})/T_b$ (clamped to $\pm\SI{120}{m/s}$), and the reading rate is multiplied by
+\begin{equation}
+  D^* = \operatorname{clamp}_{[0.5,2]}\Bigl(\frac{c}{c + \eta\,v_r}\Bigr),\qquad c = \SI{343}{m/s},
+\end{equation}
+the frequency a listener at rest hears from a moving source, scaled by the amount $\eta$ (\ui{Doppler}). $D$ glides
+towards $D^*$ with $a = 0.08$ per 16 samples ($\tau\approx\SI{4}{ms}$), so the steps of the block-wise derivative are
+not heard. Jumping pipes get no Doppler, since their distance changes without travelling.
+
+\paragraph{A pipe at the ear (\ui{Flüstern}).} When a pipe comes within $\SI{1.4}{m}$ of the head, it is also sent
+straight to the two ears, which sit $\pm\SI{8.75}{cm}$ to the sides of the head turned by the view's yaw. With the
+distances $d_L, d_R$ to the ears, $d_\mathrm{min} = \min(d_L,d_R)$, and the weight
+$t = \operatorname{smoothstep}\bigl((1.4-d)/1.2\bigr)$ (the smoothstep $3t^2-2t^3$ starts and ends with zero slope):
+\begin{align}
+  g_{L,R} &= 0.9\,W\,t\,g_\mathrm{stop}\cdot\min\bigl(12,\ 1/d_{L,R}\bigr)\cdot(d_\mathrm{min}/d_{L,R})^{0.7}, \\
+  \tau_{L,R} &= (d_{L,R} - d_\mathrm{min})\,f_s/c \quad\text{samples},\\
+  f_{c,L,R} &= \operatorname{clamp}_{[1.5\mathrm{k},\,18\mathrm{k}]}\Bigl(\frac{\SI{18}{kHz}}{1 + 4(d_{L,R}/d_\mathrm{min} - 1)}\Bigr).
+\end{align}
+The $1/d$ law per ear makes the level difference between the ears large, as only a very near source produces; the
+extra factor $(d_\mathrm{min}/d)^{0.7}$ is the head's shadow on the far ear, which at this distance reaches down to
+low frequencies; the delay is the true difference of travel time, read with linear interpolation from a 128-sample
+history; and the far ear is darkened by a one-pole whose corner falls with the ratio of the distances. A
+\SI{180}{Hz} one-pole added with the weight $0.9t$ gives the bass boost of a source at the ear. Meanwhile the pipe's
+normal gain is reduced by $1-0.85Wt$, so the two pictures do not double.
+
+% ---------------------------------------------------------------------
+\subsection{Degradation (\fn{Degrade.h})}
+\label{sec:math-degrade}
+\S\ref{sec:degrade} gives the formula of the chain; here are its parts as the code computes them.
+\fn{DegradeParams::prepareBlock} derives once per block the quantiser step count $q = 2^{B-1}$ (off for
+$B\ge 15.9$), the hold increment $h = \operatorname{clamp}(f_h, 1, f_s)/f_s$, the per-sample probability of a crackle
+$40\gamma^2/f_s$ (on average $40\gamma^2$ per second) and of a dropout $3\delta^2/f_s$.
+\fn{DegradeState::frame} then draws, once per sample frame and shared by all channels of the sum:
+\begin{itemize}[nosep]
+  \item \emph{sample and hold}: a phase accumulator $\phi \mathrel{+}= h$; when it passes 1 a new value is taken. The
+    held value is not interpolated, so its images above $f_h/2$ remain: the metallic aliasing of a cheap converter is
+    the point.
+  \item \emph{crackle}: on an event an impulse of random sign and size $0.5$--$1.5$, then decaying by $0.93$ per sample
+    ($\tau\approx14$ samples, a click of a fraction of a millisecond).
+  \item \emph{dropout}: on an event a gap of \SIrange{20}{250}{ms}; the gain moves towards 0 and back to 1 by at most
+    $1/(0.003f_s)$ per sample, i.e.\ linear \SI{3}{ms} ramps that do not click.
+\end{itemize}
+\fn{DegradeState::process} applies the frame to one sample: hold, round to the nearest of $2q$ levels in $[-1,1]$
+($y = \lfloor yq + \tfrac12\rfloor/q$, rounding half away from zero), add the grain
+$\gamma\,e\,(0.6n + 1.5c)$ where the envelope $e \mathrel{+}= 0.002(|x|-e)$ ($\tau = 500$ samples, about
+\SI{10}{ms}) makes the noise follow the signal, multiply by the dropout gain, and mix
+$x + \alpha(y-x)$. Because the grain is proportional to the envelope, silence stays silent: the decay lives on the
+sound, like grain on a photograph lives on the exposed parts.
