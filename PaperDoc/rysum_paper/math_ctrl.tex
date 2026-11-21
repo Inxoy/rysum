@@ -100,10 +100,10 @@ field to the right.
 \label{sec:math-mod}
 \paragraph{Hashing (\fn{hash01}).} Many random values must be the same every time they are asked for (a step of an
 LFO, a pipe's offset, a pass of a lane). They come from an integer hash, not a generator with state:
-\begin{equation}
-  a \leftarrow a\oplus(a\gg16),\ a \leftarrow a\cdot\mathtt{0x7feb352d},\ a \leftarrow a\oplus(a\gg15),\
-  a \leftarrow a\cdot\mathtt{0x846ca68b},\ a \leftarrow a\oplus(a\gg16),
-\end{equation}
+\begin{gather}
+  a \leftarrow a\oplus(a\gg16),\quad a \leftarrow a\cdot\mathtt{0x7feb352d},\quad a \leftarrow a\oplus(a\gg15),\\
+  a \leftarrow a\cdot\mathtt{0x846ca68b},\quad a \leftarrow a\oplus(a\gg16),
+\end{gather}
 returning the low 24 bits divided by $2^{24}-1$. Each multiply spreads every input bit over the higher bits, each
 shift-and-xor folds the high bits back, so neighbouring inputs give unrelated outputs (a well-mixing finaliser of the
 \enquote{lowbias32} family).
@@ -111,9 +111,9 @@ shift-and-xor folds the high bits back, so neighbouring inputs give unrelated ou
 \paragraph{LFO shapes (\fn{lfoValue}).} With the phase $\Phi$ in cycles and $f = \Phi - \lfloor\Phi\rfloor$, all shapes
 start at 0 and rise first, aligned with the sine:
 \begin{gather}
-  \text{sine } \sin 2\pi\Phi,\quad
-  \text{triangle } \begin{cases}4f\\2-4f\\4f-4\end{cases}\!\!\!\text{for } f<\tfrac14,\ <\tfrac34,\ \text{else},\quad
-  \text{saw } \begin{cases}2f\\2f-2\end{cases}\!\!\!\text{for } f<\tfrac12,\ \text{else},\quad
+  \text{sine } \sin 2\pi\Phi,\qquad
+  \text{triangle } \begin{cases}4f, & f<\tfrac14\\2-4f, & f<\tfrac34\\4f-4, & \text{else}\end{cases}\qquad
+  \text{saw } \begin{cases}2f, & f<\tfrac12\\2f-2, & \text{else}\end{cases}\qquad
   \text{square } \pm1,\\
   \text{steps } r_{\lfloor\Phi\rfloor},\qquad
   \text{smooth } r_{\lfloor\Phi\rfloor} + \bigl(r_{\lfloor\Phi\rfloor+1}-r_{\lfloor\Phi\rfloor}\bigr)(3f^2-2f^3),

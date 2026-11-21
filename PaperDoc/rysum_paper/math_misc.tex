@@ -1,0 +1,92 @@
+% ---------------------------------------------------------------------
+\subsection{The grain cloud (\fn{cloudWrite}, \fn{renderCloud})}
+\label{sec:math-cloud}
+A pipe with a \ui{Wolke} writes its finished signal into a ring buffer of its own. Grains are started as a random
+process with the mean rate $\lambda$ (\ui{Dichte}) per second: an accumulator grows by $\lambda N/f_s\cdot U(0.5,1.5)$
+per block and every whole unit starts a grain. A grain reads the ring from a random time up to \ui{Zeitstreuung} back,
+with a Hann window of length $T_g\cdot U(0.7,1.3)$, and comes from a direction uniformly distributed in the spherical cap
+of half-angle $\psi$ (\ui{Streuung}) around the pipe: with the pipe's direction $\mathbf u$ and two tangents
+$\mathbf t_1, \mathbf t_2$,
+\begin{equation}
+  \mathbf d = \cos\theta\,\mathbf u + \sin\theta(\cos\phi\,\mathbf t_1 + \sin\phi\,\mathbf t_2),\qquad
+  \cos\theta \sim U(\cos\psi, 1),\quad \phi\sim U(0,2\pi),
+\end{equation}
+which is uniform on the cap because the area of a spherical zone is proportional to its height (Archimedes again).
+Grains overlap randomly, so they add in energy, not in amplitude; a Hann window keeps $3/8$ of the energy of a
+rectangular one, so the expected power of the cloud is $\lambda T_g\cdot\tfrac38 A^2$ times that of the pipe, and the
+grain amplitude
+\begin{equation}
+  A = \frac{\sin(\tfrac\pi2 c)}{\sqrt{\tfrac38\lambda T_g}} = \frac{1.633\,\sin(\tfrac\pi2c)}{\sqrt{\lambda T_g}}
+\end{equation}
+keeps the cloud as loud as the pipe at any density and grain size, while the dry pipe keeps $\cos(\tfrac\pi2c)$
+(\S\ref{sec:math-voice}): an equal-power crossfade by the amount $c$.
+
+% ---------------------------------------------------------------------
+\subsection{The reference tone (\fn{DsfOscillator.h})}
+\label{sec:math-dsf}
+The \ui{Testton} (\S\ref{sec:testton}) must be an exact, alias-free harmonic tone at any pitch the tuning gives, with a
+brightness from a pure sine to a full sawtooth-like spectrum. It is made by integrating a band-limited sum of cosines in
+closed form, a discrete summation formula \citep{moorer1976dsf}. With the weight $r\in[0,1]$ per harmonic and $N$
+harmonics, the geometric series
+\begin{equation}
+  c(\theta) = \sum_{n=1}^{N} r^{\,n-1}\cos n\theta
+  = \operatorname{Re}\Bigl[e^{i\theta}\,\frac{1-(re^{i\theta})^N}{1-re^{i\theta}}\Bigr]
+\end{equation}
+costs a complex division and one power instead of $N$ cosines (\fn{cosineDsf}; where $|1-re^{i\theta}|<10^{-6}$, i.e.\
+$r=1$ near $\theta=0$, the finite sum is used instead). $N = \min(N_\mathrm{req}, \lfloor 0.45f_s/f\rfloor)$, so no
+harmonic lies above $0.45f_s$ and nothing aliases. Integrating $c$ over the phase divides harmonic $n$ by $n$,
+$\int c\,d\theta = \sum r^{n-1}\sin(n\theta)/n$, which at $r=1$ is the band-limited sawtooth and at $r=0$ a sine. The
+integration is a discrete integrator run at an internal rate (\fn{DsfIntegrator}), trapezoidal,
+\begin{equation}
+  y_n = y_{n-1} + \tan(\Delta/2)\,(x_n + x_{n-1}),\qquad \Delta = 2\pi f/f_\mathrm{int},
+\end{equation}
+or rectangular with the gain $2\sin(\Delta/2)$ and a half-sample phase offset. At the frequency $h\Delta$ the trapezoidal
+integrator has the gain $\tan(\Delta/2)\cot(h\Delta/2)$: exactly 1 for the fundamental, $\approx 1/h$ for low harmonics,
+i.e.\ the discrete integrator reproduces the continuous $1/n$ weighting to within the warping of the bilinear
+transform. Its integration constant is set when a note starts or is retuned, from the exact value of the integrated
+series at the previous sample, $\sum_h r^{h-1}\,\frac{\tan(\Delta/2)}{\tan(h\Delta/2)}\sin\bigl(h(\theta-\Delta)\bigr)$, so the
+output has no DC offset and a change of pitch continues the waveform without a step. The brightness control maps to
+$r = 1-(1-x)^2$, which spreads the useful part of the geometric weights over the slider.
+
+% ---------------------------------------------------------------------
+\subsection{The Vox humana in the plugin (\fn{VoxStop.h})}
+\label{sec:math-voxstop}
+The neural engine \citep{neuralrysum2} runs at \SI{48}{kHz}. \fn{StreamResampler} carries the input there and the
+output back with the four-point Hermite interpolation of \S\ref{sec:math-voice}, reading a ring buffer at the position
+$p \mathrel{+}= f_\mathrm{in}/f_\mathrm{out}$ that starts a fixed lag behind the writer, so it never runs out after the
+first block. The pitches the keys ask for are those of the organ's tuning: a key $(\text{channel}, k)$ is given to the
+network as the fractional MIDI number $69 + 12\log_2(f/440)$ of its frequency in the current tuning and Stimmton
+(\fn{keyFor}). A half-drawn stop moves the timbre descriptors, brightness $-0.6\ell$ and breath $+0.5\ell$ with the lack of
+wind $\ell$, like the wind of a sample stop. Notes the tracker finds in the input are folded into the organ's compass by
+octaves and moved by an octave if they land in a gap of the short octave (\fn{organKey}); they are sent to the sample
+stops on MIDI channel 16 with the velocity $1 + \mathrm{round}(126\,v)$ from the tracked level, and while they sound their
+level is sent as polyphonic aftertouch (the source \ui{Druck}), only when it changed.
+
+% ---------------------------------------------------------------------
+\subsection{Konzert: clocks and the delay (\fn{Concert.cpp})}
+\label{sec:math-konzert}
+The player sends what is played, each event stamped with the player's audio time $t_r$. The listener must play it
+at a local audio time $t_\ell$ such that the rhythm is kept although messages arrive with varying delay.
+
+\paragraph{The offset (\fn{scheduleAt}).} On every message the listener records $o = t_\mathrm{local} - t_r$, the local
+audio time at arrival minus the player's stamp. $o$ is the clock offset plus the network delay of that message; the
+\emph{smallest} $o$ of the last three seconds belongs to the fastest message and is the best estimate of offset plus the
+minimal delay. The event is scheduled at
+\begin{equation}
+  t_\ell = \max\bigl(t_\mathrm{last},\ t_r + \hat o + D\bigr),
+\end{equation}
+with the chosen delay $D$ (60--\SI{2000}{ms}) as the jitter buffer for slower messages, and never earlier than the event
+before (the order stays). The estimate $\hat o$ follows the minimum upwards at once (the player paused, or the clocks drift
+that way, and late events must not pile up) but downwards only by at most \SI{0.5}{ms} per \SI{20}{ms}: a message that
+happened to come quicker must not shift the rhythm. A local audio time between blocks is the block's time carried on by
+the wall clock (at most \SI{0.2}{s}).
+
+\paragraph{The player's audio.} The player's input arrives as samples with known due times. The listener reads them with
+linear interpolation at the rate
+\begin{equation}
+  \rho = \frac{f_r}{f_s}\bigl(1 - \operatorname{clamp}_{[-0.003,\,0.003]}(0.3\,\bar e)\bigr),
+\end{equation}
+where $\bar e$ is the timing error of the read head (due time minus now, smoothed over about half a second): a proportional
+control that reads up to 0.3\,\% faster or slower (a few cents) until the head is on time. It absorbs different sample
+rates, sound cards whose clocks drift apart and a settling delay estimate without a gap; an error beyond
+\SI{\pm120}{ms} (a stall or a pause) is resolved by skipping or waiting instead.

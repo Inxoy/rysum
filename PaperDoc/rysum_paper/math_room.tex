@@ -72,11 +72,11 @@ listener, the direct sound takes the shortest way around one or two reflex corne
 the room) that both can see. It is heard from the direction of the first corner, from the distance of the whole way,
 and loses level by Maekawa's rule for the insertion loss of a barrier \citep{maekawa1968}, from the Fresnel number
 $N = 2\delta/\lambda$ of the detour $\delta$ (the way around minus the straight line), evaluated at \SI{250}{Hz}:
-\begin{equation}
+\begin{gather}
   L_\mathrm{loss} = \min\Bigl(26,\ 10\log_{10}(1+20N) + 4b\Bigr)\ \mathrm{dB},\qquad
-  N = \frac{2\delta\cdot\SI{250}{Hz}}{c},\qquad
+  N = \frac{2\delta\cdot\SI{250}{Hz}}{c},\\
   f_c = 250\Bigl(4 + \frac{3}{29.2\,\delta}\Bigr)\,\mathrm{Hz},
-\end{equation}
+\end{gather}
 with the bend $b\in[0,1]$ ($0$--$180^\circ$) adding a little for a sharp turn. Above $f_c$, where the loss would be
 \SI{6}{dB} higher, the low-pass of \S\ref{sec:math-voice} sets in, so the highs are lost first, as the detour counts in
 wavelengths. At the edge of the shadow $\delta = 0$ and nothing is lost: stepping past a corner never makes the sound jump.

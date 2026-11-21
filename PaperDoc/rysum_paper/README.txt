@@ -1,13 +1,15 @@
-Rysum - technical documentation (LaTeX), version 13 of 18 November 2026
+Rysum - technical documentation (LaTeX), version 14 of 21 November 2026
 
 Build (XeLaTeX is required for the plug-in's fonts):
    latexmk -xelatex main.tex
    or: xelatex main && bibtex main && xelatex main && xelatex main
    or (single program, fetches the LaTeX packages itself): tectonic -X compile main.tex
 Needs TeX Live / MiKTeX with fontspec (XeLaTeX), scrartcl, tikz, siunitx, natbib, lettrine, eso-pic.
-Versions 12 and 13 were compiled with Tectonic 0.17.0.
+Versions 12 to 14 were compiled with Tectonic 0.17.0.
 
 main.tex        the document
+math*.tex       Appendix A, the mathematical reference (math.tex includes the parts: math_voice, math_conv,
+                math_out, math_room, math_ctrl, math_live, math_bodies, math_misc)
 refs.bib        bibliography
 fonts/          the plug-in's typefaces (IM Fell / "Rysum Fell", UnifrakturMaguntia, IBM Plex Mono; SIL OFL
                 licences included) and the grain texture
@@ -25,7 +27,7 @@ tests/          the logs of the test runs (Windows, Ryzen 5 2600X):
                 passed), uisnapshot.log (85 checks + all 181 patches of the folder, all passed), walk.log (48 checks,
                 47 passed: the walking check read this computer's pace x2.5), concert.log (20 checks, 19 passed: an
                 intermittent timing check of the input, passed in two reruns)
-main.pdf        compiled version (101 pages)
+main.pdf        compiled version (141 pages)
 
 New in version 12: the second recording session (30 October), the unstable wind's new mouth tone, several
 cores and the graphics card, built-in impulse responses, MIDI buttons, the dataset sampler, the 3D Saal as a
@@ -38,3 +40,9 @@ Konzert (playing for listeners on other computers, the listener app), the Vox hu
 NeuralRysum v2, and the input playing the organ), the output stage Summe (EQ, compressor), effects per stop and
 the speed spread, long reverbs that ring out and the dispersion check, light that follows the wind, AmbiX output
 turned with the head, walking up to x8, faster reflections, the dataset as rendered, and the run of 18 November.
+
+New in version 14: Appendix A, a mathematical reference that goes through the signal processing function by
+function (tuning, encoder, motion and layouts, the voice, degradation, partitioned convolution, the impulse-response
+room and its rotation per pipe, MagLS, crosstalk cancellation, AllRAD, the simulated room, Lucier, the output stage,
+modulation and the Verlauf, the living organ, spatial degradation, photographic operations, bodies and knocks, beats,
+echoes, the grain cloud, the reference tone, the Vox humana's glue and the clocks of Konzert), read off commit bfc83f3.

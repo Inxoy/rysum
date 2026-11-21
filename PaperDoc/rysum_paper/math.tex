@@ -127,10 +127,10 @@ Legendre functions are built by the standard recurrences in $x = \sin\vartheta$,
 \end{align}
 (the diagonal, the first off-diagonal, and the three-term recurrence in $l$), and the multiples of the azimuth by
 the angle-addition theorem,
-\begin{equation}
-  \cos m\varphi = \cos(m-1)\varphi\cos\varphi - \sin(m-1)\varphi\sin\varphi,\qquad
+\begin{gather}
+  \cos m\varphi = \cos(m-1)\varphi\cos\varphi - \sin(m-1)\varphi\sin\varphi,\\
   \sin m\varphi = \sin(m-1)\varphi\cos\varphi + \cos(m-1)\varphi\sin\varphi.
-\end{equation}
+\end{gather}
 For 5th order this is 36 values for two $\sin/\cos$ pairs and about 60 multiplications. The variant
 \fn{encodeAmbiXDir} takes the four cosines and sines directly, which the room simulation uses since it already has
 the direction as a vector: for an image source at $(x,y,z)$ relative to the listener,
@@ -250,10 +250,10 @@ $\vartheta_c$, spread $S$ and distance $d$. Let $\rho_k\in[0,1]$ be the rank of 
 the medians of its twelve fifths $c[i+7]-c[i]$ and twelve thirds $c[i+4]-c[i]$ (the median ignores the wolf),
 for a step tuning the multiples of the step nearest to the pure intervals, $F = q\,\mathrm{round}(701.955/q)$. Each
 key with pitch class $p$ (in cents) then takes the lattice point of least cost
-\begin{equation}
-  (a,b) = \arg\min_{|a|\le 8,\,|b|\le 2}\ \Bigl[\,|a|\,w_F + |b|\,w_T + \tfrac13\,\varepsilon(a,b)\Bigr],\qquad
-  \varepsilon = \min\bigl(e,\,1200-e\bigr),\quad e = \bigl|((aF+bT)\bmod 1200) - p\bigr|,
-\end{equation}
+\begin{gather}
+  (a,b) = \arg\min_{|a|\le 8,\,|b|\le 2}\ \Bigl[\,|a|\,w_F + |b|\,w_T + \tfrac13\,\varepsilon(a,b)\Bigr],\\
+  \varepsilon = \min\bigl(e,\,1200-e\bigr),\qquad e = \bigl|((aF+bT)\bmod 1200) - p\bigr|,
+\end{gather}
 with the weights $w_F = 0.5 + |F-701.955|/4$ and $w_T = 0.5+|T-386.314|/4$. A pure interval is cheap, an impure one
 expensive, so in quarter-comma meantone (pure thirds) the notes are reached by thirds and the lattice is compact,
 while in Pythagorean tuning (pure fifths) they line up along a chain of fifths; $\varepsilon$ makes sure the point
@@ -270,3 +270,4 @@ Tonnetz is usually drawn. $\mathrm{G}\sharp$ and $\mathrm{E}\flat$ end on opposi
 \input{math_ctrl}
 \input{math_live}
 \input{math_bodies}
+\input{math_misc}
