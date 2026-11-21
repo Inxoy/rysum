@@ -1,0 +1,193 @@
+% ---------------------------------------------------------------------
+\subsection{Lucier's room (\fn{Lucier.cpp})}
+\label{sec:math-lucier}
+The Lucier mode (\S\ref{sec:lucier}) plays the organ through the response of $n$ passes of
+\enquote{loudspeaker -- room -- microphone}. Everything is computed in the frequency domain once per change, on
+a background thread, and the result is played by the same partitioned convolution as the room tail.
+
+\paragraph{The room's response (\fn{lucierFromRoom}).} For the simulated room the single-pass response is built from
+two parts. Above a crossover frequency it is the diffuse field of \S\ref{sec:math-tail} (two-band decaying noise,
+here with the Eyring times and its own seed). Below it, where a room has few, separated resonances, it is the sum of
+the room's eigenmodes. For a rectangular room with rigid walls the modes are
+\begin{equation}
+  f_{n_x n_y n_z} = \frac c2\sqrt{\Bigl(\frac{n_x}{L_x}\Bigr)^2 + \Bigl(\frac{n_y}{L_y}\Bigr)^2 + \Bigl(\frac{n_z}{L_z}\Bigr)^2},
+\end{equation}
+with the mode shapes $\psi = \prod_i\cos(n_i\pi x_i/L_i)$. The transfer function from a source at $\mathbf s$ (the
+organ, \SI{6}{m} in front, $10^\circ$ up) to the listener $\mathbf r$ is the modal sum
+\begin{equation}
+  M(\omega) = \sum_{\mathbf n} \varepsilon_{\mathbf n}\,\psi_{\mathbf n}(\mathbf s)\,\psi_{\mathbf n}(\mathbf r)\,
+  \frac{i\omega}{\omega_{\mathbf n}^2 - \omega^2 + 2i\delta\omega},
+\end{equation}
+a sum of resonators, each driven according to how strongly source and listener couple to its shape, with the
+normalisation $\varepsilon = \prod_i(2-\delta_{n_i0})$ and the damping $\delta = 6.9078/T_\mathrm{lo}$ (the amplitude
+decay rate that gives $T_\mathrm{lo}$; the half-power bandwidth of each mode is then $\delta/\pi$). Each mode is only
+evaluated within $\pm\max(\SI{3}{Hz}, 12\delta/2\pi)$ of its frequency, where its contribution is not negligible. The
+crossover is Schroeder's frequency $f_S = 2000\sqrt{T/V}$, doubled and clamped to 60--\SI{400}{Hz}, and lowered until
+the expected number of modes below $1.3f_c$,
+\begin{equation}
+  N(f) \approx \frac{4\pi V}{3}\Bigl(\frac fc\Bigr)^3 + \frac{\pi S}{8}\Bigl(\frac fc\Bigr)^2 + \frac{L_x+L_y+L_z}{2}\,\frac fc
+\end{equation}
+(the volume, surface and edge terms of the mode count; the textbook surface term is $\pi S/4$, so the code's estimate
+is slightly low and a few more modes may be computed than the limit says), is at most 4000. The two parts are joined with a raised-cosine
+crossfade from $0.8f_c$ to $1.25f_c$, the modes scaled so that their mean energy in $[f_c/2, f_c]$ equals that of the
+diffuse field in $[f_c, 2f_c]$. A polygon room uses the modes of a rectangle with the same floor area (the exact modes
+of an arbitrary plan would need a wave solver). A loaded impulse response is used as it is, from \SI{2}{ms} before its
+direct sound (first channel only).
+
+\paragraph{One pass and $n$ passes (\fn{buildLucier}).} Every pass also goes through a loudspeaker and a microphone,
+modelled as a band-pass from about 60\,Hz to \SI{10}{kHz},
+\begin{equation}
+  |T(f)| = \frac{q^2}{\sqrt{1+q^4}}\cdot\frac{1}{\sqrt{1+(f/10^4)^2}},\qquad q = (f/60)^2,
+\end{equation}
+(a fourth-order high-pass and a first-order low-pass). The response is damped by $e^{-t/\tau}$, with
+$\tau = \min(\tau_\mathrm{user},\, 2.5/(n-1))$ so that later generations stay within a few seconds, multiplied by $T$
+and normalised to unit RMS between 60\,Hz and \SI{10}{kHz}; call the result $H(f)$. Playing a sound $n$ times through
+the room multiplies its spectrum by $H^n$. For an integer $n$ this is computed exactly as
+$|H|^n e^{in\arg H}$ (no phase unwrapping is needed, since $n\arg H$ is right modulo $2\pi$). Each power is scaled by
+\begin{equation}
+  g_n = \bigl(\max|H^n|\cdot\operatorname{rms}|H^n|\bigr)^{-1/2},
+\end{equation}
+the geometric mean between \enquote{same peak} and \enquote{same energy}: normalising to the peak would let the rest
+vanish, normalising to the energy would let the one resonance that survives explode. A fractional generation
+$n_0+\phi$ crossfades the spectra of $n_0$ and $n_0+1$ linearly. As $n$ grows, $|H|^n$ is dominated more and more by
+the largest peaks of $|H|$, which is the process of Lucier's piece: the room's resonant frequencies remain, everything
+else fades. The display shows the strongest local maxima of $|G|$ that lie at least a sixth of an octave apart.
+
+\paragraph{The piece (\fn{lucierPass}).} For \ui{Stück}, a whole recording $x$ is convolved with the single-pass response
+$h$ again and again, each time by FFT overlap-add with blocks of $B = N-\ell_h+1$ samples ($N = 2^k\ge 2\ell_h$), so
+that every block's linear convolution of length $B+\ell_h-1 = N$ fits into one transform without wrapping around.
+
+% ---------------------------------------------------------------------
+\subsection{The output stage (\fn{MasterBus.h})}
+\label{sec:math-master}
+\paragraph{Equaliser.} Three biquads after Bristow-Johnson's cookbook \citep{rbj}, the same on every channel (an Ambisonic
+field stays a field: a filter that is the same on all channels commutes with every rotation and decoder). With
+$A = 10^{G/40}$, $\omega = 2\pi f/f_s$:
+\begin{itemize}[nosep]
+  \item bell: $\alpha = \sin\omega/(2Q)$, $H(z) = \dfrac{(1+\alpha A) - 2\cos\omega\,z^{-1} + (1-\alpha A)z^{-2}}{(1+\alpha/A) - 2\cos\omega\,z^{-1} + (1-\alpha/A)z^{-2}}$,
+    which has the gain $A^2 = 10^{G/20}$ at $f$ and 1 far from it;
+  \item shelves with slope $S=1$: $\alpha = \tfrac{\sin\omega}{2}\sqrt2$, $\beta = 2\sqrt A\,\alpha$, $c = \cos\omega$, and
+    the low shelf
+    \begin{align*}
+      b_0 &= A\bigl[(A+1)-(A-1)c+\beta\bigr], & a_0 &= (A+1)+(A-1)c+\beta,\\
+      b_1 &= 2A\bigl[(A-1)-(A+1)c\bigr], & a_1 &= -2\bigl[(A-1)+(A+1)c\bigr],\\
+      b_2 &= A\bigl[(A+1)-(A-1)c-\beta\bigr], & a_2 &= (A+1)+(A-1)c-\beta,
+    \end{align*}
+    with the gain $A^2$ at DC and 1 at Nyquist; the high shelf has the signs of the $(A-1)c$ terms and of $b_1, a_1$
+    reversed. All coefficients are divided by $a_0$.
+\end{itemize}
+Each biquad runs in transposed direct form II,
+$y = b_0x + z_1$, $z_1 \leftarrow b_1x - a_1y + z_2$, $z_2 \leftarrow b_2x - a_2y$, which has the best numerical behaviour
+of the direct forms in floating point; states below $10^{-20}$ are flushed to zero so silence does not produce
+denormal numbers. A band at $0$\,dB is skipped. The curve on screen is $|H(e^{i\omega})|$ of the product, evaluated
+directly from the coefficients.
+
+\paragraph{Compressor.} The detector takes the largest $|x_c|$ of all channels, in dB, and follows it with separate
+attack and release coefficients, $E \leftarrow L + a\,(E - L)$, $a = e^{-1/(\tau f_s)}$ with $\tau$ the attack time when
+$L > E$ and the release time otherwise. The gain reduction is the soft-knee curve of width $W = \SI{6}{dB}$ with the
+threshold $T$ and ratio $R$ (over $= E - T$, slope $s = 1/R - 1$):
+\begin{equation}
+  G_r = \begin{cases} 0, & 2\,\text{over} < -W\\[2pt] s\,\dfrac{(\text{over} + W/2)^2}{2W}, & |2\,\text{over}|\le W\\[6pt]
+  s\cdot\text{over}, & 2\,\text{over} > W\end{cases}
+\end{equation}
+a quadratic that joins the two straight lines with matching value and slope at both ends of the knee. The gain itself
+glides with \SI{2}{ms} and is applied, with the make-up gain, to every channel alike. Because all channels share
+one gain, the image does not move when the compressor works: a loud pipe on the left does not push the rest of the
+field to the right.
+
+% ---------------------------------------------------------------------
+\subsection{Modulation (\fn{Modulation.h})}
+\label{sec:math-mod}
+\paragraph{Hashing (\fn{hash01}).} Many random values must be the same every time they are asked for (a step of an
+LFO, a pipe's offset, a pass of a lane). They come from an integer hash, not a generator with state:
+\begin{equation}
+  a \leftarrow a\oplus(a\gg16),\ a \leftarrow a\cdot\mathtt{0x7feb352d},\ a \leftarrow a\oplus(a\gg15),\
+  a \leftarrow a\cdot\mathtt{0x846ca68b},\ a \leftarrow a\oplus(a\gg16),
+\end{equation}
+returning the low 24 bits divided by $2^{24}-1$. Each multiply spreads every input bit over the higher bits, each
+shift-and-xor folds the high bits back, so neighbouring inputs give unrelated outputs (a well-mixing finaliser of the
+\enquote{lowbias32} family).
+
+\paragraph{LFO shapes (\fn{lfoValue}).} With the phase $\Phi$ in cycles and $f = \Phi - \lfloor\Phi\rfloor$, all shapes
+start at 0 and rise first, aligned with the sine:
+\begin{gather}
+  \text{sine } \sin 2\pi\Phi,\quad
+  \text{triangle } \begin{cases}4f\\2-4f\\4f-4\end{cases}\!\!\!\text{for } f<\tfrac14,\ <\tfrac34,\ \text{else},\quad
+  \text{saw } \begin{cases}2f\\2f-2\end{cases}\!\!\!\text{for } f<\tfrac12,\ \text{else},\quad
+  \text{square } \pm1,\\
+  \text{steps } r_{\lfloor\Phi\rfloor},\qquad
+  \text{smooth } r_{\lfloor\Phi\rfloor} + \bigl(r_{\lfloor\Phi\rfloor+1}-r_{\lfloor\Phi\rfloor}\bigr)(3f^2-2f^3),
+\end{gather}
+where $r_i = 2\,\mathrm{hash01}(i\cdot2654435761 \oplus \text{seed})-1$ is one random value per cycle (2654435761 is
+Knuth's multiplicative constant $\approx 2^{32}/\varphi$). The smooth shape interpolates between them with the smoothstep,
+which has zero slope at the cycle boundaries, so it has no corners. Because the value depends only on the phase, a
+host that jumps or loops gets the same LFO back. The phase is integrated from the rate (or from the host's tempo and the
+division in quarter notes per cycle), and each pipe adds an offset $\sigma\kappa_k$ to it (\ui{Versatz}): along the
+keyboard $\kappa_k = k/41$, or random per pipe $\kappa_k = \mathrm{hash01}(131s + 7k + 1)$, so at $\sigma = 1$ one cycle
+is spread over the whole stop and the modulation runs through the pipes like a wave.
+
+\paragraph{Envelopes (\fn{EnvState}).} Delay, attack, decay, sustain, release, advanced every control block by $\Delta t$.
+The attack is linear, $\ell \mathrel{+}= \Delta t/T_A$, since a linear rise sounds even for a level that drives other
+parameters; decay and release are exponential towards their targets,
+\begin{equation}
+  \ell \leftarrow S + (\ell - S)\,e^{-4\Delta t/T_D},\qquad \ell \leftarrow \ell\, e^{-4\Delta t/T_R},
+\end{equation}
+so that after the nominal time $T$ the remaining distance is $e^{-4}\approx 2\,\%$ (\SI{-35}{dB}); the stage ends when the
+distance falls below $10^{-3}$ (decay) or the level below $5\cdot10^{-4}$ (release). A new trigger restarts from the
+current level, so retriggering does not click.
+
+\paragraph{Routing.} Each of the 24 routings adds $a\cdot s'$ to its target, where $s'$ is the source, mapped to $[0,1]$
+by $(s+1)/2$ when the routing is unipolar and the source bipolar. For a per-pipe target the sum of all routings $m$ acts
+on each pipe with its own source values (its LFO offset, its envelope, its key, its velocity, its MPE pressure), with the
+scales of \S\ref{sec:math-voice} ($180^\circ m$, $2^{3m}$, $36m$ dB, \dots). For a parameter of the plugin it is added
+to the parameter's normalised value.
+
+% ---------------------------------------------------------------------
+\subsection{Automation over time (\fn{Automation.h})}
+\label{sec:math-verlauf}
+The value of a lane is a pure function of the clock time $t$ in beats, so seeking, host loops and bounces give exactly
+the same result as playing through.
+
+\paragraph{Lane time (\fn{autoLocalTime}).} With the lane's offset $t_0$, speed $v$ and length $\Lambda$,
+$\tau = (t-t_0)\,v$; a looping lane takes $p = \lfloor\tau/\Lambda\rfloor$ as the number of the pass and
+$\tau \leftarrow \tau - p\Lambda$; a reversed lane reads $\Lambda - \tau$.
+
+\paragraph{Segments (\fn{autoSegment}).} Between point $a$ at $t_a$ and point $b$ at $t_b$, with $u = (\tau-t_a)/(t_b-t_a)$
+and the bend $\beta\in[-1,1]$ of $a$,
+\begin{equation}
+  B(u) = u^{\,2^{-3\beta}},
+\end{equation}
+which runs from $u^8$ (slow start, fast end) through the straight line at $\beta=0$ to $u^{1/8}$ (fast start). The
+shapes are
+\begin{itemize}[nosep]
+  \item \ui{Kurve}: $v_a + (v_b-v_a)B(u)$; \ui{Stufe}: $v_a$ until the next point;
+  \item \ui{Treppe}: $n = \max(1,\mathrm{round}(\rho\,(t_b-t_a)))$ steps, $u\leftarrow\min(1, \lfloor nu\rfloor/(n-1))$, then the curve;
+  \item \ui{Welle}: the curve plus $\tfrac D2\sin(2\pi\rho(\tau-t_a))$ with the rate $\rho$ in cycles per beat and the depth $D$;
+  \item \ui{Zittern}: the curve plus $\tfrac D2\,\nu(\rho(\tau-t_a))$, with value noise
+    $\nu(x) = r_{\lfloor x\rfloor} + (r_{\lfloor x\rfloor+1}-r_{\lfloor x\rfloor})\bigl(\tfrac12-\tfrac12\cos\pi\{x\}\bigr)$ seeded by the segment.
+\end{itemize}
+The result is clamped to $[0,1]$ and, for a switch or a choice with $k$ steps, rounded to $\mathrm{round}(v(k-1))/(k-1)$.
+
+\paragraph{Variation from pass to pass.} In pass $p$ a point with \ui{Streuung} $\sigma$ takes the value
+$v + \sigma(2\,\mathrm{dice}(p,i,\cdot)-1)$; the segment from point $i$ moves only if $p \bmod n = n-1$ for \ui{jedes $n$-te
+Mal} and $\mathrm{dice}(p,i,\cdot) < $ \ui{Chance}, otherwise it holds its start value. The dice
+$\mathrm{dice}(p,i,s) = \mathrm{hash01}\bigl(2654435761p \oplus 40503i \oplus 97\,\mathrm{seed}\oplus s\bigr)$ is a pure
+function of the pass, the point and the lane's seed (with a different salt $s$ for value and chance), so the same pass
+always varies the same way, and \ui{neu würfeln} changes only the seed.
+
+\paragraph{Gestures through the room (\fn{autoPipeTime}).} A lane on a per-pipe target is not heard by all pipes at
+once: a pipe at $\mathbf x$ (from its direction and distance, $x = -d\sin\varphi\cos\vartheta$,
+$y = d\cos\varphi\cos\vartheta$, $z = d\sin\vartheta$) reads the lane at the earlier time
+\begin{equation}
+  t_\mathbf{x} = t - \frac{\lVert\mathbf x - \mathbf o\rVert}{v_w}\qquad\text{or, inwards,}\qquad
+  t_\mathbf{x} = t - \frac{\max(0,\,25 - \lVert\mathbf x-\mathbf o\rVert)}{v_w},
+\end{equation}
+with the origin $\mathbf o$ and the speed of the front $v_w$ in metres per beat: the gesture spreads like a wave from
+the origin (or runs in from a sphere of \SI{25}{m}). Its value $v$ acts on the target as the offset $2v-1$, a routing at
+full amount.
+
+\paragraph{Thinning recorded curves (\fn{autoThin}).} A recorded movement produces a point every few milliseconds. It is
+reduced with the Ramer--Douglas--Peucker algorithm \citep{douglas1973}: keep the two end points; find the point farthest
+from the straight line between them, $d = |p_x\Delta y - p_y\Delta x|/\sqrt{\Delta x^2+\Delta y^2}$ (time scaled into
+value units); if it is farther than the tolerance, keep it and repeat on both halves. The result is the smallest set of
+points (in this greedy sense) that stays within the tolerance of the original everywhere.
