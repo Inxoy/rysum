@@ -266,6 +266,43 @@ public:
                     std::abs((double)rd->lengthInSamples / rd->sampleRate - secs) < 0.01 && peak > 1.0e-4f &&
                     dir.getChildFile("make_video.bat").existsAsFile() && !dir.getChildFile("scene.bin").exists());
         }
+        // with a built-in model (thousands of triangles, kept once) and the light off
+        {
+            wv.loadBuiltInRoomForTest(1);
+            wv.setDarkForTest(true);
+            wv.setPoseForTest(0, 0, 0);
+            run(10, {48, 60, 64, 67});
+            auto dir = outDir.getChildFile("rec360_model");
+            dir.deleteRecursively();
+            const bool started = wv.startPanoForTest(dir, 2048, 30);
+            int64_t sceneBytes = 0;
+            for (int i = 0; i < 20; ++i)
+            {
+                run(5, {});
+                wv.frameForTest();
+                if (i == 19)
+                    sceneBytes = dir.getChildFile("scene.bin").getSize();
+            }
+            const auto scenes = proc->pano360.scenesKept();
+            wv.stopPanoForTest();
+            const double tDraw = juce::Time::getMillisecondCounterHiRes();
+            while (proc->pano360.state() != Pano360Recorder::State::idle &&
+                   juce::Time::getMillisecondCounterHiRes() - tDraw < 120000.0)
+                juce::Thread::sleep(20);
+            const int frames = dir.getChildFile("frames").getNumberOfChildFiles(juce::File::findFiles, "*.jpg");
+            say("360 recording with a model, light off: " + juce::String(scenes) + " scenes, scene.bin " +
+                    juce::String(sceneBytes >> 10) + " kB, " + juce::String(frames) + " frames of " +
+                    juce::String(proc->pano360.framesTotal()) + ", " +
+                    juce::String(proc->pano360.lastFrameMs(), 0) + " ms per frame",
+                started && frames == (int)proc->pano360.framesTotal() && frames > 25 &&
+                    !dir.getChildFile("scene.bin").exists());
+            auto last = juce::ImageFileFormat::loadFrom(
+                dir.getChildFile("frames").getChildFile("f_" + juce::String(frames / 2).paddedLeft('0', 6) + ".jpg"));
+            if (last.isValid())
+                saveJpg(last, "walk360_model_dark.jpg");
+            wv.setDarkForTest(false);
+            proc->clearWalkModel();
+        }
     }
 
     /** the walk itself: smooth walking, a jump, materials of single surfaces, a model that stops the

@@ -138,6 +138,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     actAudience.onClick = [this] { setAudience (actAudience.getToggleState()); };
     actPano.onClick = [this] { panoClicked(); };
     actPano.setTooltip (panoTooltip());
+    panoFinishedSeen = proc.pano360.finishedCount();
     controlsButton.setTooltip (rysum::tr("Wie sich Maus und Gehen anf\xc3\xbchlen (auf diesem Computer): Tempo des Schauens, Maus umgekehrt, Gehtempo. Tab gehalten: alle Tasten."));
     controlsButton.onClick = [this] { showControlsMenu(); };
     back.setTooltip (rysum::tr("Zur\xc3\xbc" "ck zum Saal (Esc)"));
@@ -234,6 +235,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
 
 WalkView::~WalkView()
 {
+    proc.pano360.stop();                   // (a 360 recording ends with the view: the frames are drawn on their own)
     gpu.reset();
     proc.engine.viewWalkOn = false; proc.engine.viewZ = 0.0f;
     proc.engine.grabStop = -1; proc.engine.actFreeze = false;
@@ -327,6 +329,7 @@ void WalkView::visibilityChanged()
         gpu.reset();                           // (the card's window goes with the page)
         looking = false;
         setImmersive (false);
+        stopPano();                            // (the 360 recording ends with the view)
         actGrab.midiHeld = actFreeze.midiHeld = actJump.midiHeld = false;
         updateActions (false, false);          // (nothing stays in the hand, nothing stays frozen)
         proc.engine.viewWalkOn = false;
@@ -560,7 +563,7 @@ void WalkView::timerCallback()
         setSlow (false);
         if (magnet != 0) setMagnet (0);
     }
-    if (proc.pano360.isRecording() || actPano.getToggleState()) updatePanoLabel();
+    if (proc.pano360.state() != Pano360Recorder::State::idle || actPano.getToggleState() || proc.pano360.finishedCount() != panoFinishedSeen) updatePanoLabel();
     updateGpu();
     if (! gpuOn()) { overWasCard = false; repaint(); return; }
     buildScene ((float) gpu->renderingScale());

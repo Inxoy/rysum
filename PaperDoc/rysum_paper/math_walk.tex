@@ -35,11 +35,11 @@ seen from both sides), the direction to the eye $\mathbf E$ and a fixed light fr
 (0.35, -0.25, 0.9)$:
 \begin{equation}
   b = 0.24 + 0.42\,|\mathbf n\cdot\mathbf L| + 0.3\,\mathbf n\cdot\mathbf E
-      + g\bigl(0.7\,(\mathbf n\cdot\mathbf H)^{16} + 0.35\,(\mathbf n\cdot\mathbf E)^{32}\bigr),
+      + g\bigl(0.7\,(\mathbf n\cdot\mathbf H)^{32} + 0.35\,(\mathbf n\cdot\mathbf E)^{16}\bigr),
   \qquad \mathbf H = \frac{\mathbf L+\mathbf E}{|\mathbf L+\mathbf E|},
 \end{equation}
 a Lambert term, a term that lights what faces the eye, and for a glossy material ($g>0$) a Blinn highlight and a sheen
-towards the eye; the powers are four and five squarings. Per pixel the brightness is the interpolated $b$ times the
+towards the eye; the powers are five and four squarings. Per pixel the brightness is the interpolated $b$ times the
 material's tone and its procedural texture, plus the emission of a sounding pipe. With the light off (\ui{L}) $b$ is
 scaled down to a rest of $0.018$, and every lamp $k$ (a sounding pipe, a flash, a lantern; at most 24, the strongest)
 adds
@@ -126,7 +126,7 @@ there are $W/2\pi$ pixels per radian; in the middle of a face there are $F_c$, s
 \begin{equation}
   N = \frac{W}{2\pi}\cdot 2\tan 46^\circ = 0.330\,W
 \end{equation}
-($N = 1264$ for $W = 3840$). Towards the corners of a face the face has more pixels per radian than it needs (up to
+($N = 1266$ for $W = 3840$). Towards the corners of a face the face has more pixels per radian than it needs (up to
 $3^{3/2}\approx 5$ times as many per solid angle), so the six faces hold $6N^2 = 0.65\,W^2$ pixels for the $0.5\,W^2$ of
 the panorama.
 

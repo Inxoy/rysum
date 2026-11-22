@@ -12,7 +12,8 @@ static_assert(std::is_trivially_copyable_v<Raster::Call> && std::is_trivially_co
 
 namespace
 {
-constexpr int kMaxQueuedScenes = 240; // (about 90 MB with a large model: then frames are repeated instead)
+constexpr int kMaxQueuedScenes = 240;              // (waiting to be written: beyond either limit frames are repeated instead)
+constexpr int64_t kMaxQueuedBytes = 256 << 20;    // (a large model is held whole in every waiting scene)
 
 template <typename T> void writeVec(juce::OutputStream &o, const std::vector<T> &v)
 {
@@ -45,12 +46,14 @@ public:
     std::unique_ptr<juce::FileOutputStream> sceneOut;
     mutable std::mutex mx;
     std::deque<PanoJob> jobs;
+    std::atomic<int64_t> bytes{0};
     juce::WaitableEvent wake;
 
     void push(PanoJob &&j)
     {
         {
             std::lock_guard<std::mutex> l(mx);
+            bytes += (int64_t)(j.calls.size() * sizeof(Raster::Call));
             jobs.push_back(std::move(j));
         }
         wake.signal();
@@ -114,6 +117,7 @@ private:
                 return false;
             j = std::move(jobs.front());
             jobs.pop_front();
+            bytes -= (int64_t)(j.calls.size() * sizeof(Raster::Call));
         }
         if (sceneOut == nullptr)
             return true;
@@ -456,7 +460,8 @@ int64_t Pano360Recorder::frameNow() const noexcept
 
 bool Pano360Recorder::wantsScene() const noexcept
 {
-    return armed.load() && writer != nullptr && frameNow() >= given.load() && writer->queued() < kMaxQueuedScenes;
+    return armed.load() && writer != nullptr && frameNow() >= given.load() && writer->queued() < kMaxQueuedScenes &&
+           writer->bytes.load() < kMaxQueuedBytes;
 }
 
 void Pano360Recorder::addScene(PanoJob &&job)
