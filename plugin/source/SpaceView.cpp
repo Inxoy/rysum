@@ -1377,27 +1377,30 @@ void SpaceView::resized()
 {
     auto r = getLocalBounds();
     left = r.removeFromLeft(660);
-    right = r.reduced(28, 18);
+    // (the right column is full to the last pixel: the stops, the arrangement and the motion with its ellipse
+    //  need about 640 of the 664 the page has - so narrow margins above and below)
+    right = r.reduced(28, 0).withTrimmedTop(12).withTrimmedBottom(6);
     circle.setBounds(left.reduced(20, 34).withTrimmedTop(10));
 
     auto rr = right;
-    stopsBox = rr.removeFromTop(20 + (kNumStops + 2) * 18 + 8);
+    constexpr int stopRowH = 17;
+    stopsBox = rr.removeFromTop(20 + (kNumStops + 2) * stopRowH + 8);
     auto sb = stopsBox.withTrimmedTop(20);
     for (int slot = 0; slot < kNumStops; ++slot)
     {
         const int s = kDisplayOrder[(size_t)slot];
-        auto row = sb.removeFromTop(18);
+        auto row = sb.removeFromTop(stopRowH);
         pullButtons[(size_t)s]->setBounds(row.removeFromLeft(16));
         row.removeFromLeft(4);
         stopButtons[(size_t)s]->setBounds(row.reduced(0, 1));
     }
     {
         sb.removeFromTop(4);
-        auto row = sb.removeFromTop(18);
+        auto row = sb.removeFromTop(stopRowH);
         inputPull.setBounds(row.removeFromLeft(16));
         row.removeFromLeft(4);
         inputRow.setBounds(row.reduced(0, 1));
-        auto vrow = sb.removeFromTop(18);
+        auto vrow = sb.removeFromTop(stopRowH);
         voxPull.setBounds(vrow.removeFromLeft(16));
         vrow.removeFromLeft(4);
         voxRow.setBounds(vrow.reduced(0, 1));
@@ -1540,19 +1543,20 @@ void SpaceView::resized()
             depthRow->setBounds(half.getX(), half.getY(), hw, 26);
         if (spreadRow)
             spreadRow->setBounds(half.getX() + hw + 16, half.getY(), hw, 26);
-        mb.removeFromTop(3);
+        mb.removeFromTop(2);
         auto prow = mb.removeFromTop(20);
         const int pw = (prow.getWidth() - 16) / 5;
         juce::TextButton *pb[]{&pathLoop, &pathPing, &pathEven, &pathDrawnT, &jumpHard};
         for (int i = 0; i < 5; ++i)
             pb[i]->setBounds(prow.getX() + i * (pw + 4), prow.getY(), pw, 20);
-        mb.removeFromTop(8);
-        // ellipse: two rows of sliders, the form buttons, a small picture of the orbit (from above)
-        auto eb = mb.removeFromTop(2 * 28 + 2);
-        ellPreview = eb.removeFromRight(64).withSizeKeepingCentre(60, 56);
+        mb.removeFromTop(5);
+        // ellipse: two rows of sliders, the form buttons, a small picture of the orbit (from above;
+        // its "vorn" written just above it stays clear of the buttons over it)
+        auto eb = mb.removeFromTop(2 * 26 + 2);
+        ellPreview = eb.removeFromRight(64).withSizeKeepingCentre(46, 46);
         eb.removeFromRight(10);
         auto e1 = eb.removeFromTop(26);
-        eb.removeFromTop(4);
+        eb.removeFromTop(2);
         auto e2 = eb.removeFromTop(26);
         const int ew = (e1.getWidth() - 12) / 2;
         if (ellipseRow)
