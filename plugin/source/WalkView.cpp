@@ -94,6 +94,25 @@ int clipToField (const std::array<P2, 3>& t, float x0, float y0, float x1, float
     for (int i = 0; i < n; ++i) out[i] = a[i];
     return n;
 }
+// where 360° recordings go: chosen once per computer (Documents/Rysum/360.xml), else Documents/Rysum/360
+juce::File panoDefaultFolder() { return RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("360"); }
+juce::File panoSettingsFile() { return RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("360.xml"); }
+juce::File panoBaseFolder()
+{
+    if (auto xml = juce::parseXML (panoSettingsFile()))
+    {
+        const auto path = xml->getStringAttribute ("ordner");
+        if (path.isNotEmpty() && juce::File::isAbsolutePath (path)) return juce::File (path);
+    }
+    return panoDefaultFolder();
+}
+void setPanoBaseFolder (const juce::File& f)
+{
+    juce::XmlElement xml ("AUFNAHME360");
+    xml.setAttribute ("ordner", f == panoDefaultFolder() ? juce::String() : f.getFullPathName());
+    xml.writeTo (panoSettingsFile());
+}
+
 juce::String panoTooltip()
 {
     return rysum::tr("Ein 360\xc2\xb0-Video aufnehmen: das Bild rundum (equirektangular) und der Raumklang als Ambisonics 1. Ordnung (AmbiX), "
@@ -2554,6 +2573,14 @@ void WalkView::panoClicked()
         m.addItem (4, "2048 \xc3\x97 1024 (2K), 30 " + rysum::tr("Bilder/s"));
         m.addItem (5, "5760 \xc3\x97 2880 (5.7K), 30 " + rysum::tr("Bilder/s"));
         m.addSeparator();
+        // where it goes (and how much room is left there: 4K frames take gigabytes per minute)
+        const auto base = panoBaseFolder();
+        auto probe = base;
+        while (! probe.exists() && probe.getParentDirectory() != probe) probe = probe.getParentDirectory();
+        const auto freeBytes = probe.exists() ? probe.getBytesFreeOnVolume() : (juce::int64) 0;
+        m.addSectionHeader (rysum::tr("Speicherort: ") + base.getFullPathName() + "  (" + juce::String ((double) freeBytes / 1.0e9, 1) + rysum::tr(" GB frei") + ")");
+        m.addItem (10, rysum::tr("Speicherort w\xc3\xa4hlen \xe2\x80\xa6"));
+        if (base != panoDefaultFolder()) m.addItem (11, rysum::tr("Speicherort: wieder Dokumente/Rysum/360"));
         m.addItem (9, rysum::tr("Ordner der Aufnahmen \xc3\xb6" "ffnen"));
     }
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&actPano), [safe] (int r)
@@ -2562,11 +2589,13 @@ void WalkView::panoClicked()
         if (r == 8) { safe->proc.pano360.abort(); safe->updatePanoLabel(); return; }
         if (r == 9)
         {
-            auto d = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("360");
+            auto d = panoBaseFolder();
             d.createDirectory();
             d.startAsProcess();
             return;
         }
+        if (r == 10) { safe->choosePanoFolder(); return; }
+        if (r == 11) { setPanoBaseFolder (panoDefaultFolder()); safe->say (rysum::tr("Speicherort: ") + panoDefaultFolder().getFullPathName(), 4000.0); return; }
         const int widths[] { 3840, 3840, 2560, 2048, 5760 }, rates[] { 30, 25, 30, 30, 30 };
         safe->startPano (widths[r - 1], rates[r - 1]);
     });
@@ -2579,16 +2608,42 @@ bool WalkView::startPanoForTest (const juce::File& folder, int width, int fps)
     return proc.pano360.start (folder, { width, fps, 92 }, proc.getSampleRate(), err);
 }
 
+void WalkView::choosePanoFolder()
+{
+    chooser = std::make_unique<juce::FileChooser> (rysum::tr("Wohin die 360\xc2\xb0-Aufnahmen kommen"), panoBaseFolder().exists() ? panoBaseFolder() : juce::File());
+    juce::Component::SafePointer<WalkView> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [safe] (const juce::FileChooser& fc)
+    {
+        const auto f = fc.getResult();
+        if (safe == nullptr || f == juce::File()) return;
+        if (! f.isDirectory() && ! f.createDirectory()) { safe->say (rysum::tr("Kann den Ordner nicht anlegen: ") + f.getFullPathName(), 5000.0); return; }
+        setPanoBaseFolder (f);
+        safe->say (rysum::tr("Speicherort: ") + f.getFullPathName() + "  (" + juce::String ((double) f.getBytesFreeOnVolume() / 1.0e9, 1) + rysum::tr(" GB frei") + ")", 5000.0);
+    });
+}
+
 void WalkView::startPano (int width, int fps)
 {
-    const auto dir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("360")
-                         .getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"));
+    const auto base = panoBaseFolder();
+    if (! base.isDirectory() && ! base.createDirectory())
+    {
+        // (a drive that is not there now: say so instead of writing somewhere else)
+        say (rysum::tr("Kann den Ordner nicht anlegen: ") + base.getFullPathName(), 6000.0);
+        return;
+    }
+    const auto dir = base.getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"));
     juce::String err;
     panoFinishedSeen = proc.pano360.finishedCount();
     if (! proc.pano360.start (dir, { width, fps, 92 }, proc.getSampleRate(), err)) { say (err, 5000.0); return; }
     panoWarned = false;
     actPano.setToggleState (true, juce::dontSendNotification);
-    say (rysum::tr("360\xc2\xb0-Aufnahme l\xc3\xa4uft: ") + dir.getFullPathName(), 4000.0);
+    // (little room left: a bright 4K frame is about 1.6 MB, some 3 GB a minute at 30 frames/s - a dark one far less)
+    const double gbPerMinute = 3.0 * (double) width * (double) width / (3840.0 * 3840.0) * (double) fps / 30.0;
+    if ((double) base.getBytesFreeOnVolume() / 1.0e9 < 5.0 * gbPerMinute)
+        say (rysum::tr("360\xc2\xb0: wenig Platz auf dem Laufwerk \xe2\x80\x93 ") + juce::String ((double) base.getBytesFreeOnVolume() / 1.0e9, 1)
+             + rysum::tr(" GB frei, etwa ") + juce::String (gbPerMinute, 1) + rysum::tr(" GB je Minute"), 7000.0);
+    else
+        say (rysum::tr("360\xc2\xb0-Aufnahme l\xc3\xa4uft: ") + dir.getFullPathName(), 4000.0);
     panoLabelMs = 0.0;
     updatePanoLabel();
 }

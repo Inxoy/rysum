@@ -1893,7 +1893,10 @@ reproduced on the development machine).
 \paragraph{360-degree video.} \ui{360\textdegree{} Aufnahme} (next to \ui{Immersiv}) records what the view shows all around the eye,
 together with the sound field, as the material for a 360-degree video with spatial sound such as YouTube plays it: the viewer turns the head
 (or the phone, or drags the picture), and picture and sound turn together. A menu offers 2048, 2560, 3840 or 5760 pixels of width at 30 frames
-per second (3840 also at 25). Into \fn{Documents/Rysum/360/}\emph{date and time} go the frames (\fn{frames/f\_000000.jpg} \dots, equirectangular,
+per second (3840 also at 25), and where the recordings go: \fn{Documents/Rysum/360} unless another folder or drive is chosen in the same
+menu (\ui{Speicherort wählen \dots}, kept on this computer in \fn{Documents/Rysum/360.xml}; the menu shows the space left there, and a recording
+started with room for less than about five minutes says so -- a bright 3840-wide frame is about 1.6\,MB, some 3\,GB a minute). Into a folder
+named after the date and time go the frames (\fn{frames/f\_000000.jpg} \dots, equirectangular,
 the middle the Saal's front), \fn{ambix.wav} (first-order Ambisonics, AmbiX: W, Y, Z, X, 24 bit), a script \fn{make\_video.bat} (and \fn{.sh})
 that puts them together with ffmpeg into \fn{rysum360.mov} (H.264 and 4 channels of PCM at 48\,kHz), and a \fn{README.txt} with the last step:
 Google's Spatial Media Metadata Injector marks the file as a 360-degree video with AmbiX sound, and YouTube then plays it so. Both picture and

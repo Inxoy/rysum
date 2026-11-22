@@ -322,6 +322,7 @@ private:
     int panoFinishedSeen = 0;
     void panoClicked();
     void startPano (int width, int fps);
+    void choosePanoFolder();
     void stopPano();
     void updatePanoLabel();
 public:
