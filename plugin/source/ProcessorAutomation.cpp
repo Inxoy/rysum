@@ -93,6 +93,7 @@ void RysumProcessor::autoPublish()
 void RysumProcessor::applyAutomation(const EngineParams &p)
 {
     autoHits.clear();
+    autoSinceKey.store(p.noteClock - p.lastKeyClock, std::memory_order_relaxed);
     const auto *ac = autoActive.get();
     if (ac == nullptr || !ac->on)
         return;
@@ -120,7 +121,8 @@ void RysumProcessor::applyAutomation(const EngineParams &p)
         }
         if (autoFlag[t])
             continue; // two lanes on one parameter: the first one counts
-        const float v = autoValue(L.lane, p.autoBeats, L.steps);
+        // ("mit jedem Anschlag neu": one value for the whole instrument - from the last key pressed)
+        const float v = autoValue(L.lane, L.lane.perNote ? p.noteClock - p.lastKeyClock : p.autoBeats, L.steps);
         if (std::isnan(v))
             continue;
         modVals[t] = prmList[t]->convertFrom0to1(v);

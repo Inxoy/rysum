@@ -233,6 +233,10 @@ struct EngineParams
     bool playing = false;
     // the Verlauf (automation) clock: beats at the start of the block / slice, beats per second
     double autoBeats = 0.0, autoBeatRate = 0.0;
+    // ... and the clock of the lanes "mit jedem Anschlag neu": beats that always run at the tempo
+    // (noteBeatRate per second, set by the processor; noteClock and lastKeyClock filled in by the
+    // engine per slice: the clock now, and when the last key was pressed)
+    double noteBeatRate = 1.0, noteClock = 0.0, lastKeyClock = -1.0e9;
     // ... and what it plays besides the parameters: per-pipe lanes, timed paths (nullptr = none)
     const struct AutoEngineView *autoView = nullptr;
 
@@ -1040,6 +1044,14 @@ private:
                    : 1.0f - std::exp(-juce::MathConstants<float>::twoPi * fc / (float)sr);
     }
     std::array<float, kNumKeys> keyVelocity{};
+    // Verlauf "mit jedem Anschlag neu": the note clock (beats at the tempo, always running), and
+    // where it stood when each key and the last key were pressed
+    double noteClock = 0.0, lastKeyClock = -1.0e9;
+    std::array<double, kNumKeys> keyClock{};
+    double noteBeatsOf(int key, const EngineParams &p) const noexcept
+    {
+        return p.noteClock - keyClock[(size_t)juce::jlimit(0, kNumKeys - 1, key)];
+    }
     std::array<int, kNumKeys>
         keySource{}; // which recorded pipe a key plays (step tunings), from the last params
     void gainsFor(Pos pos, float *out) const noexcept;

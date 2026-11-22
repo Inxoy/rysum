@@ -149,6 +149,11 @@ public:
     {
         return autoVersion.load();
     }
+    /** beats since the last key was pressed, on the clock of the lanes "mit jedem Anschlag neu" */
+    double getAutoSinceKey() const
+    {
+        return autoSinceKey.load();
+    }
     /** the clock in beats, as the audio thread saw it last */
     double getAutoNow() const
     {
@@ -1102,7 +1107,7 @@ private:
     std::shared_ptr<const AutoCompiled> autoPending, autoActive; // pending: swapped atomically
     std::deque<std::shared_ptr<const AutoCompiled>> autoKeep; // message thread keeps them alive
     std::atomic<int> autoVersion{0};
-    std::atomic<double> autoNow{0.0}, autoSeekReq{-1.0};
+    std::atomic<double> autoNow{0.0}, autoSeekReq{-1.0}, autoSinceKey{1.0e9};
     std::atomic<bool> autoHostNow{false}, autoMovingNow{false}, autoRun{false}, autoRec{false};
     double autoOwnBeats = 0.0; // audio thread
     std::unique_ptr<std::atomic<float>[]> autoNorm;

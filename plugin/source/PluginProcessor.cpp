@@ -2074,6 +2074,9 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     q.playing = p.playing;
     q.autoBeats = p.autoBeats;
     q.autoBeatRate = p.autoBeatRate;
+    q.noteBeatRate = p.noteBeatRate;
+    q.noteClock = p.noteClock;
+    q.lastKeyClock = p.lastKeyClock;
     q.autoView = p.autoView;
     q.roomHarmonics = p.roomHarmonics;
     q.roomFollow = p.roomFollow;
@@ -2477,6 +2480,18 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
                 autoOwnBeats >= ac->cycleEnd)
                 autoOwnBeats = ac->cycleStart + std::fmod(autoOwnBeats - ac->cycleEnd,
                                                           ac->cycleEnd - ac->cycleStart);
+        }
+        // the clock of the lanes "mit jedem Anschlag neu": at the tempo, also while the host stands
+        // still or the own clock is stopped (the host's tempo, else the page's or the tempo lane's)
+        if (host)
+            params.noteBeatRate = params.bpm / 60.0;
+        else
+        {
+            double bpm = ac != nullptr ? ac->tempo : 60.0;
+            if (ac != nullptr && ac->hasTempo)
+                if (const float tv = rysum::autoValue(ac->tempoLane, params.autoBeats); !std::isnan(tv))
+                    bpm = rysum::autoTempoBpm(tv);
+            params.noteBeatRate = bpm / 60.0;
         }
         params.autoView = ac != nullptr && ac->on ? &ac->view : nullptr;
         autoNow = params.autoBeats;

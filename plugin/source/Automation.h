@@ -91,6 +91,12 @@ struct AutoLane
     int height = 0; // the editor: the lane's height in pixels, 0 = automatic (taller when chosen)
     bool solo = false;  // while any lane is solo, only solo lanes act
     uint32_t seed = 1;  // the dice of its variations ("neu würfeln" changes it)
+    // "mit jedem Anschlag neu": the lane runs on a clock that starts at a key press instead of the
+    // song position - a per-pipe lane for every key on its own (each note its own course: dynamic
+    // crossfades per voice, vector synthesis), any other lane from the last key pressed. That clock
+    // runs at the tempo whether the host plays or not.
+    bool perNote = false;
+    int stop = -1; // a per-pipe lane: only the pipes of this stop (-1 = all)
 };
 
 /** the whole automation of a project (message thread) */
@@ -354,8 +360,11 @@ struct AutoEngineView
     int numPipe = 0;
     std::array<const AutoLane *, kNumStops> path{}; // timed path per stop, nullptr = none
 
-    /** adds the per-pipe lanes to a pipe's modulation offsets; true if any acted */
-    bool addPipe(float *pm, double beats, float azDeg, float elDeg, float dist) const noexcept
+    /** adds the per-pipe lanes to a pipe's modulation offsets; true if any acted. beats = the
+        Verlauf's clock, noteBeats = the beats since this pipe's key was pressed (the clock of the
+        lanes "mit jedem Anschlag neu") */
+    bool addPipe(float *pm, double beats, float azDeg, float elDeg, float dist, int stop,
+                 double noteBeats) const noexcept
     {
         if (numPipe <= 0)
             return false;
@@ -365,7 +374,10 @@ struct AutoEngineView
         for (int i = 0; i < numPipe; ++i)
         {
             const auto &pl = pipe[(size_t)i];
-            const float v = autoValue(*pl.lane, autoPipeTime(*pl.lane, beats, x, y, z));
+            if (pl.lane->stop >= 0 && pl.lane->stop != stop)
+                continue;
+            const double t = pl.lane->perNote ? noteBeats : beats;
+            const float v = autoValue(*pl.lane, autoPipeTime(*pl.lane, t, x, y, z));
             if (std::isnan(v))
                 continue;
             pm[pl.target] += autoPipeOffset(v);
@@ -487,6 +499,10 @@ inline juce::ValueTree autoToTree(const AutoSet &s)
             lt.setProperty("solo", true, nullptr);
         if (l.seed != 1u)
             lt.setProperty("seed", (int)l.seed, nullptr);
+        if (l.perNote)
+            lt.setProperty("perNote", true, nullptr);
+        if (l.stop >= 0)
+            lt.setProperty("stop", l.stop, nullptr);
         // points as text: t v bend shape rate depth [chance every vary]; ...
         juce::String pts;
         for (auto &p : l.pts)
@@ -545,6 +561,8 @@ inline AutoSet autoFromTree(const juce::ValueTree &t)
         l.height = juce::jlimit(0, 400, (int)lt.getProperty("height", 0));
         l.solo = (bool)lt.getProperty("solo", false);
         l.seed = (uint32_t)(int)lt.getProperty("seed", 1);
+        l.perNote = (bool)lt.getProperty("perNote", false);
+        l.stop = juce::jlimit(-1, kNumStops - 1, (int)lt.getProperty("stop", -1));
         juce::StringArray items;
         items.addTokens(lt.getProperty("pts").toString(), ";", "");
         for (auto &it : items)

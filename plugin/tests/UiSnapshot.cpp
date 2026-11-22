@@ -49,6 +49,81 @@ public:
         startTimer(100);
     }
 
+    /** RYSUM_ONLY_PERNOTE: Verlauf lanes "mit jedem Anschlag neu" - every key on its own clock, a
+        lane for one stop only, a parameter lane restarted by the last key, while no clock runs */
+    void perNoteChecks()
+    {
+        using namespace rysum;
+        auto say = [](const juce::String &what, bool ok)
+        { std::cout << what << (ok ? "  ok" : "  FAIL") << std::endl; };
+        proc->setRateAndBufferSizeDetails(48000.0, 512);
+        proc->prepareToPlay(48000.0, 512);
+        auto setReal = [&](const juce::String &id, float v)
+        {
+            if (auto *q = proc->apvts.getParameter(id))
+                q->setValueNotifyingHost(q->convertTo0to1(v));
+        };
+        juce::AudioBuffer<float> st(juce::jmax(2, proc->getTotalNumOutputChannels()), 512);
+        auto run = [&](double seconds, std::initializer_list<int> on)
+        {
+            const int blocks = juce::roundToInt(seconds * 48000.0 / 512.0);
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer mb;
+                if (b == 0)
+                    for (int n : on)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                st.clear();
+                proc->processBlock(st, mb);
+            }
+        };
+        const int sA = kDisplayOrder[1], sB = kDisplayOrder[3];
+        for (int s = 0; s < kNumStops; ++s)
+            setReal(RysumProcessor::stopParamId(s), (s == sA || s == sB) ? 1.0f : 0.0f);
+        // the own clock at 60 BPM, standing still; one per-pipe lane (direction), per note, only stop A:
+        // from no change to +180 degrees in 4 beats; a parameter lane per note (the dry level)
+        auto &as = proc->getAuto();
+        as = AutoSet{};
+        as.clock = 1;
+        as.tempo = 60.0;
+        proc->autoPlay(false);
+        AutoLane l;
+        l.paramId = pipeTargetId(tgtAz);
+        l.perNote = true;
+        l.stop = sA;
+        l.pts = {{0.0, 0.5f}, {4.0, 1.0f}};
+        as.lanes.push_back(l);
+        proc->autoChanged();
+        proc->autoPublish();
+        run(0.5, {});
+        run(2.0, {60});      // key 1 at 0 s
+        run(1.0, {67});      // key 2 at 2 s; now 3 s
+        std::vector<float> a, b;
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            const float va = proc->engine.modAz[(size_t)sA][(size_t)k].load();
+            const float vb = proc->engine.modAz[(size_t)sB][(size_t)k].load();
+            if (std::abs(va) > 0.5f)
+                a.push_back(va);
+            if (std::abs(vb) > 0.5f)
+                b.push_back(vb);
+        }
+        std::sort(a.begin(), a.end());
+        juce::String got;
+        for (float v : a)
+            got << juce::String(v, 1) << " ";
+        // key 1 is 3 beats in (0.875 -> +135 degrees), key 2 is 1 beat in (0.625 -> +45 degrees)
+        say("Verlauf per note: stop A turned by " + got + "(want 45 and 135, each key on its own clock), stop B by " +
+                juce::String((int)b.size()) + " pipes (want none), the own clock standing still",
+            a.size() == 2 && std::abs(a[0] - 45.0f) < 4.0f && std::abs(a[1] - 135.0f) < 4.0f && b.empty());
+        std::cout << "seconds since the last key (beats): " << juce::String(proc->getAutoSinceKey(), 3) << std::endl;
+        say("Verlauf per note: the page's marker counts from the last key (1 beat)",
+            std::abs(proc->getAutoSinceKey() - 1.0) < 0.05);
+        // saved and loaded again
+        const auto back = autoFromTree(autoToTree(as));
+        say("Verlauf per note: saved and loaded", back.lanes.size() == 1 && back.lanes[0].perNote && back.lanes[0].stop == sA);
+    }
+
     /** RYSUM_ONLY_WALK: only the 3D view ("Begehen"), in several rooms and from several places
         (RYSUM_WALK_OBJ = a model to load as well) */
     void walkShots()
@@ -1362,6 +1437,13 @@ public:
         {
             stopTimer();
             serveConcert();
+            quit();
+            return;
+        }
+        if (std::getenv("RYSUM_ONLY_PERNOTE") != nullptr)
+        {
+            stopTimer();
+            perNoteChecks();
             quit();
             return;
         }
@@ -3351,6 +3433,37 @@ public:
                 proc->autoChanged();
                 proc->autoPublish();
                 shoot(9, "ui_verlauf.png");
+                {
+                    // "Je Anschlag neu": two lanes on the stop wind, one per stop, crossfading in every note
+                    // (Gedackt in, Praestant out over 8 beats); a chord played a moment before the picture
+                    AutoLane in, out;
+                    in.paramId = out.paramId = pipeTargetId(tgtWind);
+                    in.perNote = out.perNote = true;
+                    in.stop = 1;
+                    out.stop = 0;
+                    in.pts = {{0.0, 0.0f, 0.4f}, {8.0, 0.5f}};
+                    out.pts = {{0.0, 0.5f, -0.4f}, {8.0, 0.0f}};
+                    in.height = out.height = 110;
+                    S.lanes = {in, out};
+                    proc->autoChanged();
+                    proc->autoPublish();
+                    juce::AudioBuffer<float> abuf(proc->getTotalNumOutputChannels(), 512);
+                    for (int i = 0; i < 280; ++i)
+                    {
+                        juce::MidiBuffer mb;
+                        if (i == 0)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
+                        if (i == 140)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, 67, (juce::uint8)100), 0);
+                        proc->processBlock(abuf, mb);
+                    }
+                    if (auto *rc2 = dynamic_cast<RysumContent *>(content))
+                        rc2->showView(0); // (shown again: the page takes the new lanes into its controls)
+                    shoot(9, "ui_verlauf_pernote.png");
+                    S.lanes = {e, a, b, c, d, f};
+                    proc->autoChanged();
+                    proc->autoPublish();
+                }
                 std::function<rysum::ui::VerlaufView *(juce::Component &)> findView;
                 findView = [&](juce::Component &parent) -> rysum::ui::VerlaufView *
                 {
