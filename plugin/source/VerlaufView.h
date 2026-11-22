@@ -246,7 +246,7 @@ private:
     }
     std::vector<AutoSet> undoStack, redoStack;
     int shownVersion = -1;
-    double shownNow = -1.0;
+    double shownNow = -1.0, shownSinceKey = -1.0;
     bool updating = false;
 
     // pieces: new, open, save, the ones that come with Rysum, one's own
@@ -298,6 +298,9 @@ private:
         revButton{juce::String::fromUTF8("R\xc3\xbc"
                                          "ckw\xc3\xa4rts")},
         clearButton{"Leeren"};
+    // "mit jedem Anschlag neu" (any lane but the tempo); which stop a per-pipe lane acts on
+    juce::TextButton perNoteButton{"Je Anschlag neu"};
+    juce::ComboBox stopBox;
     // spreading (per-pipe lanes)
     juce::TextButton spreadButton{"Ausbreitung"}, inwardButton{"nach innen"};
     FreeRow waveRow{"Geschwindigkeit der Front", 0.25, 100.0, 6.0};

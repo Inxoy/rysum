@@ -480,6 +480,9 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
         info = juce::String::fromUTF8("SOLO \xc2\xb7 ") + info;
     else if (anySolo && !tempoL)
         info = rysum::tr("stumm (Solo) \xc2\xb7 ") + info;
+    if (l.perNote && !tempoL)
+        info << (pipeT >= 0 ? rysum::tr(" \xc2\xb7 je Anschlag neu, jede Taste f\xc3\xbcr sich")
+                            : rysum::tr(" \xc2\xb7 je Anschlag neu"));
     if (l.loop)
         info << rysum::tr(" \xc2\xb7 Schleife ") << beatsText(l.length);
     if (l.reverse)
@@ -500,8 +503,9 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
     }
     else if (live)
     {
-        // per-pipe and path lanes: the curve at the clock (at the origin, for a spreading one)
-        const float v = autoValue(l, P.getAutoNow());
+        // per-pipe and path lanes: the curve at the clock (at the origin, for a spreading one; per
+        // note: since the last key)
+        const float v = autoValue(l, l.perNote ? P.getAutoSinceKey() : P.getAutoNow());
         g.setColour(col::dim);
         g.drawText(std::isnan(v) ? juce::String("-") : owner.valueText(li, v), ht.removeFromTop(14),
                    juce::Justification::centredLeft, true);
@@ -534,6 +538,23 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
     const auto c = curveArea(r);
     juce::Graphics::ScopedSaveState ss(g);
     g.reduceClipRegion(r.withTrimmedLeft(kHeaderW));
+    if (l.perNote && !tempoL)
+    {
+        // "je Anschlag neu": the ruler's 0 is the key press; a mark where the last key has got to
+        const double since = P.getAutoSinceKey();
+        const float xs = xOfBeat(since);
+        if (since >= 0.0 && since < 1.0e6 && xs > (float)kHeaderW && xs < (float)getWidth())
+        {
+            g.setColour(col::rubric.withAlpha(0.55f));
+            g.fillRect(juce::Rectangle<float>(xs - 0.5f, (float)r.getY() + 2.0f, 1.5f, (float)r.getHeight() - 4.0f));
+            if (r.getHeight() >= 40)
+            {
+                g.setFont(A.monoFont(9.0f));
+                g.drawText(rysum::tr("letzte Taste"), juce::Rectangle<float>(xs + 3.0f, (float)r.getBottom() - 13.0f, 60.0f, 11.0f),
+                           juce::Justification::centredLeft);
+            }
+        }
+    }
     // the lane's region: where its points are (darker beyond it when it loops)
     if (l.loop || l.reverse || std::abs(l.speed - 1.0f) > 1.0e-3f)
     {
@@ -1737,6 +1758,35 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
         set().lanes[(size_t)selLane].reverse = revButton.getToggleState();
         changed();
     };
+    // with every key the lane starts again: per pipe for every note on its own, else from the last key
+    perNoteButton.setClickingTogglesState(true);
+    perNoteButton.setTooltip(rysum::tr("Die Spur beginnt mit jedem Anschlag von vorn, statt der Uhr zu folgen. Eine Spur \"je Pfeife\" l\xc3\xa4uft "
+        "f\xc3\xbcr jede Taste f\xc3\xbcr sich: jeder Ton hat seinen eigenen Verlauf (z. B. ein Register blendet je Ton langsam ein, ein anderes "
+        "aus \xe2\x80\x93 Vektorsynthese). Jede andere Spur beginnt mit der zuletzt gedr\xc3\xbc" "ckten Taste neu. Ihre Uhr l\xc3\xa4uft im Tempo, "
+        "auch wenn der Host steht."));
+    perNoteButton.onClick = [this]
+    {
+        if (!validLane(selLane) || set().lanes[(size_t)selLane].paramId == kAutoTempoId)
+            return;
+        pushUndo();
+        set().lanes[(size_t)selLane].perNote = perNoteButton.getToggleState();
+        changed();
+    };
+    addAndMakeVisible(perNoteButton);
+    stopBox.setTooltip(rysum::tr("Auf welche Pfeifen die Spur wirkt: alle, oder nur die eines Registers. Mehrere Spuren auf je ein Register "
+        "blenden zwischen Registern \xc3\xbc" "ber (z. B. Pfeife: Registerwind)."));
+    stopBox.addItem(rysum::tr("alle Register"), 1);
+    for (int k = 0; k < kNumStops; ++k)
+        stopBox.addItem(rysum::tr("nur ") + rysum::tr(kStops[(size_t)kDisplayOrder[(size_t)k]].label), 2 + kDisplayOrder[(size_t)k]);
+    stopBox.onChange = [this]
+    {
+        if (updating || !selectedIsPipeLane())
+            return;
+        pushUndo();
+        set().lanes[(size_t)selLane].stop = stopBox.getSelectedId() - 2;
+        changed();
+    };
+    addChildComponent(stopBox);
     clearButton.setTooltip(rysum::tr("Alle Punkte dieser Spur l\xc3\xb6schen"));
     clearButton.onClick = [this]
     {
@@ -1880,7 +1930,11 @@ juce::String VerlaufView::laneName(int lane) const
         if (id == kAutoTempoId)
             return rysum::tr("Tempo der eigenen Uhr");
         if (const int t = autoPipeTarget(id); t >= 0)
-            return pipeTargetNames()[t];
+        {
+            const int st = proc.getAuto().lanes[(size_t)lane].stop;
+            return pipeTargetNames()[t] +
+                   (st >= 0 ? juce::String::fromUTF8(" \xc2\xb7 ") + rysum::tr(kStops[(size_t)st].label) : juce::String());
+        }
         if (const int s = autoPathStop(id); s >= 0)
             return rysum::tr("Bahn: ") + rysum::tr(kStops[(size_t)s].label);
         return id;
@@ -3109,11 +3163,17 @@ void VerlaufView::syncControls()
     {
         const bool pipeLane = selectedIsPipeLane();
         for (juce::Component *c : {(juce::Component *)&spreadButton, (juce::Component *)&inwardButton,
-                                   (juce::Component *)&waveRow, (juce::Component *)&originPad})
+                                   (juce::Component *)&waveRow, (juce::Component *)&originPad,
+                                   (juce::Component *)&stopBox})
             c->setVisible(pipeLane);
+        const bool tempoLane = lane && s.lanes[(size_t)selLane].paramId == kAutoTempoId;
+        perNoteButton.setEnabled(lane && !tempoLane);
+        perNoteButton.setToggleState(lane && !tempoLane && s.lanes[(size_t)selLane].perNote,
+                                     juce::dontSendNotification);
         if (pipeLane)
         {
             const auto &l = s.lanes[(size_t)selLane];
+            stopBox.setSelectedId(l.stop + 2, juce::dontSendNotification);
             spreadButton.setToggleState(l.spread, juce::dontSendNotification);
             inwardButton.setToggleState(l.inward, juce::dontSendNotification);
             waveRow.slider.setValue(l.waveSpeed, juce::dontSendNotification);
@@ -3212,6 +3272,16 @@ void VerlaufView::timerCallback()
         repaint(titleBox);
         if (originPad.isVisible())
             originPad.repaint();
+    }
+    {
+        // lanes "je Anschlag neu": their marker (time since the last key) moves on its own clock
+        const double since = proc.getAutoSinceKey();
+        if (std::abs(since - shownSinceKey) > 1.0e-9 &&
+            std::any_of(set().lanes.begin(), set().lanes.end(), [](const AutoLane &l) { return l.perNote; }))
+        {
+            shownSinceKey = since;
+            timeline.repaint();
+        }
     }
     const bool rec = proc.isAutoRecord();
     if (recButton.getToggleState() != rec)
@@ -3351,9 +3421,11 @@ void VerlaufView::resized()
         {
             auto row3 = b.withTrimmedTop(34 + 8 + 24 + 10);
             row3 = row3.withHeight(34);
-            spreadButton.setBounds(row3.removeFromLeft(96).withTrimmedTop(10));
+            stopBox.setBounds(row3.removeFromLeft(132).withTrimmedTop(10));
+            row3.removeFromLeft(8);
+            spreadButton.setBounds(row3.removeFromLeft(88).withTrimmedTop(10));
             row3.removeFromLeft(6);
-            inwardButton.setBounds(row3.removeFromLeft(86).withTrimmedTop(10));
+            inwardButton.setBounds(row3.removeFromLeft(80).withTrimmedTop(10));
             row3.removeFromLeft(16);
             waveRow.setBounds(row3);
         }
@@ -3369,6 +3441,8 @@ void VerlaufView::resized()
         loopButton.setBounds(row2.removeFromLeft(90));
         row2.removeFromLeft(6);
         revButton.setBounds(row2.removeFromLeft(90));
+        row2.removeFromLeft(6);
+        perNoteButton.setBounds(row2.removeFromLeft(130));
         clearButton.setBounds(row2.removeFromRight(80));
     }
     {

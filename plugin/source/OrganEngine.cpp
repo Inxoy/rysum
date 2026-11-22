@@ -780,7 +780,8 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
 
     Pos pos = currentPosition(v.stop, v.key, p);
     // Verlauf: per-pipe lanes, each pipe at its own moment of a gesture spreading through the room
-    if (p.autoView != nullptr && p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist))
+    if (p.autoView != nullptr && p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist,
+                                                     v.stop, noteBeatsOf(v.key, p)))
         anyMod = true;
     if (anyMod)
     {
@@ -1514,6 +1515,7 @@ void OrganEngine::keyDown(int key, float velocity, const EngineParams &p, int no
     lastRandom = rng.bi();
     lastVelocity = juce::jlimit(0.0f, 1.0f, velocity);
     keyVelocity[(size_t)key] = lastVelocity;
+    keyClock[(size_t)key] = lastKeyClock = p.noteClock; // (Verlauf: the lanes per note start here)
     lastDownKey = key;
     lastDownNote = noteId;
 
@@ -4275,7 +4277,8 @@ Pos OrganEngine::displayPosition(int stop, int key, const EngineParams &p) const
             any = true;
         }
         if (p.autoView != nullptr &&
-            p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist))
+            p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist, stop,
+                                noteBeatsOf(key, p)))
             any = true;
         if (!any)
             return pos;
@@ -4563,6 +4566,9 @@ void OrganEngine::process(juce::AudioBuffer<float> &out, const juce::MidiBuffer 
         EngineParams pc = pIn;
         pc.ppq = pIn.ppq + (start / sr) * pIn.bpm / 60.0;
         pc.autoBeats = pIn.autoBeats + (start / sr) * pIn.autoBeatRate;
+        pc.noteClock = noteClock;
+        pc.lastKeyClock = lastKeyClock;
+        noteClock += (len / sr) * pIn.noteBeatRate;
         followInput(start, len, pIn);
         advanceModulation(pc, len / sr);
         if (modHook != nullptr)
@@ -5291,8 +5297,10 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         if (p.autoView != nullptr && p.autoView->path[(size_t)s] != nullptr &&
             (Motion)p.motionMode[(size_t)s] == Motion::Drawn)
         {
-            const float u = autoValue(*p.autoView->path[(size_t)s],
-                                      p.autoBeats + blockSeconds * p.autoBeatRate);
+            // ("mit jedem Anschlag neu": from the last key pressed)
+            const auto &pl = *p.autoView->path[(size_t)s];
+            const float u = autoValue(pl, pl.perNote ? p.noteClock - p.lastKeyClock + blockSeconds * p.noteBeatRate
+                                                     : p.autoBeats + blockSeconds * p.autoBeatRate);
             if (!std::isnan(u))
                 ph = getPath(s).pingPong ? 0.5 * (double)u : (double)u;
         }

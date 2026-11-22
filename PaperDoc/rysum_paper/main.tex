@@ -2704,6 +2704,19 @@ on the page places the origin and shows the fronts passing. A stop that follows 
 on the path in the \ui{Raum} view and can be dragged along it; two marks at the same place make the stop wait there, and every shape works on the
 journey (\ui{Stufe} jumps, \ui{Welle} shivers back and forth along the path, a loop is a round trip).
 
+\subsection{With every note (\ui{Je Anschlag neu})}
+\label{sec:verlauf-pernote}
+A lane can leave the clock and start again with every key instead (\ui{Je Anschlag neu}, suggested by a tester as a way to vector synthesis).
+Its time is then counted from a key press, on a clock that always runs at the tempo -- the host's tempo, or that of the own clock and its tempo
+lane -- also when the host stands still or the own clock is stopped. A lane on a per-pipe target runs \emph{for every key on its own}: each note
+held has its own course, so a chord whose notes came one after another has every note at another place of the same curve. A per-pipe lane can also
+be limited to one stop (\ui{nur} \emph{stop} instead of \ui{alle Register}); several such lanes, one per stop, crossfade between the stops in
+every note over seconds or minutes, for instance \ui{Pfeife: Registerwind} rising on the Gedackt while it falls on the Praestant, or the brightness of
+the Trompete opening while it moves away -- the vector synthesis of a few samplers of the 1980s, played with the stops of an organ. Loop, stretch,
+reverse, offset (a delay after the key), the variations and the spreading through the room work as before, on the note's time. Any other lane
+(a parameter, a timed path) has one value for the whole instrument and starts again with the last key pressed. In the lane a thin red line marks
+how far the last key has got, the ruler's zero being the key press.
+
 \subsection{Pieces}
 The lanes are saved with the project, not in patches. A \emph{piece} -- the lanes, the clock and its tempo, the markers and the drawn paths that its
 timetables ride on -- can be kept as a file of its own (\fn{Documents/Rysum/Stücke/<name>.rysumstueck}) through the menu \ui{Stück}: new, open, save
