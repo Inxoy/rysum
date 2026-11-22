@@ -99,6 +99,22 @@ public:
     /** a flat triangle with texture coordinates taken from the world (by its facing): loaded models */
     void flatTriangle (V3 a, V3 b, V3 c, int slot, float tone, float emissive = 0.0f);
 
+    // ---- the 360° picture (Pano360): one frame's triangles recorded as they are given (in the room), drawn
+    //      again later from six cameras around the eye
+    struct Call { Vert a, b, c; int slot; float tone, emissive; };
+    /** while set, every triangle given is also appended here (before any culling); null = off */
+    void setRecording (std::vector<Call>* to) noexcept { recording = to; }
+    /** all around: viewDepth gives the distance from the eye (nothing is left out for lying behind the view) */
+    void setAllAround (bool on) noexcept { allAround = on; }
+    /** a camera by its axes (any direction, straight up and down too); fov over the width */
+    void setCameraBasis (V3 eye, V3 right, V3 fwd, float fovDeg);
+    /** one face of a panorama: no vignette, fog by the true distance, the dark vault by the ray's elevation
+        (so the six faces meet without a seam) */
+    void setPanoFace (bool on) noexcept { panoFace = on; }
+    const std::array<Material, 32>& materials() const noexcept { return mats; }
+    void setMaterials (const std::array<Material, 32>& m) noexcept { mats = m; }
+    float grainNow() const noexcept { return grain; }
+
     /** rasterises and shades everything, writes the image */
     void finish();
     /** only the depths (for depthAt): when the graphics card draws the picture */
@@ -159,6 +175,8 @@ private:
     uint32_t frameNo = 0;
     bool depthOnly = false;
     V3 lightDir;
+    std::vector<Call>* recording = nullptr;
+    bool allAround = false, panoFace = false;
 
     // a few worker threads (the message thread works too)
     std::vector<std::thread> workers;

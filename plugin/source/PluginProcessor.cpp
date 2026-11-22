@@ -2789,6 +2789,12 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
 
         !stereo, juce::roundToInt(apvts.getRawParameterValue("dsfPartials")->load()));
 
+    // ---- the 360° recording: the scene's first order, fixed in the room (before the head's turn
+    //      below, and before the headphone or loudspeaker decoder)
+    if (pano360.isRecording())
+        pano360.pushAudio(work.getArrayOfReadPointers(),
+                          params.outputMode >= 1 ? juce::jmin(4, work.getNumChannels()) : 0, n);
+
     // ---- AmbiX out: looking around in the 3D view turns the scene that is sent out, as the
     //      headphones below hear it (the room included). The view closed: it glides back to the front.
     if (!binaural && !speakers && params.outputMode > 0)

@@ -94,6 +94,12 @@ public:
             std::cout << "wrote " << f.getFullPathName() << "  (" << wv.renderStats() << ")"
                       << std::endl;
         };
+        if (std::getenv("RYSUM_WALK_360") != nullptr)
+        {
+            pano360Checks(wv, setReal);
+            wv.setLookAndFeel(nullptr);
+            return;
+        }
         struct View
         {
             float x, y, yaw, pitch;
@@ -144,6 +150,122 @@ public:
         std::cout << "walk: done" << std::endl;
         wv.setLookAndFeel(nullptr);
         std::cout << "walk: look reset" << std::endl;
+    }
+
+    /** RYSUM_WALK_360 (with RYSUM_ONLY_WALK): the 360° picture and a short recording */
+    template <typename SetReal> void pano360Checks(rysum::ui::WalkView &wv, SetReal &&setReal)
+    {
+        using namespace rysum;
+        auto say = [](const juce::String &what, bool ok)
+        { std::cout << what << (ok ? "  ok" : "  FAIL") << std::endl; };
+        juce::AudioBuffer<float> b4(juce::jmax(4, proc->getTotalNumOutputChannels()), 512);
+        auto run = [&](int blocks, std::initializer_list<int> on)
+        {
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer mb;
+                if (b == 0)
+                    for (int n : on)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                b4.clear();
+                proc->processBlock(b4, mb);
+            }
+        };
+        auto saveJpg = [&](const juce::Image &img, const juce::String &name)
+        {
+            auto f = outDir.getChildFile(name);
+            f.deleteFile();
+            juce::FileOutputStream os(f);
+            juce::JPEGImageFormat jpg;
+            jpg.setQuality(0.9f);
+            jpg.writeImageToStream(img, os);
+            std::cout << "wrote " << f.getFullPathName() << std::endl;
+        };
+        setReal("output", 1.0f); // AmbiX 1
+        setReal(RysumProcessor::roomParamId(0, "Shape"), 0.0f);
+        run(30, {48, 55, 60, 64, 67, 72});
+        wv.setPoseForTest(0, 0, 30); // (the view turned: the panorama stays with the room)
+        run(4, {});
+        for (int w : {2048, 3840})
+        {
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            auto pano = wv.panoramaForTest(w);
+            const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            say("360: " + juce::String((int)wv.panoTrianglesForTest()) + " triangles, " + juce::String(pano.getWidth()) + " x " + juce::String(pano.getHeight()) + " in " +
+                    juce::String(ms, 0) + " ms",
+                pano.getWidth() == w && pano.getHeight() == w / 2);
+            saveJpg(pano, "walk360_" + juce::String(w) + ".jpg");
+        }
+        // which way round: a lantern 2 m to the left of the eye, in the dark, lights the left quarter
+        {
+            const auto eye = wv.eyeForTest();
+            proc->walkLanterns.clear();
+            proc->walkLanterns.push_back({eye.x - 2.0f, eye.y, eye.z});
+            wv.setDarkForTest(true);
+            run(4, {});
+            auto pano = wv.panoramaForTest(1024);
+            saveJpg(pano, "walk360_lantern_left.jpg");
+            auto lum = [&](int x, int y)
+            {
+                float s = 0.0f;
+                for (int dy = -6; dy <= 6; ++dy)
+                    for (int dx = -6; dx <= 6; ++dx)
+                        s += pano.getPixelAt(x + dx, y + dy).getBrightness();
+                return s / 169.0f;
+            };
+            const float left = lum(256, 256), right = lum(768, 256), front = lum(512, 256);
+            say("360: a lantern on the left lights x = W/4 (" + juce::String(left, 3) + ") more than the right (" +
+                    juce::String(right, 3) + ") and the front (" + juce::String(front, 3) + ")",
+                left > right + 0.05f && left > front + 0.05f);
+            proc->walkLanterns.clear();
+            wv.setDarkForTest(false);
+        }
+        // a recording of two seconds: the audio is the clock
+        {
+            auto dir = outDir.getChildFile("rec360");
+            dir.deleteRecursively();
+            const bool started = wv.startPanoForTest(dir, 1024, 30);
+            for (int i = 0; i < 40; ++i)
+            {
+                run(5, i == 0 ? std::initializer_list<int>{50, 57, 62} : std::initializer_list<int>{});
+                wv.frameForTest(); // (a frame of the view: its scene kept when one is due)
+            }
+            const double secs = proc->pano360.secondsRecorded();
+            const auto pics = proc->pano360.scenesKept();
+            const auto sceneBytes = dir.getChildFile("scene.bin").getSize();
+            wv.stopPanoForTest();
+            const double tDraw = juce::Time::getMillisecondCounterHiRes();
+            while (proc->pano360.state() != Pano360Recorder::State::idle &&
+                   juce::Time::getMillisecondCounterHiRes() - tDraw < 120000.0)
+                juce::Thread::sleep(20);
+            std::cout << "360 recording: " << pics << " scenes, scene.bin " << (sceneBytes >> 10)
+                      << " kB before the end, drawn in "
+                      << juce::String((juce::Time::getMillisecondCounterHiRes() - tDraw) / 1000.0, 1) << " s ("
+                      << juce::String(proc->pano360.lastFrameMs(), 0) << " ms per frame)" << std::endl;
+            const auto givenAfter = proc->pano360.framesTotal();
+            const int frames = dir.getChildFile("frames").getNumberOfChildFiles(juce::File::findFiles, "*.jpg");
+            const int want = (int)givenAfter;
+            juce::WavAudioFormat wavFmt;
+            std::unique_ptr<juce::AudioFormatReader> rd(
+                wavFmt.createReaderFor(dir.getChildFile("ambix.wav").createInputStream().release(), true));
+            float peak = 0.0f;
+            if (rd != nullptr)
+            {
+                juce::AudioBuffer<float> a((int)rd->numChannels, (int)rd->lengthInSamples);
+                rd->read(&a, 0, (int)rd->lengthInSamples, 0, true, true);
+                for (int c = 0; c < a.getNumChannels(); ++c)
+                    peak = juce::jmax(peak, a.getMagnitude(c, 0, a.getNumSamples()));
+            }
+            say("360 recording: " + juce::String(secs, 2) + " s, " + juce::String(frames) + " frames (" +
+                    juce::String(want) + " due, " + juce::String(pics) + " drawn), ambix.wav " +
+                    (rd != nullptr ? juce::String((int)rd->numChannels) + " ch, " +
+                                         juce::String((double)rd->lengthInSamples / rd->sampleRate, 2) + " s"
+                                   : juce::String("missing")) +
+                    ", peak " + juce::String(peak, 3),
+                started && frames == want && std::abs((double)frames - secs * 30.0) <= 1.5 && rd != nullptr && rd->numChannels == 4 &&
+                    std::abs((double)rd->lengthInSamples / rd->sampleRate - secs) < 0.01 && peak > 1.0e-4f &&
+                    dir.getChildFile("make_video.bat").existsAsFile() && !dir.getChildFile("scene.bin").exists());
+        }
     }
 
     /** the walk itself: smooth walking, a jump, materials of single surfaces, a model that stops the

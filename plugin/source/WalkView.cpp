@@ -94,13 +94,19 @@ int clipToField (const std::array<P2, 3>& t, float x0, float y0, float x1, float
     for (int i = 0; i < n; ++i) out[i] = a[i];
     return n;
 }
+juce::String panoTooltip()
+{
+    return rysum::tr("Ein 360\xc2\xb0-Video aufnehmen: das Bild rundum (equirektangular) und der Raumklang als Ambisonics 1. Ordnung (AmbiX), "
+                           "beide fest im Saal. Zusammen werden sie ein 360\xc2\xb0-Video mit r\xc3\xa4umlichem Ton (YouTube). Der Ausgang muss Ambisonics "
+                           "sein (AmbiX, Kopfh\xc3\xb6rer oder Lautsprecher). Noch einmal klicken: Ende; der Ordner \xc3\xb6" "ffnet sich.");
+}
 } // namespace
 
 WalkView::WalkView (RysumProcessor& p) : proc (p)
 {
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::CrosshairCursor);
-    for (juce::Button* b : std::initializer_list<juce::Button*> { &back, &load, &clear, &fit, &zUp, &home, &hear, &immerse, &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience, &controlsButton })
+    for (juce::Button* b : std::initializer_list<juce::Button*> { &back, &load, &clear, &fit, &zUp, &home, &hear, &immerse, &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience, &actPano, &controlsButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -130,6 +136,8 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
                                "bl\xc3\xa4st die Pfeifen wie Wind (nach oben = wohin der Blick geht). Nur Pfeifen, die frei im Saal sind, spielen mit; "
                                "beim Einschalten schweben alle gezogenen Register, die stillstehen. Wird nicht gespeichert."));
     actAudience.onClick = [this] { setAudience (actAudience.getToggleState()); };
+    actPano.onClick = [this] { panoClicked(); };
+    actPano.setTooltip (panoTooltip());
     controlsButton.setTooltip (rysum::tr("Wie sich Maus und Gehen anf\xc3\xbchlen (auf diesem Computer): Tempo des Schauens, Maus umgekehrt, Gehtempo. Tab gehalten: alle Tasten."));
     controlsButton.onClick = [this] { showControlsMenu(); };
     back.setTooltip (rysum::tr("Zur\xc3\xbc" "ck zum Saal (Esc)"));
@@ -250,6 +258,8 @@ void WalkView::resized()
     back.setBounds (r.removeFromLeft (70));
     r.removeFromLeft (6);
     immerse.setBounds (r.removeFromLeft (84));
+    r.removeFromLeft (6);
+    actPano.setBounds (r.removeFromLeft (112));
     {
         // the hands: a row above the hints at the bottom
         auto h = getLocalBounds().reduced (18, 0).withTrimmedBottom (26).removeFromBottom (22);
@@ -550,6 +560,7 @@ void WalkView::timerCallback()
         setSlow (false);
         if (magnet != 0) setMagnet (0);
     }
+    if (proc.pano360.isRecording() || actPano.getToggleState()) updatePanoLabel();
     updateGpu();
     if (! gpuOn()) { overWasCard = false; repaint(); return; }
     buildScene ((float) gpu->renderingScale());
@@ -649,7 +660,7 @@ bool WalkView::shownWhileListening (juce::Component* c) const
 {
     // walking and looking always; the hands the player allows
     if (c == &back) return ! alwaysSpectator;
-    if (c == &immerse || c == &home || c == &actJump || c == &controlsButton || c == &actLight) return true;
+    if (c == &immerse || c == &home || c == &actJump || c == &controlsButton || c == &actLight || c == &actPano) return true;
     if (c == &actShock || c == &actClap) return handsMay (1);
     if (c == &actGrab || c == &actHome) return handsMay (2);
     return false;
@@ -1892,6 +1903,17 @@ void WalkView::buildScene (float phys)
     // (a comparison: without the film grain; in the dark less of it, so nothing glitters where no lamp shines)
     const float grainAmt = compareNow ? 0.0f : (dark ? 0.05f : 0.12f);
     rast.begin (dark ? 0.0f : 0.07f, fogDist, grainAmt, ++frame);
+    // the 360° recording: this frame's triangles are kept (all around the eye: nothing left out for lying
+    // behind the view) when the next video frame is due and the renderer is free
+    {
+        auto& rec = proc.pano360;
+        const bool on = rec.isRecording() || panoForce;
+        rast.setAllAround (on);
+        panoCapturing = panoForce || (on && ! compareNow && rec.wantsScene());
+        panoCalls.clear();
+        panoStatic = 0;
+        rast.setRecording (panoCapturing ? &panoCalls : nullptr);
+    }
 
     // the surfaces from the Saal's absorption, scatter and high damping
     const auto wm = wallMaterial (r.absWalls, r.highDamp, r.scatter);
@@ -1988,9 +2010,10 @@ void WalkView::buildScene (float phys)
         // (the surface the cross points at - the one M gives another material - a little lighter)
         aimSurf = surfaceAhead (r, eye);
         const int aimSlot = aimSurf < 0 ? -1 : (aimSurf == kSurfFloor ? (int) kSlotFloor : (aimSurf == kSurfCeiling ? (int) kSlotCeiling : kSlotWall0 + aimSurf - kSurfWall0));
-        for (const auto& t : roomTris) rast.triangle (t.a, t.b, t.c, t.slot, t.slot == aimSlot ? t.tone * 1.1f : t.tone);
+        for (const auto& t : roomTris) rast.triangle (t.a, t.b, t.c, t.slot, t.slot == aimSlot && ! panoCapturing ? t.tone * 1.1f : t.tone);
     }
 
+    panoStatic = panoCalls.size();          // (the 360° recording: up to here the room, kept only when it changes)
     // the pipes, where Ambisonics puts them (as heard from the listener's place; you walk among them)
     const double now = proc.engine.timeSeconds.load();
     auto& glows = scene.glows;
@@ -2111,6 +2134,28 @@ void WalkView::buildScene (float phys)
             lamps.push_back ({ eye + V3 { -std::sin (ya) * 3.0f, std::cos (ya) * 3.0f, 0.3f }, 1.5f, 3.0f });
         }
         rast.setLamps (lamps, dark ? kDarkRest : 1.0f);
+    }
+    if (panoCapturing)
+    {
+        // the 360° frame: its triangles, materials, light and glows to the renderer's thread
+        rast.setRecording (nullptr);
+        PanoJob job;
+        job.calls = std::move (panoCalls);
+        panoCalls = {};
+        job.staticCount = panoStatic;
+        job.mats = rast.materials();
+        job.lamps = lamps;
+        job.ambient = dark ? kDarkRest : 1.0f;
+        job.eye = earsAway ? earEye : eye;          // (the ears left behind: the film is shot where they listen)
+        job.fogTone = rast.fogToneNow();
+        job.fogDistance = fogDist;
+        job.grain = grainAmt;
+        job.frameNo = frame;
+        for (const auto& gw : glows) job.glows.push_back ({ gw.at, gw.amount, gw.size });
+        job.upTo = proc.pano360.frameNow();
+        if (panoForce) panoTestJob = std::move (job);
+        else proc.pano360.addScene (std::move (job));
+        panoCapturing = false;
     }
     geoMs = (float) (juce::Time::getMillisecondCounterHiRes() - t0);
     if (card)
@@ -2479,5 +2524,129 @@ void WalkView::drawAudience (juce::Graphics& g, juce::Rectangle<int> area)
         g.setColour (juce::Colour (0xffa03010));
         g.drawFittedText (rysum::tr("Handy l\xc3\xa4" "dt nicht? Windows-Firewall:\nRysum im privaten Netz zulassen"), box.getX() + 2, box.getBottom() + 28, side - 4, 28, juce::Justification::centred, 2, 0.7f);
     }
+}
+
+// ---------------------------------------------------------------------------
+// the 360° recording
+// ---------------------------------------------------------------------------
+void WalkView::panoClicked()
+{
+    auto& rec = proc.pano360;
+    if (rec.isRecording()) { stopPano(); return; }
+    actPano.setToggleState (rec.state() != Pano360Recorder::State::idle, juce::dontSendNotification);
+    juce::PopupMenu m;
+    juce::Component::SafePointer<WalkView> safe (this);
+    if (rec.state() == Pano360Recorder::State::drawing)
+    {
+        m.addSectionHeader (rysum::tr("Die 360\xc2\xb0-Aufnahme wird gezeichnet"));
+        m.addItem (8, rysum::tr("Zeichnen abbrechen"));
+        m.addItem (9, rysum::tr("Ordner der Aufnahmen \xc3\xb6" "ffnen"));
+    }
+    else
+    {
+        m.addSectionHeader (rysum::tr("360\xc2\xb0-Video aufnehmen"));
+        m.addItem (1, "3840 \xc3\x97 1920 (4K), 30 " + rysum::tr("Bilder/s"));
+        m.addItem (2, "3840 \xc3\x97 1920 (4K), 25 " + rysum::tr("Bilder/s"));
+        m.addItem (3, "2560 \xc3\x97 1280, 30 " + rysum::tr("Bilder/s"));
+        m.addItem (4, "2048 \xc3\x97 1024 (2K), 30 " + rysum::tr("Bilder/s"));
+        m.addItem (5, "5760 \xc3\x97 2880 (5.7K), 30 " + rysum::tr("Bilder/s"));
+        m.addSeparator();
+        m.addItem (9, rysum::tr("Ordner der Aufnahmen \xc3\xb6" "ffnen"));
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&actPano), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r == 8) { safe->proc.pano360.abort(); safe->updatePanoLabel(); return; }
+        if (r == 9)
+        {
+            auto d = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("360");
+            d.createDirectory();
+            d.startAsProcess();
+            return;
+        }
+        const int widths[] { 3840, 3840, 2560, 2048, 5760 }, rates[] { 30, 25, 30, 30, 30 };
+        safe->startPano (widths[r - 1], rates[r - 1]);
+    });
+}
+
+bool WalkView::startPanoForTest (const juce::File& folder, int width, int fps)
+{
+    juce::String err;
+    panoFinishedSeen = proc.pano360.finishedCount();
+    return proc.pano360.start (folder, { width, fps, 92 }, proc.getSampleRate(), err);
+}
+
+void WalkView::startPano (int width, int fps)
+{
+    const auto dir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("360")
+                         .getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"));
+    juce::String err;
+    panoFinishedSeen = proc.pano360.finishedCount();
+    if (! proc.pano360.start (dir, { width, fps, 92 }, proc.getSampleRate(), err)) { say (err, 5000.0); return; }
+    panoWarned = false;
+    actPano.setToggleState (true, juce::dontSendNotification);
+    say (rysum::tr("360\xc2\xb0-Aufnahme l\xc3\xa4uft: ") + dir.getFullPathName(), 4000.0);
+    panoLabelMs = 0.0;
+    updatePanoLabel();
+}
+
+void WalkView::stopPano()
+{
+    if (! proc.pano360.isRecording()) return;
+    proc.pano360.stop();
+    rast.setAllAround (false);
+    say (rysum::tr("360\xc2\xb0: die Bilder werden jetzt gezeichnet \xe2\x80\x93 der Ordner \xc3\xb6" "ffnet sich, wenn sie fertig sind"), 5000.0);
+    panoLabelMs = 0.0;
+    updatePanoLabel();
+}
+
+void WalkView::updatePanoLabel()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - panoLabelMs < 250.0) return;
+    panoLabelMs = now;
+    auto& rec = proc.pano360;
+    const auto state = rec.state();
+    if (rec.finishedCount() != panoFinishedSeen)
+    {
+        // all frames drawn (or the drawing stopped): the folder
+        panoFinishedSeen = rec.finishedCount();
+        say (rysum::tr("360\xc2\xb0-Aufnahme fertig: ") + rec.folder().getFullPathName(), 5000.0);
+        if (! testMode) rec.folder().startAsProcess();
+    }
+    if (state == Pano360Recorder::State::idle)
+    {
+        actPano.setToggleState (false, juce::dontSendNotification);
+        actPano.setButtonText (juce::String::fromUTF8 ("360\xc2\xb0 Aufnahme"));
+        actPano.setTooltip (panoTooltip());
+        return;
+    }
+    actPano.setToggleState (true, juce::dontSendNotification);
+    if (state == Pano360Recorder::State::drawing)
+    {
+        // after the recording: how far the drawing is
+        const auto total = juce::jmax<int64_t> (1, rec.framesTotal());
+        actPano.setButtonText (juce::String::fromUTF8 ("360\xc2\xb0 ") + juce::String ((int) (100 * rec.framesDrawn() / total)) + " %");
+        actPano.setTooltip (juce::String (rec.framesDrawn()) + " / " + juce::String (total) + rysum::tr(" Bilder gezeichnet, ")
+                            + juce::String (rec.lastFrameMs(), 0) + rysum::tr(" ms je Bild"));
+        return;
+    }
+    const int s = (int) rec.secondsRecorded();
+    actPano.setButtonText (juce::String::fromUTF8 ("\xe2\x97\x8f 360\xc2\xb0 ") + juce::String (s / 60) + ":" + juce::String (s % 60).paddedLeft ('0', 2));
+    if (rec.noScene() && ! panoWarned)
+    {
+        panoWarned = true;
+        say (rysum::tr("360\xc2\xb0: der Ausgang ist Stereo \xe2\x80\x93 f\xc3\xbcr den Raumklang AmbiX, Kopfh\xc3\xb6rer oder Lautsprecher w\xc3\xa4hlen"), 6000.0);
+    }
+}
+
+juce::Image WalkView::panoramaForTest (int width)
+{
+    panoForce = true;
+    buildScene (1.0f);
+    panoForce = false;
+    rast.setAllAround (proc.pano360.isRecording());
+    Raster face;
+    return renderPanorama (panoTestJob, width, face);
 }
 } // namespace rysum::ui

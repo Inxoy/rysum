@@ -1,0 +1,173 @@
+% ---------------------------------------------------------------------
+\subsection{The walking camera (\fn{WalkView::advance}, \fn{Raster})}
+\label{sec:math-walk}
+The page \ui{Begehen} (\S\ref{sec:walk}) is drawn by a software renderer of its own (or, the same triangles, by the
+graphics card). Everything below is in the room's coordinates: $x$ to the right, $y$ to the front, $z$ up, metres; the
+eye stands at the listener's place plus the walked offset, $\mathbf e = \mathbf p_L + (p_x, p_y, z_f)$, where $z_f$ is
+the height of the feet above the floor.
+
+\paragraph{The camera.} The view has a yaw $\psi$ (positive = turned to the left, like the azimuth) and a pitch
+$\vartheta$ (up). Its three axes are
+\begin{equation}
+  \mathbf f = (-\sin\psi\cos\vartheta,\ \cos\psi\cos\vartheta,\ \sin\vartheta),\qquad
+  \mathbf r = (\cos\psi,\ \sin\psi,\ 0),\qquad
+  \mathbf u = \mathbf r\times\mathbf f ,
+\end{equation}
+so $\psi = 0$ looks along $+y$, the Saal's front, and $\psi = 90^\circ$ along $-x$, to the left, exactly as an
+Ambisonics source at azimuth $90^\circ$ lies. A point $\mathbf p$ goes into view space by
+$\mathbf v = ((\mathbf p-\mathbf e)\cdot\mathbf r,\ (\mathbf p-\mathbf e)\cdot\mathbf u,\ (\mathbf p-\mathbf e)\cdot\mathbf f)$
+and onto the picture of $w\times h$ pixels by the pinhole projection
+\begin{equation}
+  s_x = \tfrac w2 + F\,\frac{v_x}{v_z},\qquad s_y = \tfrac h2 - F\,\frac{v_y}{v_z},\qquad
+  F = \frac{w/2}{\tan(\varphi/2)},
+\end{equation}
+with the horizontal field of view $\varphi = 80^\circ$ ($F = 0.596\,w$). A triangle whose three corners all lie beyond
+one side of the view (with a margin of 2\,\%) is left out; one that crosses the near plane $v_z = 6$\,cm is cut there
+(a polygon clipped against one plane, then fanned into triangles again).
+
+\paragraph{Filling and depth.} Over a triangle on the screen $1/v_z$ is an affine function of $(s_x, s_y)$, and so are
+$u/v_z$ and $v/v_z$ for the texture coordinates; they are interpolated linearly with the edge functions and divided
+again per pixel, which is the perspective-correct interpolation. The depth test keeps the larger $1/v_z$, the nearer
+surface. The picture is cut into bands of 8 rows that are filled and shaded on several threads.
+
+\paragraph{Light.} Every corner gets a brightness from its normal $\mathbf n$ (turned towards the eye: surfaces are
+seen from both sides), the direction to the eye $\mathbf E$ and a fixed light from above, $\mathbf L \propto
+(0.35, -0.25, 0.9)$:
+\begin{equation}
+  b = 0.24 + 0.42\,|\mathbf n\cdot\mathbf L| + 0.3\,\mathbf n\cdot\mathbf E
+      + g\bigl(0.7\,(\mathbf n\cdot\mathbf H)^{16} + 0.35\,(\mathbf n\cdot\mathbf E)^{32}\bigr),
+  \qquad \mathbf H = \frac{\mathbf L+\mathbf E}{|\mathbf L+\mathbf E|},
+\end{equation}
+a Lambert term, a term that lights what faces the eye, and for a glossy material ($g>0$) a Blinn highlight and a sheen
+towards the eye; the powers are four and five squarings. Per pixel the brightness is the interpolated $b$ times the
+material's tone and its procedural texture, plus the emission of a sounding pipe. With the light off (\ui{L}) $b$ is
+scaled down to a rest of $0.018$, and every lamp $k$ (a sounding pipe, a flash, a lantern; at most 24, the strongest)
+adds
+\begin{equation}
+  \Delta b = P_k\,\frac{\max(0, \mathbf n\cdot\hat{\boldsymbol\ell}_k)}{1 + d_k^2/R_k^2},
+\end{equation}
+with the distance $d_k$ and unit direction $\hat{\boldsymbol\ell}_k$ from the pixel to the lamp, its power $P_k$ and
+reach $R_k$: an inverse-square fall-off softened within the reach, so a lamp never becomes infinitely bright.
+
+\paragraph{Fog, vignette, grain, the print.} A pixel at depth $d$ is mixed towards the fog's grey $c_f$,
+\begin{equation}
+  \ell \leftarrow \ell + (c_f-\ell)\,\frac{d/D}{1+d/D},\qquad D = \max\bigl(12,\ 1.5\max(W, L)\bigr)\,\mathrm m,
+\end{equation}
+half fog at $d = D$, so the far end of any Saal stays readable. Then a vignette $1 - 0.38\,\rho^2/\rho_{\max}^2$
+($\rho$ the distance from the middle), a film grain that moves with every frame and is weaker on the highlights,
+and a tone curve that gives the greys of an old print,
+$g = 0.35\,\ell^2(3-2\ell) + 0.65\,\ell$, $(R,G,B) = (13 + 222g + 6\ell(1-\ell),\ 13 + 219g + 2\ell(1-\ell),\ 12 + 214g -
+5\ell(1-\ell))$: a smoothstep for more contrast, the mid-tones a touch warm.
+
+\paragraph{Pipes, fewer sides far away.} A pipe of radius $a$ at depth $d$ is about $\rho = a\,w/(2d)$ pixels wide;
+it gets 5, 8, 12 or 18 sides below $\rho = 1.5$, 5, 14 pixels and above. A pipe more than its own length behind the
+eye is left out.
+
+\paragraph{Walking.} All the motions relax exponentially: with the frame time $\Delta t$, a quantity $q$ goes towards
+its target $q^*$ by
+\begin{equation}
+  q \leftarrow q + (q^*-q)\,\alpha(\tau),\qquad \alpha(\tau) = 1 - e^{-\Delta t/\tau},
+\end{equation}
+which is exact for a first-order lag and so does not depend on the frame rate. The mouse sets where to look
+($0.22^\circ$ per pixel, $0.15^\circ$ when the pointer is locked), the view follows with $\tau = 35$\,ms; the turning
+keys build up a turning speed towards $90^\circ$/s with $\tau = 90$\,ms. The walking speed goes towards $1.6$\,m/s
+($4.2$ with Shift) in the direction of the keys with $\tau = 0.12$\,s, dies away with $0.16$\,s when they are let go,
+and changes only slowly in the air ($\tau = 0.7$\,s): there is nothing to push against. Against a wall the step is
+kept inside the plan (\fn{keepInsidePlan}), and the velocity is then replaced by the step actually made divided by
+$\Delta t$, so the part into the wall is gone and the part along it stays, a slide.
+
+A jump starts with $v_z = 4.6$\,m/s against $g = 12.5$\,m/s$^2$ (a little heavier than the earth, so the jump does
+not float): the top is $v_z^2/2g = 0.85$\,m above the floor, after $v_z/g = 0.37$\,s, and the feet are back after
+$0.74$\,s. Landing, the knees give in by $\min(0.12, 0.016|v_z|)$\,m, which dies away with $\tau = 90$\,ms. In a
+loaded model the ground is found by a ray straight down from $0.5$\,m above the feet (the highest step one can climb),
+and a step up lifts the feet with $\tau = 50$\,ms instead of at once; a ray upwards keeps the head $0.2$\,m below
+what is above it. While walking the eye sways by $0.022\,a\sin\phi$, with the phase growing at $4.4$\,rad per metre
+walked and the amount $a\to\min(1, v/1.6)$ (above $0.3$\,m/s, $\tau = 0.15$\,s). The pose goes to the engine with
+every frame, and the engine listens from there (\S\ref{sec:walk}): the walked offset moves the listener in the
+simulated room, and the yaw turns the head of the headphone decoder and of the AmbiX output.
+
+% ---------------------------------------------------------------------
+\subsection{The 360-degree camera (\fn{Pano360.*})}
+\label{sec:math-pano}
+The button \ui{360\textdegree{} Aufnahme} on the page \ui{Begehen} records a video all around the eye together with
+the sound field, for a 360-degree video with spatial sound (YouTube and other players turn both with the viewer's
+head). Both are fixed to the room: the picture and the sound are taken as they are before the head's turn, so the
+viewer of the video, not the player of the plugin, decides where to look.
+
+\paragraph{The frame's triangles.} While a recording runs, the view's renderer keeps every triangle it is given, in
+room coordinates, before any culling (\fn{Raster::setRecording}), and nothing is left out for lying behind the view:
+the depth used for leaving out and for the number of sides is then the distance $|\mathbf p - \mathbf e|$ instead of
+$v_z$. The triangles of one frame, the materials, the lamps and the glows are written to a file (the triangles of
+the room or the model, which come first, only when they differ from the last frame's), and after the recording a
+thread of its own draws every frame from it again, from six cameras, the faces of a cube around the eye: front, right, back and left ($\mathbf f = \pm\mathbf x$,
+$\pm\mathbf y$), up and down ($\pm\mathbf z$, with $\mathbf r = \mathbf x$), each a square of $N\times N$ pixels with a
+field of view of $92^\circ$ (\fn{Raster::setCameraBasis}, which takes the axes directly, as the yaw and pitch of the
+view cannot look straight up).
+
+\paragraph{The equirectangular picture.} The video frame of $W\times H$ pixels, $H = W/2$, has the longitude
+$\lambda$ along its width and the latitude $\beta$ along its height:
+\begin{equation}
+  \lambda_i = 2\pi\Bigl(\frac{i+\frac12}{W} - \frac12\Bigr),\qquad
+  \beta_j = \pi\Bigl(\frac12 - \frac{j+\frac12}{H}\Bigr),\qquad
+  \mathbf d = (\sin\lambda\cos\beta,\ \cos\lambda\cos\beta,\ \sin\beta).
+\end{equation}
+The middle of the frame is the Saal's front, its right half is the right: a source at azimuth $a$ (positive to the
+left) and elevation $e$ appears at $i = W(\frac12 - a/2\pi)$, $j = H(\frac12 - e/\pi)$. The ray $\mathbf d$ meets the
+face whose axis is its largest component, $|d_x|$, $|d_y|$ or $|d_z|$; there, with that face's axes,
+\begin{equation}
+  s_x = \tfrac N2 + F_c\,\frac{\mathbf d\cdot\mathbf r}{\mathbf d\cdot\mathbf f} - \tfrac12,\qquad
+  s_y = \tfrac N2 - F_c\,\frac{\mathbf d\cdot\mathbf u}{\mathbf d\cdot\mathbf f} - \tfrac12,\qquad
+  F_c = \frac{N/2}{\tan 46^\circ},
+\end{equation}
+and the pixel is read bilinearly. Since the ray belongs to the face it meets first, $|s_x - N/2|, |s_y - N/2| \le
+F_c\tan 45^\circ = 0.966\,N/2$: the extra $2^\circ$ leave a border of $1.7\,\%$ of the face on every side, so the
+bilinear read never needs a pixel beyond the edge. The face is made as sharp as the panorama at its equator, where
+there are $W/2\pi$ pixels per radian; in the middle of a face there are $F_c$, so
+\begin{equation}
+  N = \frac{W}{2\pi}\cdot 2\tan 46^\circ = 0.330\,W
+\end{equation}
+($N = 1264$ for $W = 3840$). Towards the corners of a face the face has more pixels per radian than it needs (up to
+$3^{3/2}\approx 5$ times as many per solid angle), so the six faces hold $6N^2 = 0.65\,W^2$ pixels for the $0.5\,W^2$ of
+the panorama.
+
+\paragraph{No seams.} Three things of the usual picture depend on where a pixel lies on the screen, and would
+show the cube's edges in the panorama. On a face they are made to depend on the ray instead
+(\fn{Raster::setPanoFace}):
+\begin{itemize}
+  \item the fog: the usual picture uses the depth $v_z$; on a face it uses the distance along the ray,
+        $d_r = v_z\sqrt{1 + x'^2 + y'^2}$ with $x' = (s_x - N/2)/F_c$, $y' = (N/2 - s_y)/F_c$, the same for both faces
+        that meet at an edge;
+  \item the dark vault where nothing is (lighter at the horizon): by the ray's elevation $\varepsilon$ instead of the
+        row, $c_f\bigl(0.55 + 0.45\max(0, 1 - |\varepsilon|/0.56)\bigr)$;
+  \item the vignette: none.
+\end{itemize}
+The light itself depends only on the surface and the eye (\S\ref{sec:math-walk}), not on the view, so it is the same
+on both sides of an edge.
+
+\paragraph{The glows.} The glow of a sounding pipe is drawn over the picture, not into the triangles. Whether a
+wall hides it is decided on the face where its middle lies, as in the view (hidden when the depth there is less than
+$0.95\,d - 0.4$\,m). It is then laid into the panorama at its longitude and latitude with the angular radius the view
+gives it, $\alpha = \tan 40^\circ\,(0.6 + 0.35\,\ell)/d$ for a pipe of length $\ell$ at distance $d$ (limited to
+$0.008 \dots 0.34$\,rad), as an ellipse $2\alpha H/\pi$ high and $2\alpha W/(2\pi\cos\beta)$ wide, wider towards
+the poles as the equirectangular picture is stretched there, and drawn again one width to the left and the right where
+it crosses the seam at the back.
+
+\paragraph{The sound, and the audio as the clock.} The audio thread hands every block's first four Ambisonics
+channels to the recorder, taken before the head's turn and before the headphone or loudspeaker decoder: the scene as
+the engine renders it, fixed in the room. For ACN / SN3D (AmbiX) the first order of a higher-order scene is exactly
+its first four channels, $W, Y, Z, X$; nothing has to be converted, and a player that turns the head by $\psi$
+applies the same rotation $R(\psi)$ that the plugin itself applies to its AmbiX output (\fn{AmbiYawRotator}). They
+are written as a 24-bit WAV from a lock-free FIFO by a thread of the recorder. Picture and sound are then put
+together by the clock of the sound: after $n$ samples at the rate $f_s$ the video frame
+\begin{equation}
+  k = \Bigl\lfloor \frac{n\,r_v}{f_s} \Bigr\rfloor
+\end{equation}
+is due ($r_v$ frames per second). The view keeps the scene of the frame it builds whenever a frame $k$ is due that
+has no scene yet; that scene then stands for all frames from the first without one up to $k$. A scene is thus never
+late by more than one frame of the view (about 17\,ms at its 60 frames per second), and if the view is slower than
+$r_v$, frames are repeated, never dropped or shifted: the $k$-th frame of the video always belongs to the moment
+$k/r_v$ of the sound, and the video is as long as the sound (at the end the last picture is held to
+$\lfloor n_{\text{end}}\,r_v/f_s\rfloor$). Because the drawing comes afterwards, its time does not matter for this:
+the recording keeps every frame even at 5760 pixels of width. The recording's folder holds the frames, \fn{ambix.wav} and a script for
+ffmpeg that makes a MOV with H.264 and 4 channels of PCM at 48\,kHz, the form YouTube asks for; marking it as a
+360-degree video with AmbiX sound is left to Google's Spatial Media Metadata Injector.

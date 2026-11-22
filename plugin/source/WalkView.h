@@ -312,6 +312,29 @@ private:
     juce::TextButton actLight { "L Licht aus" };
     // "Publikum": the audience's phones as hands (a QR code in the corner leads them to the page)
     juce::TextButton actAudience { "Publikum" };
+    // the 360° recording (Pano360.h): the frame's triangles, recorded while the view builds them
+    juce::TextButton actPano { juce::String::fromUTF8 ("360\xc2\xb0 Aufnahme") };
+    std::vector<Raster::Call> panoCalls;
+    size_t panoStatic = 0;               // (this frame: how many of panoCalls are the room / the model)
+    bool panoCapturing = false, panoWarned = false, panoForce = false;
+    PanoJob panoTestJob;                 // (tests: the frame captured by panoramaForTest)
+    double panoLabelMs = 0.0;
+    int panoFinishedSeen = 0;
+    void panoClicked();
+    void startPano (int width, int fps);
+    void stopPano();
+    void updatePanoLabel();
+public:
+    /** tests: a 360° picture of the scene as it is now (equirectangular, 'width' wide) */
+    juce::Image panoramaForTest (int width);
+    /** tests: start / stop a recording into 'folder' */
+    bool startPanoForTest (const juce::File& folder, int width, int fps);
+    void stopPanoForTest() { stopPano(); }
+    /** tests: a frame of the view (the scene kept when the recording wants one) */
+    void frameForTest() { buildScene (1.0f); }
+    V3 eyeForTest() const { return eyeNow(); }
+    size_t panoTrianglesForTest() const noexcept { return panoTestJob.calls.size(); }
+private:
     void setAudience (bool on);
     void drawAudience (juce::Graphics& g, juce::Rectangle<int> area);
     double audienceShockSeen = 0.0;

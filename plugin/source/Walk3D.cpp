@@ -428,6 +428,16 @@ void Raster::setCamera (V3 e, float yawDeg, float pitchDeg, float fovDeg)
     lightDir = normalised ({ 0.35f, -0.25f, 0.9f });
 }
 
+void Raster::setCameraBasis (V3 e, V3 r, V3 f, float fovDeg)
+{
+    eye = e;
+    fwd = normalised (f);
+    right = normalised (r - fwd * dot (r, fwd));
+    up = cross (right, fwd);
+    focal = 0.5f * (float) w / std::tan (0.5f * juce::degreesToRadians (juce::jlimit (30.0f, 120.0f, fovDeg)));
+    lightDir = normalised ({ 0.35f, -0.25f, 0.9f });
+}
+
 void Raster::begin (float fog, float fogDistance, float grainAmt, uint32_t frame)
 {
     fogTone = fog;
@@ -465,7 +475,11 @@ Raster::VV Raster::toView (V3 p) const noexcept
     return { dot (d, right), dot (d, up), dot (d, fwd), 0, 0, 0, 0 };
 }
 
-float Raster::viewDepth (V3 p) const noexcept { return dot (p - eye, fwd); }
+float Raster::viewDepth (V3 p) const noexcept
+{
+    if (allAround) { const V3 d = p - eye; return std::sqrt (dot (d, d)); }
+    return dot (p - eye, fwd);
+}
 
 bool Raster::project (V3 p, float& sx, float& sy, float& depth) const noexcept
 {
@@ -519,6 +533,7 @@ float Raster::light (V3 p, V3 n, const Material& m) const noexcept
 
 void Raster::triangle (const Vert& a, const Vert& b, const Vert& c, int slot, float tone, float emissive)
 {
+    if (recording != nullptr) recording->push_back ({ a, b, c, slot, tone, emissive });
     const Vert* vs[3] { &a, &b, &c };
     VV v[3];
     for (int i = 0; i < 3; ++i) v[i] = toView (vs[i]->p);
@@ -669,13 +684,27 @@ void Raster::shadeBand (int band)
     {
         const size_t row = (size_t) y * (size_t) w;
         // above / below everything: a dark vault, a little lighter at the horizon
-        const float sky = fogTone * (0.55f + 0.45f * (1.0f - std::abs ((float) y / (float) h - 0.5f) * 2.0f));
+        const float skyRow = fogTone * (0.55f + 0.45f * (1.0f - std::abs ((float) y / (float) h - 0.5f) * 2.0f));
+        const float ry = (cy - ((float) y + 0.5f)) / focal;
         for (int x = 0; x < w; ++x)
         {
             const size_t k = row + (size_t) x;
             float l;
             const float iz = zbuf[k];
-            if (iz <= 0.0f) l = sky;
+            // (a panorama face: the ray's own direction, for the vault and the true distance)
+            const float rx = panoFace ? ((float) x + 0.5f - cx) / focal : 0.0f;
+            const float rayLen = panoFace ? std::sqrt (1.0f + rx * rx + ry * ry) : 1.0f;
+            if (iz <= 0.0f)
+            {
+                if (panoFace)
+                {
+                    // the vault as the screen's rows give it at the usual 80° view: by the ray's elevation
+                    const float dz = (right.z * rx + up.z * ry + fwd.z) / rayLen;
+                    const float el = std::abs (std::asin (juce::jlimit (-1.0f, 1.0f, dz)));
+                    l = fogTone * (0.55f + 0.45f * juce::jmax (0.0f, 1.0f - el / 0.56f));
+                }
+                else l = skyRow;
+            }
             else
             {
                 const auto& m = mats[gm[k]];
@@ -697,12 +726,13 @@ void Raster::shadeBand (int band)
                     }
                 }
                 l = m.tone * gt[k] * lit * texture (m, gu[k], gv[k]) + ge[k];
-                const float f = d * fogInv / (1.0f + d * fogInv);
+                const float dr = d * rayLen;           // (the distance along the ray; = d in the usual view, as before)
+                const float f = (panoFace ? dr : d) * fogInv / (1.0f + (panoFace ? dr : d) * fogInv);
                 l += (fogTone - l) * f;
             }
             // vignette and grain (moving with every frame, like film)
             const float dx = (float) x - cx, dy = (float) y - cy;
-            l *= 1.0f - 0.38f * (dx * dx + dy * dy) * ir2;
+            if (! panoFace) l *= 1.0f - 0.38f * (dx * dx + dy * dy) * ir2;
             const float gr = hash2 (x + (int) (frameNo * 7919u), y * 3 + (int) (frameNo * 104729u)) - 0.5f;
             l += grain * gr * (0.3f + 0.6f * juce::jmin (1.0f, l * 2.0f)) * (1.0f - 0.55f * juce::jmin (1.0f, l));   // (less on the highlights)
             // greys of an old print: ink-black to paper-white, the mids a touch warm

@@ -16,6 +16,7 @@
 #include "Transaural.h"
 #include "VoxStop.h"
 #include "Walk3D.h"
+#include "Pano360.h"
 #include <map>
 
 // the effect version ("Rysum FX", for audio tracks) is the same code built with IsSynth = 0
@@ -775,6 +776,8 @@ public:
     std::array<WalkLayout, 8> walkLayouts{};
     /** the lanterns put into the 3D view (K), in the Saal (m); saved with the project */
     std::vector<rysum::Vec3f> walkLanterns;
+    /** the 360° recording of the 3D view: the Ambisonics of every block (see Pano360.h) */
+    rysum::Pano360Recorder pano360;
     /** counts the times something other than the 3D view changed its room, light or pose (a patch
      *  with a built-in room): the open view takes them over */
     std::atomic<int> walkSerial{0};

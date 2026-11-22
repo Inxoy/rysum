@@ -94,7 +94,7 @@
   \small Matrikelnummer 521382 \\
   \small Sound als mediale Inszenierung \textperiodcentered{} Dr.\ Gerriet Sharma \\
   \small Technische Universität Berlin \textperiodcentered{} 3rd semester}
-\date{21 November 2026}
+\date{22 November 2026}
 
 \begin{document}
 \maketitle
@@ -1889,6 +1889,38 @@ The card draws into a native child window laid over the view. JUCE marks it clic
 as the window under the pointer, and it took every click: no button worked and only the walking keys, which are read directly, did anything. That
 window is now disabled, which makes Windows pass its mouse input to the window below and never give it the keyboard (the fault could not be
 reproduced on the development machine).
+
+\paragraph{360-degree video.} \ui{360\textdegree{} Aufnahme} (next to \ui{Immersiv}) records what the view shows all around the eye,
+together with the sound field, as the material for a 360-degree video with spatial sound such as YouTube plays it: the viewer turns the head
+(or the phone, or drags the picture), and picture and sound turn together. A menu offers 2048, 2560, 3840 or 5760 pixels of width at 30 frames
+per second (3840 also at 25). Into \fn{Documents/Rysum/360/}\emph{date and time} go the frames (\fn{frames/f\_000000.jpg} \dots, equirectangular,
+the middle the Saal's front), \fn{ambix.wav} (first-order Ambisonics, AmbiX: W, Y, Z, X, 24 bit), a script \fn{make\_video.bat} (and \fn{.sh})
+that puts them together with ffmpeg into \fn{rysum360.mov} (H.264 and 4 channels of PCM at 48\,kHz), and a \fn{README.txt} with the last step:
+Google's Spatial Media Metadata Injector marks the file as a 360-degree video with AmbiX sound, and YouTube then plays it so. Both picture and
+sound are fixed in the room, not in the player's head: the sound is taken before the head's turn and before the headphone or loudspeaker
+decoder, so the output has to be Ambisonics of any order (AmbiX, headphones or loudspeakers; with a stereo output the button says so). The
+player walks and looks around as usual; where the eye goes, the camera goes; where the player looks does not matter to the video. The ears
+left behind with \textbf{H} take the camera with them.
+
+Recording and drawing are two steps. While recording, the view keeps for every video frame that falls due the scene it has just
+built -- its triangles in the room, the materials, the lamps and the glows -- and writes it to \fn{scene.bin} (the room's or model's
+triangles only when they change; about 150\,kB per frame in the Saal with a chord). That costs almost nothing, so the recording keeps every
+frame whatever the size of the video. After \ui{360\textdegree{} Aufnahme} is clicked again, a thread of its own draws every frame from
+\fn{scene.bin}, with the processor, six times (a cube around the eye), resamples it into the panorama and writes the JPEG while the next one
+is drawn; the button shows how far it is, and the folder opens when it is done. Drawing a 3840-wide frame takes about 0.27\,s on the
+development machine (Ryzen~5 2600X), a 2048-wide one 0.11\,s: a minute of 4K video at 30 frames per second is drawn in about eight minutes.
+The sound's clock decides which video frame a scene belongs to (\S\ref{sec:math-pano}); a frame for which the view gave no scene, because it
+drew more slowly than the video's frame rate, repeats the one before, so picture and sound stay together. The recording has to be made in real
+time, with the view open (not in a faster-than-real-time export of the DAW, which the view cannot follow).
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=\linewidth]{screens/walk360.jpg}
+\caption{A frame of a 360-degree recording (2048\,$\times$\,1024, equirectangular): the Saal all around the eye, the middle its front with the
+organ, the left and right walls at a quarter of the width from either edge, the back wall split at the edges, the ceiling above and the floor
+below stretched over the whole width. A video player shows a part of it, turned as the viewer looks.}
+\label{fig:walk360}
+\end{figure}
 
 \begin{figure}[t]
 \centering
