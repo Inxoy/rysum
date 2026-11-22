@@ -194,7 +194,17 @@ void OrganEngine::updateLive (const EngineParams& p, double dt) noexcept
                 else if ((treadPhase += p.bpm / 60.0 / q * dt) >= 1.0) { treadPhase -= std::floor (treadPhase); tread = true; }
             }
             else if ((treadPhase += (double) lv.treadRate / 60.0 * dt) >= 1.0) { treadPhase -= std::floor (treadPhase); tread = true; }
-            if (tread) { bellowsRising = true; treadEnv = 1.0f; treadCount = treadCount.load() + 1; }
+            if (tread)
+            {
+                // the last thump has died away: the new one starts from rest (its tone at phase 0, its
+                // noise filters empty); one still sounding goes on from where it is
+                if (treadEnv < 1.0e-3f && treadAtk2 < 1.0e-3f)
+                {
+                    treadTone = 0.0; treadLp = treadLp2 = 0.0f;
+                    treadAtk1 = treadAtk2 = 0.0f;
+                }
+                bellowsRising = true; treadEnv = 1.0f; treadCount = treadCount.load() + 1;
+            }
             if (bellowsRising && (bellowsV += fdt / 0.3f) >= 1.0f) { bellowsV = 1.0f; bellowsRising = false; }
             // (twelve middle pipes empty it in 'size' seconds at full amount)
             bellowsV = juce::jmax (0.0f, bellowsV - lv.bellows * (demand / 12.0f) / juce::jmax (0.2f, lv.bellowsSize) * fdt);
@@ -418,12 +428,15 @@ void OrganEngine::updateSympathy (const EngineParams& p) noexcept
 void OrganEngine::renderLive (float* const* outs, int n, const EngineParams& p) noexcept
 {
     if (n <= 0) return;
-    if (treadEnv > 1.0e-4f)
+    if (treadEnv > 1.0e-4f || treadAtk2 > 1.0e-4f)
     {
-        // the tread: a dull thump from the console (the bellows board and the air rushing in)
+        // the tread: a dull thump from the console (the bellows board and the air rushing in). Its level
+        // follows the envelope through two short smoothing stages (about 5 ms to rise): a tread starts at
+        // zero and rises, also when the next one comes while the last still sounds.
         float g[kMaxAmbiChannels];
         gainsFor ({ p.consoleAz, juce::jmax (-60.0f, p.consoleEl - 25.0f), 2.0f }, g);
         const float dec = std::exp (-1.0f / (0.11f * (float) sr)), lpA = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 140.0f / (float) sr);
+        const float atkA = 1.0f - std::exp (-1.0f / (0.0015f * (float) sr));
         const float lvl = 0.5f * p.live.treadNoise;
         float* y = scratch.data();
         for (int i = 0; i < n; ++i)
@@ -432,7 +445,10 @@ void OrganEngine::renderLive (float* const* outs, int n, const EngineParams& p) 
             treadLp2 += lpA * (treadLp - treadLp2);
             treadTone += (double) (36.0f + 46.0f * treadEnv) / sr;
             if (treadTone >= 1.0) treadTone -= 1.0;
-            y[i] = lvl * treadEnv * (5.0f * treadLp2 + 0.5f * treadEnv * (float) std::sin (juce::MathConstants<double>::twoPi * treadTone));
+            treadAtk1 += atkA * (treadEnv - treadAtk1);
+            treadAtk2 += atkA * (treadAtk1 - treadAtk2);
+            const float a = treadAtk2;
+            y[i] = lvl * a * (5.0f * treadLp2 + 0.5f * a * (float) std::sin (juce::MathConstants<double>::twoPi * treadTone));
             treadEnv *= dec;
         }
         if (lvl > 0.0f)

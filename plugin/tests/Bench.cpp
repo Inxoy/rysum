@@ -231,6 +231,108 @@ public:
         return r;
     }
 
+    void playPatch(const juce::String &name)
+    {
+        juce::File file;
+        for (auto &f : RysumProcessor::getPatchFiles())
+            if (f.getFileNameWithoutExtension().contains(name))
+                file = f;
+        if (!file.existsAsFile())
+        {
+            std::cout << "no factory patch with '" << name << "'" << std::endl;
+            return;
+        }
+        juce::AudioProcessor::BusesLayout lay;
+        lay.outputBuses.add(juce::AudioChannelSet::stereo());
+        proc->setBusesLayout(lay);
+        proc->setRateAndBufferSizeDetails(48000.0, block);
+        proc->prepareToPlay(48000.0, block);
+        resetParams();
+        proc->loadPatch(file);
+        pump(200);
+        std::cout << "patch " << file.getFileNameWithoutExtension() << std::endl;
+        const double secs =
+            juce::jmax(2.0, juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_PATCH_SECS", "20")
+                                .getDoubleValue());
+        const double pre = juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_PATCH_PRE", "1")
+                               .getDoubleValue();
+        const int blocks = (int)(secs * 48000 / block), startB = (int)(pre * 48000 / block);
+        juce::AudioBuffer<float> buf(proc->getTotalNumOutputChannels(), block),
+            rec(2, blocks * block);
+        // RYSUM_BENCH_PATCH_CHORD = MIDI notes, comma separated
+        std::vector<int> chord{41, 53, 57, 60, 65, 69, 72};
+        const auto chordEnv = juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_PATCH_CHORD", {});
+        if (chordEnv.isNotEmpty())
+        {
+            chord.clear();
+            for (auto &s : juce::StringArray::fromTokens(chordEnv, ",", ""))
+                chord.push_back(s.getIntValue());
+        }
+        int treads = proc->engine.treadCount.load();
+        float lowest = 2.0f;
+        for (int b = 0; b < blocks; ++b)
+        {
+            juce::MidiBuffer mb;
+            if (b == startB)
+                for (int m : chord)
+                    mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)100), 0);
+            buf.clear();
+            proc->processBlock(buf, mb);
+            for (int c = 0; c < 2; ++c)
+                rec.copyFrom(c, b * block, buf, c, 0, block);
+            lowest = juce::jmin(lowest, proc->engine.bellowsNow.load());
+            if (proc->engine.treadCount.load() != treads)
+            {
+                treads = proc->engine.treadCount.load();
+                std::cout << "  tread at " << juce::String(b * block / 48000.0, 3)
+                          << " s, lowest pressure since the last " << lowest << std::endl;
+                lowest = 2.0f;
+            }
+            if (b % 8 == 0)
+                pump(1);
+        }
+        // the biggest jumps from one sample to the next (where a click would be)
+        struct Jump
+        {
+            int at;
+            float d;
+        };
+        std::vector<Jump> jumps;
+        const float *x = rec.getReadPointer(0);
+        for (int i = 1; i < rec.getNumSamples(); ++i)
+            jumps.push_back({i, std::abs(x[i] - x[i - 1])});
+        std::sort(jumps.begin(), jumps.end(), [](const Jump &a, const Jump &b) { return a.d > b.d; });
+        std::cout << "  biggest jumps:";
+        for (size_t j = 0, shown = 0; j < jumps.size() && shown < 12; ++j)
+        {
+            bool near = false;
+            for (size_t k = 0; k < j; ++k)
+                near = near || std::abs(jumps[k].at - jumps[j].at) < 2400;
+            if (near)
+                continue;
+            ++shown;
+            std::cout << " " << juce::String(jumps[j].at / 48000.0, 3) << "s:" << jumps[j].d;
+        }
+        std::cout << std::endl;
+        const auto wavDir = juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_WAV", {});
+        if (wavDir.isNotEmpty())
+        {
+            auto f = juce::File(wavDir).getChildFile("patch_" + name + ".wav");
+            f.deleteFile();
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> os(f.createOutputStream());
+            if (auto w = wav.createWriterFor(
+                    os, juce::AudioFormatWriterOptions()
+                            .withSampleRate(48000.0)
+                            .withNumChannels(2)
+                            .withBitsPerSample(32)
+                            .withSampleFormat(
+                                juce::AudioFormatWriterOptions::SampleFormat::floatingPoint)))
+                w->writeFromAudioSampleBuffer(rec, 0, rec.getNumSamples());
+            std::cout << "  wrote " << f.getFullPathName() << std::endl;
+        }
+    }
+
     void allStops(bool moving)
     {
         for (int s = 0; s < rysum::kNumStops; ++s)
@@ -257,6 +359,18 @@ public:
         std::cout << ", kernels " << rysum::kern::get().name;
 #endif
         std::cout << std::endl;
+
+        // RYSUM_BENCH_PATCH = part of a factory patch's name: play that patch through the whole
+        // plugin instead of the benchmark - a chord held (RYSUM_BENCH_PATCH_SECS, default 20 s),
+        // the bellows printed every 0.25 s, the biggest sample-to-sample jumps listed; with
+        // RYSUM_BENCH_WAV the render as a WAV file
+        const auto patchName = juce::SystemStats::getEnvironmentVariable("RYSUM_BENCH_PATCH", {});
+        if (patchName.isNotEmpty())
+        {
+            playPatch(patchName);
+            quit();
+            return;
+        }
 
         auto tmp = juce::File::getSpecialLocation(juce::File::tempDirectory);
         auto irFoa = tmp.getChildFile("RysumBench_foa.wav");

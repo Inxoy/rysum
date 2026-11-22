@@ -2014,6 +2014,240 @@ static void testRoomsAndSpread(std::shared_ptr<const SampleLibrary> lib)
           "spread: muted pipes are skipped");
 }
 
+// the factory patch "148 Kalkant - Der Atem geht aus" on the engine: a Kalkant treads every four
+// seconds (thump at the console), four stops, a big chord held. The tread must not click, and the
+// held chord must run out of wind before every tread, whenever the chord starts.
+static void testKalkantPatch(std::shared_ptr<const SampleLibrary> lib, const juce::File &outDir)
+{
+    const double sr = 48000.0;
+    const int B = 512;
+    auto patch = [](EngineParams &p)
+    {
+        p.stopOn = {};
+        for (int s : {0, 1, 2, 7})
+            p.stopOn[(size_t)s] = true;
+        // (as the patch has them: with 0.8 / 3 s a middle triad lasted nearly the whole cycle and
+        // a high one never ran out)
+        p.live.bellows = 1.0f;
+        p.live.bellowsSize = 2.2f;
+        p.live.blower = 1;
+        p.live.treadRate = 15.0f;
+        p.live.treadNoise = 0.5f;
+        p.windModel = 1;
+        p.wind = 0.1f;
+    };
+    // the step at a tread (the thump starts in the block where the tread count changes): the
+    // biggest jump from one sample to the next in the first 2 ms against the biggest jump inside
+    // the thump afterwards (a thump at 40-80 Hz moves slowly; a click is one big step at once), and
+    // the first samples' level against the thump's peak
+    struct Onset
+    {
+        float stepRatio, firstRatio;
+    };
+    auto onsetAt = [&](const juce::AudioBuffer<float> &b, int at)
+    {
+        float onset = 0.0f, body = 1.0e-9f, first = 0.0f, peak = 1.0e-9f;
+        for (int c = 0; c < b.getNumChannels(); ++c)
+        {
+            const float *x = b.getReadPointer(c);
+            const int end = b.getNumSamples();
+            for (int i = juce::jmax(1, at); i < juce::jmin(end, at + (int)(0.002 * sr)); ++i)
+                onset = juce::jmax(onset, std::abs(x[i] - x[i - 1]));
+            for (int i = at; i < juce::jmin(end, at + 4); ++i)
+                first = juce::jmax(first, std::abs(x[i]));
+            for (int i = at + (int)(0.004 * sr); i < juce::jmin(end, at + (int)(0.12 * sr)); ++i)
+            {
+                body = juce::jmax(body, std::abs(x[i] - x[i - 1]));
+                peak = juce::jmax(peak, std::abs(x[i]));
+            }
+        }
+        return Onset{onset / body, first / peak};
+    };
+    // 1) the tread alone (no keys, no wind noise): every thump starts without a click - at the
+    //    patch's rate, and fast (the next tread while the last thump still sounds), at two block
+    //    sizes
+    for (const float rate : {15.0f, 120.0f})
+        for (const int blk : {512, 64})
+        {
+            OrganEngine e;
+            e.prepare(sr, blk);
+            e.setLibrary(lib);
+            EngineParams p;
+            patch(p);
+            p.wind = 0.0f;
+            p.live.treadRate = rate;
+            const int total = (int)((rate > 60.0f ? 6.0 : 42.0) * sr);
+            juce::AudioBuffer<float> keep(2, total), b(2, blk);
+            keep.clear();
+            std::vector<int> treads;
+            int lastCount = e.treadCount.load();
+            for (int pos = 0; pos + blk <= total; pos += blk)
+            {
+                juce::MidiBuffer mb;
+                b.clear();
+                e.process(b, mb, p);
+                for (int c = 0; c < 2; ++c)
+                    keep.copyFrom(c, pos, b, c, 0, blk);
+                if (e.treadCount.load() != lastCount)
+                {
+                    lastCount = e.treadCount.load();
+                    treads.push_back(pos);
+                }
+            }
+            float worstStep = 0.0f, worstFirst = 0.0f;
+            for (int at : treads)
+                if (at + (int)(0.12 * sr) < total)
+                {
+                    const auto o = onsetAt(keep, at);
+                    worstStep = juce::jmax(worstStep, o.stepRatio);
+                    worstFirst = juce::jmax(worstFirst, o.firstRatio);
+                }
+            std::cout << "Kalkant patch, tread alone (" << rate << "/min, block " << blk
+                      << "): " << treads.size() << " treads, worst onset step / thump step "
+                      << worstStep << ", worst first samples / thump peak " << worstFirst
+                      << std::endl;
+            // (at 120 /min the last thump and its room still sound when the next one starts: there
+            // only the step counts)
+            check(treads.size() >= 9 && worstStep < 1.2f && (rate > 60.0f || worstFirst < 0.05f),
+                  "Kalkant: the tread's thump starts without a click (" + juce::String(rate) +
+                      "/min, block " + juce::String(blk) + ")");
+            if (rate < 60.0f && blk == 512)
+                writeWav(outDir.getChildFile("83_kalkant_tritt.wav"), keep, sr);
+        }
+    // 2) a chord held - the big one and plain triads low, middle and high - started at different
+    //    points of the Kalkant's cycle: the wind runs out before every tread (the pressure falls
+    //    low) and comes back with it. With the thump off: the pipes come back without a click.
+    {
+        struct Chord
+        {
+            const char *name;
+            std::vector<int> notes;
+        };
+        const Chord chords[]{{"big chord", {41, 53, 57, 60, 65, 69, 72}},
+                             {"triad C3", {48, 52, 55}},
+                             {"triad C4", {60, 64, 67}},
+                             {"triad C5", {72, 76, 79}}};
+        int fine = 0, runs = 0;
+        float worstHigh = 0.0f, worstBack = 0.0f;
+        for (const auto &ch : chords)
+            for (int k = 0; k < 4; ++k)
+            {
+                OrganEngine e;
+                e.prepare(sr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                patch(p);
+                const bool quietTread = k == 1; // one run per chord without the thump
+                if (quietTread)
+                    p.live.treadNoise = 0.0f;
+                const double pre = 1.0 * k; // silence before the chord: its place in the cycle
+                const int total = (int)((pre + 13.0) * sr), start = (int)(pre * sr);
+                juce::AudioBuffer<float> keep(2, total), b(2, B);
+                keep.clear();
+                std::vector<int> treads;
+                std::vector<float> minP;
+                float lowSince = 2.0f;
+                std::vector<double> lasts; // how long the chord sounds after a tread until the pressure is half gone
+                bool full = false;
+                int lastCount = e.treadCount.load();
+                for (int pos = 0; pos + B <= total; pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos <= start && start < pos + B)
+                        for (int m : ch.notes)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, m, (juce::uint8)100), start - pos);
+                    b.clear();
+                    e.process(b, mb, p);
+                    for (int c = 0; c < 2; ++c)
+                        keep.copyFrom(c, pos, b, c, 0, B);
+                    lowSince = juce::jmin(lowSince, e.bellowsNow.load());
+                    if (!treads.empty() && e.bellowsNow.load() > 0.9f)
+                        full = true;
+                    if (full && e.bellowsNow.load() < 0.5f)
+                    {
+                        full = false;
+                        lasts.push_back((pos - treads.back()) / sr);
+                    }
+                    if (e.treadCount.load() != lastCount)
+                    {
+                        lastCount = e.treadCount.load();
+                        if (pos > start)
+                        {
+                            treads.push_back(pos);
+                            // (the first tread after the chord began: the chord held only part of
+                            // a cycle)
+                            if (treads.size() > 1)
+                                minP.push_back(lowSince);
+                        }
+                        lowSince = 2.0f;
+                    }
+                }
+                // every full cycle the chord held: was the wind gone just before the tread?
+                bool ok = minP.size() >= 2;
+                float high = 0.0f;
+                for (float m : minP)
+                {
+                    high = juce::jmax(high, m);
+                    ok = ok && m < 0.1f;
+                }
+                // the pipes coming back with the wind: no sharper edge than while they sound
+                // steadily (second difference: a click stands out of a pipe's tone)
+                if (quietTread)
+                    for (size_t t = 1; t < treads.size(); ++t)
+                    {
+                        const int at = treads[t];
+                        int where = 0;
+                        auto d2max = [&](int i0, int i1)
+                        {
+                            float m = 1.0e-9f;
+                            for (int c = 0; c < 2; ++c)
+                            {
+                                const float *x = keep.getReadPointer(c);
+                                for (int i = juce::jmax(2, i0); i < juce::jmin(total, i1); ++i)
+                                {
+                                    const float d = std::abs(x[i] - 2.0f * x[i - 1] + x[i - 2]);
+                                    if (d > m)
+                                    {
+                                        m = d;
+                                        where = i - i0;
+                                    }
+                                }
+                            }
+                            return m;
+                        };
+                        const float back = d2max(at, at + (int)(0.4 * sr));
+                        const int backAt = where;
+                        const float steady = d2max(at + (int)(0.5 * sr), at + (int)(1.0 * sr));
+                        worstBack = juce::jmax(worstBack, back / steady);
+                        std::cout << "  (" << ch.name << ", tread " << t << ": pipes coming back, sharpest edge "
+                                  << back << " at +" << backAt * 1000.0 / sr << " ms / steady " << steady
+                                  << ")" << std::endl;
+                    }
+                worstHigh = juce::jmax(worstHigh, high);
+                fine += ok ? 1 : 0;
+                ++runs;
+                std::cout << "Kalkant patch, " << ch.name << " after " << pre << " s: "
+                          << treads.size() << " treads, lowest pressure before each:";
+                for (float m : minP)
+                    std::cout << " " << m;
+                std::cout << "; the wind lasts (s):";
+                for (double l : lasts)
+                    std::cout << " " << l;
+                std::cout << std::endl;
+                if (k == 0)
+                    writeWav(outDir.getChildFile(juce::String("84_kalkant_") +
+                                                 juce::String(ch.name).replaceCharacter(' ', '_') +
+                                                 ".wav"),
+                             keep, sr);
+            }
+        std::cout << "Kalkant patch: the wind ran out before every tread in " << fine << " of "
+                  << runs << " runs (highest low " << worstHigh
+                  << "); pipes coming back, sharpest edge / steady " << worstBack << std::endl;
+        check(fine == runs, "Kalkant: a held chord runs out of wind before every tread");
+        check(worstBack < 1.5f, "Kalkant: the pipes come back with the tread without a click");
+    }
+}
+
 static void testHeldPipeTuning()
 {
     constexpr double sampleRate = 48000.0;
@@ -2270,6 +2504,13 @@ int main(int argc, char **argv)
     {
         testPipeTargets(lib);
         testStopEffects(lib);
+        std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string(failures))
+                  << std::endl;
+        return failures;
+    }
+    if (std::getenv("RYSUM_ONLY_KALKANT") != nullptr)
+    {
+        testKalkantPatch(lib, outDir);
         std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string(failures))
                   << std::endl;
         return failures;
@@ -3270,6 +3511,7 @@ int main(int argc, char **argv)
         testLucier(lib);
         testInput(lib);
         testRoomsAndSpread(lib);
+        testKalkantPatch(lib, outDir);
         testPipeTargets(lib);
         testStopEffects(lib);
 

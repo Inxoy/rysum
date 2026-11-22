@@ -1322,6 +1322,7 @@ private:
     bool bellowsRising = false;
     double treadPhase = 0.0, treadTone = 0.0, treadLast = -1.0e18;
     float treadEnv = 0.0f, treadLp = 0.0f, treadLp2 = 0.0f;
+    float treadAtk1 = 0.0f, treadAtk2 = 0.0f; // the thump's level, rising over a few ms (no click)
     float walkX = 0.0f, walkY = 0.0f;
     float walkZ = 0.0f; // the listener's height above standing (3D view)
     // the room model of Saal 1 (line of sight), and how many searches a block may still do

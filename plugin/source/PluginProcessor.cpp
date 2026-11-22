@@ -5167,7 +5167,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 17;
+    constexpr int kFactoryVersion = 18;
     const auto marker = folder.getChildFile(".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion)
@@ -5184,6 +5184,41 @@ void RysumProcessor::writeFactoryPatches()
         bool uni = false;
     };
     using Values = std::vector<std::pair<juce::String, double>>;
+    // factory patches revised after their set was written: rewritten once (when the last version
+    // written is older than the revision), but only where the file is still there and still holds
+    // the old values of what changed - a deleted or edited patch stays as it is
+    struct Revision
+    {
+        juce::String name;
+        int version;
+        Values oldValues;
+    };
+    const std::vector<Revision> revisions{
+        // v18: the Kalkant's bellows empties within one tread also for a triad (it used to last
+        // nearly the whole cycle, a high triad never ran out)
+        {u8("148 Kalkant \xe2\x80\x93 Der Atem geht aus"), 18, {{"lvBellows", 0.8}, {"lvBellowsSize", 3.0}}}};
+    auto revisedSinceWritten = [&](const juce::String &name)
+    {
+        for (const auto &rv : revisions)
+        {
+            if (rv.name != name || written >= rv.version)
+                continue;
+            auto xml = juce::XmlDocument::parse(folder.getChildFile(name + ".rysum"));
+            if (xml == nullptr)
+                return false;
+            for (const auto &[id, old] : rv.oldValues)
+            {
+                bool same = false;
+                for (auto *e : xml->getChildWithTagNameIterator("PARAM"))
+                    if (e->getStringAttribute("id") == id)
+                        same = std::abs(e->getDoubleAttribute("value") - old) < 1.0e-3;
+                if (!same)
+                    return false;
+            }
+            return true;
+        }
+        return false;
+    };
     // scenes: each one = the patch's values with these changes on top; 'input' = made for the audio
     // input (switches it on) layoutsIn: (stop, layout type) - the stop gets that layout (default
     // width etc.), its pipes placed when the patch loads
@@ -5206,7 +5241,7 @@ void RysumProcessor::writeFactoryPatches()
         for (auto &rt : routesIn)
             if (targetFromId(rt.tgt) < 0)
                 factoryWarnings.add(name + ": unknown target " + rt.tgt);
-        if (currentSet <= written)
+        if (currentSet <= written && !revisedSinceWritten(name))
             return;
         juce::ValueTree state(apvts.state.getType());
         for (auto *prm : prmList)
@@ -7561,15 +7596,15 @@ void RysumProcessor::writeFactoryPatches()
     currentSet = 16;
     {
         const int beat = (int)Motion::Beat, tonnetz = (int)Layout::Tonnetz;
-        // a Kalkant treads every four seconds: hold a big chord and the wind runs out before he
-        // comes back
+        // a Kalkant treads every four seconds: hold a chord and the wind runs out before he comes
+        // back (a big chord after about a second, a high triad after about three)
         make(u8("148 Kalkant \xe2\x80\x93 Der Atem geht aus"),
              {{"stop7", 1},
               {"stop0", 1},
               {"stop1", 1},
               {"stop2", 1},
-              {"lvBellows", 0.8f},
-              {"lvBellowsSize", 3.0f},
+              {"lvBellows", 1.0f},
+              {"lvBellowsSize", 2.2f},
               {"lvBlower", 1},
               {"lvTreadRate", 15.0f},
               {"lvTreadNoise", 0.5f},

@@ -267,7 +267,9 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
     netKeyNow = -1;
     bellowsP = bellowsV = 1.0f;
     bellowsRising = false;
-    treadEnv = 0.0f;
+    treadEnv = treadAtk1 = treadAtk2 = 0.0f;
+    treadTone = 0.0;
+    treadLp = treadLp2 = 0.0f;
     {
         // FDN mixing matrix: a fixed random orthogonal matrix (Gram-Schmidt) instead of a Hadamard
         // matrix (that one left isolated modes around 1.5-2 kHz). Together with a slow, small

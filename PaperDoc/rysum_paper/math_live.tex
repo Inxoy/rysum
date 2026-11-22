@@ -29,7 +29,11 @@ bellows of size $V_b$ in $V_b$ seconds at full amount). The weight on the bellow
 bellows is nearly empty: $P$ glides ($\tau = \SI{40}{ms}$) towards $\operatorname{smoothstep}(V/0.3)$. Every pipe's wind
 (\S\ref{sec:math-voice}) is multiplied by $\min(1,P)$. Each tread is also heard: two cascaded one-pole low-passes at
 \SI{140}{Hz} on white noise plus a sine that falls from 82 to \SI{36}{Hz}, decaying with $\tau = \SI{110}{ms}$, from below
-the console.
+the console. The thump's level $a$ follows that envelope $e$ through two cascaded one-pole smoothers
+($\tau = \SI{1.5}{ms}$ each, about \SI{5}{ms} to rise), and the output is $a\,(5\,n_{lp} + \tfrac12 a\sin\varphi)$: a
+tread starts at zero instead of jumping to full level. When the last thump has died away ($e, a < 10^{-3}$), the sine's
+phase and the noise filters start from rest; a tread that comes while the last thump still sounds continues from
+where it is.
 
 \paragraph{The pallet (\ui{Ventil}).} Driven by velocity $v$, a pallet with the amount $\Pi$ opens over
 $T = 1.6\,\Pi\,(1-v)^2$ seconds, starting at $\max\bigl(0.1,\ 1-\Pi(0.3+0.7(1-v)^2)\bigr)$ and rising linearly: a slow
