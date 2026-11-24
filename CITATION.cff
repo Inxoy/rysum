@@ -5,7 +5,9 @@ type: software
 authors:
   - given-names: Christoffer
     family-names: Schöne
-  - alias: 000masa000
+  - given-names: Marc
+    family-names: Sabat
+    affiliation: "Universität der Künste Berlin"
 repository-code: "https://github.com/Inxoy/rysum"
 license: AGPL-3.0-only
 date-released: 2026-11-24

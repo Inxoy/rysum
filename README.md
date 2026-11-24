@@ -781,7 +781,7 @@ Microtuning via the MTS-ESP client library by ODDSound Ltd. (0BSD).
 
 If you use Rysum or parts of its code in your work, please cite it:
 
-> Christoffer Schöne and 000masa000. *Rysum: a spatial sample instrument of a fifteenth-century meantone
+> Christoffer Schöne and Marc Sabat. *Rysum: a spatial sample instrument of a fifteenth-century meantone
 > organ.* Software, 2026. https://github.com/Inxoy/rysum
 
 The technical documentation (about 150 pages, with the mathematics of the instrument) can be cited as:
@@ -794,7 +794,7 @@ BibTeX:
 
 ```bibtex
 @software{rysum,
-  author = {Schöne, Christoffer and {000masa000}},
+  author = {Schöne, Christoffer and Sabat, Marc},
   title  = {Rysum: a spatial sample instrument of a fifteenth-century meantone organ},
   year   = {2026},
   url    = {https://github.com/Inxoy/rysum},
