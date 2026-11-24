@@ -48,6 +48,7 @@ uniform int uLampN;
 uniform vec4 uFog;          // fog tone, 1 / fog distance, grain
 uniform vec2 uView;         // the picture's size in pixels
 uniform ivec2 uFrame;       // the grain's offset of this frame
+uniform vec4 uPano;         // a face of the 360 degree picture (1 / 0), the z of its right, up and forward
 out vec4 colour;
 
 float hash2 (int x, int y)
@@ -138,8 +139,22 @@ void main()
 {
     float x = gl_FragCoord.x, y = uView.y - gl_FragCoord.y;      // (rows from the top, as Raster counts them)
     float l;
+    // a face of the 360 degree picture (PanoGpu): the ray's own direction, for the vault and the true distance
+    bool pano = uPano.x > 0.5;
+    float focalPx = uDark.z * uView.x;
+    float rx = (x - 0.5 * uView.x) / focalPx, ry = (0.5 * uView.y - y) / focalPx;
+    float rayLen = pano ? sqrt (1.0 + rx * rx + ry * ry) : 1.0;
     if (vSlot < -0.5)
-        l = uFog.x * (0.55 + 0.45 * (1.0 - abs (floor (y) / uView.y - 0.5) * 2.0));     // the dark vault
+    {
+        if (pano)
+        {
+            float dz = (uPano.y * rx + uPano.z * ry + uPano.w) / rayLen;
+            float el = abs (asin (clamp (dz, -1.0, 1.0)));
+            l = uFog.x * (0.55 + 0.45 * max (0.0, 1.0 - el / 0.56));
+        }
+        else
+            l = uFog.x * (0.55 + 0.45 * (1.0 - abs (floor (y) / uView.y - 0.5) * 2.0));     // the dark vault
+    }
     else
     {
         vec4 m = uMat[int (vSlot + 0.5)];
@@ -159,12 +174,13 @@ void main()
             }
         }
         l = m.y * vTone * lit * pattern (int (m.x + 0.5), m.z, vUV.x, vUV.y) + vE;
-        float f = d * uFog.y / (1.0 + d * uFog.y);
+        float dr = d * rayLen;
+        float f = dr * uFog.y / (1.0 + dr * uFog.y);
         l += (uFog.x - l) * f;
     }
     float cx = 0.5 * uView.x, cy = 0.5 * uView.y;
     float dx = floor (x) - cx, dy = floor (y) - cy;
-    l *= 1.0 - 0.38 * (dx * dx + dy * dy) / (cx * cx + cy * cy);
+    if (! pano) l *= 1.0 - 0.38 * (dx * dx + dy * dy) / (cx * cx + cy * cy);
     float gr = hash2 (int (x) + uFrame.x, int (y) * 3 + uFrame.y) - 0.5;
     l += uFog.z * gr * (0.3 + 0.6 * min (1.0, l * 2.0)) * (1.0 - 0.55 * min (1.0, l));
     l = clamp (l, 0.0, 1.0);
@@ -195,6 +211,9 @@ void main()
 }
 )";
 } // namespace
+
+const char* walkVertexShader() { return kVertex; }
+const char* walkFragmentShader() { return kFragment; }
 
 void GpuFrame::addGlow (float x, float y, float rx, float ry, float strength)
 {

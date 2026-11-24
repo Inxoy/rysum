@@ -9,6 +9,7 @@
 #include "WalkView.h"
 #include "VerlaufView.h"
 #include "RoomModels.h"
+#include "SpatialMeta.h"
 
 class SnapshotApp : public juce::JUCEApplication, private juce::Timer
 {
@@ -227,6 +228,136 @@ public:
         std::cout << "walk: look reset" << std::endl;
     }
 
+    /** the 360 degree picture of the last panoramaForTest drawn again by the graphics card (on a thread of its
+        own, as the recorder does it) and compared with the processor's */
+    template <typename Save, typename Say>
+    void gpuPanoCheck(rysum::ui::WalkView &wv, const juce::String &what, Save &&saveJpg, Say &&say)
+    {
+        using namespace rysum;
+        const PanoJob job = wv.panoJobForTest();
+        for (int w : {2048, 3840})
+        {
+            juce::Image cpu, gpuImg;
+            double msCpu = 0.0, msGpu = 0.0, msJpg = 0.0;
+            juce::String why, card, lost;
+            bool opened = false;
+            std::thread t([&]
+            {
+                Raster face;
+                double t0 = juce::Time::getMillisecondCounterHiRes();
+                cpu = renderPanorama(job, w, face);
+                msCpu = juce::Time::getMillisecondCounterHiRes() - t0;
+                PanoGpu g;
+                opened = g.open(why);
+                card = g.cardName();
+                if (opened)
+                {
+                    gpuImg = renderPanorama(job, w, face, &g, &lost); // (the first: the targets are made)
+                    t0 = juce::Time::getMillisecondCounterHiRes();
+                    for (int k = 0; k < 5; ++k)
+                        gpuImg = renderPanorama(job, w, face, &g, &lost);
+                    msGpu = (juce::Time::getMillisecondCounterHiRes() - t0) / 5.0;
+                    if (!g.isOpen())
+                        opened = false;
+                }
+                juce::MemoryOutputStream mo;
+                juce::JPEGImageFormat jpg;
+                jpg.setQuality(0.92f);
+                t0 = juce::Time::getMillisecondCounterHiRes();
+                jpg.writeImageToStream(cpu, mo);
+                msJpg = juce::Time::getMillisecondCounterHiRes() - t0;
+                g.close();
+            });
+            t.join();
+            if (!opened)
+            {
+                say("360 on the graphics card (" + what + "): not available (" + why + lost + "); the processor " +
+                        juce::String(msCpu, 0) + " ms",
+                    false);
+                continue;
+            }
+            double sum = 0.0;
+            int worst = 0;
+            int64_t over8 = 0;
+            {
+                juce::Image::BitmapData a(cpu, juce::Image::BitmapData::readOnly), b(gpuImg, juce::Image::BitmapData::readOnly);
+                for (int y = 0; y < cpu.getHeight(); ++y)
+                    for (int x = 0; x < cpu.getWidth(); ++x)
+                    {
+                        const uint8_t *pa = a.getPixelPointer(x, y), *pb = b.getPixelPointer(x, y);
+                        for (int k = 0; k < 3; ++k)
+                        {
+                            const int d = std::abs((int)pa[k] - (int)pb[k]);
+                            sum += d;
+                            worst = juce::jmax(worst, d);
+                            over8 += d > 8 ? 1 : 0;
+                        }
+                    }
+            }
+            const double n = 3.0 * cpu.getWidth() * cpu.getHeight();
+            if (w == 3840)
+                saveJpg(gpuImg, "walk360_gpu_" + what.replace(",", "").replace(" ", "_") + ".jpg");
+            say("360 on the graphics card (" + what + ", " + card + "), " + juce::String(w) + " wide: " +
+                    juce::String(msGpu, 0) + " ms a frame (the processor " + juce::String(msCpu, 0) +
+                    " ms, writing the JPEG " + juce::String(msJpg, 0) + " ms); apart from the processor's by " +
+                    juce::String(sum / n, 2) + " of 255 on average, " + juce::String(100.0 * over8 / n, 3) +
+                    " % more than 8, worst " + juce::String(worst),
+                gpuImg.getWidth() == w && sum / n < 1.5 && 100.0 * over8 / n < 1.0 && lost.isEmpty());
+        }
+    }
+
+    /** the video ffmpeg made of a recording, and its marks for YouTube */
+    template <typename Say> void videoCheck(const juce::File &dir, Say &&say)
+    {
+        using namespace rysum;
+        const auto mov = dir.getChildFile("rysum360.mov");
+        if (Pano360Recorder::findFfmpeg() == juce::File())
+        {
+            say("360 video: no ffmpeg here - the folder has make_video.bat instead", dir.getChildFile("make_video.bat").existsAsFile() && !mov.exists());
+            return;
+        }
+        const auto info = readSpatialMetadata(mov);
+        say("360 video: " + mov.getFileName() + " " + juce::String(mov.getSize() >> 10) + " kB, spherical V1 " +
+                (info.v1 ? "yes" : "no") + ", V2 " + (info.v2 ? "yes" : "no") + ", SA3D " + (info.sa3d ? "yes" : "no") +
+                " (order " + juce::String(info.sa3dOrder) + ", " + juce::String(info.sa3dChannels) + " ch), sound '" +
+                info.soundFormat + "' " + juce::String(info.soundChannels) + " ch; the version without the marks " +
+                (dir.getChildFile("rysum360_ohne_metadaten.mov").exists() ? "still there" : "gone"),
+            mov.existsAsFile() && info.v1 && info.v2 && info.sa3d && info.sa3dOrder == 1 && info.sa3dChannels == 4 &&
+                info.soundChannels == 4 && !dir.getChildFile("rysum360_ohne_metadaten.mov").exists());
+        // the whole video decodes (ffmpeg reads every frame and sample) - and a "fast start" file, its 'moov'
+        // before the media, marked too: the chunk offsets must move with the grown 'moov'
+        auto run = [](const juce::StringArray &a, juce::String &out)
+        {
+            juce::ChildProcess p;
+            if (!p.start(a, juce::ChildProcess::wantStdErr | juce::ChildProcess::wantStdOut))
+                return -1;
+            out = p.readAllProcessOutput();
+            p.waitForProcessToFinish(60000);
+            return (int)p.getExitCode();
+        };
+        const auto ff = Pano360Recorder::findFfmpeg().getFullPathName();
+        juce::String o1, o2, o3;
+        const int dec = run({ff, "-v", "error", "-i", mov.getFullPathName(), "-f", "null", "-"}, o1);
+        const auto fsRaw = dir.getChildFile("faststart_raw.mov"), fs = dir.getChildFile("faststart_360.mov");
+        auto args = Pano360Recorder::ffmpegArgs(Pano360Recorder::Settings{1024, 30, 92}, dir.getChildFile("frames"),
+                                                dir.getChildFile("ambix.wav"), fsRaw);
+        args.insert(args.size() - 1, "-movflags");
+        args.insert(args.size() - 1, "+faststart");
+        args.insert(0, ff);
+        const int made = run(args, o2);
+        juce::String err;
+        const bool marked = made == 0 && injectSpatialMetadata(fsRaw, fs, err);
+        const int dec2 = marked ? run({ff, "-v", "error", "-i", fs.getFullPathName(), "-f", "null", "-"}, o3) : -1;
+        const auto fsInfo = readSpatialMetadata(fs);
+        say("360 video decodes without an error (" + juce::String(dec) + ": " + o1.trim().substring(0, 200) +
+                "); a fast-start file marked " + (marked ? "ok" : err) + ", decodes (" + juce::String(dec2) + ": " +
+                o3.trim().substring(0, 200) + "), V1/V2/SA3D " + (fsInfo.v1 ? "y" : "n") + (fsInfo.v2 ? "y" : "n") +
+                (fsInfo.sa3d ? "y" : "n"),
+            dec == 0 && o1.trim().isEmpty() && marked && dec2 == 0 && o3.trim().isEmpty() && fsInfo.v1 && fsInfo.v2 &&
+                fsInfo.sa3d);
+        fsRaw.deleteFile();
+    }
+
     /** RYSUM_WALK_360 (with RYSUM_ONLY_WALK): the 360° picture and a short recording */
     template <typename SetReal> void pano360Checks(rysum::ui::WalkView &wv, SetReal &&setReal)
     {
@@ -271,6 +402,7 @@ public:
                 pano.getWidth() == w && pano.getHeight() == w / 2);
             saveJpg(pano, "walk360_" + juce::String(w) + ".jpg");
         }
+        gpuPanoCheck(wv, "Saal", saveJpg, say);
         // which way round: a lantern 2 m to the left of the eye, in the dark, lights the left quarter
         {
             const auto eye = wv.eyeForTest();
@@ -299,7 +431,7 @@ public:
         {
             auto dir = outDir.getChildFile("rec360");
             dir.deleteRecursively();
-            const bool started = wv.startPanoForTest(dir, 1024, 30);
+            const bool started = wv.startPanoForTest(dir, juce::SystemStats::getEnvironmentVariable("RYSUM_360_WIDTH", "1024").getIntValue(), 30);
             for (int i = 0; i < 40; ++i)
             {
                 run(5, i == 0 ? std::initializer_list<int>{50, 57, 62} : std::initializer_list<int>{});
@@ -320,6 +452,7 @@ public:
             const auto givenAfter = proc->pano360.framesTotal();
             const int frames = dir.getChildFile("frames").getNumberOfChildFiles(juce::File::findFiles, "*.jpg");
             const int want = (int)givenAfter;
+            videoCheck(dir, say);
             juce::WavAudioFormat wavFmt;
             std::unique_ptr<juce::AudioFormatReader> rd(
                 wavFmt.createReaderFor(dir.getChildFile("ambix.wav").createInputStream().release(), true));
@@ -375,6 +508,12 @@ public:
                 dir.getChildFile("frames").getChildFile("f_" + juce::String(frames / 2).paddedLeft('0', 6) + ".jpg"));
             if (last.isValid())
                 saveJpg(last, "walk360_model_dark.jpg");
+            videoCheck(dir, say);
+            {
+                // the same scene of the model, light off, on the card and from the processor
+                wv.panoramaForTest(1024);
+                gpuPanoCheck(wv, "model, light off", saveJpg, say);
+            }
             wv.setDarkForTest(false);
             proc->clearWalkModel();
         }

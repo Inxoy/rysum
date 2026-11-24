@@ -152,6 +152,21 @@ $0.008 \dots 0.34$\,rad), as an ellipse $2\alpha H/\pi$ high and $2\alpha W/(2\p
 the poles as the equirectangular picture is stretched there, and drawn again one width to the left and the right where
 it crosses the seam at the back.
 
+\paragraph{On the graphics card (\fn{PanoGpu.*}).} The drawing thread opens an OpenGL 3.2 context of its own, in a
+hidden window, because the view may be closed long before the frames are drawn. For each face the processor still
+does what it does for the view's own picture on the card (\S\ref{sec:walkgpu}): it transforms, clips and lights the
+triangles; the card fills the face with the view's shader, in which a uniform switches on the three changes above
+(the ray $(x', y', 1)$ comes from \texttt{gl\_FragCoord} and the focal length, the vault's elevation from the $z$
+components of the face's $\mathbf r$, $\mathbf u$, $\mathbf f$). The six faces are layers of one texture array; a
+second pass computes, for every pixel of the panorama, the ray, the face and $(s_x, s_y)$ as above, and reads the
+four neighbours with \texttt{texelFetch}, so that the bilinear weights and the rounding are the processor's, not the
+card's own filtering. Whether a wall hides a glow is read from the face's depth buffer: the shader writes
+$z_w = 1 - 0.06/v_z$, so $v_z = 0.06/(1 - z_w)$. The glows are then laid in by the card as quads with the
+sprite's four colour stops, and the picture is read back once, straight into the JPEG's image. Against the
+processor's frame the card's differs by 0.03 of 255 on average in the Saal and 0.01 with a model and the light
+off (0.08\,\% and 0.002\,\% of the samples by more than 8, along edges where the two rasterise a pixel
+differently).
+
 \paragraph{The sound, and the audio as the clock.} The audio thread hands every block's first four Ambisonics
 channels to the recorder, taken before the head's turn and before the headphone or loudspeaker decoder: the scene as
 the engine renders it, fixed in the room. For ACN / SN3D (AmbiX) the first order of a higher-order scene is exactly
@@ -168,6 +183,28 @@ late by more than one frame of the view (about 17\,ms at its 60 frames per secon
 $r_v$, frames are repeated, never dropped or shifted: the $k$-th frame of the video always belongs to the moment
 $k/r_v$ of the sound, and the video is as long as the sound (at the end the last picture is held to
 $\lfloor n_{\text{end}}\,r_v/f_s\rfloor$). Because the drawing comes afterwards, its time does not matter for this:
-the recording keeps every frame even at 5760 pixels of width. The recording's folder holds the frames, \fn{ambix.wav} and a script for
-ffmpeg that makes a MOV with H.264 and 4 channels of PCM at 48\,kHz, the form YouTube asks for; marking it as a
-360-degree video with AmbiX sound is left to Google's Spatial Media Metadata Injector.
+the recording keeps every frame even at 5760 pixels of width. From the frames and \fn{ambix.wav} ffmpeg makes a MOV
+with H.264 and 4 channels of 24-bit PCM at 48\,kHz (sample entry \texttt{lpcm}), the form YouTube asks for.
+
+\paragraph{The marks for YouTube (\fn{SpatialMeta.*}).} A player knows a 360-degree video with spatial sound only by
+boxes in the file's \texttt{moov}; the plugin writes the ones Google's Spatial Media Metadata Injector writes
+(\texttt{github.com/google/spatial-media}):
+\begin{itemize}
+  \item Spherical Video V1: a box \texttt{uuid} with the UUID
+        \texttt{ffcc8263-f855-\allowbreak 4a93-\allowbreak 8814-\allowbreak 587a02521fdd} and an XML text (\texttt{Spherical}, \texttt{Stitched}, \texttt{ProjectionType} equirectangular), the last child of the
+        video's \texttt{trak};
+  \item Spherical Video V2, in the video's sample entry (\texttt{avc1}, after its fixed 78 bytes and the codec's own
+        boxes, before \texttt{pasp}): \texttt{st3d} (mono) and \texttt{sv3d} with \texttt{svhd}, and \texttt{proj}
+        with \texttt{prhd} (yaw, pitch, roll 0) and \texttt{equi} (no crop);
+  \item spatial audio: \texttt{SA3D} at the end of the sound's sample entry, 36 bytes -- version 0, periphonic, order 1,
+        ACN, SN3D, 4 channels, the channel map $0, 1, 2, 3$ (the file's W, Y, Z, X are already in ACN order). The
+        sample entry's fixed part before its boxes depends on its version: 28, 44 or 64 bytes after the header for
+        versions 0, 1, 2 (ffmpeg's 4-channel \texttt{lpcm} is version 2, its channel count the 32-bit field at
+        byte 40).
+\end{itemize}
+Only \texttt{moov} changes; the media are copied as they are into a new file. Every box that contains a changed
+one grows by as much (\texttt{stsd}, \texttt{stbl}, \texttt{minf}, \texttt{mdia}, \texttt{trak}, \texttt{moov}), and
+where \texttt{moov} lies before the media (a \enquote{fast start} file) every chunk offset in \texttt{stco} or
+\texttt{co64} that points past it moves by the same $\Delta$. ffprobe reads the marked file as
+\enquote{Spherical Mapping: equirectangular} with the sound \enquote{ambisonic 1}, and decodes both the usual and a
+fast-start file without an error. Whether YouTube plays it so is the one step not tried yet.

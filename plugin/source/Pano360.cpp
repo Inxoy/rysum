@@ -1,5 +1,6 @@
 #include "Pano360.h"
 #include "Lang.h"
+#include "SpatialMeta.h"
 #include <cmath>
 #include <cstring>
 #include <type_traits>
@@ -159,8 +160,7 @@ public:
     ~Drawer() override
     {
         stopThread(-1);
-        if (jpg.joinable())
-            jpg.join();
+        pool.finish();
     }
 
     void run() override
@@ -169,10 +169,19 @@ public:
         {
             juce::FileInputStream in(rec.dir.getChildFile("scene.bin"));
             Raster face;
+            // the graphics card, on this thread (its own context: the view may be gone long before)
+            PanoGpu gpu;
+            {
+                juce::String why;
+                const bool onCard = gpu.open(why);
+                const std::lock_guard<std::mutex> l(rec.infoLock);
+                rec.drawnOn = onCard ? gpu.cardName() : juce::String();
+                rec.gpuWhy = onCard ? juce::String() : why.upToFirstOccurrenceOf("\n", false, false).trim();
+            }
+            pool.start(juce::jlimit(1, 6, (int)std::thread::hardware_concurrency() - 2));
             std::vector<Raster::Call> stat;
             int64_t next = 0;
             const int64_t total = rec.total.load();
-            juce::File lastFile;
             bool ok = in.openedOk();
             while (ok && !threadShouldExit() && !in.isExhausted())
             {
@@ -200,63 +209,216 @@ public:
                 if (last < next)
                     continue;
                 const double t0 = juce::Time::getMillisecondCounterHiRes();
-                auto img = renderPanorama(j, rec.set.width, face);
+                juce::String gpuError;
+                const bool wasOnCard = gpu.isOpen();
+                auto img = renderPanorama(j, rec.set.width, face, &gpu, &gpuError);
+                if (wasOnCard && !gpu.isOpen())
+                {
+                    // (the card gave up on the way: the rest from the processor)
+                    const std::lock_guard<std::mutex> l(rec.infoLock);
+                    rec.gpuWhy = gpuError.upToFirstOccurrenceOf("\n", false, false).trim();
+                    rec.drawnOn = {};
+                }
                 rec.frameMs = (float)(juce::Time::getMillisecondCounterHiRes() - t0);
-                encode(std::move(img), next, last, lastFile);
+                encode(std::move(img), next, last);
                 next = last + 1;
             }
+            gpu.close();
+            pool.finish();
             // (the end: the last picture held as long as the sound goes on)
             if (!threadShouldExit() && next < total && next > 0)
-                encode(juce::Image(), next, total - 1, lastFile);
-            if (jpg.joinable())
-                jpg.join();
+            {
+                const auto src = frameFile(lastFirst);
+                for (int64_t i = next; i < total; ++i)
+                {
+                    src.copyFileTo(frameFile(i));
+                    rec.drawn = i + 1;
+                }
+                next = total;
+            }
             complete = !threadShouldExit() && next > 0;
         }
+        if (complete)
+            makeVideo();
         rec.finishDrawing(complete);
     }
 
 private:
     Pano360Recorder &rec;
-    std::thread jpg;
+    int64_t lastFirst = 0;
+
+    /** a few threads that write the JPEGs (one 4K picture takes longer to write than the card takes to draw it) */
+    struct Pool
+    {
+        std::vector<std::thread> threads;
+        std::deque<std::function<void()>> todo;
+        std::mutex mx;
+        std::condition_variable more, room;
+        bool quit = false;
+        int limit = 1;
+        void start(int n)
+        {
+            finish();
+            quit = false;
+            limit = n;
+            for (int i = 0; i < n; ++i)
+                threads.emplace_back(
+                    [this]
+                    {
+                        for (;;)
+                        {
+                            std::function<void()> f;
+                            {
+                                std::unique_lock<std::mutex> l(mx);
+                                more.wait(l, [this] { return quit || !todo.empty(); });
+                                if (todo.empty())
+                                    return;
+                                f = std::move(todo.front());
+                                todo.pop_front();
+                            }
+                            room.notify_all();
+                            f();
+                        }
+                    });
+        }
+        /** (waits while as many pictures as there are threads are waiting: the memory stays bounded) */
+        void push(std::function<void()> f)
+        {
+            if (threads.empty())
+            {
+                f();
+                return;
+            }
+            {
+                std::unique_lock<std::mutex> l(mx);
+                room.wait(l, [this] { return (int)todo.size() < limit; });
+                todo.push_back(std::move(f));
+            }
+            more.notify_one();
+        }
+        /** every picture written, the threads ended */
+        void finish()
+        {
+            {
+                std::lock_guard<std::mutex> l(mx);
+                quit = true;
+            }
+            more.notify_all();
+            for (auto &t : threads)
+                t.join();
+            threads.clear();
+        }
+    } pool;
+    std::atomic<int64_t> written{0};
 
     juce::File frameFile(int64_t i) const
     {
         return rec.dir.getChildFile("frames").getChildFile("f_" + juce::String(i).paddedLeft('0', 6) + ".jpg");
     }
 
-    /** frames first..last: the picture (null = the one before again); written on a thread of its own while the
-        next picture is drawn */
-    void encode(juce::Image img, int64_t first, int64_t last, juce::File &lastFile)
+    /** frames first..last: the picture, written by the pool while the next ones are drawn (the repeats copied
+        from it) */
+    void encode(juce::Image img, int64_t first, int64_t last)
     {
-        if (jpg.joinable())
-            jpg.join();
-        const auto from = frameFile(first);
-        const auto prev = lastFile;
-        if (img.isValid())
-            lastFile = from;
+        lastFirst = first;
         const int quality = rec.set.jpegQuality;
-        jpg = std::thread(
-            [this, img = std::move(img), first, last, from, prev, quality]
+        pool.push(
+            [this, img = std::move(img), first, last, quality]
             {
-                juce::File src = prev;
-                for (int64_t i = first; i <= last; ++i)
+                const auto from = frameFile(first);
+                from.deleteFile();
                 {
-                    const auto f = frameFile(i);
-                    if (i == first && img.isValid())
-                    {
-                        f.deleteFile();
-                        juce::FileOutputStream os(f);
-                        juce::JPEGImageFormat fmt;
-                        fmt.setQuality((float)quality / 100.0f);
-                        if (os.openedOk())
-                            fmt.writeImageToStream(img, os);
-                        src = f;
-                    }
-                    else if (src.existsAsFile())
-                        src.copyFileTo(f); // (a repeat: the picture before)
-                    rec.drawn = i + 1;
+                    juce::FileOutputStream os(from);
+                    juce::JPEGImageFormat fmt;
+                    fmt.setQuality((float)quality / 100.0f);
+                    if (os.openedOk())
+                        fmt.writeImageToStream(img, os);
                 }
+                for (int64_t i = first + 1; i <= last; ++i)
+                    from.copyFileTo(frameFile(i)); // (a repeat: the picture before)
+                // (frames written, counted: with several writers they finish in any order)
+                rec.drawn = written += last - first + 1;
             });
+    }
+
+    /** ffmpeg (if it is there) makes the video, which is then marked as 360 degrees with spatial sound */
+    void makeVideo()
+    {
+        const auto ffmpeg = Pano360Recorder::findFfmpeg();
+        auto note = [this](const juce::String &t)
+        {
+            const std::lock_guard<std::mutex> l(rec.infoLock);
+            rec.videoNote = t;
+        };
+        if (ffmpeg == juce::File())
+        {
+            note({});
+            return;
+        }
+        const auto raw = rec.dir.getChildFile("rysum360_ohne_metadaten.mov");
+        const auto video = rec.dir.getChildFile("rysum360.mov");
+        const auto progress = rec.dir.getChildFile("ffmpeg_progress.txt");
+        raw.deleteFile();
+        progress.deleteFile();
+        rec.videoStep = 1;
+        juce::StringArray args;
+        args.add(ffmpeg.getFullPathName());
+        args.addArray(Pano360Recorder::ffmpegArgs(rec.set, rec.dir.getChildFile("frames"),
+                                                  rec.dir.getChildFile("ambix.wav"), raw));
+        args.addArray({"-progress", progress.getFullPathName()});
+        juce::ChildProcess p;
+        if (!p.start(args, juce::ChildProcess::wantStdErr))
+        {
+            rec.videoStep = 0;
+            note(tr("ffmpeg lie\xc3\x9f sich nicht starten: ") + ffmpeg.getFullPathName());
+            return;
+        }
+        juce::String errors;
+        std::thread reader([&] { errors = p.readAllProcessOutput(); }); // (so that its messages never fill the pipe)
+        const int64_t frames = juce::jmax<int64_t>(1, rec.total.load());
+        while (p.isRunning())
+        {
+            if (threadShouldExit())
+            {
+                p.kill();
+                break;
+            }
+            juce::Thread::sleep(200);
+            // (how far: the last "frame=" in the progress file)
+            const auto t = progress.loadFileAsString();
+            const int at = t.lastIndexOf("frame=");
+            if (at >= 0)
+                rec.videoFrames = juce::jlimit<int64_t>(0, frames, t.substring(at + 6).getLargeIntValue());
+        }
+        reader.join();
+        progress.deleteFile();
+        const auto code = p.getExitCode();
+        if (threadShouldExit() || code != 0 || !raw.existsAsFile())
+        {
+            rec.videoStep = 0;
+            raw.deleteFile();
+            note(threadShouldExit() ? juce::String()
+                                    : tr("ffmpeg ist gescheitert: ") +
+                                          errors.trim().fromLastOccurrenceOf("\n", false, false).substring(0, 300));
+            return;
+        }
+        // the marks for YouTube
+        rec.videoStep = 2;
+        juce::String error;
+        video.deleteFile();
+        if (injectSpatialMetadata(raw, video, error, [this] { return threadShouldExit(); }))
+        {
+            raw.deleteFile();
+            rec.videoStep = 3;
+            note({});
+        }
+        else
+        {
+            rec.videoStep = 0;
+            note(tr("Die 360\xc2\xb0-Metadaten lie\xc3\x9f"
+                    "en sich nicht schreiben: ") +
+                 error);
+        }
     }
 };
 
@@ -358,6 +520,12 @@ void Pano360Recorder::stop()
     writer->wake.signal();
     writer->stopThread(-1);
     writer.reset();
+    videoStep = 0;
+    videoFrames = 0;
+    {
+        const std::lock_guard<std::mutex> l(infoLock);
+        drawnOn = gpuWhy = videoNote = {};
+    }
     st = State::drawing;
     drawer = std::make_unique<Drawer>(*this);
     drawer->startThread(juce::Thread::Priority::low);
@@ -389,54 +557,136 @@ void Pano360Recorder::finishDrawing(bool complete)
                  .replace("\r\n", "\n");
         dir.getChildFile("make_video.sh").replaceWithText(sh);
     }
+    const bool made = videoStep.load() == 3;
+    juce::String problem, card, why;
+    {
+        const std::lock_guard<std::mutex> l(infoLock);
+        problem = videoNote;
+        card = drawnOn;
+        why = gpuWhy;
+    }
     const juce::String nl("\r\n");
     juce::String txt;
     const auto res = juce::String(set.width) + " x " + juce::String(set.width / 2);
-    if (german())
-        txt << "Rysum 360-Grad-Aufnahme" << nl << nl << "frames/      die Bilder, equirektangular " << res << ", " << set.fps
-            << " Bilder/s (die Mitte = die Front des Saals)" << nl
-            << "ambix.wav    das Schallfeld, Ambisonics 1. Ordnung, AmbiX (ACN / SN3D: W Y Z X), fest im Raum" << nl << nl
-            << "1. make_video.bat (Windows) oder make_video.sh starten: macht mit ffmpeg rysum360.mov" << nl
-            << "   (H.264 + 4 Kanaele PCM, 48 kHz). ffmpeg muss installiert sein (z. B. winget install ffmpeg)." << nl
-            << "2. Fuer YouTube: rysum360.mov im Spatial Media Metadata Injector oeffnen" << nl
-            << "   (https://github.com/google/spatial-media/releases), 'My video is spherical (360)' und" << nl
-            << "   'My video has spatial audio (ambiX ACN/SN3D format)' ankreuzen, 'Inject metadata'." << nl
-            << "   Die Datei, die dabei entsteht, hochladen. YouTube braucht nach dem Hochladen eine Weile," << nl
-            << "   bis 360 Grad und der Raumklang gehen." << nl << nl
-            << "Bild und Ton laufen nach der Uhr des Tons: Bild k zeigt den Augenblick k / " << set.fps
-            << " s nach dem Start." << nl << total.load() << " Bilder, " << scenes.load()
-            << " davon eigens gezeichnet (die anderen wiederholen das vorige: die Ansicht war langsamer als "
-            << set.fps << " Bilder/s)." << nl;
-    else
-        txt << "Rysum 360 degree recording" << nl << nl << "frames/      the pictures, equirectangular " << res << ", "
-            << set.fps << " frames/s (the centre = the front of the Saal)" << nl
-            << "ambix.wav    the sound field, first-order Ambisonics, AmbiX (ACN / SN3D: W Y Z X), fixed in the room"
-            << nl << nl << "1. Run make_video.bat (Windows) or make_video.sh: ffmpeg makes rysum360.mov" << nl
-            << "   (H.264 + 4 channels PCM, 48 kHz). ffmpeg has to be installed (e.g. winget install ffmpeg)." << nl
-            << "2. For YouTube: open rysum360.mov in the Spatial Media Metadata Injector" << nl
-            << "   (https://github.com/google/spatial-media/releases), tick 'My video is spherical (360)' and" << nl
-            << "   'My video has spatial audio (ambiX ACN/SN3D format)', 'Inject metadata'." << nl
-            << "   Upload the file it writes. After the upload YouTube takes a while before 360 degrees and" << nl
-            << "   the spatial sound work." << nl << nl
-            << "Picture and sound follow the clock of the sound: frame k shows the moment k / " << set.fps
-            << " s after the start." << nl << total.load() << " frames, " << scenes.load()
-            << " of them drawn on their own (the others repeat the one before: the view was slower than " << set.fps
-            << " frames/s)." << nl;
+    const bool de = german();
+    txt << (de ? "Rysum 360-Grad-Aufnahme" : "Rysum 360 degree recording") << nl << nl;
+    if (made)
+        txt << (de ? "rysum360.mov  das Video: 360 Grad (equirektangular " : "rysum360.mov  the video: 360 degrees (equirectangular ")
+            << res << ", " << set.fps << (de ? " Bilder/s) mit Raumklang (Ambisonics 1. Ordnung)." : " frames/s) with spatial sound (first-order Ambisonics).") << nl
+            << (de ? "              Fertig fuer YouTube: die Metadaten fuer 360 Grad und den Raumklang sind schon darin"
+                   : "              Ready for YouTube: the metadata for 360 degrees and the spatial sound are already in it")
+            << nl << (de ? "              (wie sie Googles Spatial Media Metadata Injector schreibt)." : "              (as Google's Spatial Media Metadata Injector writes them).")
+            << nl << (de ? "              Einfach hochladen. YouTube braucht danach eine Weile, bis 360 Grad und der Raumklang gehen."
+                         : "              Just upload it. Afterwards YouTube takes a while before 360 degrees and the spatial sound work.")
+            << nl << nl;
+    txt << (de ? "frames/       die Bilder, equirektangular " : "frames/       the pictures, equirectangular ") << res << ", " << set.fps
+        << (de ? " Bilder/s (die Mitte = die Front des Saals)" : " frames/s (the centre = the front of the Saal)") << nl
+        << (de ? "ambix.wav     das Schallfeld, Ambisonics 1. Ordnung, AmbiX (ACN / SN3D: W Y Z X), fest im Raum"
+               : "ambix.wav     the sound field, first-order Ambisonics, AmbiX (ACN / SN3D: W Y Z X), fixed in the room")
+        << nl;
+    if (made)
+        txt << (de ? "              (beide stecken im Video; wer sie nicht mehr braucht, kann sie loeschen)"
+                   : "              (both are in the video; delete them if you do not need them any more)")
+            << nl;
+    txt << nl;
+    if (!made && complete)
+    {
+        if (problem.isNotEmpty())
+            txt << (de ? "Das Video liess sich nicht machen: " : "The video could not be made: ") << problem << nl << nl;
+        else
+            txt << (de ? "ffmpeg wurde nicht gefunden, darum gibt es noch kein Video." : "ffmpeg was not found, so there is no video yet.") << nl << nl;
+        txt << (de ? "1. ffmpeg installieren (z. B. winget install ffmpeg) und make_video.bat (Windows) oder make_video.sh"
+                   : "1. Install ffmpeg (e.g. winget install ffmpeg) and run make_video.bat (Windows) or make_video.sh:")
+            << nl
+            << (de ? "   starten: macht rysum360_ohne_metadaten.mov (H.264 + 4 Kanaele PCM, 48 kHz)."
+                   : "   it makes rysum360_ohne_metadaten.mov (H.264 + 4 channels PCM, 48 kHz).")
+            << nl
+            << (de ? "2. In Rysum, 3D-Ansicht, Knopf \"360 Grad Aufnahme\": \"360-Grad-Metadaten in ein Video schreiben ...\","
+                   : "2. In Rysum, 3D view, button \"360 Grad Aufnahme\": \"Write 360 degree metadata into a video ...\",")
+            << nl
+            << (de ? "   die Datei waehlen: daneben entsteht rysum360_ohne_metadaten_360.mov, fertig fuer YouTube."
+                   : "   choose the file: next to it comes rysum360_ohne_metadaten_360.mov, ready for YouTube.")
+            << nl << (de ? "   (Oder wie bisher mit Googles Spatial Media Metadata Injector.)" : "   (Or, as before, with Google's Spatial Media Metadata Injector.)")
+            << nl << nl;
+    }
+    txt << (de ? "Bild und Ton laufen nach der Uhr des Tons: Bild k zeigt den Augenblick k / " : "Picture and sound follow the clock of the sound: frame k shows the moment k / ")
+        << set.fps << (de ? " s nach dem Start." : " s after the start.") << nl << total.load()
+        << (de ? " Bilder, " : " frames, ") << scenes.load()
+        << (de ? " davon eigens gezeichnet (die anderen wiederholen das vorige: die Ansicht war langsamer als "
+               : " of them drawn on their own (the others repeat the one before: the view was slower than ")
+        << set.fps << (de ? " Bilder/s)." : " frames/s).") << nl;
+    txt << (card.isNotEmpty() ? (de ? "Gezeichnet von der Grafikkarte: " : "Drawn by the graphics card: ") + card
+                              : (de ? "Gezeichnet vom Prozessor" : "Drawn by the processor") +
+                                    (why.isNotEmpty() ? " (" + why + ")" : juce::String()))
+        << nl;
     if (!complete)
         txt << nl
-            << (german() ? "ABGEBROCHEN: nur die ersten " + juce::String(drawn.load()) +
-                               " Bilder sind gezeichnet (scene.bin ist noch da)."
-                         : "STOPPED: only the first " + juce::String(drawn.load()) +
-                               " frames are drawn (scene.bin is still there).")
+            << (de ? "ABGEBROCHEN: nur die ersten " + juce::String(drawn.load()) +
+                         " Bilder sind gezeichnet (scene.bin ist noch da)."
+                   : "STOPPED: only the first " + juce::String(drawn.load()) +
+                         " frames are drawn (scene.bin is still there).")
             << nl;
     if (lost.load() > 0)
-        txt << nl << (german() ? "Achtung: " : "Note: ") << juce::String(lost.load())
-            << (german() ? " Samples gingen verloren (der Schreiber kam nicht nach)."
-                         : " samples were lost (the writer fell behind).")
+        txt << nl << (de ? "Achtung: " : "Note: ") << juce::String(lost.load())
+            << (de ? " Samples gingen verloren (der Schreiber kam nicht nach)."
+                   : " samples were lost (the writer fell behind).")
             << nl;
-    dir.getChildFile(german() ? "LIESMICH.txt" : "README.txt").replaceWithText(txt);
+    dir.getChildFile(de ? "LIESMICH.txt" : "README.txt").replaceWithText(txt);
     st = State::idle;
     ++finished;
+}
+
+juce::StringArray Pano360Recorder::ffmpegArgs(const Settings &s, const juce::File &frames, const juce::File &wav,
+                                              const juce::File &out)
+{
+    // (QuickTime with 4 channels of 24-bit PCM: ffmpeg writes them as 'lpcm', which the spatial audio box goes with)
+    return {"-y", "-hide_banner", "-nostdin", "-loglevel", "error", "-framerate", juce::String(s.fps), "-i",
+            frames.getChildFile("f_%06d.jpg").getFullPathName(), "-i", wav.getFullPathName(), "-map", "0:v:0", "-map",
+            "1:a:0", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-g",
+            juce::String(juce::jmax(1, s.fps / 2)), "-c:a", "pcm_s24le", "-ar", "48000", "-shortest",
+            out.getFullPathName()};
+}
+
+juce::File Pano360Recorder::findFfmpeg()
+{
+    const auto own = juce::SystemStats::getEnvironmentVariable("RYSUM_FFMPEG", {});
+    if (own.isNotEmpty())
+        return own == "none" ? juce::File() : juce::File(own); // ("none": as if there were none - a test)
+#if JUCE_WINDOWS
+    const juce::String exe("ffmpeg.exe"), sep(";");
+#else
+    const juce::String exe("ffmpeg"), sep(":");
+#endif
+    for (const auto &d : juce::StringArray::fromTokens(juce::SystemStats::getEnvironmentVariable("PATH", {}), sep, "\""))
+        if (d.trim().isNotEmpty() && juce::File::isAbsolutePath(d.trim()))
+        {
+            const auto f = juce::File(d.trim()).getChildFile(exe);
+            if (f.existsAsFile())
+                return f;
+        }
+#if JUCE_WINDOWS
+    // (a DAW started before ffmpeg was installed has the old PATH: winget's places, and the usual folders)
+    const auto local = juce::File(juce::SystemStats::getEnvironmentVariable("LOCALAPPDATA", {}));
+    if (local.getFullPathName().isNotEmpty())
+    {
+        const auto link = local.getChildFile("Microsoft/WinGet/Links/ffmpeg.exe");
+        if (link.existsAsFile())
+            return link;
+        for (const auto &pkg : local.getChildFile("Microsoft/WinGet/Packages")
+                                   .findChildFiles(juce::File::findDirectories, false, "*FFmpeg*"))
+            for (const auto &f : pkg.findChildFiles(juce::File::findFiles, true, "ffmpeg.exe"))
+                return f;
+    }
+    for (const char *p : {"C:/ffmpeg/bin/ffmpeg.exe", "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+                          "C:/ProgramData/chocolatey/bin/ffmpeg.exe"})
+        if (juce::File(p).existsAsFile())
+            return juce::File(p);
+#else
+    for (const char *p : {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"})
+        if (juce::File(p).existsAsFile())
+            return juce::File(p);
+#endif
+    return {};
 }
 
 juce::String Pano360Recorder::videoScript(const Settings &s)
@@ -445,11 +695,11 @@ juce::String Pano360Recorder::videoScript(const Settings &s)
     juce::String t;
     t << "@echo off" << nl
       << "rem Rysum 360: the frames and the Ambisonics (AmbiX, W Y Z X) into one video. Needs ffmpeg." << nl
-      << "rem Then: Spatial Media Metadata Injector (360 + spatial audio), see README / LIESMICH." << nl
+      << "rem Then the 360 metadata: Rysum's 3D view, 360 button, or Google's Spatial Media Metadata Injector." << nl
       << "cd /d \"%~dp0\"" << nl << "ffmpeg -y -framerate " << s.fps
       << " -i frames\\f_%%06d.jpg -i ambix.wav -map 0:v:0 -map 1:a:0 -c:v libx264 -preset medium -crf 18"
-      << " -pix_fmt yuv420p -g " << juce::jmax(1, s.fps / 2) << " -c:a pcm_s24le -ar 48000 -shortest rysum360.mov"
-      << nl << "pause" << nl;
+      << " -pix_fmt yuv420p -g " << juce::jmax(1, s.fps / 2)
+      << " -c:a pcm_s24le -ar 48000 -shortest rysum360_ohne_metadaten.mov" << nl << "pause" << nl;
     return t;
 }
 
@@ -550,7 +800,7 @@ const juce::Image &glowSprite()
 }
 } // namespace
 
-juce::Image renderPanorama(const PanoJob &job, int W, Raster &face)
+juce::Image renderPanorama(const PanoJob &job, int W, Raster &face, PanoGpu *gpu, juce::String *gpuError)
 {
     W = juce::jmax(64, W);
     const int H = W / 2;
@@ -566,6 +816,14 @@ juce::Image renderPanorama(const PanoJob &job, int W, Raster &face)
     face.setAllAround(false);
     face.setRecording(nullptr);
     face.setMaterials(job.mats);
+    // the graphics card: the processor prepares each face's triangles, the card fills and resamples them
+    bool onCard = gpu != nullptr && gpu->isOpen();
+    juce::String why;
+    if (onCard)
+        onCard = gpu->beginFrame(F, W, why);
+    std::vector<float> verts;
+    std::array<float, 32 * 4> matsGpu{};
+    juce::Image out;
     for (int f = 0; f < 6; ++f)
     {
         face.setCameraBasis(job.eye, kFaces[f].right, kFaces[f].fwd, kFaceFov);
@@ -573,8 +831,42 @@ juce::Image renderPanorama(const PanoJob &job, int W, Raster &face)
         face.setLamps(job.lamps, job.ambient);
         for (const auto &c : job.calls)
             face.triangle(c.a, c.b, c.c, c.slot, c.tone, c.emissive);
-        face.finish();
-        faces[(size_t)f] = face.image().createCopy();
+        if (onCard)
+        {
+            face.exportGpu(verts, matsGpu);
+            const V3 up = cross(kFaces[f].right, kFaces[f].fwd);
+            const PanoGpu::FaceLook look{face.fogToneNow(), face.fogInvNow(), face.grainNow(), job.frameNo,
+                                         face.darkNow(), face.ambientNow(), face.focalPerWidth(), &face.lampsInView(),
+                                         {kFaces[f].right.z, up.z, kFaces[f].fwd.z}};
+            onCard = gpu->drawFace(f, verts, matsGpu, look, why);
+        }
+        if (!onCard)
+        {
+            if (gpu != nullptr && gpu->isOpen())
+            {
+                // (the card gave up: this frame and the ones after it from the processor)
+                if (gpuError != nullptr)
+                    *gpuError = why;
+                gpu->close();
+                for (int g = 0; g < f; ++g)
+                {
+                    face.setCameraBasis(job.eye, kFaces[g].right, kFaces[g].fwd, kFaceFov);
+                    face.begin(job.fogTone, job.fogDistance, job.grain, job.frameNo);
+                    face.setLamps(job.lamps, job.ambient);
+                    for (const auto &c : job.calls)
+                        face.triangle(c.a, c.b, c.c, c.slot, c.tone, c.emissive);
+                    face.finish();
+                    faces[(size_t)g] = face.image().createCopy();
+                }
+                face.setCameraBasis(job.eye, kFaces[f].right, kFaces[f].fwd, kFaceFov);
+                face.begin(job.fogTone, job.fogDistance, job.grain, job.frameNo);
+                face.setLamps(job.lamps, job.ambient);
+                for (const auto &c : job.calls)
+                    face.triangle(c.a, c.b, c.c, c.slot, c.tone, c.emissive);
+            }
+            face.finish();
+            faces[(size_t)f] = face.image().createCopy();
+        }
         // the glows whose middle lies in this face: hidden behind a wall or not (as the view decides it)
         for (size_t i = 0; i < job.glows.size(); ++i)
         {
@@ -584,14 +876,54 @@ juce::Image renderPanorama(const PanoJob &job, int W, Raster &face)
             float sx, sy, dep;
             if (!face.project(job.glows[i].at, sx, sy, dep))
                 continue;
-            const float zd = face.depthAt((int)sx, (int)sy);
+            const float zd = onCard ? gpu->depthAt((int)sx, (int)sy) : face.depthAt((int)sx, (int)sy);
             seen[i] = !(zd > 0.0f && zd < dep * 0.95f - 0.4f);
         }
     }
 
-    // every pixel of the panorama: its ray, the face it meets, bilinear there
-    juce::Image out(juce::Image::RGB, W, H, false);
+    // the glows of the sounding pipes, over the panorama (wider towards the poles, as it stretches there)
+    std::vector<PanoGpu::Glow> glowsOver;
+    for (size_t i = 0; i < job.glows.size(); ++i)
     {
+        if (!seen[i])
+            continue;
+        const auto &gw = job.glows[i];
+        const V3 dv = gw.at - job.eye;
+        const float dist = std::sqrt(dot(dv, dv));
+        if (dist < 0.05f)
+            continue;
+        // (as wide as the view draws it: its radius at an 80 degree view, in radians)
+        const float ang = juce::jlimit(0.008f, 0.34f, 0.839f * (0.6f + 0.35f * gw.size) / dist);
+        const float lon = std::atan2(dv.x, dv.y), lat = std::asin(juce::jlimit(-1.0f, 1.0f, dv.z / dist));
+        const float cx = (lon / juce::MathConstants<float>::twoPi + 0.5f) * (float)W;
+        const float cy = (0.5f - lat / juce::MathConstants<float>::pi) * (float)H;
+        const float rh = ang * (float)H / juce::MathConstants<float>::pi;
+        const float rw = juce::jmin(0.5f * (float)W, rh / juce::jmax(0.15f, std::cos(lat)));
+        glowsOver.push_back({cx, cy, rw, rh, juce::jlimit(0.0f, 1.0f, gw.amount)});
+    }
+
+    if (onCard)
+    {
+        std::array<V3, 6> fw, rt;
+        for (int f = 0; f < 6; ++f)
+        {
+            fw[(size_t)f] = kFaces[f].fwd;
+            rt[(size_t)f] = kFaces[f].right;
+        }
+        onCard = gpu->resample(fw, rt, focal, glowsOver, out, why);
+        if (!onCard)
+        {
+            if (gpuError != nullptr)
+                *gpuError = why;
+            gpu->close();
+            return renderPanorama(job, W, face, nullptr, nullptr);
+        }
+    }
+
+    // every pixel of the panorama: its ray, the face it meets, bilinear there
+    if (!onCard)
+    {
+        out = juce::Image(juce::Image::RGB, W, H, false);
         std::array<std::unique_ptr<juce::Image::BitmapData>, 6> src;
         for (int f = 0; f < 6; ++f)
             src[(size_t)f] =
@@ -647,31 +979,19 @@ juce::Image renderPanorama(const PanoJob &job, int W, Raster &face)
             t.join();
     }
 
-    // the glows of the sounding pipes, laid over the panorama (wider towards the poles, as it stretches there)
+    // the glows (the card has laid them in already)
+    if (!onCard && !glowsOver.empty())
     {
         juce::Graphics g(out);
         g.setImageResamplingQuality(juce::Graphics::lowResamplingQuality);
         const auto &sprite = glowSprite();
-        for (size_t i = 0; i < job.glows.size(); ++i)
+        for (const auto &gw : glowsOver)
         {
-            if (!seen[i])
-                continue;
-            const auto &gw = job.glows[i];
-            const V3 dv = gw.at - job.eye;
-            const float dist = std::sqrt(dot(dv, dv));
-            if (dist < 0.05f)
-                continue;
-            // (as wide as the view draws it: its radius at an 80 degree view, in radians)
-            const float ang = juce::jlimit(0.008f, 0.34f, 0.839f * (0.6f + 0.35f * gw.size) / dist);
-            const float lon = std::atan2(dv.x, dv.y), lat = std::asin(juce::jlimit(-1.0f, 1.0f, dv.z / dist));
-            const float cx = (lon / juce::MathConstants<float>::twoPi + 0.5f) * (float)W;
-            const float cy = (0.5f - lat / juce::MathConstants<float>::pi) * (float)H;
-            const float rh = ang * (float)H / juce::MathConstants<float>::pi;
-            const float rw = juce::jmin(0.5f * (float)W, rh / juce::jmax(0.15f, std::cos(lat)));
-            g.setOpacity(juce::jlimit(0.0f, 1.0f, gw.amount));
+            g.setOpacity(gw.alpha);
             for (float shift : {-(float)W, 0.0f, (float)W})
-                if (cx + shift + rw > 0.0f && cx + shift - rw < (float)W)
-                    g.drawImage(sprite, juce::Rectangle<float>(2.0f * rw, 2.0f * rh).withCentre({cx + shift, cy}));
+                if (gw.cx + shift + gw.rw > 0.0f && gw.cx + shift - gw.rw < (float)W)
+                    g.drawImage(sprite,
+                                juce::Rectangle<float>(2.0f * gw.rw, 2.0f * gw.rh).withCentre({gw.cx + shift, gw.cy}));
         }
     }
     return out;

@@ -1,9 +1,13 @@
 #pragma once
 
 #include "Walk3D.h"
+#include "PanoGpu.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <array>
+#include <condition_variable>
 #include <deque>
+#include <functional>
+#include <mutex>
 
 /** The 360° recording of the 3D view: a video all around the eye (equirectangular) and the sound field as
     first-order Ambisonics (AmbiX: ACN / SN3D, W Y Z X), both fixed to the room - the front of the picture is
@@ -45,8 +49,11 @@ struct PanoJob
     int64_t upTo = 0; // the video frame this scene is for (and the ones before it that have none)
 };
 
-/** draws one frame: the equirectangular picture, 'width' wide (face: a renderer to draw the cube's faces with) */
-juce::Image renderPanorama(const PanoJob &job, int width, Raster &face);
+/** draws one frame: the equirectangular picture, 'width' wide (face: a renderer to draw the cube's faces with).
+    gpu: the graphics card fills the faces and resamples them (if it fails, the processor draws, the card is
+    closed and why is in gpuError) */
+juce::Image renderPanorama(const PanoJob &job, int width, Raster &face, PanoGpu *gpu = nullptr,
+                           juce::String *gpuError = nullptr);
 
 class Pano360Recorder
 {
@@ -95,6 +102,33 @@ public:
     /** counts finished recordings (all frames drawn) */
     int finishedCount() const noexcept { return finished.load(); }
     int64_t samplesLost() const noexcept { return lost.load(); }
+    /** drawing: the graphics card that draws the frames (empty: the processor), and why not the card */
+    juce::String drawingOn() const
+    {
+        const std::lock_guard<std::mutex> l(infoLock);
+        return drawnOn;
+    }
+    juce::String whyNotOnCard() const
+    {
+        const std::lock_guard<std::mutex> l(infoLock);
+        return gpuWhy;
+    }
+    /** after the frames: 0 = no video being made, 1 = ffmpeg makes it, 2 = the 360 marks are written,
+        3 = the last recording's video is done */
+    int videoStepNow() const noexcept { return videoStep.load(); }
+    int64_t videoFramesDone() const noexcept { return videoFrames.load(); }
+    /** what went wrong with the last video (empty: nothing, or no ffmpeg) */
+    juce::String videoProblem() const
+    {
+        const std::lock_guard<std::mutex> l(infoLock);
+        return videoNote;
+    }
+
+    /** ffmpeg: RYSUM_FFMPEG, the PATH, then the usual places (winget, Homebrew); none = File() */
+    static juce::File findFfmpeg();
+    /** ffmpeg's arguments (after its own name) for the video from the frames and the sound */
+    static juce::StringArray ffmpegArgs(const Settings &s, const juce::File &frames, const juce::File &wav,
+                                        const juce::File &out);
 
     // ---- audio thread: the block's Ambisonics (numCh < 4: the missing channels silent)
     void pushAudio(const float *const *ch, int numCh, int n) noexcept;
@@ -116,6 +150,10 @@ private:
     std::atomic<float> frameMs{0.0f};
     std::atomic<bool> lastNoScene{false};
     std::atomic<int> finished{0};
+    std::atomic<int> videoStep{0};
+    std::atomic<int64_t> videoFrames{0};
+    mutable std::mutex infoLock;
+    juce::String drawnOn, gpuWhy, videoNote; // (under infoLock)
     // audio -> writer
     static constexpr int kFifo = 1 << 18;
     juce::AbstractFifo fifo{kFifo};

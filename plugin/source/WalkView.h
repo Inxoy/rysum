@@ -323,6 +323,7 @@ private:
     void panoClicked();
     void startPano (int width, int fps);
     void choosePanoFolder();
+    void markVideo();
     void stopPano();
     void updatePanoLabel();
 public:
@@ -335,6 +336,8 @@ public:
     void frameForTest() { buildScene (1.0f); }
     V3 eyeForTest() const { return eyeNow(); }
     size_t panoTrianglesForTest() const noexcept { return panoTestJob.calls.size(); }
+    /** the scene panoramaForTest last drew (to draw it again, e.g. on the graphics card) */
+    const PanoJob& panoJobForTest() const noexcept { return panoTestJob; }
 private:
     void setAudience (bool on);
     void drawAudience (juce::Graphics& g, juce::Rectangle<int> area);

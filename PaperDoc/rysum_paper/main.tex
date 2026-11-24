@@ -94,7 +94,7 @@
   \small Matrikelnummer 521382 \\
   \small Sound als mediale Inszenierung \textperiodcentered{} Dr.\ Gerriet Sharma \\
   \small Technische Universität Berlin \textperiodcentered{} 3rd semester}
-\date{22 November 2026}
+\date{24 November 2026}
 
 \begin{document}
 \maketitle
@@ -514,6 +514,8 @@ File & Responsibility \\
 \fn{Transaural.h}      & crosstalk cancellation for two loudspeakers: filter design and real-time filter (\S\ref{sec:transaural}) \\
 \fn{Walk3D.*}, \fn{WalkView.*} & the Saal in 3D: OBJ import, materials, software renderer, page \ui{Begehen} (\S\ref{sec:walk}) \\
 \fn{WalkGpu.*}         & the same picture drawn by the graphics card (OpenGL 3.2 shader), with the processor as the way back (\S\ref{sec:walkgpu}) \\
+\fn{Pano360.*}, \fn{PanoGpu.*} & the 360-degree recording: scenes, sound, drawing the frames (on the graphics card when it can), ffmpeg (\S\ref{sec:math-pano}) \\
+\fn{SpatialMeta.*}     & the 360-degree and spatial-audio boxes YouTube reads, written into the video (\S\ref{sec:math-pano}) \\
 \fn{WalkArrange.cpp}, \fn{WalkHands.cpp} & the player's hands in the 3D view: choosing and arranging pipes, layouts, undo, magnet, sweep; setting down, pinning, the bow, whirlwind, time, room size, lanterns, ears, the controls of the computer (\S\ref{sec:hands}) \\
 \fn{RoomModels.*}      & the six built-in church rooms, generated as OBJ (\S\ref{sec:models}) \\
 \fn{TimeDistance.h}    & \ui{Zeit als Entfernung}: a memory of up to \SI{20}{s} read further back the further forward one stands (\S\ref{sec:illusions}) \\
@@ -1897,9 +1899,13 @@ per second (3840 also at 25), and where the recordings go: \fn{Documents/Rysum/3
 menu (\ui{Speicherort wählen \dots}, kept on this computer in \fn{Documents/Rysum/360.xml}; the menu shows the space left there, and a recording
 started with room for less than about five minutes says so -- a bright 3840-wide frame is about 1.6\,MB, some 3\,GB a minute). Into a folder
 named after the date and time go the frames (\fn{frames/f\_000000.jpg} \dots, equirectangular,
-the middle the Saal's front), \fn{ambix.wav} (first-order Ambisonics, AmbiX: W, Y, Z, X, 24 bit), a script \fn{make\_video.bat} (and \fn{.sh})
-that puts them together with ffmpeg into \fn{rysum360.mov} (H.264 and 4 channels of PCM at 48\,kHz), and a \fn{README.txt} with the last step:
-Google's Spatial Media Metadata Injector marks the file as a 360-degree video with AmbiX sound, and YouTube then plays it so. Both picture and
+the middle the Saal's front), \fn{ambix.wav} (first-order Ambisonics, AmbiX: W, Y, Z, X, 24 bit) and, when the frames are drawn, the video
+itself: if ffmpeg is installed (found on the \texttt{PATH}, in winget's or Homebrew's places, or named by \texttt{RYSUM\_FFMPEG}), the plugin runs
+it and gets \fn{rysum360.mov} (H.264 and 4 channels of PCM at 48\,kHz), and then writes into it the marks that make it a 360-degree video with
+AmbiX sound -- the boxes Google's Spatial Media Metadata Injector would write (\S\ref{sec:math-pano}). That file goes to YouTube as it is.
+Without ffmpeg the folder has a script \fn{make\_video.bat} (and \fn{.sh}) for it instead, and the same menu has
+\ui{360\textdegree-Metadaten in ein Video schreiben \dots}, which marks any such video (next to it as \fn{\dots\_360.mov}); the
+\fn{README.txt} says which of the two happened. Both picture and
 sound are fixed in the room, not in the player's head: the sound is taken before the head's turn and before the headphone or loudspeaker
 decoder, so the output has to be Ambisonics of any order (AmbiX, headphones or loudspeakers; with a stereo output the button says so). The
 player walks and looks around as usual; where the eye goes, the camera goes; where the player looks does not matter to the video. The ears
@@ -1909,9 +1915,13 @@ Recording and drawing are two steps. While recording, the view keeps for every v
 built -- its triangles in the room, the materials, the lamps and the glows -- and writes it to \fn{scene.bin} (the room's or model's
 triangles only when they change; about 150\,kB per frame in the Saal with a chord). That costs almost nothing, so the recording keeps every
 frame whatever the size of the video. After \ui{360\textdegree{} Aufnahme} is clicked again, a thread of its own draws every frame from
-\fn{scene.bin}, with the processor, six times (a cube around the eye), resamples it into the panorama and writes the JPEG while the next one
-is drawn; the button shows how far it is, and the folder opens when it is done. Drawing a 3840-wide frame takes about 0.27\,s on the
-development machine (Ryzen~5 2600X), a 2048-wide one 0.11\,s: a minute of 4K video at 30 frames per second is drawn in about eight minutes.
+\fn{scene.bin} six times (a cube around the eye), resamples it into the panorama and hands the JPEG to a few threads that write
+while the next frames are drawn; the button shows how far it is (then \ui{Video \dots\,\%} while ffmpeg works), and the folder opens when
+it is done. The six faces are drawn by the graphics card when it can (\S\ref{sec:math-pano}): a 3840-wide frame then takes about
+\SI{18}{ms} on the development machine (Radeon RX~6700~XT), against about 0.26\,s from the processor (Ryzen~5 2600X), and the JPEGs, about
+0.18\,s each on one core, become the slower part; a 2.1-second 4K recording had its frames in about 2\,s (12\,s from the processor), and
+ffmpeg took 7\,s more for the video. A card that cannot (no OpenGL 3.2, a shader that does not compile, a picture larger than its textures,
+or a failure on the way) hands the drawing back to the processor, from the frame where it failed; the README says which drew the frames.
 The sound's clock decides which video frame a scene belongs to (\S\ref{sec:math-pano}); a frame for which the view gave no scene, because it
 drew more slowly than the video's frame rate, repeats the one before, so picture and sound stay together. The recording has to be made in real
 time, with the view open (not in a faster-than-real-time export of the DAW, which the view cannot follow).

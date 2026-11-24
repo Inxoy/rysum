@@ -5,6 +5,10 @@
 
 namespace rysum
 {
+/** the shaders of the 3D view's picture (the 360 degree faces use them too: uPano) */
+const char* walkVertexShader();
+const char* walkFragmentShader();
+
 /** one frame of the 3D view for the graphics card: the triangles the Raster has prepared (projected, lit,
     clipped), the materials, fog and grain. Built on the message thread. */
 struct GpuFrame

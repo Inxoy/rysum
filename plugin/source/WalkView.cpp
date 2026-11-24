@@ -2,6 +2,7 @@
 #include "MeshAcoustics.h"
 #include "RoomSim.h"
 #include "RoomModels.h"
+#include "SpatialMeta.h"
 #include <algorithm>
 
 namespace rysum::ui
@@ -116,8 +117,9 @@ void setPanoBaseFolder (const juce::File& f)
 juce::String panoTooltip()
 {
     return rysum::tr("Ein 360\xc2\xb0-Video aufnehmen: das Bild rundum (equirektangular) und der Raumklang als Ambisonics 1. Ordnung (AmbiX), "
-                           "beide fest im Saal. Zusammen werden sie ein 360\xc2\xb0-Video mit r\xc3\xa4umlichem Ton (YouTube). Der Ausgang muss Ambisonics "
-                           "sein (AmbiX, Kopfh\xc3\xb6rer oder Lautsprecher). Noch einmal klicken: Ende; der Ordner \xc3\xb6" "ffnet sich.");
+                           "beide fest im Saal. Der Ausgang muss Ambisonics sein (AmbiX, Kopfh\xc3\xb6rer oder Lautsprecher). Noch einmal klicken: Ende. "
+                           "Dann werden die Bilder gezeichnet (von der Grafikkarte, wenn sie es kann) und, wenn ffmpeg installiert ist, wird daraus "
+                           "rysum360.mov \xe2\x80\x93 schon mit den Metadaten f\xc3\xbcr 360\xc2\xb0 und den Raumklang, fertig f\xc3\xbcr YouTube. Der Ordner \xc3\xb6" "ffnet sich.");
 }
 } // namespace
 
@@ -2563,6 +2565,7 @@ void WalkView::panoClicked()
         m.addSectionHeader (rysum::tr("Die 360\xc2\xb0-Aufnahme wird gezeichnet"));
         m.addItem (8, rysum::tr("Zeichnen abbrechen"));
         m.addItem (9, rysum::tr("Ordner der Aufnahmen \xc3\xb6" "ffnen"));
+        m.addItem (12, rysum::tr("360\xc2\xb0-Metadaten in ein Video schreiben \xe2\x80\xa6"));
     }
     else
     {
@@ -2582,6 +2585,7 @@ void WalkView::panoClicked()
         m.addItem (10, rysum::tr("Speicherort w\xc3\xa4hlen \xe2\x80\xa6"));
         if (base != panoDefaultFolder()) m.addItem (11, rysum::tr("Speicherort: wieder Dokumente/Rysum/360"));
         m.addItem (9, rysum::tr("Ordner der Aufnahmen \xc3\xb6" "ffnen"));
+        m.addItem (12, rysum::tr("360\xc2\xb0-Metadaten in ein Video schreiben \xe2\x80\xa6"));
     }
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&actPano), [safe] (int r)
     {
@@ -2595,6 +2599,7 @@ void WalkView::panoClicked()
             return;
         }
         if (r == 10) { safe->choosePanoFolder(); return; }
+        if (r == 12) { safe->markVideo(); return; }
         if (r == 11) { setPanoBaseFolder (panoDefaultFolder()); safe->say (rysum::tr("Speicherort: ") + panoDefaultFolder().getFullPathName(), 4000.0); return; }
         const int widths[] { 3840, 3840, 2560, 2048, 5760 }, rates[] { 30, 25, 30, 30, 30 };
         safe->startPano (widths[r - 1], rates[r - 1]);
@@ -2619,6 +2624,33 @@ void WalkView::choosePanoFolder()
         if (! f.isDirectory() && ! f.createDirectory()) { safe->say (rysum::tr("Kann den Ordner nicht anlegen: ") + f.getFullPathName(), 5000.0); return; }
         setPanoBaseFolder (f);
         safe->say (rysum::tr("Speicherort: ") + f.getFullPathName() + "  (" + juce::String ((double) f.getBytesFreeOnVolume() / 1.0e9, 1) + rysum::tr(" GB frei") + ")", 5000.0);
+    });
+}
+
+void WalkView::markVideo()
+{
+    // a video made by hand (make_video.bat): marked as 360 degrees with spatial sound, next to it as ..._360
+    chooser = std::make_unique<juce::FileChooser> (rysum::tr("Welches Video (360\xc2\xb0, mit Ambisonics 1. Ordnung)?"),
+                                                   panoBaseFolder().exists() ? panoBaseFolder() : juce::File(), "*.mov;*.mp4");
+    juce::Component::SafePointer<WalkView> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc)
+    {
+        const auto in = fc.getResult();
+        if (safe == nullptr || ! in.existsAsFile()) return;
+        const auto out = in.getSiblingFile (in.getFileNameWithoutExtension() + "_360" + in.getFileExtension());
+        safe->say (rysum::tr("360\xc2\xb0-Metadaten werden geschrieben: ") + out.getFullPathName(), 4000.0);
+        // (a copy of the whole file: on a thread of its own)
+        std::thread ([safe, in, out]
+        {
+            juce::String error;
+            const bool ok = rysum::injectSpatialMetadata (in, out, error);
+            juce::MessageManager::callAsync ([safe, ok, out, error]
+            {
+                if (safe == nullptr) return;
+                if (ok) safe->say (rysum::tr("Fertig f\xc3\xbcr YouTube: ") + out.getFullPathName(), 7000.0);
+                else safe->say (rysum::tr("Die 360\xc2\xb0-Metadaten lie\xc3\x9f" "en sich nicht schreiben: ") + error, 8000.0);
+            });
+        }).detach();
     });
 }
 
@@ -2669,7 +2701,13 @@ void WalkView::updatePanoLabel()
     {
         // all frames drawn (or the drawing stopped): the folder
         panoFinishedSeen = rec.finishedCount();
-        say (rysum::tr("360\xc2\xb0-Aufnahme fertig: ") + rec.folder().getFullPathName(), 5000.0);
+        const auto problem = rec.videoProblem();
+        if (rec.videoStepNow() == 3)
+            say (rysum::tr("360\xc2\xb0-Video fertig f\xc3\xbcr YouTube: ") + rec.folder().getChildFile ("rysum360.mov").getFullPathName(), 7000.0);
+        else if (problem.isNotEmpty())
+            say (problem, 8000.0);
+        else
+            say (rysum::tr("360\xc2\xb0-Aufnahme fertig: ") + rec.folder().getFullPathName(), 5000.0);
         if (! testMode) rec.folder().startAsProcess();
     }
     if (state == Pano360Recorder::State::idle)
@@ -2684,9 +2722,25 @@ void WalkView::updatePanoLabel()
     {
         // after the recording: how far the drawing is
         const auto total = juce::jmax<int64_t> (1, rec.framesTotal());
+        const int step = rec.videoStepNow();
+        if (step == 1)
+        {
+            // ffmpeg makes the video
+            actPano.setButtonText (rysum::tr("Video ") + juce::String ((int) (100 * rec.videoFramesDone() / total)) + " %");
+            actPano.setTooltip (rysum::tr("ffmpeg macht das Video: ") + juce::String (rec.videoFramesDone()) + " / " + juce::String (total) + rysum::tr(" Bilder"));
+            return;
+        }
+        if (step == 2)
+        {
+            actPano.setButtonText (rysum::tr("360\xc2\xb0 Metadaten"));
+            actPano.setTooltip (rysum::tr("Die Metadaten f\xc3\xbcr 360\xc2\xb0 und den Raumklang werden geschrieben"));
+            return;
+        }
+        const auto card = rec.drawingOn();
         actPano.setButtonText (juce::String::fromUTF8 ("360\xc2\xb0 ") + juce::String ((int) (100 * rec.framesDrawn() / total)) + " %");
         actPano.setTooltip (juce::String (rec.framesDrawn()) + " / " + juce::String (total) + rysum::tr(" Bilder gezeichnet, ")
-                            + juce::String (rec.lastFrameMs(), 0) + rysum::tr(" ms je Bild"));
+                            + juce::String (rec.lastFrameMs(), 0) + rysum::tr(" ms je Bild") + " ("
+                            + (card.isNotEmpty() ? rysum::tr("Grafikkarte: ") + card : rysum::tr("vom Prozessor")) + ")");
         return;
     }
     const int s = (int) rec.secondsRecorded();
