@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use Rysum or parts of its code, please cite it as below."
+title: "Rysum: a spatial sample instrument of a fifteenth-century meantone organ"
+type: software
+authors:
+  - given-names: Christoffer
+    family-names: Schöne
+  - alias: 000masa000
+repository-code: "https://github.com/Inxoy/rysum"
+license: AGPL-3.0-only
+date-released: 2026-11-24
+keywords:
+  - organ
+  - meantone
+  - spatial audio
+  - Ambisonics
+  - audio plugin
+  - VST3
+references:
+  - type: report
+    title: "Rysum: A spatial sample instrument of a fifteenth-century meantone organ. Technical documentation of the plug-in (VST3 / Standalone)"
+    authors:
+      - given-names: Christoffer
+        family-names: Schöne
+    institution:
+      name: "Technische Universität Berlin"
+    year: 2026
+    url: "https://github.com/Inxoy/rysum/blob/main/PaperDoc/rysum_paper/main.pdf"

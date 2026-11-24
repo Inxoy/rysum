@@ -776,3 +776,45 @@ Database for Different Head-Above-Torso Orientations", JAES 65(10), 2017, data D
 10.14279/depositonce-5718, licence CC BY 4.0 (see `plugin/resources/FABIAN_LICENSE.txt`).
 SOFA files are read with libmysofa by Christian Hoene / Symonics (BSD 3-clause).
 Microtuning via the MTS-ESP client library by ODDSound Ltd. (0BSD).
+
+## How to cite
+
+If you use Rysum or parts of its code in your work, please cite it:
+
+> Christoffer Schöne and 000masa000. *Rysum: a spatial sample instrument of a fifteenth-century meantone
+> organ.* Software, 2026. https://github.com/Inxoy/rysum
+
+The technical documentation (about 150 pages, with the mathematics of the instrument) can be cited as:
+
+> Christoffer Schöne. *Rysum: A spatial sample instrument of a fifteenth-century meantone organ. Technical
+> documentation of the plug-in (VST3 / Standalone).* Technische Universität Berlin, 2026.
+> https://github.com/Inxoy/rysum/blob/main/PaperDoc/rysum_paper/main.pdf
+
+BibTeX:
+
+```bibtex
+@software{rysum,
+  author = {Schöne, Christoffer and {000masa000}},
+  title  = {Rysum: a spatial sample instrument of a fifteenth-century meantone organ},
+  year   = {2026},
+  url    = {https://github.com/Inxoy/rysum},
+  note   = {Licensed under the GNU Affero General Public License v3.0}
+}
+```
+
+GitHub's "Cite this repository" button (from `CITATION.cff`) gives the same in other formats.
+
+## License
+
+Copyright (C) 2026 Christoffer Schöne and the Rysum contributors.
+
+The source code is free software: you can redistribute it and/or modify it under the terms of the GNU
+Affero General Public License, version 3, as published by the Free Software Foundation (see `LICENSE`). It
+is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. Anyone who changes it and passes it on, or
+runs a changed version as a network service, must publish the changes under the same license and keep
+this copyright notice.
+
+The recordings of the Rysum organ (the sample library) are not part of this repository and not covered
+by this license; all rights to them are reserved. The third-party parts keep their own licenses: JUCE
+(used under the AGPLv3), and libmysofa, MTS-ESP, the FABIAN HRTFs and the fonts as listed above.
