@@ -53,10 +53,13 @@ Either copy the whole `Rysum.vst3` folder to `C:\Program Files\Common Files\VST3
 *Options → Preferences → Plug-ins → VST → Edit path list → add*
 `D:\RYSUM_plugin\rysum_plugin\plugin\build\Rysum_artefacts\Release\VST3`, then *Re-scan*.
 
-The plugin finds the samples by itself in `D:\RYSUM_plugin\rysum_plugin\rysum-samples`
-(the output of `scripts/rysum_preprocess.py`, run from the repository root). If they are somewhere else, click
-**Samples-Ordner …** on the Spieltisch page and choose the folder that contains
-`rysum_samples.json`.
+**The samples are not part of this repository.** The recordings of the Rysum organ belong to the author and
+are not published here; the code, the documentation and the build are. Without the sample library the plugin
+builds and opens, but the seven sampled stops stay silent (the Vox humana, the synthesised sounds and the effects
+still work). If you have the library, the plugin finds it by itself in a folder `rysum-samples` at the root of the
+repository; if it is somewhere else, click **Samples-Ordner …** on the Spieltisch page and choose the folder that
+contains `rysum_samples.json`. The preparation script `scripts/rysum_preprocess.py` makes that folder from the raw
+recordings.
 
 ### Stereo
 Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.

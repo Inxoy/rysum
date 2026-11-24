@@ -32,3 +32,25 @@ october30_samples/
 # browser profile used for screenshots stay local
 PaperDoc/*
 !PaperDoc/rysum_paper/
+
+# the organ's recordings and everything made from them stay with the author, never in this repository
+rysum-samples/
+samples/
+output_notes*/
+raw_unprocessed_files/
+october30_samples/
+_archive/rysum-organ/
+_archive/output_notes_*/
+_archive/photos/
+newpics/
+*.wav
+*.WAV
+*.flac
+*.aif
+*.aiff
+*.mp3
+*.ogg
+*.RPP
+*.rpp
+*.rpp-bak
+*.zip
