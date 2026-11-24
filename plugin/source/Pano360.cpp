@@ -309,7 +309,6 @@ private:
             threads.clear();
         }
     } pool;
-    std::atomic<int64_t> written{0};
 
     juce::File frameFile(int64_t i) const
     {
@@ -337,7 +336,7 @@ private:
                 for (int64_t i = first + 1; i <= last; ++i)
                     from.copyFileTo(frameFile(i)); // (a repeat: the picture before)
                 // (frames written, counted: with several writers they finish in any order)
-                rec.drawn = written += last - first + 1;
+                rec.drawn += last - first + 1;
             });
     }
 

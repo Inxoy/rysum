@@ -160,6 +160,10 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     actPano.onClick = [this] { panoClicked(); };
     actPano.setTooltip (panoTooltip());
     panoFinishedSeen = proc.pano360.finishedCount();
+    // (test, RYSUM_360_TEST, on the standalone with this page open: a recording of 2.5 s while the view goes on
+    //  drawing, then Documents/Rysum/360-test.txt - who drew the frames, the video, the view's card)
+    if (juce::SystemStats::getEnvironmentVariable ("RYSUM_360_TEST", {}).isNotEmpty())
+        juce::Timer::callAfterDelay (3000, [safe = juce::Component::SafePointer<WalkView> (this)] { if (safe != nullptr) safe->run360Test (0); });
     controlsButton.setTooltip (rysum::tr("Wie sich Maus und Gehen anf\xc3\xbchlen (auf diesem Computer): Tempo des Schauens, Maus umgekehrt, Gehtempo. Tab gehalten: alle Tasten."));
     controlsButton.onClick = [this] { showControlsMenu(); };
     back.setTooltip (rysum::tr("Zur\xc3\xbc" "ck zum Saal (Esc)"));
@@ -256,6 +260,8 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
 
 WalkView::~WalkView()
 {
+    markStop = true;                       // (a video being marked: stopped, its half-written copy removed)
+    if (markThread.joinable()) markThread.join();
     proc.pano360.stop();                   // (a 360 recording ends with the view: the frames are drawn on their own)
     gpu.reset();
     proc.engine.viewWalkOn = false; proc.engine.viewZ = 0.0f;
@@ -2637,21 +2643,63 @@ void WalkView::markVideo()
     {
         const auto in = fc.getResult();
         if (safe == nullptr || ! in.existsAsFile()) return;
+        if (safe->markBusy.load()) { safe->say (rysum::tr("Ein Video wird noch markiert"), 4000.0); return; }
         const auto out = in.getSiblingFile (in.getFileNameWithoutExtension() + "_360" + in.getFileExtension());
         safe->say (rysum::tr("360\xc2\xb0-Metadaten werden geschrieben: ") + out.getFullPathName(), 4000.0);
-        // (a copy of the whole file: on a thread of its own)
-        std::thread ([safe, in, out]
+        // (a copy of the whole file: on a thread of the view's, stopped and waited for when the view goes)
+        if (safe->markThread.joinable()) safe->markThread.join();
+        safe->markStop = false;
+        safe->markBusy = true;
+        auto* view = safe.getComponent();
+        safe->markThread = std::thread ([view, safe, in, out]
         {
             juce::String error;
-            const bool ok = rysum::injectSpatialMetadata (in, out, error);
+            const bool ok = rysum::injectSpatialMetadata (in, out, error, [view] { return view->markStop.load(); });
+            view->markBusy = false;
             juce::MessageManager::callAsync ([safe, ok, out, error]
             {
                 if (safe == nullptr) return;
                 if (ok) safe->say (rysum::tr("Fertig f\xc3\xbcr YouTube: ") + out.getFullPathName(), 7000.0);
                 else safe->say (rysum::tr("Die 360\xc2\xb0-Metadaten lie\xc3\x9f" "en sich nicht schreiben: ") + error, 8000.0);
             });
-        }).detach();
+        });
     });
+}
+
+void WalkView::run360Test (int step)
+{
+    juce::Component::SafePointer<WalkView> safe (this);
+    auto& rec = proc.pano360;
+    const auto root = RysumProcessor::getPatchFolder().getParentDirectory();
+    if (step == 0)
+    {
+        const auto dir = root.getChildFile ("360-test").getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"));
+        juce::String err;
+        panoFinishedSeen = rec.finishedCount();
+        testStarted = rec.start (dir, { 2048, 30, 92 }, proc.getSampleRate(), err);
+        testFolder = dir;
+        testNote = err;
+        juce::Timer::callAfterDelay (2500, [safe] { if (safe != nullptr) safe->run360Test (1); });
+        return;
+    }
+    if (step == 1) { stopPano(); juce::Timer::callAfterDelay (500, [safe] { if (safe != nullptr) safe->run360Test (2); }); return; }
+    if (rec.state() != Pano360Recorder::State::idle && step < 600)
+    {
+        juce::Timer::callAfterDelay (500, [safe, step] { if (safe != nullptr) safe->run360Test (step + 1); });
+        return;
+    }
+    juce::String t;
+    t << "started: " << (testStarted ? "yes" : "no " + testNote) << "\n"
+      << "frames due " << rec.framesTotal() << ", scenes " << rec.scenesKept() << ", frames drawn " << rec.framesDrawn() << ", last "
+      << juce::String (rec.lastFrameMs(), 1) << " ms\n"
+      << "drawn on: " << (rec.drawingOn().isNotEmpty() ? rec.drawingOn() : "the processor (" + rec.whyNotOnCard() + ")") << "\n"
+      << "video: " << (testFolder.getChildFile ("rysum360.mov").existsAsFile() ? juce::String (testFolder.getChildFile ("rysum360.mov").getSize()) + " bytes" : "none " + rec.videoProblem()) << "\n"
+      << "the view's card: " << (gpu != nullptr ? juce::String (gpu->isReady() ? "ready" : "not ready") + (gpu->hasFailed() ? ", FAILED " + gpu->failure() : juce::String())
+                                                  + ", " + juce::String (gpu->framesPerSecond(), 1) + " pictures/s, " + gpu->cardName()
+                                                : juce::String ("none")) << "\n"
+      << "note: " << gpuNote << "\n\n"
+      << testFolder.getChildFile (rysum::german() ? "LIESMICH.txt" : "README.txt").loadFileAsString();
+    root.getChildFile ("360-test.txt").replaceWithText (t);
 }
 
 void WalkView::startPano (int width, int fps)

@@ -1841,4 +1841,5 @@
 {"vom Prozessor", "by the processor"},
 {"ffmpeg lie\xc3\x9f sich nicht starten: ", "ffmpeg did not start: "},
 {"ffmpeg ist gescheitert: ", "ffmpeg failed: "},
+{"Ein Video wird noch markiert", "A video is still being marked"},
 {"360\xc2\xb0: die Bilder werden jetzt gezeichnet \xe2\x80\x93 der Ordner \xc3\xb6" "ffnet sich, wenn sie fertig sind", "360\xc2\xb0: the frames are being drawn now \xe2\x80\x93 the folder opens when they are done"},

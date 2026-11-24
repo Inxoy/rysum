@@ -12,8 +12,9 @@
 /** The 360° recording of the 3D view: a video all around the eye (equirectangular) and the sound field as
     first-order Ambisonics (AmbiX: ACN / SN3D, W Y Z X), both fixed to the room - the front of the picture is
     the Saal's front (azimuth 0), as the scene is before the head's turn. Together they make a 360° video with
-    spatial audio (YouTube: the frames and the WAV muxed with ffmpeg, then marked with Google's Spatial Media
-    Metadata Injector, see the README the recording writes).
+    spatial audio for YouTube: when the frames are drawn, ffmpeg (if it is installed) makes rysum360.mov of the
+    frames and the WAV, and SpatialMeta writes into it the boxes that mark it as such (those Google's Spatial
+    Media Metadata Injector writes). Without ffmpeg the folder has a script for it instead (see its README).
 
     Recording and drawing are two steps:
     - while recording, the audio thread hands every block's first four Ambisonics channels to the recorder
@@ -23,8 +24,9 @@
       however large the picture is to become.
     - after the recording, a thread of the recorder draws every frame from scene.bin: six cameras (a cube
       around the eye, 92° each), resampled into the equirectangular picture, the glows of the sounding pipes
-      laid in, written as frames/f_000000.jpg ... (a 3840-wide frame takes a few tenths of a second, so this
-      takes a few times as long as the recording).
+      laid in, written as frames/f_000000.jpg ... by a few threads. The graphics card draws the faces when it
+      can (PanoGpu, its own context on this thread: about 20 ms for a 3840-wide frame); otherwise, or when it
+      fails on the way, the processor (a few tenths of a second a frame).
     The audio is the clock: video frame k shows the moment k / fps after the start; a frame for which the view
     gave no scene (it drew more slowly than the frame rate) repeats the one before. */
 namespace rysum

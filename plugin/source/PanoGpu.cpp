@@ -262,6 +262,8 @@ bool PanoGpu::beginFrame (int faceSize, int width, juce::String& why)
 bool PanoGpu::drawFace (int face, const std::vector<float>& verts, const std::array<float, 32 * 4>& mats, const FaceLook& look, juce::String& why)
 {
     if (! ok || faceFbo == 0) { why = "no frame buffer"; return false; }
+    if (face == 0) ++framesBegun;
+    if (failAt > 0 && framesBegun >= failAt && face == 3) { why = "failAtFrameForTest"; return false; }
     glBindFramebuffer (GL_FRAMEBUFFER, faceFbo);
     glFramebufferTextureLayer (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, faceTex, 0, face);
     glViewport (0, 0, F, F);

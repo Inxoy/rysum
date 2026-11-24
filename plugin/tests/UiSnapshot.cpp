@@ -267,6 +267,35 @@ public:
                 jpg.writeImageToStream(cpu, mo);
                 msJpg = juce::Time::getMillisecondCounterHiRes() - t0;
                 g.close();
+                if (opened && w == 2048)
+                {
+                    // the card failing on the way (the fourth face of the second frame): the processor draws that
+                    // very frame and the ones after it
+                    PanoGpu g2;
+                    juce::String why2, lost2;
+                    if (g2.open(why2))
+                    {
+                        g2.failAtFrameForTest(2);
+                        const auto f1 = renderPanorama(job, w, face, &g2, &lost2);
+                        const bool openAfter1 = g2.isOpen();
+                        const auto f2 = renderPanorama(job, w, face, &g2, &lost2);
+                        const auto f3 = renderPanorama(job, w, face, &g2, &lost2);
+                        auto same = [&](const juce::Image &a, const juce::Image &b)
+                        {
+                            if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
+                                return false;
+                            for (int y = 0; y < a.getHeight(); y += 3)
+                                for (int x = 0; x < a.getWidth(); x += 3)
+                                    if (a.getPixelAt(x, y) != b.getPixelAt(x, y))
+                                        return false;
+                            return true;
+                        };
+                        say("360: the card failing at the 4th face of the 2nd frame (" + lost2 +
+                                "): the 1st from the card, the 2nd and 3rd from the processor, as it draws them",
+                            openAfter1 && !g2.isOpen() && lost2 == "failAtFrameForTest" && f1.getWidth() == w &&
+                                same(f2, cpu) && same(f3, cpu));
+                    }
+                }
             });
             t.join();
             if (!opened)

@@ -324,6 +324,12 @@ private:
     void startPano (int width, int fps);
     void choosePanoFolder();
     void markVideo();
+    void run360Test (int step);
+    bool testStarted = false;
+    juce::File testFolder;
+    juce::String testNote;
+    std::thread markThread;                 // (marking a video as 360 degrees: a copy of the whole file)
+    std::atomic<bool> markStop { false }, markBusy { false };
     void stopPano();
     void updatePanoLabel();
 public:

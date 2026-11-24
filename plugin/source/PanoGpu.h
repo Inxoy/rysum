@@ -51,6 +51,8 @@ public:
     bool resample (const std::array<V3, 6>& fwd, const std::array<V3, 6>& right, float focal, const std::vector<Glow>& glows,
                    juce::Image& out, juce::String& why);
     void close();
+    /** (test) the card fails at the fourth face of the n-th frame drawn, as a driver might on the way */
+    void failAtFrameForTest (int n) noexcept { failAt = n; }
 
 private:
     struct Native;
@@ -59,7 +61,7 @@ private:
     juce::String card;
     int maxTex = 0;
     unsigned int faceProg = 0, sampleProg = 0, glowProg = 0, glowVbo = 0, vao = 0, vbo = 0, faceTex = 0, faceDepth = 0, faceFbo = 0, outTex = 0, outFbo = 0;
-    int F = 0, W = 0;
+    int F = 0, W = 0, failAt = 0, framesBegun = 0;
     int uMat = -1, uFog = -1, uView = -1, uFrame = -1, uDark = -1, uLamp = -1, uLampR = -1, uLampN = -1, uPano = -1;
     int gSize = -1, sFaces = -1, sF = -1, sFocal = -1, sSize = -1, sFwd = -1, sRight = -1;
     void releaseTargets();
