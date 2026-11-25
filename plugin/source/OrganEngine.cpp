@@ -1364,6 +1364,7 @@ void OrganEngine::startVoice(int stop, int key, int previewSamples, int noteId)
     v->hiGSm = v->airInvSm = -1.0f;
     v->hzNow = 0.0f;
     v->beatT = v->beatHz = v->beatNorm = 0.0f;
+    v->devT = v->devC = 0.0f;
     {
         // Ansprache: the chiff repeated as a short burst (a second reader over the attack)
         const auto &ps = pipeSndNow[(size_t)stop];
@@ -2810,6 +2811,7 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
     {
         auto &v = voices[(size_t)i];
         v.beatT = 0.0f;
+        v.devT = 0.0f;
         if (v.active && !v.killing && v.hzNow > 8.0f && v.gainLin > 1.0e-4f && nv < kMaxVoices)
             idx[nv++] = i;
     }
@@ -2827,8 +2829,10 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
         {
             v.beatHz = 0.0f;
             v.beatNorm = 0.0f;
+            v.devC = 0.0f;
         }
         beatMaxNow = 0.0f;
+        devMaxNow = 0.0f;
         return;
     }
     // the strongest pairs for difference tones
@@ -2866,6 +2870,28 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
                 A.beatT = juce::jmax(A.beatT, beat);
                 B.beatT = juce::jmax(B.beatT, beat);
             }
+            if (p.beatRatio)
+            {
+                // the ratio: the interval folded into an octave, and how far it is from the pure
+                // interval it is nearest to (the most consonant one within reach, as Reinheit
+                // finds it)
+                const float d = std::fmod(1200.0f * std::log2(f2 / f1), 1200.0f);
+                float bestScore = 0.0f, dev = 0.0f;
+                for (const auto &jn : justIntervals())
+                {
+                    const float e = std::abs(jn.cents - d), score = jn.w * (1.0f - e / jn.reach);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        dev = e;
+                    }
+                }
+                if (bestScore > 0.0f)
+                {
+                    A.devT = juce::jmax(A.devT, dev);
+                    B.devT = juce::jmax(B.devT, dev);
+                }
+            }
             if (ghostsOn && A.held && B.held)
             {
                 // the difference tone (below the lower pipe, as the resultant 32' of the organ
@@ -2894,13 +2920,17 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
         }
     // smoothed beat rates; the "Schwebung" motion turns every pipe by its own beat
     const float k = p.beatInstant ? 1.0f : 1.0f - std::exp(-(float)blockSeconds / 0.25f);
-    float maxBeat = 0.0f;
+    float maxBeat = 0.0f, maxDev = 0.0f;
     for (int i = 0; i < nv; ++i)
     {
         auto &v = voices[(size_t)idx[i]];
         v.beatHz += k * (v.beatT - v.beatHz);
-        v.beatNorm = juce::jlimit(0.0f, 1.0f, std::log2(1.0f + v.beatHz) / 5.044f); // 32 Hz = 1
+        v.devC += k * (v.devT - v.devC);
+        v.beatNorm = p.beatRatio
+                         ? juce::jlimit(0.0f, 1.0f, std::log2(1.0f + v.devC) / 5.672f) // 50 ct = 1
+                         : juce::jlimit(0.0f, 1.0f, std::log2(1.0f + v.beatHz) / 5.044f); // 32 Hz = 1
         maxBeat = juce::jmax(maxBeat, v.beatHz);
+        maxDev = juce::jmax(maxDev, v.devC);
         if (anyBeatMotion && (Motion)p.motionMode[(size_t)v.stop] == Motion::Beat && v.held)
         {
             auto &t = beatTurn[(size_t)v.stop][(size_t)v.key];
@@ -2915,8 +2945,10 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
         {
             v.beatHz = 0.0f;
             v.beatNorm = 0.0f;
+            v.devC = 0.0f;
         }
     beatMaxNow = maxBeat;
+    devMaxNow = maxDev;
 
     // difference tones: keep a ghost on its pair (continuous phase), new pairs get free ghosts,
     // gone pairs fade
@@ -4871,7 +4903,9 @@ void OrganEngine::advanceModulation(const EngineParams &p, double dt) noexcept
     globalSrc[srcPressure] = lastPress;
     globalSrc[srcSlide] = lastSlide;
     globalSrc[srcInput] = inFollowVal;
-    globalSrc[srcBeat] = juce::jlimit(0.0f, 1.0f, std::log2(1.0f + beatMaxNow.load()) / 5.044f);
+    globalSrc[srcBeat] = p.beatRatio
+                             ? juce::jlimit(0.0f, 1.0f, std::log2(1.0f + devMaxNow.load()) / 5.672f)
+                             : juce::jlimit(0.0f, 1.0f, std::log2(1.0f + beatMaxNow.load()) / 5.044f);
     globalSrc[srcBellows] = juce::jlimit(0.0f, 1.0f, bellowsP);
     {
         // the room keyboard: how far its held keys pull now (the strongest, over the glide time)

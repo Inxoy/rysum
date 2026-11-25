@@ -2280,6 +2280,15 @@ source rose too far and settled a second time. The render test now holds a chord
 direction and checks that it rises once and stays, at the same value in both cases. The rates glide with a time constant of
 \SI{0.25}{s} (\ui{Schwebung folgt: gleitend}); with \ui{sofort} they are taken as they are in every slice, so the source and the
 motion jump with the chord (checked: the held chord's value from the first block on).
+
+\ui{Schwebung misst: Verhältnis} makes the source measure the ratio instead of the beats. For a pair the interval is folded into one octave,
+$d = 1200\log_2(f_2/f_1) \bmod 1200$ cents, and compared with the table of pure intervals that \ui{Reinheit} uses (\S\ref{sec:live}):
+each pure interval $j$ has its size $c_j$, a weight $w_j$ (how consonant) and a reach $\rho_j$, and the pair is read as the one with the
+largest $w_j(1-|c_j-d|/\rho_j)$. Its deviation $\delta = |c_j - d|$ is what the pipe reports (the largest with any other pipe; global
+targets the largest of all), as $\log_2(1+\delta)/\log_2 51$, so 0 is pure and 1 is \SI{50}{cents}. This does not depend on the register,
+and it works for any tuning, a Scala file or MTS-ESP included, because it reads the frequencies the pipes are given. The render test
+plays a meantone C major triad in three octaves: the source is 0.470 in each (fifth and minor third \SI{5.4}{cents} narrow), against
+1.0 and 0.74 with beats in Hz, and a pure third alone gives 0. The motion \ui{Schwebung} always turns with the beats in Hz.
 \ui{Schwebungen aus} chooses between the tuning as it is meant (ideal frequencies) and the pipes as recorded, which are
 only accurate to about $\pm5$ cents, so that even the pure thirds beat a little. Figure~\ref{fig:beats} shows the
 rates this rule gives in ¼-comma meantone and, for comparison, in equal temperament.

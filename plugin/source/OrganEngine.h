@@ -262,6 +262,10 @@ struct EngineParams
     bool beatIdeal =
         true; // beats from the tuning as it should be (true) or from the pipes as recorded
     bool beatInstant = false; // the beat rates follow at once (true) or glide over 1/4 s
+    /** what the source "Schwebung" measures: the beats in Hz (false), or the ratio - how far each
+        pair's interval (folded into an octave) is from the nearest pure interval, in cents: the
+        same in every register and for any tuning */
+    bool beatRatio = false;
     float ghostLevel = 0.0f; // difference tones of sounding pairs (linear, 0 = off)
     float ghostPlace = 0.3f; // 0 = between the two pipes .. 1 = deep below the listener
     float ghostCons =
@@ -832,6 +836,7 @@ private:
         // beats: the pipe's frequency now, how fast it beats with the others (Hz, smoothed) and as
         // a modulation source
         float hzNow = 0.0f, beatT = 0.0f, beatHz = 0.0f, beatNorm = 0.0f;
+        float devT = 0.0f, devC = 0.0f; // ratio mode: the largest deviation from a pure interval (cents)
         // grain cloud: the pipe's sound history (a ring of the pool), when the next grain is due,
         // where the pipe is
         int cloudRing = -1;
@@ -1534,6 +1539,7 @@ public:
     std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> beatTurn;
     std::atomic<int> ghostsNow{0};       // difference tones sounding (for tests / display)
     std::atomic<float> beatMaxNow{0.0f}; // fastest beat right now (Hz)
+    std::atomic<float> devMaxNow{0.0f};  // ratio mode: the largest deviation right now (cents)
 private:
     struct Ghost
     {

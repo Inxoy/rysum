@@ -164,6 +164,12 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
                                     "gleitend (eine Viertelsekunde, ohne Spr\xc3\xbcnge) oder sofort "
                                     "(die Quelle \xe2\x80\x9eSchwebung\xe2\x80\x9c und die Bewegung springen "
                                     "mit dem Akkord)."));
+    beatMode = &combo("fxBeatMode");
+    beatMode->setTooltip(rysum::tr("Was die Quelle \xe2\x80\x9eSchwebung\xe2\x80\x9c misst: die Schwebungen in Hz "
+                                   "(eine Oktave h\xc3\xb6her doppelt so schnell) oder das Verh\xc3\xa4ltnis: wie weit "
+                                   "jedes Intervall (in eine Oktave gelegt) vom n\xc3\xa4" "chsten reinen entfernt ist, in "
+                                   "Cent \xe2\x80\x93 in jeder Lage gleich, f\xc3\xbcr jede Stimmung (0 = rein, 1 = "
+                                   "50 Cent). Die Bewegung \xe2\x80\x9eSchwebung\xe2\x80\x9c dreht immer mit den Hz."));
     ghostRows = {&row("fxGhostLevel", rysum::tr("Lautst\xc3\xa4rke")),
                  &row("fxGhostPlace", rysum::tr("Ort (zwischen \xe2\x86\x92 unten)")),
                  &row("fxGhostCons", rysum::tr("nur Konsonanzen")),
@@ -461,6 +467,8 @@ void EffectsView::resized()
         beatFrom->setBounds(b.removeFromTop(24));
         b.removeFromTop(4);
         beatSpeed->setBounds(b.removeFromTop(24));
+        b.removeFromTop(4);
+        beatMode->setBounds(b.removeFromTop(24));
         b.removeFromTop(8);
         beatNote = b;
     }

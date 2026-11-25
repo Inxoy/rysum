@@ -1353,6 +1353,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add(std::make_unique<AudioParameterChoice>(
             ParameterID{"fxBeatInstant", 1}, "Schwebung folgt",
             StringArray{String::fromUTF8("gleitend (\xc2\xbc s)"), "sofort"}, 0));
+        // what the source "Schwebung" measures: the beats (Hz) or the ratio (cents from pure)
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"fxBeatMode", 1}, "Schwebung misst",
+            StringArray{"Schwebungen (Hz)", String::fromUTF8("Verh\xc3\xa4ltnis (Cent von rein)")}, 0));
     }
     return l;
 }
@@ -1669,6 +1673,7 @@ RysumProcessor::RysumProcessor()
         }
         ix.kbGlide = I("simKbGlide");
         ix.beatInstant = I("fxBeatInstant");
+        ix.beatMode = I("fxBeatMode");
         roomKbChParam = apvts.getRawParameterValue("simKbCh");
     }
     engine.setModHook(this);
@@ -2107,6 +2112,7 @@ EngineParams RysumProcessor::readParams(const float *vals) const
     }
     p.roomKeys.glide = V(ix.kbGlide); // (the held keys: processBlock)
     p.beatInstant = V(ix.beatInstant) > 0.5f;
+    p.beatRatio = V(ix.beatMode) > 0.5f;
     return p;
 }
 

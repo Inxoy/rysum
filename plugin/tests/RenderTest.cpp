@@ -4770,6 +4770,48 @@ int main(int argc, char **argv)
                 check(std::abs(first - held) < 0.002f && std::abs(held - settled[0]) < 0.002f,
                       "Schwebung at once: the chord's value from the first block on");
             }
+            {
+                // "Schwebung misst: Verhaeltnis": cents from pure, the same in every register. A
+                // meantone C major chord: pure third, fifth and minor third 5.4 ct narrow ->
+                // log2(1 + 5.38) / log2(51) = 0.471; a pure triad alone (c, e) is 0
+                auto ratioSrc = [&](std::initializer_list<int> notes, bool ratio)
+                {
+                    OrganEngine e;
+                    e.prepare(fsr, B);
+                    e.setLibrary(lib);
+                    EngineParams p;
+                    p.stopOn = {};
+                    p.stopOn[0] = true;
+                    p.clickLevel = 0;
+                    p.releaseClick = 0;
+                    p.wind = 0;
+                    p.stopPull = 0;
+                    p.outputMode = 1;
+                    p.beatInstant = true;
+                    p.beatRatio = ratio;
+                    p.mod.routes[0].src = srcBeat;
+                    p.mod.routes[0].target = tgtBright;
+                    p.mod.routes[0].amount = 1.0f;
+                    juce::AudioBuffer<float> b(4, B);
+                    for (int pos = 0; pos < (int)(0.5 * fsr); pos += B)
+                    {
+                        juce::MidiBuffer mb;
+                        if (pos == 0)
+                            for (int nt : notes)
+                                mb.addEvent(juce::MidiMessage::noteOn(1, nt, (juce::uint8)100), 0);
+                        e.process(b, mb, p);
+                    }
+                    return e.sourceOut[srcBeat].load();
+                };
+                const float r48 = ratioSrc({48, 52, 55}, true), r60 = ratioSrc({60, 64, 67}, true),
+                            r72 = ratioSrc({72, 76, 79}, true), third = ratioSrc({60, 64}, true),
+                            h48 = ratioSrc({48, 52, 55}, false), h72 = ratioSrc({72, 76, 79}, false);
+                std::cout << "Schwebung as ratio: C major " << r48 << " / " << r60 << " / " << r72
+                          << " (Hz: " << h48 << " .. " << h72 << "), pure third " << third << std::endl;
+                check(std::abs(r48 - r60) < 0.01f && std::abs(r72 - r60) < 0.01f &&
+                          std::abs(r60 - 0.471f) < 0.02f && third < 0.05f,
+                      "Schwebung as ratio: the same in every octave (cents from pure), 0 for a pure third");
+            }
         }
         if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
         {

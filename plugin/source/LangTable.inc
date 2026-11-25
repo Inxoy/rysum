@@ -1888,3 +1888,7 @@
 {"gleitend (\xc2\xbc s)", "gliding (\xc2\xbc s)"},
 {"sofort", "at once"},
 {"Wie schnell die Schwebungen folgen, wenn T\xc3\xb6ne kommen und gehen: gleitend (eine Viertelsekunde, ohne Spr\xc3\xbc" "nge) oder sofort (die Quelle \xe2\x80\x9eSchwebung\xe2\x80\x9c und die Bewegung springen mit dem Akkord).", "How fast the beats follow when notes come and go: gliding (a quarter of a second, without jumps) or at once (the source \xe2\x80\x9c" "Beating\xe2\x80\x9d and the motion jump with the chord)."},
+{"Schwebung misst", "Beating measures"},
+{"Schwebungen (Hz)", "beats (Hz)"},
+{"Verh\xc3\xa4ltnis (Cent von rein)", "ratio (cents from pure)"},
+{"Was die Quelle \xe2\x80\x9eSchwebung\xe2\x80\x9c misst: die Schwebungen in Hz (eine Oktave h\xc3\xb6her doppelt so schnell) oder das Verh\xc3\xa4ltnis: wie weit jedes Intervall (in eine Oktave gelegt) vom n\xc3\xa4" "chsten reinen entfernt ist, in Cent \xe2\x80\x93 in jeder Lage gleich, f\xc3\xbcr jede Stimmung (0 = rein, 1 = 50 Cent). Die Bewegung \xe2\x80\x9eSchwebung\xe2\x80\x9c dreht immer mit den Hz.", "What the source \xe2\x80\x9c" "Beating\xe2\x80\x9d measures: the beats in Hz (an octave higher twice as fast) or the ratio: how far each interval (folded into one octave) is from the nearest pure one, in cents \xe2\x80\x93 the same in every register, for any tuning (0 = pure, 1 = 50 cents). The motion \xe2\x80\x9c" "Beating\xe2\x80\x9d always turns with the Hz."},

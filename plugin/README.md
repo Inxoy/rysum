@@ -625,6 +625,14 @@ follow the pipes. Everything is off in older patches.
   the pipes' place it settles once and stays. *Schwebung folgt*: *gleitend* (the rates glide over a
   quarter of a second, so nothing jumps when notes come and go) or *sofort* (the source and the
   motion take a chord's beats from its first block and drop them when it is let go).
+  *Schwebung misst*: *Schwebungen (Hz)* (the beats themselves: the nearest coinciding partials
+  below 35 Hz, so the same chord beats twice as fast an octave higher) or *Verhältnis (Cent von
+  rein)*: every pair's interval is folded into one octave and compared with the nearest pure
+  interval (the table *Reinheit* uses); the source is how far it is off, 0 = pure … 1 = 50 cents,
+  logarithmic. That is the same in every register and works for any tuning, Scala and MTS-ESP
+  included (a meantone C major chord: 0.47 in every octave, its pure third alone 0). Per pipe the
+  largest deviation from any other sounding pipe, global targets the largest of all. The motion
+  *Schwebung* always turns with the beats in Hz.
 - **Differenztöne** (resultant ghosts) – every two held pipes sound their difference tone
   (higher minus lower frequency), like the resultant with which organ builders suggest a 32′:
   a fifth gives the octave below its lower note, a pure third two octaves below the root of the

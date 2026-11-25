@@ -289,12 +289,7 @@ void OrganEngine::updatePure (const EngineParams& p, double dt) noexcept
     {
         pureHash = hash;
         // the pure interval a pair is nearest to (cents, how consonant, how far off it may be and still be meant)
-        struct Just { float cents, w, reach; };
-        static const Just just[] { { 0.0f, 1.0f, 30.0f }, { 111.73f, 0.12f, 25.0f }, { 182.40f, 0.15f, 20.0f }, { 203.91f, 0.3f, 25.0f },
-                                   { 266.87f, 0.12f, 18.0f }, { 315.64f, 0.6f, 40.0f }, { 386.31f, 0.8f, 45.0f }, { 498.04f, 0.9f, 45.0f },
-                                   { 582.51f, 0.1f, 18.0f }, { 590.22f, 0.12f, 20.0f }, { 701.96f, 1.0f, 45.0f }, { 813.69f, 0.6f, 45.0f },
-                                   { 884.36f, 0.7f, 40.0f }, { 968.83f, 0.2f, 20.0f }, { 996.09f, 0.25f, 22.0f }, { 1017.60f, 0.25f, 22.0f },
-                                   { 1088.27f, 0.2f, 25.0f }, { 1200.0f, 1.0f, 30.0f } };
+        const auto& just = justIntervals();
         struct Spring { int lo, hi; float e, w; };
         Spring springs[kMax * (kMax - 1) / 2];
         int ns = 0;

@@ -405,6 +405,36 @@ inline juce::String u8(const char *s)
     return juce::String::fromUTF8(s);
 }
 
+/** the pure intervals within an octave (cents), how consonant they are, and how far off a
+    tempered interval may be and still mean them (cents) - Reinheit pulls towards them, the beat
+    source in ratio mode measures how far a pair is from them */
+struct JustInterval
+{
+    float cents, w, reach;
+};
+inline const std::array<JustInterval, 18> &justIntervals() noexcept
+{
+    static const std::array<JustInterval, 18> just{{{0.0f, 1.0f, 30.0f},
+                                                    {111.73f, 0.12f, 25.0f},
+                                                    {182.40f, 0.15f, 20.0f},
+                                                    {203.91f, 0.3f, 25.0f},
+                                                    {266.87f, 0.12f, 18.0f},
+                                                    {315.64f, 0.6f, 40.0f},
+                                                    {386.31f, 0.8f, 45.0f},
+                                                    {498.04f, 0.9f, 45.0f},
+                                                    {582.51f, 0.1f, 18.0f},
+                                                    {590.22f, 0.12f, 20.0f},
+                                                    {701.96f, 1.0f, 45.0f},
+                                                    {813.69f, 0.6f, 45.0f},
+                                                    {884.36f, 0.7f, 40.0f},
+                                                    {968.83f, 0.2f, 20.0f},
+                                                    {996.09f, 0.25f, 22.0f},
+                                                    {1017.60f, 0.25f, 22.0f},
+                                                    {1088.27f, 0.2f, 25.0f},
+                                                    {1200.0f, 1.0f, 30.0f}}};
+    return just;
+}
+
 inline float dbToGain(float db) noexcept
 {
     return db <= -99.0f ? 0.0f : std::pow(10.0f, db / 20.0f);
