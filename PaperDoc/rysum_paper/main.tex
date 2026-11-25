@@ -2277,7 +2277,9 @@ drive anything else -- for example \ui{Schwebung} $\rightarrow$ \ui{Pfeife: Verf
 The frequencies are those at the pipes, without the Doppler shift of a moving pipe. Until 25~November the shift was included, and the
 source routed to the pipes' distance fed back on itself: it moved the pipes, the motion changed the beats, and over a held chord the
 source rose too far and settled a second time. The render test now holds a chord with the source on the pipes' distance and on their
-direction and checks that it rises once and stays, at the same value in both cases.
+direction and checks that it rises once and stays, at the same value in both cases. The rates glide with a time constant of
+\SI{0.25}{s} (\ui{Schwebung folgt: gleitend}); with \ui{sofort} they are taken as they are in every slice, so the source and the
+motion jump with the chord (checked: the held chord's value from the first block on).
 \ui{Schwebungen aus} chooses between the tuning as it is meant (ideal frequencies) and the pipes as recorded, which are
 only accurate to about $\pm5$ cents, so that even the pure thirds beat a little. Figure~\ref{fig:beats} shows the
 rates this rule gives in ¼-comma meantone and, for comparison, in equal temperament.

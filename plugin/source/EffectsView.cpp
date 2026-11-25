@@ -159,6 +159,11 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
                            "gemeint ist (reine Terzen stehen still), "
                            "oder aus den Pfeifen, wie sie aufgenommen sind (\xc2\xb1"
                            "5 ct: auch reine Terzen schweben ein wenig)."));
+    beatSpeed = &combo("fxBeatInstant");
+    beatSpeed->setTooltip(rysum::tr("Wie schnell die Schwebungen folgen, wenn T\xc3\xb6ne kommen und gehen: "
+                                    "gleitend (eine Viertelsekunde, ohne Spr\xc3\xbcnge) oder sofort "
+                                    "(die Quelle \xe2\x80\x9eSchwebung\xe2\x80\x9c und die Bewegung springen "
+                                    "mit dem Akkord)."));
     ghostRows = {&row("fxGhostLevel", rysum::tr("Lautst\xc3\xa4rke")),
                  &row("fxGhostPlace", rysum::tr("Ort (zwischen \xe2\x86\x92 unten)")),
                  &row("fxGhostCons", rysum::tr("nur Konsonanzen")),
@@ -454,6 +459,8 @@ void EffectsView::resized()
     {
         auto b = body(beatBox);
         beatFrom->setBounds(b.removeFromTop(24));
+        b.removeFromTop(4);
+        beatSpeed->setBounds(b.removeFromTop(24));
         b.removeFromTop(8);
         beatNote = b;
     }

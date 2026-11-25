@@ -884,6 +884,7 @@ private:
         std::array<std::array<int, 4>, rysum::kNumStops> radiate{}; // Width DirPat Face Spin
         std::array<std::array<int, 3>, rysum::kNumRooms> door{};    // DoorTo DoorWall DoorOpen
         int kbGlide = -1;
+        int beatInstant = -1;
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex

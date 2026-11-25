@@ -54,6 +54,7 @@ private:
     juce::TextButton tabSounds { juce::String::fromUTF8 ("Kl\xc3\xa4nge") }, tabLight { juce::String::fromUTF8 ("Stimmung & Belichtung") };
     std::vector<juce::Component*> page0, page1;
     juce::ComboBox* beatFrom = nullptr;
+    juce::ComboBox* beatSpeed = nullptr;
     juce::ComboBox* dexMirror = nullptr;
     std::array<ParamRow*, 6> ghostRows {}, dexRows {}, expoRows {};
     juce::Rectangle<int> beatBox, ghostBox, dexBox, expoBox, beatNote, ghostNote, dexNote, expoNote;

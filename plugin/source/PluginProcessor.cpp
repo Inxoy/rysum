@@ -1349,6 +1349,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             0.8f,
             AudioParameterFloatAttributes().withStringFromValueFunction(
                 [](float v, int) { return String(v, v < 1.0f ? 2 : 1) + " s"; })));
+        // how fast the beat rates follow (Effekte, Schwebungsraum): gliding or at once
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"fxBeatInstant", 1}, "Schwebung folgt",
+            StringArray{String::fromUTF8("gleitend (\xc2\xbc s)"), "sofort"}, 0));
     }
     return l;
 }
@@ -1664,6 +1668,7 @@ RysumProcessor::RysumProcessor()
             ix.door[(size_t)r][2] = I(roomParamId(r, "DoorOpen"));
         }
         ix.kbGlide = I("simKbGlide");
+        ix.beatInstant = I("fxBeatInstant");
         roomKbChParam = apvts.getRawParameterValue("simKbCh");
     }
     engine.setModHook(this);
@@ -2101,6 +2106,7 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         d.open = V(ix.door[(size_t)r][2]);
     }
     p.roomKeys.glide = V(ix.kbGlide); // (the held keys: processBlock)
+    p.beatInstant = V(ix.beatInstant) > 0.5f;
     return p;
 }
 

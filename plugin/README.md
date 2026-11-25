@@ -622,7 +622,9 @@ follow the pipes. Everything is off in older patches.
   modulation source *Schwebung* (per pipe, 0 = still … 1 = 32 Hz, logarithmic) lets the beats
   drive anything else (e.g. *Schwebung* → *Pfeife: Verfall*: impure intervals crumble). The beats
   are those of the tuning, at the pipes: the Doppler shift of moving pipes is left out, so routed to
-  the pipes' place it settles once and stays.
+  the pipes' place it settles once and stays. *Schwebung folgt*: *gleitend* (the rates glide over a
+  quarter of a second, so nothing jumps when notes come and go) or *sofort* (the source and the
+  motion take a chord's beats from its first block and drop them when it is let go).
 - **Differenztöne** (resultant ghosts) – every two held pipes sound their difference tone
   (higher minus lower frequency), like the resultant with which organ builders suggest a 32′:
   a fifth gives the octave below its lower note, a pure third two octaves below the root of the

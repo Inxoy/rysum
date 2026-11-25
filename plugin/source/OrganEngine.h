@@ -261,6 +261,7 @@ struct EngineParams
     // difference tones
     bool beatIdeal =
         true; // beats from the tuning as it should be (true) or from the pipes as recorded
+    bool beatInstant = false; // the beat rates follow at once (true) or glide over 1/4 s
     float ghostLevel = 0.0f; // difference tones of sounding pairs (linear, 0 = off)
     float ghostPlace = 0.3f; // 0 = between the two pipes .. 1 = deep below the listener
     float ghostCons =

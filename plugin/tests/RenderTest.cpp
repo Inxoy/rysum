@@ -4731,6 +4731,45 @@ int main(int argc, char **argv)
             }
             check(std::abs(settled[1] - settled[0]) < 0.002f,
                   "Schwebung: moving the pipes does not change it (the beats of the tuning)");
+            {
+                // "Schwebung folgt: sofort": the chord's beat value from its first slices on, and
+                // gone at once when the chord is let go
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[1] = true;
+                p.stopOn[2] = true;
+                p.clickLevel = 0;
+                p.releaseClick = 0;
+                p.wind = 0;
+                p.stopPull = 0;
+                p.outputMode = 1;
+                p.beatInstant = true;
+                p.mod.routes[0].src = srcBeat;
+                p.mod.routes[0].target = tgtBright;
+                p.mod.routes[0].amount = 1.0f;
+                juce::AudioBuffer<float> b(4, B);
+                std::vector<float> src;
+                for (int pos = 0; pos < (int)(3.0 * fsr); pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                        for (int nt : {60, 64, 67})
+                            mb.addEvent(juce::MidiMessage::noteOn(1, nt, (juce::uint8)100), 0);
+                    if (pos == ((int)(2.0 * fsr) / B) * B)
+                        for (int nt : {60, 64, 67})
+                            mb.addEvent(juce::MidiMessage::noteOff(1, nt), 0);
+                    e.process(b, mb, p);
+                    src.push_back(e.sourceOut[srcBeat].load());
+                }
+                const float first = src[1], held = src[(size_t)(1.5 * fsr / B)];
+                std::cout << "Schwebung at once: after one block " << first << ", held " << held
+                          << " (gliding: " << settled[0] << ")" << std::endl;
+                check(std::abs(first - held) < 0.002f && std::abs(held - settled[0]) < 0.002f,
+                      "Schwebung at once: the chord's value from the first block on");
+            }
         }
         if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
         {

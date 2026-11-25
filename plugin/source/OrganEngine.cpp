@@ -2893,7 +2893,7 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
             }
         }
     // smoothed beat rates; the "Schwebung" motion turns every pipe by its own beat
-    const float k = 1.0f - std::exp(-(float)blockSeconds / 0.25f);
+    const float k = p.beatInstant ? 1.0f : 1.0f - std::exp(-(float)blockSeconds / 0.25f);
     float maxBeat = 0.0f;
     for (int i = 0; i < nv; ++i)
     {
