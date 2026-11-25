@@ -4680,6 +4680,58 @@ int main(int argc, char **argv)
                       "door: also with the convolution tail the hall rings on through the door");
             }
         }
+        {
+            // the source "Schwebung" routed to the pipes' place: moving pipes are heard with a
+            // Doppler shift, but the beats belong to the tuning - over a held chord the source rises
+            // once and stays (it used to settle a second time as the moving pipes' Doppler shift
+            // changed the beats it was moving them by)
+            float settled[2]{};
+            for (int tgt : {(int)tgtAz, (int)tgtDist})
+            {
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[1] = true;
+                p.stopOn[2] = true;
+                p.clickLevel = 0;
+                p.releaseClick = 0;
+                p.wind = 0;
+                p.stopPull = 0;
+                p.outputMode = 1;
+                p.doppler = 1.0f;
+                p.mod.routes[0].src = srcBeat;
+                p.mod.routes[0].target = tgt;
+                p.mod.routes[0].amount = 1.0f;
+                juce::AudioBuffer<float> b(4, B);
+                std::vector<float> src;
+                for (int pos = 0; pos < (int)(6.0 * fsr); pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                        for (int nt : {60, 64, 67})
+                            mb.addEvent(juce::MidiMessage::noteOn(1, nt, (juce::uint8)100), 0);
+                    e.process(b, mb, p);
+                    src.push_back(e.sourceOut[srcBeat].load());
+                }
+                // after its first peak the source may only settle, never swing back
+                float peak = 0.0f, back = 0.0f, late0 = src[(size_t)(3.0 * fsr / B)], late1 = src.back();
+                for (float v : src)
+                {
+                    peak = juce::jmax(peak, v);
+                    back = juce::jmax(back, peak - v);
+                }
+                std::cout << "Schwebung -> " << (tgt == tgtDist ? "distance" : "direction") << ": peak " << peak
+                          << ", falls back by " << back << ", 3 s .. 6 s " << late0 << " .. " << late1 << std::endl;
+                settled[tgt == tgtDist ? 1 : 0] = late1;
+                check(back < 0.002f && std::abs(late1 - late0) < 0.001f,
+                      juce::String("Schwebung routed to the pipes' ") + (tgt == tgtDist ? "distance" : "direction") +
+                          ": over a held chord it rises once and stays (no Doppler feedback)");
+            }
+            check(std::abs(settled[1] - settled[0]) < 0.002f,
+                  "Schwebung: moving the pipes does not change it (the beats of the tuning)");
+        }
         if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
         {
             std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string(failures))

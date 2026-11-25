@@ -994,7 +994,10 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
         const float cents = v.lenCents + (v.noteId >= 0 ? v.noteCents : p.tuning.cents[(size_t)v.key]) +
                             p.pitchCents + p.detune * v.detuneRnd + v.modCents1 +
                             (mpeNow ? v.bendSm : 0.0f) + v.pureC;
-        v.hzNow = (float)((p.beatIdeal ? ideal : rec) * std::exp2(cents / 1200.0) * (double)v.dop);
+        // (at the pipe: without the Doppler shift a moving pipe is heard with. The beats are those
+        // of the tuning - with it, the source "Schwebung" routed to the pipes' place moved them,
+        // their motion changed the beats, and the source settled a second time)
+        v.hzNow = (float)((p.beatIdeal ? ideal : rec) * std::exp2(cents / 1200.0));
     }
     v.pmx = pm;
     v.pmNew = false;
