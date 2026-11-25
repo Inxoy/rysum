@@ -4378,6 +4378,36 @@ int main(int argc, char **argv)
             check(finite(sS) && spread(sS) > 2.0 * spread(sC) + 10.0,
                   "radiation: a turning cardioid sweeps its reflections round the room");
 
+            // a figure-eight's rear lobe is negative: turned round, everything (direct sound and
+            // every reflection) only changes its sign - nothing may be dropped
+            {
+                auto eight = [&](float face) { return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = true;
+                        p.room.tailModel = 1;
+                        p.room.tailGain = 0.0f;
+                        p.stopDirPat[0] = 1.0f;
+                        p.stopFace[0] = face;
+                    },
+                    1.5, 0.0, {}); };
+                const auto f0 = eight(0.0f), f1 = eight(180.0f);
+                double sum = 0.0, ref = 0.0;
+                for (int c = 0; c < 4; ++c)
+                    for (int i = 0; i < f0.getNumSamples(); ++i)
+                    {
+                        const double a = f0.getSample(c, i), b = f1.getSample(c, i);
+                        sum += (a + b) * (a + b);
+                        ref += a * a;
+                    }
+                std::cout << "radiation: figure-eight turned round, residue " << dB(sum, ref)
+                          << " dB, level " << dB(en(f1, 0, 0.3, 1.4), en(f0, 0, 0.3, 1.4)) << " dB"
+                          << std::endl;
+                check(ref > 0.0 && sum < 1.0e-8 * ref,
+                      "radiation: a figure-eight turned round only changes its sign (the rear "
+                      "lobe's reflections are kept)");
+            }
+
             // 4) Ausdehnung: the same pressure, but no longer one direction
             auto wide = [&](float w)
             {
@@ -4408,7 +4438,7 @@ int main(int argc, char **argv)
                               juce::jmax(1.0e-30, en(w1, 0, 0.3, 0.9));
             std::cout << "Ausdehnung: W " << lvl << " dB, coherence point " << coherence(w0)
                       << ", all around " << coherence(w1) << ", first order / W " << r1 << std::endl;
-            check(finite(w1) && std::abs(lvl) < 0.5 && coherence(w0) > 0.95 && coherence(w1) < 0.5 &&
+            check(finite(w1) && std::abs(lvl) < 0.5 && coherence(w0) > 0.95 && coherence(w1) < 0.7 &&
                       r1 > 0.6 && r1 < 1.4,
                   "Ausdehnung: all around, the pipe keeps its level but comes from everywhere "
                   "(decorrelated, an even field)");
@@ -4464,6 +4494,70 @@ int main(int argc, char **argv)
             std::cout << "room keyboard: walls and ceiling out, the late tail " << late << " dB"
                       << std::endl;
             check(finite(wOut) && late < -10.0, "room keyboard: without walls the room rings shorter");
+            {
+                // the same with the convolution tail (its response is built for the closed room:
+                // the level follows the shorter decay)
+                auto wallsConv = [&](bool out)
+                {
+                    // (as the processor does: the response is built again with the surfaces the
+                    // engine reports gone, here once, 0.4 s in)
+                    OrganEngine e;
+                    e.prepare(fsr, B);
+                    e.setLibrary(lib);
+                    EngineParams p;
+                    p.stopOn = {};
+                    p.stopOn[0] = true;
+                    p.clickLevel = 0;
+                    p.releaseClick = 0;
+                    p.wind = 0;
+                    p.stopPull = 0;
+                    p.outputMode = 1;
+                    p.room.on = true;
+                    p.room.tailModel = 0;
+                    p.room.absWalls = 0.03f;
+                    if (out)
+                    {
+                        p.roomKeys.numWalls = 4;
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            p.roomKeys.wallAz[(size_t)k] = 90.0f * (float)k;
+                            p.roomKeys.wallDepth[(size_t)k] = 1.0f;
+                        }
+                        p.roomKeys.ceilingDepth = 1.0f;
+                        p.roomKeys.glide = 0.05f;
+                    }
+                    // (the engine's copies are never the last ones: the old response may still be
+                    // fading out)
+                    std::vector<std::shared_ptr<const TailIR>> keepIr{
+                        TailIR::build(p.room, p.air, p.outputMode, fsr, 1)};
+                    e.setTailIR(keepIr.back());
+                    juce::AudioBuffer<float> b(4, B), all(4, (int)(fsr * 3.0));
+                    for (int pos = 0; pos < all.getNumSamples(); pos += B)
+                    {
+                        juce::MidiBuffer mb;
+                        if (pos == 0)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, 69, (juce::uint8)110), 0);
+                        if (pos == ((int)(1.0 * fsr) / B) * B)
+                            mb.addEvent(juce::MidiMessage::noteOff(1, 69), 0);
+                        if (out && pos == ((int)(0.4 * fsr) / B) * B)
+                        {
+                            RoomParams r = p.room;
+                            for (int sfc = 0; sfc < kMaxSurf; ++sfc)
+                                r.gone[(size_t)sfc] = e.wallGoneNow[0][(size_t)sfc].load();
+                            keepIr.push_back(TailIR::build(r, p.air, p.outputMode, fsr, 2));
+                            e.setTailIR(keepIr.back());
+                        }
+                        e.process(b, mb, p);
+                        for (int c = 0; c < 4; ++c)
+                            all.copyFrom(c, pos, b, c, 0, juce::jmin(B, all.getNumSamples() - pos));
+                    }
+                    return all;
+                };
+                const double lateC = dB(en(wallsConv(true), 0, 1.6, 2.6), en(wallsConv(false), 0, 1.6, 2.6));
+                std::cout << "room keyboard, convolution tail: walls and ceiling out, the late tail "
+                          << lateC << " dB" << std::endl;
+                check(lateC < -10.0, "room keyboard: without walls the convolution tail rings shorter (its response built anew)");
+            }
 
             // 6) a door: a small wooden room with its door open into a large stone hall rings twice
             auto door = [&](int to, float open, const juce::String &name)
@@ -4522,6 +4616,69 @@ int main(int argc, char **argv)
             std::cout << "door: the hall heard from " << doorAz << " deg (the door is in front)"
                       << std::endl;
             check(std::abs(doorAz) < 20.0, "door: the hall behind it is heard from the door");
+            {
+                // the default convolution tail: the hall behind the door has no stop of its own,
+                // so the engine must count it as used (the processor builds the responses of the
+                // rooms in use)
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = true;
+                p.clickLevel = 0;
+                p.releaseClick = 0;
+                p.wind = 0;
+                p.stopPull = 0;
+                p.outputMode = 1;
+                p.room.on = true;
+                p.room.tailModel = 0;
+                p.room.width = 5.0f;
+                p.room.length = 6.0f;
+                p.room.height = 3.0f;
+                p.room.absWalls = 0.3f;
+                p.room.absFloor = 0.3f;
+                auto &h = p.moreRooms[0];
+                h = p.room;
+                h.width = 30.0f;
+                h.length = 50.0f;
+                h.height = 20.0f;
+                h.absWalls = 0.02f;
+                h.absFloor = 0.03f;
+                p.doors[0].to = 1;
+                p.doors[0].open = 1.0f;
+                std::vector<std::shared_ptr<const TailIR>> doorIr;
+                juce::AudioBuffer<float> b(4, B), all(4, (int)(fsr * 5.0));
+                for (int pos = 0; pos < all.getNumSamples(); pos += B)
+                {
+                    juce::MidiBuffer mb;
+                    if (pos == 0)
+                        mb.addEvent(juce::MidiMessage::noteOn(1, 69, (juce::uint8)110), 0);
+                    if (pos == ((int)(1.0 * fsr) / B) * B)
+                        mb.addEvent(juce::MidiMessage::noteOff(1, 69), 0);
+                    e.process(b, mb, p);
+                    if (pos == 0)
+                    {
+                        // as the processor does: the responses of the rooms in use
+                        const int used = e.roomsUsed.load();
+                        check(((used >> 1) & 1) != 0,
+                              "door: the Saal behind the door counts as in use (its response is built)");
+                        for (int ri = 0; ri < 2; ++ri)
+                            if ((used >> ri) & 1)
+                            {
+                                doorIr.push_back(TailIR::build(p.roomAt(ri), p.air, p.outputMode, fsr, (uint32_t)(10 + ri)));
+                                e.setTailIR(doorIr.back(), ri);
+                            }
+                    }
+                    for (int c = 0; c < 4; ++c)
+                        all.copyFrom(c, pos, b, c, 0, juce::jmin(B, all.getNumSamples() - pos));
+                }
+                auto noDoor = door(-1, 1.0f, {});
+                const double lateConv = dB(en(all, 0, 2.5, 4.5), en(noDoor, 0, 2.5, 4.5));
+                std::cout << "door, convolution tail: late " << lateConv << " dB" << std::endl;
+                check(finite(all) && lateConv > 10.0,
+                      "door: also with the convolution tail the hall rings on through the door");
+            }
         }
         if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
         {

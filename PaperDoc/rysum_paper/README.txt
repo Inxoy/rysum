@@ -27,7 +27,7 @@ tests/          the logs of the test runs (Windows, Ryzen 5 2600X):
                 passed), uisnapshot.log (85 checks + all 181 patches of the folder, all passed), walk.log (48 checks,
                 47 passed: the walking check read this computer's pace x2.5), concert.log (20 checks, 19 passed: an
                 intermittent timing check of the input, passed in two reruns)
-main.pdf        compiled version (150 pages)
+main.pdf        compiled version (151 pages)
 
 New in version 12: the second recording session (30 October), the unstable wind's new mouth tone, several
 cores and the graphics card, built-in impulse responses, MIDI buttons, the dataset sampler, the 3D Saal as a

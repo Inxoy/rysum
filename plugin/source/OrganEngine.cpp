@@ -2438,7 +2438,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                 juce::FloatVectorOperations::add(buf, bufH, n);
             for (int k2 = 0; k2 < n; ++k2)
                 bufRamp[k2] = buf[k2] * (float)k2;
-            if (v.dif1 > 0.0f && (int)difBus.size() >= end)
+            if (v.dif1 != 0.0f && (int)difBus.size() >= end)
             {
                 juce::FloatVectorOperations::addWithMultiply(difBus.data() + start, buf, v.dif1, n);
                 difUsed = true;
@@ -2489,7 +2489,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
             // Ausdehnung: the part that surrounds the listener, into the diffuse field
             auto toDiffuse = [&](const float *x, const float *xr)
             {
-                if ((v.dif0 <= 0.0f && v.dif1 <= 0.0f) || (int)difBus.size() < end)
+                if ((v.dif0 == 0.0f && v.dif1 == 0.0f) || (int)difBus.size() < end)
                     return;
                 const float da = v.dif0 + (v.dif1 - v.dif0) * (float)start * inv,
                             dd = (v.dif1 - v.dif0) * inv;
@@ -3729,7 +3729,7 @@ void OrganEngine::renderErGroup(int group) noexcept
         for (int ti = 0; ti < s.numTaps; ++ti)
         {
             auto &t = s.taps[(size_t)ti];
-            if (t.g0 < 3.0e-5f && t.g1 < 3.0e-5f)
+            if (std::abs(t.g0) < 3.0e-5f && std::abs(t.g1) < 3.0e-5f) // (a figure-eight's rear lobe is negative)
             {
                 t.d0 = t.d1;
                 t.g0 = t.g1;
@@ -3892,7 +3892,18 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         used |= 1 << juce::jlimit(0, kNumRooms - 1, p.inputRoom);
     if (p.vox.on || voxRunning)
         used |= 1 << juce::jlimit(0, kNumRooms - 1, p.vox.room);
-    roomsUsed = used;
+    {
+        // (a Saal behind a door of a Saal in use needs its late reverb too: the processor builds the
+        // responses of these)
+        int behind = 0;
+        for (int ri = 0; ri < kNumRooms; ++ri)
+        {
+            const auto &d = p.doors[(size_t)ri];
+            if (((used >> ri) & 1) && d.to >= 0 && d.to < kNumRooms && d.to != ri)
+                behind |= 1 << d.to;
+        }
+        roomsUsed = used | behind;
+    }
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         auto &rr = roomsNow[(size_t)ri];
@@ -4002,6 +4013,9 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             }
             wallsOpen[(size_t)ri] = open;
             wallsGone[(size_t)ri].store(gone, std::memory_order_relaxed);
+            for (int sfc = 0; sfc < kMaxSurf; ++sfc)
+                wallGoneNow[(size_t)ri][(size_t)sfc].store(1.0f - keep[(size_t)sfc],
+                                                           std::memory_order_relaxed);
         }
         h.absW = rr.absWalls;
         h.absF = rr.absFloor;
@@ -4234,14 +4248,28 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         const TailIR *ir = R.tail.current();
         float rtL = ir != nullptr ? ir->rtLow : eyringRt(rm, false, p.air);
         float rtH = ir != nullptr ? ir->rtHigh : eyringRt(rm, true, p.air);
-        if (wallsOpen[(size_t)ri])
         {
             // surfaces taken out by the room keyboard: the sound leaves there, the room rings
-            // shorter (and so quieter)
-            float fL = 1.0f, fH = 1.0f;
-            openedRt(rm, ri, fL, fH);
-            rtL = juce::jmax(0.05f, rtL * fL);
-            rtH = juce::jmax(0.05f, rtH * fH);
+            // shorter (and so quieter). The processor builds the response anew without them (a
+            // fraction of a second later); until then the decay is scaled by what the response in
+            // use does not yet know.
+            bool builtOpen = false;
+            std::array<float, kMaxSurf> builtKeep;
+            for (int sfc = 0; sfc < kMaxSurf; ++sfc)
+            {
+                const float g = ir != nullptr ? ir->gone[(size_t)sfc] : 0.0f;
+                builtKeep[(size_t)sfc] = 1.0f - g;
+                builtOpen = builtOpen || g > 0.0f;
+            }
+            if (wallsOpen[(size_t)ri] || builtOpen)
+            {
+                float fL = 1.0f, fH = 1.0f, bL = 1.0f, bH = 1.0f;
+                openedRt(rm, wallKeep[(size_t)ri], fL, fH);
+                if (builtOpen)
+                    openedRt(rm, builtKeep, bL, bH);
+                rtL = juce::jlimit(0.05f, 30.0f, rtL * fL / juce::jmax(0.03f, bL));
+                rtH = juce::jlimit(0.05f, 30.0f, rtH * fH / juce::jmax(0.03f, bH));
+            }
         }
         const float V = roomVolume(rm);
         const float rc = juce::jmax(0.2f, 0.057f * std::sqrt(V / rtL)); // critical distance
@@ -4455,12 +4483,12 @@ Vec3f OrganEngine::doorPoint(int room, int wall) const noexcept
     return {0.5f * (w.ax + w.bx), 0.5f * (w.ay + w.by), z};
 }
 
-void OrganEngine::openedRt(const RoomParams &rm, int room, float &fLow, float &fHigh) const noexcept
+void OrganEngine::openedRt(const RoomParams &rm, const std::array<float, kMaxSurf> &keep,
+                           float &fLow, float &fHigh) const noexcept
 {
     // Sabine: the decay time goes with the volume over the absorption. A surface taken out
     // absorbs everything that reaches it.
     fLow = fHigh = 1.0f;
-    const auto &keep = wallKeep[(size_t)juce::jlimit(0, kNumRooms - 1, room)];
     const auto ab = SurfAbs::from(rm);
     const float W = rm.W(), L = rm.L(), H = rm.H();
     float area[kMaxSurf]{};

@@ -1421,7 +1421,9 @@ sweeps its reflections round the room while the pipe stays where it is; turned f
 render test checks it as follows. With the room off, a cardioid facing the listener is as loud as a ball (\SI{-0.005}{dB}), turned away
 it is \SI{64}{dB} down and a figure-eight turned sideways is silent. In the Saal a cardioid turned away is heard through the room, about
 \SI{4.8}{dB} below a ball, as the pattern's power says. Turning once a second the direct sound swings by \SI{40}{dB} (standing:
-\SI{0.6}{dB}), and with the late reverb off the direction of the sound moves over \SI{38}{\degree} (standing: \SI{0.9}{\degree}). At full
+\SI{0.6}{dB}), and with the late reverb off the direction of the sound moves over \SI{38}{\degree} (standing: \SI{0.9}{\degree}). A
+figure-eight turned round only changes the sign of everything it sends (the residue is \SI{-141}{dB}), so the negative rear lobe's
+reflections are kept. At full
 extent W keeps its level exactly, the coherence between W and the strongest first-order channel falls from 1 to 0.49 and the
 first-order energy is 0.97 of W, as in an even field.
 
@@ -1729,7 +1731,8 @@ twice, first with its own short time and then with the hall's long one, the doub
 opening is a swell box made of architecture and is meant for a pedal. The render test checks that a shut door is no door (the output is
 identical), that with the door open a $5\times6\times3$\,m wooden room ($\alpha=0.3$) rings \SI{80}{dB} louder \SIrange{1.5}{3.5}{s} after the
 key than without it, because a $30\times50\times20$\,m stone hall behind it rings on, while the level during the note changes by only
-\SI{-0.15}{dB}, and that the hall's tail comes from the door's direction (\SI{0}{\degree}, the door in the front wall).
+\SI{-0.15}{dB}, and that the hall's tail comes from the door's direction (\SI{0}{\degree}, the door in the front wall). A Saal behind a
+door counts as in use, so its convolution response is built too; with it the hall rings \SI{89}{dB} louder late.
 
 \paragraph{The room keyboard.} One MIDI channel (\ui{Raumtastatur}, off by default) can be given to the room: its keys make no sound and
 are taken out of the MIDI stream before the engine. One hand plays notes, the other plays the room. From C4 the keys are places on a clock
@@ -1743,10 +1746,13 @@ the ceiling. Every surface $s$ of every Saal has a factor $\kappa_s$ gliding to 
 by $\prod\kappa_s$ over the surfaces of its path, and the late reverb rings shorter by Sabine's law \citep{kuttruff2016}, an open surface
 absorbing everything:
 \[ T' = T\,\frac{A}{A + \sum_s (1-\kappa_s)\,S_s\,(1-\alpha_s)},\qquad A = \sum_s \alpha_s S_s, \]
-in each of the two bands (in the convolution tail through the level, which follows the critical distance). The plan shows a wall that
+in each of the two bands. The processor builds the convolution tail's response anew with the open surfaces absorbing fully (in tenths of
+the way, like any other change of the room, \S\ref{sec:plans}); until the new response arrives the decay is scaled by the part the
+response in use does not yet contain, which also keeps the FDN from counting it twice. The plan shows a wall that
 is gone as a dashed red line. The modulation source \ui{Raumtastatur} follows how far the held keys pull, so the room keys can drive
 anything else, a door's opening for instance. The render test checks that a held place pulls the pipe to it (heard from
-\SI{-90}{\degree}, the place at three o'clock) and that with the four walls and the ceiling out the late tail is \SI{19.5}{dB} lower.
+\SI{-90}{\degree}, the place at three o'clock) and that with the four walls and the ceiling out the late tail is \SI{19.5}{dB} lower
+with the FDN and \SI{32}{dB} lower with the convolution tail once its response is rebuilt.
 
 % =====================================================================
 \subsection{Lucier mode}

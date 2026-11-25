@@ -15,7 +15,8 @@ bool RysumProcessor::takesPartInScenes(const juce::String &id) const
     static const juce::StringArray never{
         "sceneMorph",    "output",  "master",   "binOrder", "binYaw", "binDfEq",  "trAngle",
         "trAmount",      "trBoost", "trSideEq", "irFuma",   "irN3D",  "irOrder",  "temperament",
-        "mtsContinuous", "midiCC",  "mpe",      "mpeBend",  "inpOn",  "spkOrder", "spkDistComp"};
+        "mtsContinuous", "midiCC",  "mpe",      "mpeBend",  "inpOn",  "spkOrder", "spkDistComp",
+        "simKbCh"}; // (the room keyboard's channel: a scene must not silence the keys)
     return !id.startsWith("dsf") && !never.contains(id);
 }
 
@@ -185,12 +186,17 @@ int RysumProcessor::diceGroupOf(const juce::String &id) const
          {"motion",    "rate",         "depth",      "ellipse",    "ellDir",    "ellTilt",
           "ellForm",   "pathSpread",   "jumpHard",   "cloudMix",   "cloudDens", "cloudSpread",
           "cloudSize", "cloudScatter", "pipeAtt",    "pipeSharp",  "pipeIso",   "pipeRep",
-          "pipePuff",  "pipeHiFreq",   "pipeHiGain", "pipeHiShape"})
+          "pipePuff",  "pipeHiFreq",   "pipeHiGain", "pipeHiShape", "pipeWidth", "pipeDirPat",
+          "pipeFace",  "pipeSpin"})
         if (stopParam(p))
             return dgRaum;
     if (id == "doppler" || id == "air" || id == "airInvert" || id == "distAmount" ||
         id == "irDry" || id == "irWet" || id == "irEnvelop" || id == "irDirect")
         return dgRaum;
+    // (not the room keyboard's channel - on a channel the organ plays on, its keys fall silent -
+    // nor where the doors lead)
+    if (id == "simKbCh" || id.endsWith("DoorTo") || id.endsWith("DoorWall"))
+        return -1;
     if (id.startsWith("sim") && id != "simOrder")
         return dgSaal;
     if (id == "detune" || id.startsWith("trem") || id == "freezeSmear" || id == "freezeRelease" ||

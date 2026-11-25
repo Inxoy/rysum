@@ -38,6 +38,7 @@ struct TailIR
     double sampleRate = 48000.0;
     int length = 0; // samples
     float rtLow = 1.0f, rtHigh = 1.0f, volume = 0.0f;
+    std::array<float, kMaxSurf> gone{}; // the surfaces it was built without (RoomParams::gone)
     int rays = 0;
     uint32_t serial = 0;
     // spectra per stage: [channel][partition][2 * block] (PFFFT order, scaled). Partition q of

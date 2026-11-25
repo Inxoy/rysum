@@ -2454,7 +2454,6 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         engine.numTapped = 0;
     if (concertRole == rysum::ConcertLink::Role::listener)
         midi.clear();
-    takeRoomKeys(midi);
 
     // notes that are MIDI buttons (pads mapped to a switch or to a button on screen) do not play
     if (noteMaps.load() || bmLearn.load() >= 0 || mmLearn.load() >= 0)
@@ -2561,6 +2560,9 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
             midi.clear();
         concert.playInto(midi, concertBlockTime, buffer.getNumSamples(), concertSr);
     }
+    // the room keyboard's notes out of the stream (after Konzert: the player sends them, every
+    // listener plays the room with them)
+    takeRoomKeys(midi);
 
     // free tuning: MIDI Tuning Standard SysEx (e.g. from Hexatone) goes to the MTS-ESP client (used
     // when no master is connected); then the note table the engine plays from
@@ -3385,6 +3387,12 @@ rysum::RoomParams RysumProcessor::tailRoom(int room) const
     r.width *= s;
     r.length *= s;
     r.height *= s;
+    // the surfaces the room keyboard has taken out (in tenths: a glide rebuilds a few times, not
+    // every block)
+    const int ri = juce::jlimit(0, rysum::kNumRooms - 1, room);
+    for (int sfc = 0; sfc < rysum::kMaxSurf; ++sfc)
+        r.gone[(size_t)sfc] =
+            (float)juce::roundToInt(10.0f * engine.wallGoneNow[(size_t)ri][(size_t)sfc].load()) / 10.0f;
     return r;
 }
 
@@ -3501,6 +3509,15 @@ static rysum::FloorPlan planFromString(const juce::String &s)
     return f;
 }
 
+static juce::String goneString(const rysum::RoomParams &r)
+{
+    juce::String s;
+    for (int i = 0; i < rysum::kMaxSurf; ++i)
+        if (r.gone[(size_t)i] > 0.0f)
+            s << "|g" << i << ":" << juce::roundToInt(10.0f * r.gone[(size_t)i]);
+    return s;
+}
+
 juce::String RysumProcessor::roomKey(int room) const
 {
     // rounded so that tiny modulation steps do not rebuild all the time (1.5 % in size, 0.004 in
@@ -3515,7 +3532,7 @@ juce::String RysumProcessor::roomKey(int room) const
            juce::String(juce::jmin(2, engine.roomOutOrder.load())) + "|" +
            juce::String(hostRate.load(), 0) +
            (r.box() ? juce::String() : "|" + juce::String(r.shape) + "|" + planString(r.plan)) +
-           (r.plan.anySurf() ? "|s" + surfString(r.plan) : juce::String()) +
+           (r.plan.anySurf() ? "|s" + surfString(r.plan) : juce::String()) + goneString(r) +
            // (Saal 1 with a model that is heard: the rays go through the model)
            (room == 0 && walkHear && getWalkAcoustics() != nullptr
                 ? "|m" + juce::String(getWalkAcoustics()->serial)

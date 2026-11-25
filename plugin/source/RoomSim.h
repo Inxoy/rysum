@@ -98,6 +98,10 @@ struct RoomParams
     float highDamp = 0.5f;  // extra absorption of the highs
     float scatter = 0.3f;   // part of the energy reflected diffusely
     int order = 2;          // early reflections up to this order (1..3)
+    /** surfaces taken out (the room keyboard), 0 = there .. 1 = gone: they absorb everything. Only
+        the late reverb's response is built with them (the processor sets them); the engine applies
+        them to the early reflections and to the decay itself. */
+    std::array<float, kMaxSurf> gone{};
     float erGain = 1.0f, tailGain = 1.0f; // linear
     int tailModel = 0; // late reverb: 0 = convolution (ray-traced response), 1 = FDN
 
@@ -163,6 +167,12 @@ struct SurfAbs
                 const float a = juce::jlimit(0.0f, 0.99f, fl ? mat.af : mat.aw);
                 s.low[(size_t)i] = a;
                 s.high[(size_t)i] = juce::jlimit(0.0f, 0.99f, a + mat.hi * (1.0f - a) * 0.6f);
+            }
+            const float g = juce::jlimit(0.0f, 1.0f, r.gone[(size_t)i]);
+            if (g > 0.0f)
+            {
+                s.low[(size_t)i] += g * (0.99f - s.low[(size_t)i]);
+                s.high[(size_t)i] += g * (0.99f - s.high[(size_t)i]);
             }
         }
         return s;

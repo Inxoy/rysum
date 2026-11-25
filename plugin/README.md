@@ -489,8 +489,10 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
     every pipe goes to one of them. A note that starts while a place is held sounds from there at
     once.
   - C3–B3 (48–59): **walls**, on the same clock face: the wall in that direction from the
-    listener disappears while the key is down. Its reflections go, and the room rings shorter
-    (Sabine: the open surface absorbs everything). The plan shows it dashed in red.
+    listener disappears while the key is down. Its reflections go at once, and the room rings
+    shorter (Sabine: the open surface absorbs everything); the convolution tail's response is built
+    anew without the surface in the background, a fraction of a second later. The plan shows it
+    dashed in red.
   - C2–F2 (36–41): the floor, F#2–B2 (42–47): the ceiling.
   - The source *Raumtastatur* in the modulation list follows how far the held keys pull, so the
     room keys can also open a door, widen the pipes or anything else.

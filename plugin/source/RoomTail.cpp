@@ -35,6 +35,7 @@ std::shared_ptr<const TailIR> TailIR::build(const RoomParams &r, float air, int 
                          : traceRoom(r, air, 4000,
                                      1234u); // same rays every time: no random jumps while modulating
     const float stretch = mesh != nullptr ? juce::jlimit(0.2f, 40.0f, meshScale) : 1.0f;
+    ir->gone = r.gone;
     ir->rtLow = juce::jlimit(0.05f, 30.0f, res.rtLow * stretch);
     ir->rtHigh = juce::jlimit(0.05f, 30.0f, juce::jmin(res.rtHigh, res.rtLow) * stretch);
     ir->rays = res.rays;

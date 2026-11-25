@@ -429,6 +429,8 @@ public:
     std::atomic<float> roomTailSeconds{0.0f};
     /** the surfaces the room keyboard has taken (more than half) out now: bit s = surface s */
     std::array<std::atomic<uint32_t>, kNumRooms> wallsGone{};
+    /** how much of each surface is gone now (0 .. 1), for the processor's responses */
+    std::array<std::array<std::atomic<float>, kMaxSurf>, kNumRooms> wallGoneNow{};
     std::atomic<int> lastStruckStop{-1}, lastStruckKey{-1}, erActive{0};
     // ...and the rest of it, for building the late reverb (processor, message thread)
     std::atomic<float> roomAbsW{0.0f}, roomAbsF{0.0f}, roomHighD{0.0f}, roomScat{0.0f},
@@ -1265,7 +1267,8 @@ private:
     /** the middle of a door in a wall, a little above the floor (room coordinates) */
     Vec3f doorPoint(int room, int wall) const noexcept;
     /** the late reverb with surfaces taken out: how much shorter it rings (low / high band) */
-    void openedRt(const RoomParams &rm, int room, float &fLow, float &fHigh) const noexcept;
+    void openedRt(const RoomParams &rm, const std::array<float, kMaxSurf> &keep, float &fLow,
+                  float &fHigh) const noexcept;
     /** a slot's taps for this slice: the pattern turned to the facing, and the surfaces taken out
         (both on top of the taps' own gains, without new geometry) */
     void applyTapLive(ErSlot &s, int room, float face, float pat, bool wasFresh) noexcept;
