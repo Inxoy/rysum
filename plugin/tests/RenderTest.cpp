@@ -4242,6 +4242,294 @@ int main(int argc, char **argv)
             return all;
         };
 
+        // ---------------- how the pipes radiate, doors, the room keyboard ----------------
+        {
+            auto en = [&](const juce::AudioBuffer<float> &a, int c, double t0, double t1)
+            {
+                double sum = 0.0;
+                const int i0 = juce::jlimit(0, a.getNumSamples(), (int)(t0 * fsr)),
+                          i1 = juce::jlimit(0, a.getNumSamples(), (int)(t1 * fsr));
+                const float *x = a.getReadPointer(c);
+                for (int i = i0; i < i1; ++i)
+                    sum += (double)x[i] * x[i];
+                return sum;
+            };
+            auto dB = [](double a, double b) { return 10.0 * std::log10((a + 1.0e-30) / (b + 1.0e-30)); };
+            auto finite = [](const juce::AudioBuffer<float> &a)
+            {
+                for (int c = 0; c < a.getNumChannels(); ++c)
+                    for (int i = 0; i < a.getNumSamples(); ++i)
+                        if (!std::isfinite(a.getSample(c, i)))
+                            return false;
+                return true;
+            };
+            // 1) the pattern and the facing, the room off: the direct sound only
+            auto dry = [&](float pat, float face)
+            {
+                return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = false;
+                        p.stopDirPat[0] = pat;
+                        p.stopFace[0] = face;
+                    },
+                    1.0, 0.0, {});
+            };
+            const auto omni = dry(0.0f, 0.0f), front = dry(0.5f, 0.0f), back = dry(0.5f, 180.0f),
+                       side8 = dry(1.0f, 90.0f);
+            const double eO = en(omni, 0, 0.3, 0.9);
+            std::cout << "radiation (direct): cardioid facing " << dB(en(front, 0, 0.3, 0.9), eO)
+                      << " dB, facing away " << dB(en(back, 0, 0.3, 0.9), eO)
+                      << " dB, figure-eight sideways " << dB(en(side8, 0, 0.3, 0.9), eO) << " dB"
+                      << std::endl;
+            check(std::abs(dB(en(front, 0, 0.3, 0.9), eO)) < 1.0 &&
+                      dB(en(back, 0, 0.3, 0.9), eO) < -25.0 && dB(en(side8, 0, 0.3, 0.9), eO) < -40.0,
+                  "radiation: a cardioid facing the listener is as loud as a ball, turned away or "
+                  "a figure-eight sideways it is gone");
+            // 2) in the Saal a pipe turned away is heard through the room
+            auto inSaal = [&](float pat, float face, float spin, const juce::String &name)
+            {
+                return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = true;
+                        p.room.tailModel = 1;
+                        p.stopDirPat[0] = pat;
+                        p.stopFace[0] = face;
+                        p.stopSpin[0] = spin;
+                    },
+                    3.0, 2.0, name);
+            };
+            const auto sO = inSaal(0.0f, 0.0f, 0.0f, {}), sB = inSaal(0.5f, 180.0f, 0.0f, "radiate_away");
+            const double tail = dB(en(sB, 0, 2.2, 2.9), en(sO, 0, 2.2, 2.9)),
+                         during = dB(en(sB, 0, 0.5, 1.9), en(sO, 0, 0.5, 1.9));
+            std::cout << "radiation in the Saal, cardioid turned away: " << during
+                      << " dB while it sounds, tail " << tail << " dB" << std::endl;
+            check(finite(sB) && tail > -10.0 && tail < -1.0 && during < -2.0,
+                  "radiation: turned away, the pipe is heard through the room (the room gets a "
+                  "little less)");
+            // 3) turning on the spot: the direct sound swings once a turn; in the Saal the
+            // reflected sound sweeps round (its direction moves), the pipe stays where it is
+            auto swing = [&](const juce::AudioBuffer<float> &a)
+            {
+                double lo = 1.0e30, hi = 0.0;
+                for (double t = 0.6; t < 1.8; t += 0.05)
+                {
+                    const double e = en(a, 0, t, t + 0.05);
+                    lo = juce::jmin(lo, e);
+                    hi = juce::jmax(hi, e);
+                }
+                return dB(hi, lo);
+            };
+            auto drySpin = [&](float spin)
+            {
+                return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = false;
+                        p.stopDirPat[0] = 0.5f;
+                        p.stopSpin[0] = spin;
+                    },
+                    2.0, 0.0, {});
+            };
+            const auto dS = drySpin(1.0f), dC = drySpin(0.0f);
+            std::cout << "radiation: turning once a second, the direct sound swings " << swing(dS)
+                      << " dB, standing " << swing(dC) << " dB" << std::endl;
+            check(finite(dS) && swing(dS) > 15.0 && swing(dC) < 1.5,
+                  "radiation: a turning cardioid swings once a turn (direct sound)");
+            auto spread = [&](const juce::AudioBuffer<float> &a)
+            {
+                // the directions of the sound in windows of 0.1 s: how far apart they lie
+                std::vector<double> az;
+                for (double t = 0.6; t < 1.8; t += 0.1)
+                {
+                    double cx2 = 0.0, cy2 = 0.0;
+                    for (int i = (int)(t * fsr); i < (int)((t + 0.1) * fsr); ++i)
+                    {
+                        cy2 += (double)a.getSample(0, i) * a.getSample(1, i);
+                        cx2 += (double)a.getSample(0, i) * a.getSample(3, i);
+                    }
+                    az.push_back(std::atan2(cy2, cx2));
+                }
+                double worst = 0.0;
+                for (size_t i = 0; i < az.size(); ++i)
+                    for (size_t j = i + 1; j < az.size(); ++j)
+                        worst = juce::jmax(worst, std::abs(std::remainder(az[i] - az[j], 2.0 * juce::MathConstants<double>::pi)));
+                return juce::radiansToDegrees(worst);
+            };
+            // (the early reflections and the direct sound only: the late reverb's direction wanders
+            // in short windows anyway)
+            auto erOnly = [&](float spin, const juce::String &name)
+            {
+                return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = true;
+                        p.room.tailModel = 1;
+                        p.room.tailGain = 0.0f;
+                        p.stopDirPat[0] = 0.5f;
+                        p.stopSpin[0] = spin;
+                    },
+                    3.0, 2.0, name);
+            };
+            const auto sS = erOnly(1.0f, "radiate_spin"), sC = erOnly(0.0f, {});
+            std::cout << "radiation in the Saal: the sound's direction moves over " << spread(sS)
+                      << " deg turning, " << spread(sC) << " deg standing" << std::endl;
+            check(finite(sS) && spread(sS) > 2.0 * spread(sC) + 10.0,
+                  "radiation: a turning cardioid sweeps its reflections round the room");
+
+            // 4) Ausdehnung: the same pressure, but no longer one direction
+            auto wide = [&](float w)
+            {
+                return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = false;
+                        p.stopWidth[0] = w;
+                    },
+                    1.0, 0.0, w > 0.5f ? "radiate_wide" : "");
+            };
+            const auto w0 = wide(0.0f), w1 = wide(1.0f);
+            auto coherence = [&](const juce::AudioBuffer<float> &a)
+            {
+                // the first-order channel with the most energy: how much of it is W itself
+                int best = 1;
+                for (int c = 2; c < 4; ++c)
+                    if (en(a, c, 0.3, 0.9) > en(a, best, 0.3, 0.9))
+                        best = c;
+                double sxy = 0.0;
+                const float *x = a.getReadPointer(0), *y = a.getReadPointer(best);
+                for (int i = (int)(0.3 * fsr); i < (int)(0.9 * fsr); ++i)
+                    sxy += (double)x[i] * y[i];
+                return std::abs(sxy) / std::sqrt(en(a, 0, 0.3, 0.9) * en(a, best, 0.3, 0.9) + 1.0e-30);
+            };
+            const double lvl = dB(en(w1, 0, 0.3, 0.9), en(w0, 0, 0.3, 0.9));
+            const double r1 = (en(w1, 1, 0.3, 0.9) + en(w1, 2, 0.3, 0.9) + en(w1, 3, 0.3, 0.9)) /
+                              juce::jmax(1.0e-30, en(w1, 0, 0.3, 0.9));
+            std::cout << "Ausdehnung: W " << lvl << " dB, coherence point " << coherence(w0)
+                      << ", all around " << coherence(w1) << ", first order / W " << r1 << std::endl;
+            check(finite(w1) && std::abs(lvl) < 0.5 && coherence(w0) > 0.95 && coherence(w1) < 0.5 &&
+                      r1 > 0.6 && r1 < 1.4,
+                  "Ausdehnung: all around, the pipe keeps its level but comes from everywhere "
+                  "(decorrelated, an even field)");
+
+            // 5) the room keyboard: a place pulls the pipe there (a note that starts while the key
+            // is held sounds from there at once)
+            auto pulled = run(
+                [&](EngineParams &p)
+                {
+                    p.room.on = false;
+                    p.roomKeys.numPlaces = 1;
+                    p.roomKeys.placeAz[0] = -90.0f; // (C#4 .. : 3 o'clock, to the right)
+                    p.roomKeys.placeEl[0] = 0.0f;
+                    p.roomKeys.placeDepth[0] = 1.0f;
+                    p.roomKeys.glide = 0.05f;
+                },
+                1.0, 0.0, {});
+            double cx = 0.0, cy = 0.0;
+            for (int i = (int)(0.3 * fsr); i < (int)(0.9 * fsr); ++i)
+            {
+                cy += (double)pulled.getSample(0, i) * pulled.getSample(1, i);
+                cx += (double)pulled.getSample(0, i) * pulled.getSample(3, i);
+            }
+            const double azHeard = juce::radiansToDegrees(std::atan2(cy, cx));
+            std::cout << "room keyboard: pulled to the right, heard from " << azHeard << " deg"
+                      << std::endl;
+            check(std::abs(azHeard + 90.0) < 5.0, "room keyboard: a held place pulls the pipe there");
+            // ... and walls taken out: the room rings much shorter
+            auto walls = [&](bool out)
+            {
+                return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = true;
+                        p.room.tailModel = 1;
+                        p.room.absWalls = 0.03f;
+                        if (out)
+                        {
+                            p.roomKeys.numWalls = 4;
+                            for (int k = 0; k < 4; ++k)
+                            {
+                                p.roomKeys.wallAz[(size_t)k] = 90.0f * (float)k;
+                                p.roomKeys.wallDepth[(size_t)k] = 1.0f;
+                            }
+                            p.roomKeys.ceilingDepth = 1.0f;
+                            p.roomKeys.glide = 0.05f;
+                        }
+                    },
+                    3.0, 1.0, out ? "roomkeys_walls" : "");
+            };
+            const auto wIn = walls(false), wOut = walls(true);
+            const double late = dB(en(wOut, 0, 1.6, 2.6), en(wIn, 0, 1.6, 2.6));
+            std::cout << "room keyboard: walls and ceiling out, the late tail " << late << " dB"
+                      << std::endl;
+            check(finite(wOut) && late < -10.0, "room keyboard: without walls the room rings shorter");
+
+            // 6) a door: a small wooden room with its door open into a large stone hall rings twice
+            auto door = [&](int to, float open, const juce::String &name)
+            {
+                return run(
+                    [&](EngineParams &p)
+                    {
+                        p.room.on = true;
+                        p.room.tailModel = 1;
+                        p.room.width = 5.0f;
+                        p.room.length = 6.0f;
+                        p.room.height = 3.0f;
+                        p.room.absWalls = 0.3f;
+                        p.room.absFloor = 0.3f;
+                        auto &h = p.moreRooms[0];
+                        h = p.room;
+                        h.width = 30.0f;
+                        h.length = 50.0f;
+                        h.height = 20.0f;
+                        h.absWalls = 0.02f;
+                        h.absFloor = 0.03f;
+                        p.stopRoom[0] = 0;
+                        p.doors[0].to = to;
+                        p.doors[0].open = open;
+                        p.doors[0].wall = 2;
+                    },
+                    5.0, 1.0, name);
+            };
+            const auto dNone = door(-1, 1.0f, {}), dShut = door(1, 0.0f, {}),
+                       dOpen = door(1, 1.0f, "door_open");
+            double diff = 0.0, ref = 0.0;
+            for (int c = 0; c < 4; ++c)
+                for (int i = 0; i < dNone.getNumSamples(); ++i)
+                {
+                    const double d = (double)dShut.getSample(c, i) - dNone.getSample(c, i);
+                    diff += d * d;
+                    ref += (double)dNone.getSample(c, i) * dNone.getSample(c, i);
+                }
+            const double lateDoor = dB(en(dOpen, 0, 2.5, 4.5), en(dNone, 0, 2.5, 4.5)),
+                         early = dB(en(dOpen, 0, 0.3, 0.9), en(dNone, 0, 0.3, 0.9));
+            std::cout << "door: shut = no door (rel. difference " << diff / juce::jmax(1.0e-30, ref)
+                      << "), open: while it sounds " << early << " dB, late (1.5 .. 3.5 s after) "
+                      << lateDoor << " dB" << std::endl;
+            check(diff < 1.0e-12 * ref, "door: a shut door is no door");
+            check(finite(dOpen) && lateDoor > 10.0 && early < 3.0,
+                  "door: open into the big hall, the small room rings out twice (the hall's long "
+                  "tail through the door)");
+            // the hall's tail comes from the door (the front wall): the first-order direction
+            double fx = 0.0, fy = 0.0;
+            for (int i = (int)(2.5 * fsr); i < (int)(4.5 * fsr); ++i)
+            {
+                fy += (double)dOpen.getSample(0, i) * dOpen.getSample(1, i);
+                fx += (double)dOpen.getSample(0, i) * dOpen.getSample(3, i);
+            }
+            const double doorAz = juce::radiansToDegrees(std::atan2(fy, fx));
+            std::cout << "door: the hall heard from " << doorAz << " deg (the door is in front)"
+                      << std::endl;
+            check(std::abs(doorAz) < 20.0, "door: the hall behind it is heard from the door");
+        }
+        if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
+        {
+            std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string(failures))
+                      << std::endl;
+            return failures;
+        }
+
         // ---------------- polygon rooms (floor plans) ----------------
         {
             // 1) a rectangle given as a polygon must give exactly the shoebox's mirror images

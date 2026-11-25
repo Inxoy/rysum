@@ -975,13 +975,14 @@ SpaceView::SpaceView(RysumProcessor &p) : proc(p), circle(p, selected, inputSel,
     tabCloud.onClick = [this] { showTab(2); };
     tabPipe.onClick = [this] { showTab(3); };
     tabPipe.setTooltip(rysum::tr("Der Klang der Pfeifen dieses Registers: Ansprache (Chiff), Abriss beim "
-                          "Loslassen, Obert\xc3\xb6ne als eigene Schicht"));
+                          "Loslassen, Obert\xc3\xb6ne als eigene Schicht, wie die Pfeifen abstrahlen"));
     addAndMakeVisible(tabPipe);
-    pipeAll.setTooltip(rysum::tr("Diese acht Werte f\xc3\xbcr alle Register setzen"));
+    pipeAll.setTooltip(rysum::tr("Diese Werte f\xc3\xbcr alle Register setzen"));
     pipeAll.onClick = [this]
     {
         std::vector<const char *> keys(std::begin(RysumProcessor::kPipeSndKeys), std::end(RysumProcessor::kPipeSndKeys));
         keys.insert(keys.end(), std::begin(RysumProcessor::kStopFxKeys), std::end(RysumProcessor::kStopFxKeys));
+        keys.insert(keys.end(), std::begin(RysumProcessor::kRadiateKeys), std::end(RysumProcessor::kRadiateKeys));
         for (const char *k : keys)
         {
             auto *src = proc.apvts.getParameter(RysumProcessor::pipeSndParamId(k, selected));
@@ -1324,6 +1325,30 @@ void SpaceView::selectStop(int s)
             row->setTooltip(rysum::tr(fxTips[k]));
             addAndMakeVisible(*row);
         }
+        // how the stop's pipes radiate
+        const char *radNames[]{"Ausdehnung", "Abstrahlung", "Ausrichtung", "Drehung"};
+        const char *radTips[]{
+            "Vom scharfen Punkt bis rundherum: die Pfeife wird zu einem Fleck, der w\xc3\xa4"
+            "chst, und zuletzt zu einem Klang, der den H\xc3\xb6rer umgibt. Mit einer H\xc3\xbc"
+            "llkurve auf \xe2\x80\x9ePfeife: Ausdehnung\xe2\x80\x9c beginnt ein gehaltener Ton "
+            "als Punkt und umh\xc3\xbcllt langsam.",
+            "Wie die Pfeife abstrahlt: Kugel (in alle Richtungen gleich), Niere (nach vorn), Acht "
+            "(nach vorn und hinten, zur Seite nichts). Jede Reflexion bekommt den Klang der "
+            "Richtung, in der sie die Pfeife verl\xc3\xa4sst.",
+            "Wohin die Pfeife schaut: 0\xc2\xb0 = zum H\xc3\xb6rer, 180\xc2\xb0 = von ihm weg "
+            "(dann h\xc3\xb6rt man sie vor allem \xc3\xbc"
+            "ber den Raum), + = nach links gedreht.",
+            "Die Pfeife dreht sich auf der Stelle (Umdrehungen pro Sekunde): sie bleibt, wo sie "
+            "ist, aber ihre Reflexionen wandern durch den Raum. Schnell gedreht ein Rotorklang."};
+        for (int k = 0; k < 4; ++k)
+        {
+            auto &row = pipeRows[(size_t)(12 + k)];
+            row = std::make_unique<ParamRow>(proc.apvts,
+                                             RysumProcessor::pipeSndParamId(RysumProcessor::kRadiateKeys[k], s),
+                                             rysum::tr(radNames[k]));
+            row->setTooltip(rysum::tr(radTips[k]));
+            addAndMakeVisible(*row);
+        }
     }
     jumpHardAttachment = rysum::ui::attachButton(
         proc.apvts, RysumProcessor::jumpHardParamId(s), jumpHard);
@@ -1487,12 +1512,12 @@ void SpaceView::resized()
         auto pb = tabBox.withTrimmedTop(36);
         // two columns: the attack on the left, release puff and upper partials on the right; below,
         // the stop's own effects (tremulant, crackle | leaks, speed spread)
-        const int rh = juce::jmin(34, (pb.getHeight() - 30) / 6);
-        auto colL = pb.removeFromTop(rh * 6), colR = colL.removeFromRight(colL.getWidth() / 2);
+        const int rh = juce::jmin(34, (pb.getHeight() - 30) / 8);
+        auto colL = pb.removeFromTop(rh * 8), colR = colL.removeFromRight(colL.getWidth() / 2);
         colL.removeFromRight(10);
         colR.removeFromLeft(10);
-        static const int column[12]{0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1};
-        for (int k = 0; k < 12; ++k)
+        static const int column[16]{0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1};
+        for (int k = 0; k < 16; ++k)
             if (pipeRows[(size_t)k])
                 pipeRows[(size_t)k]->setBounds((column[k] == 0 ? colL : colR).removeFromTop(rh));
         pb.removeFromTop(6);

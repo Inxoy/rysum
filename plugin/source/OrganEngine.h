@@ -252,6 +252,10 @@ struct EngineParams
     // each stop's own effects ("Pfeife" tab), on top of the global ones: tremulant depth,
     // crackle, its own wind leaks, and how differently fast its pipes move (0 = all alike)
     std::array<float, kNumStops> stopTrem{}, stopCrack{}, stopLeak{}, rateSpread{};
+    // how each stop's pipes radiate (Raum page, tab "Pfeife"): Ausdehnung 0 = a point .. 1 = all
+    // around; Abstrahlung 0 = Kugel, 0.5 = Niere, 1 = Acht; Ausrichtung in degrees (0 = towards
+    // the listener, + = turned to the left); Drehung in turns per second
+    std::array<float, kNumStops> stopWidth{}, stopDirPat{}, stopFace{}, stopSpin{};
     GlitchParams glitch;
     // tuning made audible in space: beats ("Schwebung", motion mode and modulation source) and
     // difference tones
@@ -313,6 +317,31 @@ struct EngineParams
     std::array<RoomParams, kNumRooms - 1> moreRooms{};
     std::array<int, kNumStops> stopRoom{};
     int inputRoom = 0;
+    /** doors (Saal page): each Saal can have a door in one of its walls into another Saal. What
+        sounds in the Saal goes through it into the room behind, and that room's late reverb comes
+        back through the door (from the door's direction). A Saal with no sound of its own is then
+        heard only through its door. */
+    struct Door
+    {
+        int to = -1;       // the Saal behind the door, -1 = no door
+        int wall = 2;      // the wall it is in (shoebox: 0 back, 1 right, 2 front, 3 left)
+        float open = 1.0f; // 0 = shut .. 1 = wide open
+    };
+    std::array<Door, kNumRooms> doors{};
+    /** the room keyboard (Saal page): the keys held on its MIDI channel, as the processor read
+        them. Places pull the sounding pipes to a direction, walls take a surface out of the
+        rooms. */
+    struct RoomKeys
+    {
+        static constexpr int kMax = 16;
+        int numPlaces = 0;
+        std::array<float, kMax> placeAz{}, placeEl{}, placeDepth{};
+        // a wall by its direction from the listener (deg), and how far it is taken out
+        int numWalls = 0;
+        std::array<float, kMax> wallAz{}, wallDepth{};
+        float floorDepth = 0.0f, ceilingDepth = 0.0f;
+        float glide = 0.8f; // s
+    } roomKeys;
     const RoomParams &roomAt(int i) const noexcept
     {
         return i <= 0 ? room : moreRooms[(size_t)juce::jmin(kNumRooms - 2, i - 1)];
@@ -398,6 +427,8 @@ public:
         roomRtLow{0.0f}, roomRtHigh{0.0f}, roomCritDist{0.0f};
     /** how long the late reverb of the rooms in use rings after the last note (s; for the host) */
     std::atomic<float> roomTailSeconds{0.0f};
+    /** the surfaces the room keyboard has taken (more than half) out now: bit s = surface s */
+    std::array<std::atomic<uint32_t>, kNumRooms> wallsGone{};
     std::atomic<int> lastStruckStop{-1}, lastStruckKey{-1}, erActive{0};
     // ...and the rest of it, for building the late reverb (processor, message thread)
     std::atomic<float> roomAbsW{0.0f}, roomAbsF{0.0f}, roomHighD{0.0f}, roomScat{0.0f},
@@ -837,6 +868,15 @@ private:
         int erSlot = -1;
         float erBase = 0.0f;
         Pos erPos;
+        // how it radiates: facing (deg from the direction to the listener) and pattern, for the
+        // reflections; how far it has turned (Drehung); the part of its direct sound that goes to
+        // the diffuse field (Ausdehnung), start / end of the block
+        float erFace = 0.0f, erPat = 0.0f;
+        double facePhase = 0.0;
+        float dif0 = 0.0f, dif1 = 0.0f;
+        float widNow = 0.0f, dirNow = 1.0f; // Ausdehnung now, the direct sound's share of the pattern
+        // the room keyboard: the direction it is pulled to (unit vector, smoothed) and how far
+        float pullX = 0.0f, pullY = 1.0f, pullZ = 0.0f, pullAmt = 0.0f;
         // freeze
         bool frozen = false;
         float freezeMix = 0.0f;
@@ -881,6 +921,12 @@ private:
         std::array<uint8_t, 3> w{};
         float vis = 0.0f, visT = 0.0f, gFull = 0.0f;
         bool hold = false, born = false;
+        // what changes from slice to slice without new geometry: the direction the sound leaves
+        // the source (unit vector, room coordinates), the surfaces it meets on the way (for the
+        // room keyboard), and the gain before those two were applied
+        float ex = 0.0f, ey = 1.0f, ez = 0.0f, gb = 0.0f;
+        std::array<uint8_t, 6> sf{};
+        int nsf = 0;
     };
     struct ErSlot
     {
@@ -900,6 +946,8 @@ private:
         Vec3f visSrc{};
         bool visValid = false, fading = false;
         int visShape = -1, visN = -1;
+        // source and listener of the last geometry (room coordinates): where the pipe faces from
+        Vec3f lastS{}, lastL{};
     };
     // polygon rooms: scratch for the path search (audio thread), and how many searches a block may
     // do
@@ -1193,6 +1241,40 @@ private:
     std::array<float, kFdnLines> fdnModStepC{},
         fdnModStepS{}; // slow delay modulation (phasor steps)
     std::vector<float> zeroIn, room0In;
+
+    // ---- how the pipes radiate, and the room keyboard's walls and the doors
+    // Ausdehnung: the part of a pipe's direct sound that surrounds the listener goes into one
+    // shared mono field, decorrelated into every channel by sparse noise filters (velvet noise, a
+    // few hundredths of a second), at the levels of an even, diffuse field
+    static constexpr int kDifRing = 8192, kDifTaps = 24;
+    std::vector<float> difBus, difRing;
+    std::array<std::array<int, kDifTaps>, kMaxAmbiChannels> difPos{};
+    std::array<std::array<float, kDifTaps>, kMaxAmbiChannels> difGain{};
+    int difW = 0, difLeft = 0, difLen = 0;
+    bool difUsed = false;
+    void renderDiffuse(float *const *outs, int start, int n) noexcept;
+    /** a pipe's gains (as gainsFor made them) blurred to its Ausdehnung: the higher orders fade
+        (a spot growing on the sphere), and the part that becomes diffuse leaves */
+    void spreadGains(float width, float *g) const noexcept;
+    /** the room keyboard: how much of every surface is still there (1 = all), per room, smoothed */
+    std::array<std::array<float, kMaxSurf>, kNumRooms> wallKeep{};
+    std::array<bool, kNumRooms> wallsOpen{};
+    float roomKeyLevel = 0.0f;
+    /** the wall a horizontal ray from the listener meets in this direction (deg, + = left) */
+    int wallToward(int room, float azDeg) const noexcept;
+    /** the middle of a door in a wall, a little above the floor (room coordinates) */
+    Vec3f doorPoint(int room, int wall) const noexcept;
+    /** the late reverb with surfaces taken out: how much shorter it rings (low / high band) */
+    void openedRt(const RoomParams &rm, int room, float &fLow, float &fHigh) const noexcept;
+    /** a slot's taps for this slice: the pattern turned to the facing, and the surfaces taken out
+        (both on top of the taps' own gains, without new geometry) */
+    void applyTapLive(ErSlot &s, int room, float face, float pat, bool wasFresh) noexcept;
+    // doors: the Saal each door leads into now (it changes only once the door is shut), how far
+    // open, and scratch for what goes through: [room][sample], [room][channel][sample]
+    std::array<int, kNumRooms> doorToNow{-1, -1, -1, -1};
+    std::array<float, kNumRooms> doorOpenSm{};
+    static constexpr int kDoorCap = kSubBlock + 16;
+    std::vector<float> doorIn, doorOut;
     // notes to single pipes
     uint32_t spreadCounter = 0;
     int lastSpreadStop = -1;

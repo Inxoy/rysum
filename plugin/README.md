@@ -330,6 +330,29 @@ motion. The grains are not sent to the room separately (the pipe's room send sta
 *für alle Register übernehmen* copies the five values to every stop. Up to 64 pipes at once
 have a cloud (256 grains in all); more pipes stay whole.
 
+**How the pipes radiate** (Raum page, tab *Pfeife*, the last four rows, per stop, all off by
+default):
+- *Ausdehnung* (extent): from a sharp point to all around. A little of it blurs the pipe into a
+  spot (its higher Ambisonics orders fade, as if the point spread on the sphere); more of it turns
+  the pipe into a sound that surrounds you. That part goes into one shared diffuse field, sent to
+  every channel through its own short noise filter (24 taps over ~24 ms), so the channels are
+  decorrelated and the sound comes from everywhere at once (a plain omni signal would sit inside
+  your head on headphones). The pressure stays the same, so the pipe keeps its level. An envelope
+  on *Pfeife: Ausdehnung* lets a held note start as a point and slowly wrap around you; velocity
+  on it makes soft notes clouds and hard ones points. The early reflections and the room send
+  stay as they are.
+- *Abstrahlung* (pattern): *Kugel* (omni, as before), *Niere* (cardioid, at 50 %), up to *Acht*
+  (figure-eight). *Ausrichtung* (facing): 0° = towards the listener, 180° = away from you, + =
+  turned to the left. The direct sound gets the pattern towards the listener; every early
+  reflection gets it in the direction in which its path leaves the pipe (worked out from its
+  mirror image, through the walls); the late reverb gets what the pattern sends into all
+  directions (a cardioid a third less). A pipe turned away is heard through the room.
+- *Drehung* (spin): the pipe turns on the spot, in turns per second (±8). It stays where it is,
+  but its reflections sweep round the room; turned fast, a cardioid becomes a rotary sound. The
+  reflections need no new geometry for this (only their gains change), so it costs almost nothing.
+- Targets in the modulation list: *Pfeife: Ausdehnung / Abstrahlung* ±100 %, *Ausrichtung* ±180°,
+  *Drehung* ±4 turns per second (submenu *Pfeife: Abstrahlung*).
+
 **Lucier** (Saal page, middle column) – after Alvin Lucier's *I am sitting in a room* (1969):
 a recording is played into a room and recorded again, over and over, until only the room's
 resonances are left. Two ways (buttons under *Lucier an*):
@@ -447,6 +470,31 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
   an impossible room).
 - *Hörer · Pegel*: where you stand (also by dragging in the plan), level of the early
   reflections and of the tail.
+- **Tür** (door, the strip under the plan, per room): a Saal can have a door in one of its walls
+  into another Saal (*Tür zu*: *keine* / Saal 1–4, the wall, *offen* 0–100 %). What sounds in the
+  Saal goes through the door and excites the Saal behind it; that Saal's late reverb comes back
+  through the door, from the door's direction (blurred to its width). A Saal with no stops of its
+  own is heard only through the door. Open a small wooden room onto a large stone hall and you get
+  the double decay of coupled spaces: the small room dies away first, then the hall's long tail
+  comes through the opening. *offen* is a swell box made of architecture: put it on a pedal
+  (MIDI learn) or an envelope. A shut door is no door (the sound is exactly as without one). When
+  you choose another Saal behind the door, the door shuts first and opens onto the new one. The
+  plan shows the door as a gap with its leaf open as far as the door is.
+- **Raumtastatur** (room keyboard, same strip): a MIDI channel whose keys make no sound and play
+  the room instead (*aus* by default). One hand plays notes, the other plays the room. The
+  velocity says how far; *Gleiten* sets how fast it happens and goes back (0.01–10 s).
+  - From C4 (MIDI 60) up: **places**, on a clock face: C = in front, every semitone 30° clockwise
+    (D = 2 o'clock, F# = behind you, A = 9 o'clock on the left). C4–B4 at ear height, C5–B5
+    40° up, from C6 75° up. Holding a key pulls the sounding pipes there; with several keys held,
+    every pipe goes to one of them. A note that starts while a place is held sounds from there at
+    once.
+  - C3–B3 (48–59): **walls**, on the same clock face: the wall in that direction from the
+    listener disappears while the key is down. Its reflections go, and the room rings shorter
+    (Sabine: the open surface absorbs everything). The plan shows it dashed in red.
+  - C2–F2 (36–41): the floor, F#2–B2 (42–47): the ceiling.
+  - The source *Raumtastatur* in the modulation list follows how far the held keys pull, so the
+    room keys can also open a door, widen the pipes or anything else.
+  - Pipes that are bodies in the Saal (room motion) are not pulled.
 - Everything is a modulation target ("Saal" in the list): an LFO on *Größe* makes the room
   breathe, envelopes can shrink it while a chord is held, LFOs on the listener let you walk
   through it. Patches 49–55 show some of this.
@@ -846,7 +894,8 @@ reach you. The 3D view shows how many sounding pipes are heard around a corner.
   (pitch wheel −1 … +1; it bends nothing by itself – route it to *Pfeife: Tonhöhe*, e.g. 17 %
   = ±2 semitones, or anywhere else), *Schwebung* (per pipe: how fast it beats with the other
   sounding pipes, see Effekte · Stimmung & Belichtung), *Balg (Winddruck)* (the pressure of the shared
-  bellows, 0 … 1, see Effekte · Lebendige Orgel).
+  bellows, 0 … 1, see Effekte · Lebendige Orgel), *Raumtastatur* (how far the room keyboard's
+  held keys pull now, 0 … 1, see Saal).
 - *Zuordnungen* (24 slots, scroll the list): source → target, amount ±100 % (click the
   amount to type it), and **± / +**: ± = bipolar (an LFO swings around the slider value),
   + = unipolar (it only pushes one way, 0 … amount; envelopes and the mod wheel are 0 … 1 anyway).
@@ -867,7 +916,8 @@ reach you. The 3D view shows how many sounding pipes are heard around a corner.
     *Wolke* (Menge ±100 %, Dichte and Korngröße ×8 / :8, Streuung ±180°, Zeitstreuung ±150 ms),
     *Verfall* (Körnung / Aussetzer ±100 %, Bittiefe ±13 bits, Abtastrate ±6 octaves – only in the
     mode *pro Pfeife*, and only where the pipe's *Verfall* amount is above 0) and *Glitch*
-    (Stottern, Bandschnitt, harte Kanten, Clipping ±100 %). *Wiederholen* and the hard start of
+    (Stottern, Bandschnitt, harte Kanten, Clipping ±100 %), *Abstrahlung* (Ausdehnung and
+    Abstrahlung ±100 %, Ausrichtung ±180°, Drehung ±4 turns per second). *Wiederholen* and the hard start of
     *harte Kanten* are taken when the note starts, *Abriss* and the hard release when the key
     is let go; everything else follows the modulation all the time (Obertöne Pegel and Luft
     umkehren glide over ~4 ms). Example: *Zufall je Ton* → *Pfeife: Ansprache* +60 % gives every

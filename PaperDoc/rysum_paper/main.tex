@@ -93,7 +93,7 @@
 \author{\textsc{Christoffer Schöne}\\[0.2em]
   \small Sound als mediale Inszenierung \textperiodcentered{} Dr.\ Gerriet Sharma \\
   \small Technische Universität Berlin \textperiodcentered{} 3rd semester}
-\date{24 November 2026}
+\date{25 November 2026}
 
 \begin{document}
 \maketitle
@@ -1381,6 +1381,50 @@ send is unchanged. Up to 64 pipes at a time have a cloud (256 grains in all), mo
 source code and README; the render test of 15~November checks that the cloud spreads the energy over the sphere (the length of the
 energy vector $r_E$ falls from 1 to 0.11 for the whole sphere and stays 0.98 at \SI{15}{\degree}) at an unchanged level.
 
+\subsection{How the pipes radiate (\ui{Ausdehnung}, \ui{Abstrahlung}, \ui{Drehung})}
+\label{sec:radiate}
+The last four rows of the \ui{Pfeife} tab (\S\ref{sec:pipesound}) set, per stop, how its pipes send their sound out. All four are
+off by default and all are per-pipe modulation targets (\ui{Pfeife: Ausdehnung}, \ui{Abstrahlung} $\pm100\,\%$, \ui{Ausrichtung}
+$\pm\SI{180}{\degree}$, \ui{Drehung} $\pm4$ turns per second).
+
+\paragraph{Extent.} \ui{Ausdehnung} $w\in[0,1]$ turns a point into a sound that surrounds the listener. The directional part is
+blurred like a spot of light spreading on the sphere: the gains of order $l\ge1$ are multiplied by
+\[ a_l = \sqrt{1-w^2}\;\exp\bigl(-\tfrac12\,l(l+1)\,\sigma^2\bigr),\qquad \sigma = 1.75\,w, \]
+the heat kernel on the sphere ($\sigma$ reaches about \SI{100}{\degree}). The share $w$ (in amplitude, $w^2$ of the power) goes into one
+diffuse field shared by all pipes. It reaches every directional channel through a sparse noise filter of its own, a velvet-noise
+decorrelator \citep{alary2017velvet}: 24 taps of $\pm1$, one at a random place in each of 24 equal parts of \SI{24}{ms}, decaying as
+$e^{-2.5\,t/T}$ and normalised to unit energy, weighted by $1/\sqrt{2l+1}$, the share of an isotropic field in each channel of order $l$
+(SN3D). W, the pressure, is left whole, so the level and the mono sum do not change. The field in the directional channels is
+uncorrelated with W and between the channels, and it is decoded as sound from everywhere; a plain omni signal would be heard inside
+the head on headphones. In stereo both sides take the field, through two filters. The early reflections and the room send are not
+changed. An envelope on \ui{Pfeife: Ausdehnung} starts a held note as a point and lets it wrap round the listener; velocity on it makes
+soft notes clouds and hard ones points.
+
+\paragraph{Pattern and facing.} \ui{Abstrahlung} $p\in[0,1]$ gives the first-order pattern $D(\theta) = (1-p) + p\cos\theta$: a ball at 0,
+a cardioid at 0.5, a figure-eight at 1 (the rear lobe with its sign). \ui{Ausrichtung} $\varphi$ turns it in the horizontal plane,
+$\varphi = 0$ towards the listener, positive to the left. The direct sound leaves the pipe towards the listener, so
+$\cos\theta = \cos\epsilon\,\cos\varphi$ with the pipe's elevation $\epsilon$ as heard. Every early reflection takes the pattern in the
+direction in which its path leaves the pipe. For an image $I$ reached over the walls $w_1,\dots,w_k$ (in order from the source) the
+straight line from $I$ to the listener $L$ is folded back through the walls,
+\[ \mathbf e = A_{w_1}A_{w_2}\cdots A_{w_k}\,\frac{L-I}{\lVert L-I\rVert},\qquad A_w\mathbf v = \mathbf v - 2(\mathbf v\cdot\mathbf n_w)\,\mathbf n_w, \]
+with the vertical component turned over for an odd number of floor and ceiling reflections (in the shoebox: every axis with an odd
+number of reflections flips). The facing vector is the horizontal direction from the pipe to the listener, turned by $\varphi$. The late
+reverb gets what the pattern radiates into all directions, $\sqrt{(1-p)^2 + p^2/3}$ in amplitude: a cardioid sends a third less.
+
+\paragraph{Spin.} \ui{Drehung} $\nu$ (turns per second, $\pm8$) adds $\SI{360}{\degree}\int\nu\,dt$ to the facing. The reflections need
+no new geometry for this. Every tap keeps its delay and direction; the slot stores $\mathbf e$ and the surfaces of the path with it,
+and only the gains are recomputed in every \SI{64}{}-sample slice, gliding within the slice. The pattern and the surfaces taken out by
+the room keyboard (\S\ref{sec:doors}) are applied on top of the tap's own gain, so the cached geometry is never stale. A turning cardioid
+sweeps its reflections round the room while the pipe stays where it is; turned fast it is a rotary sound.
+
+\paragraph{Verification.} This part was written on 25~November, after the last full verification run (\S\ref{sec:verification}); the
+render test checks it as follows. With the room off, a cardioid facing the listener is as loud as a ball (\SI{-0.005}{dB}), turned away
+it is \SI{64}{dB} down and a figure-eight turned sideways is silent. In the Saal a cardioid turned away is heard through the room, about
+\SI{4.8}{dB} below a ball, as the pattern's power says. Turning once a second the direct sound swings by \SI{40}{dB} (standing:
+\SI{0.6}{dB}), and with the late reverb off the direction of the sound moves over \SI{38}{\degree} (standing: \SI{0.9}{\degree}). At full
+extent W keeps its level exactly, the coherence between W and the strongest first-order channel falls from 1 to 0.49 and the
+first-order energy is 0.97 of W, as in an even field.
+
 \subsection{Binaural rendering}
 \label{sec:binaural}
 For headphones (and hosts with stereo tracks only, such as Ableton Live) the plug-in renders Ambisonics
@@ -1672,6 +1716,37 @@ low-pass cutoff $20\,\mathrm{kHz}/(1+40\,b)$ (about \SI{1}{kHz} round a right an
 so nothing jumps as one steps past the corner. If no way is found (a strange plan) the straight line through the wall is
 used, \SI{30}{dB} down and low-passed at \SI{500}{Hz}. Only the direct sound is treated like this; the reflections still
 arrive from where they reach the listener. The 3D view shows how many sounding pipes are heard around a corner.
+
+\paragraph{Doors.}\label{sec:doors} A Saal can have a door in one of its walls into another Saal (in the strip under the plan:
+\ui{Tür zu}, the wall, \ui{offen} $o\in[0,1]$). The door couples the two late reverbs. What is sent to the late reverb of Saal $r$, its
+sources' room sends, is also sent to the Saal $t$ behind the door, times $0.5\,o$. The W channel of $t$'s late reverb comes back through
+the door as one source of $0.7\,o$, from the middle of the door (\SI{1.6}{m} high, lower in a low room) as seen from $r$'s listener and
+blurred to a door \SI{2.4}{m} wide with the taper of \S\ref{sec:radiate} ($\sigma = \arctan(1.2/d)$ at the distance $d$). A Saal behind a
+door is rendered into scratch; it is heard directly only if it has sound of its own, otherwise only through its door. Only the dry sends
+cross a door, never a reverb's output, so doors cannot form a feedback loop. The opening glides over \SI{30}{ms}; when another Saal is
+chosen behind the door, the door shuts first and opens onto the new one. A small absorbent room opened onto a large hard hall decays
+twice, first with its own short time and then with the hall's long one, the double decay of coupled rooms \citep{kuttruff2016}. The
+opening is a swell box made of architecture and is meant for a pedal. The render test checks that a shut door is no door (the output is
+identical), that with the door open a $5\times6\times3$\,m wooden room ($\alpha=0.3$) rings \SI{80}{dB} louder \SIrange{1.5}{3.5}{s} after the
+key than without it, because a $30\times50\times20$\,m stone hall behind it rings on, while the level during the note changes by only
+\SI{-0.15}{dB}, and that the hall's tail comes from the door's direction (\SI{0}{\degree}, the door in the front wall).
+
+\paragraph{The room keyboard.} One MIDI channel (\ui{Raumtastatur}, off by default) can be given to the room: its keys make no sound and
+are taken out of the MIDI stream before the engine. One hand plays notes, the other plays the room. From C4 the keys are places on a clock
+face: C in front, every semitone \SI{30}{\degree} clockwise, C4--B4 at ear height, C5--B5 \SI{40}{\degree} up and from C6
+\SI{75}{\degree} up. Holding places pulls the sounding pipes there; with several held, each pipe is given one of them by a hash of stop and
+key. The pipe's direction $\mathbf u$ is blended with the place $\mathbf q$ as $(1-a)\,\mathbf u + a\,\mathbf q$, normalised, and the amount
+$a$ (the key's velocity) and $\mathbf q$ glide with the time constant \ui{Gleiten}; a note that starts while a place is held sounds from
+there at once. Pipes that are bodies in the Saal (\S\ref{sec:roommotion}) are not pulled. C3--B3 are walls on the same clock face: the
+wall that a horizontal ray from the listener meets in that direction is taken out while the key is down, C2--F2 the floor and F$\sharp$2--B2
+the ceiling. Every surface $s$ of every Saal has a factor $\kappa_s$ gliding to $1-v$ (velocity $v$); each early reflection is multiplied
+by $\prod\kappa_s$ over the surfaces of its path, and the late reverb rings shorter by Sabine's law \citep{kuttruff2016}, an open surface
+absorbing everything:
+\[ T' = T\,\frac{A}{A + \sum_s (1-\kappa_s)\,S_s\,(1-\alpha_s)},\qquad A = \sum_s \alpha_s S_s, \]
+in each of the two bands (in the convolution tail through the level, which follows the critical distance). The plan shows a wall that
+is gone as a dashed red line. The modulation source \ui{Raumtastatur} follows how far the held keys pull, so the room keys can drive
+anything else, a door's opening for instance. The render test checks that a held place pulls the pipe to it (heard from
+\SI{-90}{\degree}, the place at three o'clock) and that with the four walls and the ceiling out the late tail is \SI{19.5}{dB} lower.
 
 % =====================================================================
 \subsection{Lucier mode}
@@ -2512,7 +2587,7 @@ repeated notes on the same key merge into one, a dense mix is reduced to its eig
 The modulation system has four LFOs (sine, triangle, saw, square, random steps, smooth random; 0.01--20
 Hz or synced to note values), two DADSR envelopes, and further sources: key position
 ($-1\dots1$), mod wheel, a random value per note, velocity per note, and pitch wheel ($-1\dots1$; it bends
-nothing by itself and must be routed). With MPE (\S\ref{sec:mpe}) pressure and slide are sources per note, the loudness of the audio input (\S\ref{sec:input}) is one more, \ui{Schwebung} gives every pipe the rate at which it beats with the others (\S\ref{sec:beats}), and \ui{Balg (Winddruck)} is the pressure of the shared bellows (\S\ref{sec:live}). LFOs have a \ui{Versatz je Pfeife}: 0\,\% moves all pipes
+nothing by itself and must be routed). With MPE (\S\ref{sec:mpe}) pressure and slide are sources per note, the loudness of the audio input (\S\ref{sec:input}) is one more, \ui{Schwebung} gives every pipe the rate at which it beats with the others (\S\ref{sec:beats}), \ui{Balg (Winddruck)} is the pressure of the shared bellows (\S\ref{sec:live}), and \ui{Raumtastatur} follows the room keyboard (\S\ref{sec:doors}). LFOs have a \ui{Versatz je Pfeife}: 0\,\% moves all pipes
 together, 100\,\% spreads one full cycle across the pipes, along the keyboard (a wave running from bass
 to treble) or randomly. Envelopes run either per pipe (every note its own) or globally (one envelope,
 restarted by every key, released when all keys are up).

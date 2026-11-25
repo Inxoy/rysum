@@ -262,6 +262,107 @@ void SaalPlan::paint(juce::Graphics &g)
             juce::Justification::centred);
     }
 
+    {
+        // the walls the room keyboard takes out (dashed), and the door: a gap in its wall, the
+        // leaf open as far as the door is, the Saal behind it written next to it
+        const int nw = poly ? geo.n : 4;
+        auto wallSeg = [&](int wi, juce::Point<float> &a, juce::Point<float> &b)
+        {
+            if (!poly)
+            {
+                switch (((wi % 4) + 4) % 4)
+                {
+                case 0:
+                    a = P(0, 0), b = P(W, 0);
+                    break;
+                case 1:
+                    a = P(W, 0), b = P(W, L);
+                    break;
+                case 2:
+                    a = P(W, L), b = P(0, L);
+                    break;
+                default:
+                    a = P(0, L), b = P(0, 0);
+                    break;
+                }
+                return true;
+            }
+            if (geo.n <= 0)
+                return false;
+            const auto &w = geo.w[(size_t)(((wi % geo.n) + geo.n) % geo.n)];
+            a = P(w.ax, w.ay);
+            b = P(w.bx, w.by);
+            return true;
+        };
+        const uint32_t gone =
+            proc.engine.wallsGone[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, shownRoom)].load();
+        const float dashG[]{5.0f, 4.0f};
+        for (int wi = 0; wi < nw; ++wi)
+        {
+            juce::Point<float> a, b;
+            if ((gone & (1u << (rysum::kSurfWall0 + wi))) == 0 || !wallSeg(wi, a, b))
+                continue;
+            g.setColour(col::bg);
+            g.drawLine({a, b}, 9.0f);
+            juce::Path seg, d;
+            seg.startNewSubPath(a);
+            seg.lineTo(b);
+            juce::PathStrokeType(1.6f).createDashedStroke(d, seg, dashG, 2);
+            g.setColour(col::rubric.withAlpha(0.9f));
+            g.fillPath(d);
+        }
+        if ((gone & ((1u << rysum::kSurfFloor) | (1u << rysum::kSurfCeiling))) != 0)
+        {
+            g.setFont(A.monoFont(10.0f));
+            g.setColour(col::rubric);
+            const bool fl = (gone & (1u << rysum::kSurfFloor)) != 0,
+                       ce = (gone & (1u << rysum::kSurfCeiling)) != 0;
+            g.drawText(fl && ce ? rysum::tr("ohne Boden und Decke")
+                                : fl ? rysum::tr("ohne Boden") : rysum::tr("ohne Decke"),
+                       juce::Rectangle<float>(200, 12).withCentre({room.getCentreX(), room.getY() + 14}),
+                       juce::Justification::centred);
+        }
+        const auto &dr = params.doors[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, shownRoom)];
+        juce::Point<float> a, b;
+        if (dr.to >= 0 && dr.to < rysum::kNumRooms && dr.to != shownRoom && wallSeg(dr.wall, a, b))
+        {
+            const auto c = (a + b) * 0.5f;
+            const float len = a.getDistanceFrom(b);
+            if (len > 4.0f)
+            {
+                const juce::Point<float> u = (b - a) / len;
+                const float h = juce::jmin(1.2f * f.scale, 0.4f * len);
+                // inwards: the side of the wall the room's middle is on
+                juce::Point<float> nIn(-u.y, u.x);
+                juce::Point<float> mid = room.getCentre();
+                if (poly && now.plan.n > 0)
+                {
+                    mid = {};
+                    for (int i = 0; i < now.plan.n; ++i)
+                        mid += P(now.plan.x[(size_t)i] * W, now.plan.y[(size_t)i] * L);
+                    mid /= (float)now.plan.n;
+                }
+                if ((mid - c).getDotProduct(nIn) < 0.0f)
+                    nIn = -nIn;
+                const auto hinge = c - u * h, end = c + u * h;
+                g.setColour(col::bg);
+                g.drawLine({hinge, end}, 9.0f);
+                g.setColour(col::ink.withAlpha(on ? 0.95f : 0.45f));
+                g.drawLine({hinge - nIn * 3.0f, hinge + nIn * 3.0f}, 2.0f);
+                g.drawLine({end - nIn * 3.0f, end + nIn * 3.0f}, 2.0f);
+                // the leaf, turned in as far as the door is open
+                const float ang = juce::jlimit(0.0f, 1.0f, dr.open) * juce::MathConstants<float>::halfPi;
+                const auto leaf = hinge + (u * std::cos(ang) + nIn * std::sin(ang)) * (2.0f * h);
+                g.setColour(col::rubric.withAlpha(on ? 1.0f : 0.5f));
+                g.drawLine({hinge, leaf}, 1.6f);
+                g.setFont(A.monoFont(10.0f));
+                g.drawText(U("\xe2\x86\x92 Saal ") + juce::String(dr.to + 1),
+                           juce::Rectangle<float>(80, 12).withCentre(c + nIn * 16.0f),
+                           juce::Justification::centred);
+            }
+        }
+    }
+
     Vec3f lis = listenerPos(now);
     const auto home = P(
         lis.x, lis.y); // where the pipes are placed from; the listener may have walked away from it
@@ -997,6 +1098,50 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
             &row(id("Lx").toRawUTF8(), rysum::tr("H\xc3\xb6rer quer (links \xe2\x86\x92 rechts)")),
             &row(id("Ly").toRawUTF8(), rysum::tr("H\xc3\xb6rer l\xc3\xa4ngs (hinten \xe2\x86\x92 vorn)"))};
     }
+    // the door of each Saal, and the room keyboard
+    auto fillChoices = [this](juce::ComboBox &box, const juce::String &id)
+    {
+        if (auto *c = dynamic_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter(id)))
+            for (int i = 0; i < c->choices.size(); ++i)
+                box.addItem(rysum::trText(c->choices[i]), i + 1);
+    };
+    for (int r = 0; r < rysum::kNumRooms; ++r)
+    {
+        const auto toId = RysumProcessor::roomParamId(r, "DoorTo"),
+                   wallId = RysumProcessor::roomParamId(r, "DoorWall");
+        fillChoices(doorTo[(size_t)r], toId);
+        fillChoices(doorWall[(size_t)r], wallId);
+        doorToAtt[(size_t)r] = std::make_unique<ComboAtt>(proc.apvts, toId, doorTo[(size_t)r]);
+        doorWallAtt[(size_t)r] = std::make_unique<ComboAtt>(proc.apvts, wallId, doorWall[(size_t)r]);
+        doorTo[(size_t)r].setTooltip(rysum::tr(
+            "Eine T\xc3\xbcr in einen anderen Saal: was hier klingt, geht hindurch und regt den "
+            "Saal dahinter an, und dessen Nachhall kommt aus der Richtung der T\xc3\xbcr zur\xc3\xbc"
+            "ck. Ein kleiner Holzraum mit offener T\xc3\xbcr zur Steinhalle klingt doppelt aus: "
+            "erst kurz, dann lang. Ein Saal ohne eigene Register h\xc3\xb6rt man nur durch die "
+            "T\xc3\xbcr."));
+        doorWall[(size_t)r].setTooltip(rysum::tr(
+            "In welcher Wand die T\xc3\xbcr ist (beim Grundriss: Wand 1 von der ersten Ecke an)"));
+        addAndMakeVisible(doorTo[(size_t)r]);
+        addAndMakeVisible(doorWall[(size_t)r]);
+        doorOpenR[(size_t)r] =
+            &row(RysumProcessor::roomParamId(r, "DoorOpen").toRawUTF8(), rysum::tr("offen"));
+        doorOpenR[(size_t)r]->setTooltip(rysum::tr(
+            "Wie weit die T\xc3\xbcr offen ist: ein Schwellwerk aus Architektur (z. B. auf ein "
+            "Pedal legen)"));
+    }
+    fillChoices(kbCh, "simKbCh");
+    kbChAtt = std::make_unique<ComboAtt>(proc.apvts, "simKbCh", kbCh);
+    kbCh.setTooltip(rysum::tr(
+        "Raumtastatur: die Tasten dieses MIDI-Kanals klingen nicht, sie spielen den Raum. Ab C4: "
+        "Orte auf einem Zifferblatt (C = vorn, jeder Halbton 30\xc2\xb0 im Uhrzeigersinn; "
+        "C5 und h\xc3\xb6her: weiter oben) \xe2\x80\x93 gehalten ziehen sie die klingenden "
+        "Pfeifen dorthin. C3 bis H3: die Wand in dieser Richtung ist weg, solange die Taste "
+        "unten ist. C2 bis F2: der Boden, Fis2 bis H2: die Decke. Der Anschlag sagt, wie weit."));
+    addAndMakeVisible(kbCh);
+    kbGlideR = &row("simKbGlide", rysum::tr("Gleiten"));
+    kbGlideR->setTooltip(rysum::tr("Wie schnell die Pfeifen zu den Orten gleiten und die W\xc3\xa4nde "
+                                   "verschwinden (und zur\xc3\xbc"
+                                   "ckkommen)"));
     gainRows = {&row("simEr", rysum::tr("Fr\xc3\xbche Reflexionen")), &row("simTail", rysum::tr("Nachhall"))};
     iceRows = {&row("simIce", rysum::tr("Eis (Reflexionen)")), &row("simIceLen", rysum::tr("Eis L\xc3\xa4nge"))};
     iceRows[0]->setTooltip(
@@ -1317,6 +1462,29 @@ void SaalView::resized()
             if (x)
                 x->setBounds(fr);
     }
+    doorBox = r.removeFromBottom(32 + 2 * 28);
+    r.removeFromBottom(6);
+    {
+        auto b = doorBox.withTrimmedTop(32);
+        auto l1 = b.removeFromTop(28).withTrimmedBottom(4);
+        for (int q = 0; q < rysum::kNumRooms; ++q)
+        {
+            auto line = l1;
+            line.removeFromLeft(64);
+            doorTo[(size_t)q].setBounds(line.removeFromLeft(120));
+            line.removeFromLeft(6);
+            doorWall[(size_t)q].setBounds(line.removeFromLeft(150));
+            line.removeFromLeft(8);
+            if (doorOpenR[(size_t)q] != nullptr)
+                doorOpenR[(size_t)q]->setBounds(line.withHeight(26));
+        }
+        auto l2 = b.removeFromTop(28).withTrimmedBottom(4);
+        l2.removeFromLeft(64);
+        kbCh.setBounds(l2.removeFromLeft(120));
+        l2.removeFromLeft(6 + 150 + 8);
+        if (kbGlideR != nullptr)
+            kbGlideR->setBounds(l2.withHeight(26));
+    }
     planBox = r;
     plan.setBounds(r);
     walkButton.setBounds(r.getRight() - 98, r.getY() + 30, 94, 24); // (below the plan's hint line)
@@ -1473,6 +1641,10 @@ void SaalView::selectRoom(int r)
                 x->setVisible(q == editRoom);
         if (formR[(size_t)q])
             formR[(size_t)q]->setVisible(q == editRoom);
+        doorTo[(size_t)q].setVisible(q == editRoom);
+        doorWall[(size_t)q].setVisible(q == editRoom);
+        if (doorOpenR[(size_t)q])
+            doorOpenR[(size_t)q]->setVisible(q == editRoom);
     }
     shapes.refresh();
     shapes.repaint();
@@ -1579,6 +1751,18 @@ void SaalView::refresh()
     plan.repaint();
     shapes.refresh();
     refreshSurfaces();
+    {
+        // the room keyboard's held keys: the count in the title
+        bool changed = false;
+        for (int i = 0; i < 4; ++i)
+        {
+            const uint32_t b = proc.roomKeysHeld[(size_t)i].load();
+            changed = changed || b != shownKeys[(size_t)i];
+            shownKeys[(size_t)i] = b;
+        }
+        if (changed)
+            repaint(doorBox);
+    }
     const auto st = proc.getRoomStatus();
     if (st != shownStatus)
     {
@@ -1803,6 +1987,24 @@ void SaalView::paint(juce::Graphics &g)
                        "chen \xc2\xb7 Saal ") +
                          juce::String(editRoom + 1));
     drawSectionTitle(g, levelBox, rysum::tr("H\xc3\xb6rer \xc2\xb7 Pegel"));
+    {
+        // doors and the room keyboard: labels, and which keys are held
+        int held = 0;
+        for (int i = 0; i < 4; ++i)
+            for (uint32_t b = proc.roomKeysHeld[(size_t)i].load(); b != 0; b &= b - 1)
+                ++held;
+        drawSectionTitle(g, doorBox, rysum::tr("T\xc3\xbcr \xc2\xb7 Raumtastatur"),
+                         held > 0 ? juce::String(held) + rysum::tr(" Tasten gehalten")
+                                  : rysum::tr("Saal ") + juce::String(editRoom + 1));
+        g.setFont(A.monoFont(10.5f));
+        g.setColour(col::mute);
+        g.drawText(rysum::tr("T\xc3\xbcr zu"),
+                   doorBox.withTrimmedTop(32).removeFromTop(24).removeFromLeft(60),
+                   juce::Justification::centredLeft);
+        g.drawText(rysum::tr("Tasten"),
+                   doorBox.withTrimmedTop(60).removeFromTop(24).removeFromLeft(60),
+                   juce::Justification::centredLeft);
+    }
     g.setColour(col::mute);
     g.setFont(A.monoFont(11.0f));
     g.drawText(

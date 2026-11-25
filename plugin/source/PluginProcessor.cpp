@@ -1278,6 +1278,78 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add(std::make_unique<AudioParameterFloat>(ParameterID{"voxDyn", 1}, "Vox humana Dynamik",
                                                     NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f, vpct));
     }
+    // how each stop's pipes radiate (Raum page, tab "Pfeife"), the doors between the Saele and the
+    // room keyboard (Saal page). Appended last: older projects keep their parameter indices.
+    {
+        auto rpct = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(juce::roundToInt(v * 100)) + " %"; });
+        auto pattern = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                const char *n = v < 0.05f   ? "Kugel"
+                                : v < 0.38f ? "breite Niere"
+                                : v < 0.57f ? "Niere"
+                                : v < 0.69f ? "Superniere"
+                                : v < 0.88f ? "Hyperniere"
+                                            : "Acht";
+                return rysum::tr(n) + " (" + String(juce::roundToInt(v * 100)) + " %)";
+            });
+        auto facing = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                return (v > 0.5f ? "+" : "") + String(juce::roundToInt(v)) +
+                       String::fromUTF8("\xc2\xb0");
+            });
+        auto turns = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                if (std::abs(v) < 0.0005f)
+                    return rysum::tr("steht");
+                return (v > 0 ? "+" : "") + String(v, std::abs(v) < 1.0f ? 3 : 2) + " U/s";
+            });
+        for (int s = 0; s < kNumStops; ++s)
+        {
+            const String name = prettyLabel(kStops[(size_t)s].label) + " ";
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("Width", s), 1},
+                                                        name + "Ausdehnung", NormalisableRange<float>(0, 1),
+                                                        0.0f, rpct));
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{pipeSndParamId("DirPat", s), 1},
+                                                        name + "Abstrahlung", NormalisableRange<float>(0, 1),
+                                                        0.0f, pattern));
+            l.add(std::make_unique<AudioParameterFloat>(
+                ParameterID{pipeSndParamId("Face", s), 1}, name + "Ausrichtung",
+                NormalisableRange<float>(-180.0f, 180.0f, 0.1f), 0.0f, facing));
+            l.add(std::make_unique<AudioParameterFloat>(
+                ParameterID{pipeSndParamId("Spin", s), 1}, name + "Drehung",
+                NormalisableRange<float>(-8.0f, 8.0f, 0.0001f, 0.3f, true), 0.0f, turns));
+        }
+        StringArray behind{"keine"};
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+            behind.add("Saal " + String(r + 1));
+        StringArray walls{"Wand 1 (hinten)", "Wand 2 (rechts)", "Wand 3 (vorne)", "Wand 4 (links)"};
+        for (int w = 5; w <= rysum::kMaxPlanVerts; ++w)
+            walls.add("Wand " + String(w));
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+        {
+            const String sn = "Saal " + String(r + 1) + " ";
+            l.add(std::make_unique<AudioParameterChoice>(ParameterID{roomParamId(r, "DoorTo"), 1},
+                                                         sn + String::fromUTF8("T\xc3\xbcr zu"), behind, 0));
+            l.add(std::make_unique<AudioParameterChoice>(ParameterID{roomParamId(r, "DoorWall"), 1},
+                                                         sn + String::fromUTF8("T\xc3\xbcr in"), walls, 2));
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{roomParamId(r, "DoorOpen"), 1},
+                                                        sn + String::fromUTF8("T\xc3\xbcr offen"),
+                                                        NormalisableRange<float>(0, 1), 1.0f, rpct));
+        }
+        StringArray chans{"aus"};
+        for (int c = 1; c <= 16; ++c)
+            chans.add("Kanal " + String(c));
+        l.add(std::make_unique<AudioParameterChoice>(ParameterID{"simKbCh", 1}, "Raumtastatur Kanal", chans, 0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"simKbGlide", 1}, "Raumtastatur Gleiten", NormalisableRange<float>(0.01f, 10.0f, 0.001f, 0.4f),
+            0.8f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, v < 1.0f ? 2 : 1) + " s"; })));
+    }
     return l;
 }
 
@@ -1582,6 +1654,17 @@ RysumProcessor::RysumProcessor()
         for (int st = 0; st < kNumStops; ++st)
             for (int k = 0; k < 5; ++k)
                 ix.cloud[(size_t)st][(size_t)k] = I(cloudParamId(kCloudKeys[k], st));
+        for (int st = 0; st < kNumStops; ++st)
+            for (int k = 0; k < 4; ++k)
+                ix.radiate[(size_t)st][(size_t)k] = I(pipeSndParamId(kRadiateKeys[k], st));
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+        {
+            ix.door[(size_t)r][0] = I(roomParamId(r, "DoorTo"));
+            ix.door[(size_t)r][1] = I(roomParamId(r, "DoorWall"));
+            ix.door[(size_t)r][2] = I(roomParamId(r, "DoorOpen"));
+        }
+        ix.kbGlide = I("simKbGlide");
+        roomKbChParam = apvts.getRawParameterValue("simKbCh");
     }
     engine.setModHook(this);
     engine.spaceDegInProcess =
@@ -1821,6 +1904,11 @@ EngineParams RysumProcessor::readParams(const float *vals) const
             p.stopCrack[(size_t)st] = V(ix.stopFx[(size_t)st][1]);
             p.stopLeak[(size_t)st] = V(ix.stopFx[(size_t)st][2]);
             p.rateSpread[(size_t)st] = V(ix.stopFx[(size_t)st][3]);
+            // how its pipes radiate
+            p.stopWidth[(size_t)st] = V(ix.radiate[(size_t)st][0]);
+            p.stopDirPat[(size_t)st] = V(ix.radiate[(size_t)st][1]);
+            p.stopFace[(size_t)st] = V(ix.radiate[(size_t)st][2]);
+            p.stopSpin[(size_t)st] = V(ix.radiate[(size_t)st][3]);
         }
         p.airInvert = V(ix.airInvert);
         p.resClick = V(ix.clickRes);
@@ -2005,6 +2093,14 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         p.stopRoom[(size_t)st] = juce::roundToInt(V(ix.stopRoom[(size_t)st]));
     p.inputRoom = juce::roundToInt(V(ix.inputRoom));
     p.noteSpread = juce::roundToInt(V(ix.noteSpread));
+    for (int r = 0; r < rysum::kNumRooms; ++r)
+    {
+        auto &d = p.doors[(size_t)r];
+        d.to = juce::roundToInt(V(ix.door[(size_t)r][0])) - 1;
+        d.wall = juce::roundToInt(V(ix.door[(size_t)r][1]));
+        d.open = V(ix.door[(size_t)r][2]);
+    }
+    p.roomKeys.glide = V(ix.kbGlide); // (the held keys: processBlock)
     return p;
 }
 
@@ -2082,6 +2178,15 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     q.roomFollow = p.roomFollow;
     q.roomBaseAz = p.roomBaseAz;
     q.outputMode = p.outputMode;
+    q.roomKeys.numPlaces = p.roomKeys.numPlaces; // (the held keys: as read this block)
+    q.roomKeys.placeAz = p.roomKeys.placeAz;
+    q.roomKeys.placeEl = p.roomKeys.placeEl;
+    q.roomKeys.placeDepth = p.roomKeys.placeDepth;
+    q.roomKeys.numWalls = p.roomKeys.numWalls;
+    q.roomKeys.wallAz = p.roomKeys.wallAz;
+    q.roomKeys.wallDepth = p.roomKeys.wallDepth;
+    q.roomKeys.floorDepth = p.roomKeys.floorDepth;
+    q.roomKeys.ceilingDepth = p.roomKeys.ceilingDepth;
     // the Vox humana is not in readParams: keep it, with its place and level as modulated now
     q.vox = p.vox;
     fillVoxPlace(q.vox, modVals.data());
@@ -2236,6 +2341,84 @@ void RysumProcessor::runVox(juce::MidiBuffer &midi, int n, EngineParams &params)
     engine.setVox(chans.data(), VoxStop::kOut, n);
 }
 
+/** The room keyboard: notes on its channel do not sound, they play the room.
+    - from C4 (MIDI 60) up: places on a clock face (C = in front, every semitone 30 degrees
+      clockwise); C4..B4 at ear height, C5..B5 40 degrees up, from C6 75 degrees up. Holding them
+      pulls the sounding pipes there.
+    - C3..B3 (48..59): walls, on the same clock face: the wall in that direction from the listener
+      is taken out while the key is down.
+    - C2..F2 (36..41): the floor, F#2..B2 (42..47): the ceiling.
+    The velocity says how far (pulled all the way, the wall all gone). */
+void RysumProcessor::takeRoomKeys(juce::MidiBuffer &midi)
+{
+    const int ch = roomKbChParam != nullptr ? juce::roundToInt(roomKbChParam->load()) : 0;
+    if (ch != roomKbChLast)
+    {
+        roomKeyVel.fill(0);
+        roomKbChLast = ch;
+    }
+    if (ch > 0 && !midi.isEmpty())
+    {
+        noteScratch.clear();
+        bool any = false;
+        for (const auto meta : midi)
+        {
+            const auto m = meta.getMessage();
+            if (m.getChannel() == ch && (m.isNoteOnOrOff() || m.isAllNotesOff() || m.isAllSoundOff()))
+            {
+                if (m.isNoteOn())
+                    roomKeyVel[(size_t)m.getNoteNumber()] = (uint8_t)juce::jmax(1, (int)m.getVelocity());
+                else if (m.isNoteOff())
+                    roomKeyVel[(size_t)m.getNoteNumber()] = 0;
+                else
+                    roomKeyVel.fill(0);
+                any = true;
+                continue;
+            }
+            noteScratch.addEvent(meta.data, meta.numBytes, meta.samplePosition);
+        }
+        if (any)
+        {
+            // (copied back, not swapped: both buffers keep the memory they have)
+            midi.clear();
+            midi.addEvents(noteScratch, 0, -1, 0);
+        }
+    }
+    auto &rk = roomKeysNow;
+    rk.numPlaces = rk.numWalls = 0;
+    rk.floorDepth = rk.ceilingDepth = 0.0f;
+    std::array<uint32_t, 4> bits{};
+    for (int note = 0; note < 128; ++note)
+    {
+        const int vel = roomKeyVel[(size_t)note];
+        if (vel <= 0)
+            continue;
+        bits[(size_t)(note >> 5)] |= 1u << (note & 31);
+        const float depth = (float)vel / 127.0f;
+        const float clock = -30.0f * (float)(note % 12); // (clockwise: the plugin's angles turn left)
+        if (note >= 60 && rk.numPlaces < EngineParams::RoomKeys::kMax)
+        {
+            const int oct = (note - 60) / 12;
+            rk.placeAz[(size_t)rk.numPlaces] = clock;
+            rk.placeEl[(size_t)rk.numPlaces] = oct == 0 ? 0.0f : oct == 1 ? 40.0f : 75.0f;
+            rk.placeDepth[(size_t)rk.numPlaces] = depth;
+            ++rk.numPlaces;
+        }
+        else if (note >= 48 && note < 60 && rk.numWalls < EngineParams::RoomKeys::kMax)
+        {
+            rk.wallAz[(size_t)rk.numWalls] = clock;
+            rk.wallDepth[(size_t)rk.numWalls] = depth;
+            ++rk.numWalls;
+        }
+        else if (note >= 36 && note < 42)
+            rk.floorDepth = juce::jmax(rk.floorDepth, depth);
+        else if (note >= 42 && note < 48)
+            rk.ceilingDepth = juce::jmax(rk.ceilingDepth, depth);
+    }
+    for (int i = 0; i < 4; ++i)
+        roomKeysHeld[(size_t)i].store(bits[(size_t)i], std::memory_order_relaxed);
+}
+
 void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midi)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -2271,6 +2454,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         engine.numTapped = 0;
     if (concertRole == rysum::ConcertLink::Role::listener)
         midi.clear();
+    takeRoomKeys(midi);
 
     // notes that are MIDI buttons (pads mapped to a switch or to a button on screen) do not play
     if (noteMaps.load() || bmLearn.load() >= 0 || mmLearn.load() >= 0)
@@ -2425,6 +2609,12 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     }
 
     auto params = readParams();
+    {
+        // the room keyboard's held keys (read from this block's MIDI above)
+        const float glide = params.roomKeys.glide;
+        params.roomKeys = roomKeysNow;
+        params.roomKeys.glide = glide;
+    }
     applyCcOverrides(params);
 
     // host tempo / position for tempo-synced movement

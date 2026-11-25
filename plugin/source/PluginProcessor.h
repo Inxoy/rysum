@@ -804,6 +804,8 @@ public:
     /** a stop's own effects (Raum page, tab "Pfeife"): tremulant, crackle, wind leaks, how
         differently fast its pipes move - ids "pipeTrem<s>" ... */
     static constexpr const char *kStopFxKeys[4]{"Trem", "Crack", "Leak", "Spread"};
+    /** how a stop's pipes radiate (Raum page, tab "Pfeife"): ids "pipeWidth<s>" ... */
+    static constexpr const char *kRadiateKeys[4]{"Width", "DirPat", "Face", "Spin"};
     static constexpr const char *kPipeSndKeys[8]{"Att",  "Sharp",  "Iso",    "Rep",
                                                  "Puff", "HiFreq", "HiGain", "HiShape"};
     static constexpr const char *kSpcIds[7]{"spcErode", "spcWeather", "spcGrid", "spcBits",
@@ -879,6 +881,9 @@ private:
         std::array<int, 4> glitch{};
         std::array<int, 15> space2{};
         std::array<int, kNumLive> live{}; // (one per LiveIndex: never a fixed number)
+        std::array<std::array<int, 4>, rysum::kNumStops> radiate{}; // Width DirPat Face Spin
+        std::array<std::array<int, 3>, rysum::kNumRooms> door{};    // DoorTo DoorWall DoorOpen
+        int kbGlide = -1;
         int inputRoom = 0, noteSpread = 0;
     } ix;
     enum InpIndex
@@ -1042,6 +1047,19 @@ private:
     juce::AbstractFifo bmFifo{256};
     std::array<int, 256> bmEvents{};
     juce::MidiBuffer noteScratch;
+    /** the room keyboard (Saal page): notes on its channel play the room, not the pipes. The held
+        keys (velocity, 0 = up) and what they mean for the engine (audio thread). */
+    std::array<uint8_t, 128> roomKeyVel{};
+    int roomKbChLast = 0;
+    rysum::EngineParams::RoomKeys roomKeysNow;
+    std::atomic<float> *roomKbChParam = nullptr;
+    void takeRoomKeys(juce::MidiBuffer &midi);
+
+public:
+    /** the room keyboard's held keys, for the Saal page (bit = MIDI note, 0..127) */
+    std::array<std::atomic<uint32_t>, 4> roomKeysHeld{};
+
+private:
     void updateNoteMaps();
     bool handleTrigger(int code, int channel, int value); // audio thread; true = mapped
     int savedMapVersion = 0;

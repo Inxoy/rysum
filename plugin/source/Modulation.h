@@ -32,6 +32,7 @@ enum ModSource
                 // logarithmic)
     srcBellows, // the wind pressure of the shared bellows ("Lebendige Orgel"), 0 = empty .. 1 =
                 // full
+    srcRoomKeys, // the room keyboard: how far its held keys pull now, 0..1 (Saal page)
     kNumSources
 };
 
@@ -54,7 +55,8 @@ inline juce::StringArray modSourceNames()
             rysum::tr("Gleiten (MPE, CC 74)"),
             rysum::tr("Eingang (Pegel)"),
             rysum::tr("Schwebung"),
-            rysum::tr("Balg (Winddruck)")};
+            rysum::tr("Balg (Winddruck)"),
+            rysum::tr("Raumtastatur")};
 }
 
 /** targets 0..kNumPipeTargets-1 act on every pipe separately: only here do the per-pipe sources
@@ -103,6 +105,11 @@ enum PipeTarget
     tgtSplice,
     tgtZero,
     tgtClip, // +-100 % (harte Kanten: at the start and the release of the note)
+    // how the pipe radiates (Raum page, tab "Pfeife")
+    tgtWidth,  // Ausdehnung, +-100 % (from a point to all around)
+    tgtDirPat, // Abstrahlung, +-100 % (Kugel .. Niere .. Acht)
+    tgtFacing, // Ausrichtung, +-180 deg
+    tgtSpin,   // Drehung, +-4 turns per second
     kNumPipeTargets
 };
 constexpr int kGlobalTargetBase = 100;
@@ -142,7 +149,11 @@ inline juce::StringArray pipeTargetNames()
             rysum::tr("Pfeife: Glitch Stottern"),
             rysum::tr("Pfeife: Glitch Bandschnitt"),
             rysum::tr("Pfeife: Glitch harte Kanten"),
-            rysum::tr("Pfeife: Glitch Clipping")};
+            rysum::tr("Pfeife: Glitch Clipping"),
+            rysum::tr("Pfeife: Ausdehnung"),
+            rysum::tr("Pfeife: Abstrahlung"),
+            rysum::tr("Pfeife: Ausrichtung"),
+            rysum::tr("Pfeife: Drehung")};
 }
 inline juce::String pipeTargetId(int t)
 {

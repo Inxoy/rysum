@@ -104,6 +104,16 @@ private:
     std::array<std::array<ParamRow *, 2>, rysum::kNumRooms> lisR{};
     std::array<ParamRow *, 2> gainRows{}, iceRows{};
     juce::Rectangle<int> roomsArea;
+    // the door of each Saal (the edited one shown) and the room keyboard
+    using ComboAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    std::array<juce::ComboBox, rysum::kNumRooms> doorTo, doorWall;
+    std::array<std::unique_ptr<ComboAtt>, rysum::kNumRooms> doorToAtt, doorWallAtt;
+    std::array<ParamRow *, rysum::kNumRooms> doorOpenR{};
+    juce::ComboBox kbCh;
+    std::unique_ptr<ComboAtt> kbChAtt;
+    ParamRow *kbGlideR = nullptr;
+    juce::Rectangle<int> doorBox;
+    std::array<uint32_t, 4> shownKeys{};
     std::array<int, rysum::kNumStops + 2> shownAssign{};
     void selectRoom(int r);
     juce::String assignId(int slot) const;

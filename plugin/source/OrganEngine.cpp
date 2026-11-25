@@ -257,6 +257,46 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
     lucDry = 1.0f;
     lucWetGain = 0.0f;
     zeroIn.assign((size_t)juce::jmax(maxBlock, kSubBlock) + 16, 0.0f);
+    // how the pipes radiate: the diffuse field's filters (sparse noise, every channel its own), all
+    // walls there, the doors shut
+    difBus.assign((size_t)juce::jmax(maxBlock, kSubBlock) + 16, 0.0f);
+    difRing.assign((size_t)kDifRing, 0.0f);
+    difW = difLeft = 0;
+    difUsed = false;
+    {
+        difLen = juce::jlimit(64, kDifRing - 1, (int)(0.024 * sr));
+        XorShift dr(90210u);
+        const float seg = (float)difLen / (float)kDifTaps;
+        for (int c = 0; c < kMaxAmbiChannels; ++c)
+        {
+            float e = 0.0f;
+            for (int k = 0; k < kDifTaps; ++k)
+            {
+                const int at = juce::jlimit(0, difLen - 1, (int)((float)k * seg + dr.uni() * seg));
+                difPos[(size_t)c][(size_t)k] = at;
+                const float g = (dr.uni() < 0.5f ? -1.0f : 1.0f) *
+                                std::exp(-2.5f * (float)at / (float)difLen);
+                difGain[(size_t)c][(size_t)k] = g;
+                e += g * g;
+            }
+            // unit energy, then the channel's share of an even field (SN3D: each channel of order
+            // l carries 1 / (2l + 1) of W's power)
+            const int l = (int)std::sqrt((float)c + 0.5f);
+            const float w = 1.0f / std::sqrt(juce::jmax(1.0e-9f, e) * (float)(2 * l + 1));
+            for (auto &g : difGain[(size_t)c])
+                g *= w;
+        }
+    }
+    for (auto &wk : wallKeep)
+        wk.fill(1.0f);
+    wallsOpen.fill(false);
+    for (auto &wg : wallsGone)
+        wg.store(0u);
+    roomKeyLevel = 0.0f;
+    doorToNow.fill(-1);
+    doorOpenSm.fill(0.0f);
+    doorIn.assign((size_t)kNumRooms * (size_t)kDoorCap, 0.0f);
+    doorOut.assign((size_t)kNumRooms * (size_t)kMaxAmbiChannels * (size_t)kDoorCap, 0.0f);
     // living organ
     sympBus.assign((size_t)juce::jmax(maxBlock, kSubBlock) + 16, 0.0f);
     for (auto &s : symps)
@@ -626,10 +666,11 @@ void OrganEngine::hardJumpGains(const Voice &v, const EngineParams &p, double ph
     pos.el = juce::jlimit(-90.0f, 90.0f, pos.el + v.pmEl);
     pos.dist = juce::jlimit(kMinDist, kMaxDist, pos.dist * v.pmDist);
     pos = heardFrom(pos);
-    const float k = v.gainLin * distanceGain(pos.dist, p.distAmount) * v.cloudDry;
+    const float k = v.gainLin * distanceGain(pos.dist, p.distAmount) * v.cloudDry * v.dirNow;
     gainsFor(pos, g);
     for (int c = 0; c < kMaxAmbiChannels; ++c)
         g[c] *= k;
+    spreadGains(v.widNow, g);
     if (gh != nullptr)
     {
         Pos ph = pos;
@@ -637,6 +678,35 @@ void OrganEngine::hardJumpGains(const Voice &v, const EngineParams &p, double ph
         gainsFor(ph, gh);
         for (int c = 0; c < kMaxAmbiChannels; ++c)
             gh[c] *= k;
+        spreadGains(v.widNow, gh);
+    }
+}
+
+void OrganEngine::spreadGains(float width, float *g) const noexcept
+{
+    if (width <= 1.0e-4f)
+        return;
+    // the part that becomes diffuse (w^2: a little width is mostly a blur) leaves; the rest is
+    // blurred like a spot of light spreading on the sphere (each order l fades as
+    // exp(-l (l + 1) s^2 / 2), s up to about 100 degrees). W stays: the pressure is the same.
+    const float w = juce::jmin(1.0f, width);
+    const float keep = std::sqrt(juce::jmax(0.0f, 1.0f - w * w));
+    const float s2 = (1.75f * w) * (1.75f * w);
+    if (order == 0)
+    {
+        // stereo: towards the middle
+        const float b = 1.0f - std::exp(-s2), m = std::sqrt(0.5f * (g[0] * g[0] + g[1] * g[1]));
+        g[0] = keep * ((1.0f - b) * g[0] + b * m);
+        g[1] = keep * ((1.0f - b) * g[1] + b * m);
+        return;
+    }
+    // (W, the pressure, is left whole: the diffuse field fills only the directional channels, so
+    // the level and the mono sum stay exactly as they were)
+    for (int l = 1; l <= juce::jmin(order, kMaxOrder); ++l)
+    {
+        const float a = keep * std::exp(-0.5f * (float)(l * (l + 1)) * s2);
+        for (int c = l * l; c < (l + 1) * (l + 1); ++c)
+            g[c] *= a;
     }
 }
 
@@ -790,6 +860,59 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
         const float dm = std::exp2(3.0f * juce::jlimit(-2.0f, 2.0f, pm[tgtDist]));
         pos.dist = juce::jlimit(kMinDist, kMaxDist, pos.dist * dm);
     }
+    {
+        // the room keyboard: the held places pull the sounding pipes there (each pipe to one of
+        // them), over the glide time; a note that starts while a place is held sounds from there
+        const auto &rk = p.roomKeys;
+        float tx = v.pullX, ty = v.pullY, tz = v.pullZ, ta = 0.0f;
+        if (rk.numPlaces > 0)
+        {
+            const int np = juce::jmin(rk.numPlaces, EngineParams::RoomKeys::kMax);
+            const int k = juce::jlimit(
+                0, np - 1,
+                (int)(hash01((uint32_t)(v.stop * 7919 + v.key * 131 + 5)) * (float)np));
+            const float a = juce::degreesToRadians(rk.placeAz[(size_t)k]),
+                        e = juce::degreesToRadians(rk.placeEl[(size_t)k]);
+            tx = -std::sin(a) * std::cos(e);
+            ty = std::cos(a) * std::cos(e);
+            tz = std::sin(e);
+            ta = juce::jlimit(0.0f, 1.0f, rk.placeDepth[(size_t)k]);
+        }
+        if (v.fresh)
+        {
+            v.pullX = tx;
+            v.pullY = ty;
+            v.pullZ = tz;
+            v.pullAmt = ta;
+        }
+        else
+        {
+            const float kk =
+                1.0f - (float)std::exp(-blockSeconds / juce::jmax(0.005, (double)rk.glide));
+            v.pullX += kk * (tx - v.pullX);
+            v.pullY += kk * (ty - v.pullY);
+            v.pullZ += kk * (tz - v.pullZ);
+            v.pullAmt += kk * (ta - v.pullAmt);
+            if (v.pullAmt < 1.0e-5f && ta <= 0.0f)
+                v.pullAmt = 0.0f;
+        }
+        const float pl = std::sqrt(v.pullX * v.pullX + v.pullY * v.pullY + v.pullZ * v.pullZ);
+        // (pipes that are bodies in the Saal stay where they fly)
+        if (v.pullAmt > 1.0e-5f && pl > 1.0e-4f && !isRoomMotion(p.motionMode[(size_t)v.stop]))
+        {
+            const float a = juce::degreesToRadians(pos.az), e = juce::degreesToRadians(pos.el);
+            const float w = juce::jlimit(0.0f, 1.0f, v.pullAmt);
+            float x = (1.0f - w) * (-std::sin(a) * std::cos(e)) + w * v.pullX / pl,
+                  y = (1.0f - w) * (std::cos(a) * std::cos(e)) + w * v.pullY / pl,
+                  z = (1.0f - w) * std::sin(e) + w * v.pullZ / pl;
+            const float h = std::sqrt(x * x + y * y);
+            if (h + std::abs(z) > 1.0e-4f)
+            {
+                pos.az = juce::radiansToDegrees(std::atan2(-x, y));
+                pos.el = juce::radiansToDegrees(std::atan2(z, h));
+            }
+        }
+    }
     const Pos homePos = pos;
     pos = heardFrom(pos); // the listener walks: the pipe as heard from there
     profMark(8);
@@ -910,6 +1033,23 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     float g =
         sg * lvl * distanceGain(dpos.dist, p.distAmount) * (hidDb > 0.0f ? dbToGain(-hidDb) : 1.0f);
     {
+        // how it radiates: its pattern turned to its facing (and its own turning). The direct
+        // sound leaves it towards the listener; the reflections take the pattern where they leave
+        // (renderErGroup), the room as much as the pattern sends into all directions.
+        const auto st = (size_t)v.stop;
+        const float pat = juce::jlimit(0.0f, 1.0f, p.stopDirPat[st] + pm[tgtDirPat]);
+        const float spin = p.stopSpin[st] + 4.0f * pm[tgtSpin];
+        v.facePhase =
+            v.fresh ? 0.0 : std::fmod(v.facePhase + 360.0 * (double)spin * blockSeconds, 360.0);
+        v.erFace = p.stopFace[st] + 180.0f * pm[tgtFacing] + (float)v.facePhase;
+        v.erPat = pat;
+        v.dirNow = pat > 1.0e-4f ? (1.0f - pat) + pat * std::cos(juce::degreesToRadians(dpos.el)) *
+                                                      std::cos(juce::degreesToRadians(v.erFace))
+                                 : 1.0f;
+        v.widNow = juce::jlimit(0.0f, 1.0f, p.stopWidth[st] + pm[tgtWidth]);
+        g *= v.dirNow;
+    }
+    {
         // Fluestern: a pipe within arm's reach of the head is also heard at the two ears
         // themselves - each ear by its own distance (a strong difference, as nothing far away
         // has), the far one later and in the head's shadow, and warmer the nearer it is
@@ -1005,6 +1145,15 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     }
     else
         v.gh1 = v.g1;
+    // Ausdehnung: the spot grows on the sphere, and the part that surrounds the listener goes to
+    // the diffuse field
+    v.dif1 = 0.0f;
+    if (v.widNow > 1.0e-4f)
+    {
+        spreadGains(v.widNow, v.g1.data());
+        spreadGains(v.widNow, v.gh1.data());
+        v.dif1 = v.widNow * g;
+    }
     v.crkEnv = v.held ? 1.0f : v.crkEnv * spatialCrk;
     v.send1 =
         sg * lvl *
@@ -1014,6 +1163,8 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     v.sendAz1 = p.roomFollow ? pos.az : p.roomBaseAz;
     if (anyMod && pm[tgtSend] != 0.0f)
         v.send1 *= dbToGain(juce::jlimit(-100.0f, 24.0f, 24.0f * pm[tgtSend]));
+    if (v.erPat > 1.0e-4f) // (its power over all directions: a cardioid sends a third less)
+        v.send1 *= std::sqrt((1.0f - v.erPat) * (1.0f - v.erPat) + v.erPat * v.erPat / 3.0f);
 
     // jumps: a ~4 ms glide so the teleport is sudden but does not click
     if (!v.fresh && !v.hard && (Motion)p.motionMode[(size_t)v.stop] == Motion::Jumps &&
@@ -1201,6 +1352,10 @@ void OrganEngine::startVoice(int stop, int key, int previewSamples, int noteId)
     v->cloudRing = -1;
     v->cloudAcc = 0.0;
     v->cloudDry = 1.0f;
+    v->dif0 = v->dif1 = 0.0f;
+    v->facePhase = 0.0;
+    v->widNow = 0.0f;
+    v->dirNow = 1.0f;
     v->pmx.fill(0.0f);
     v->pmNew = false;
     v->hiGSm = v->airInvSm = -1.0f;
@@ -2283,6 +2438,11 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                 juce::FloatVectorOperations::add(buf, bufH, n);
             for (int k2 = 0; k2 < n; ++k2)
                 bufRamp[k2] = buf[k2] * (float)k2;
+            if (v.dif1 > 0.0f && (int)difBus.size() >= end)
+            {
+                juce::FloatVectorOperations::addWithMultiply(difBus.data() + start, buf, v.dif1, n);
+                difUsed = true;
+            }
         }
         else
         {
@@ -2326,6 +2486,19 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                 dg[c] = (b - a) * inv;
             }
             mixInto(outs, start, usedChannels, dirBuf, dirRamp, ga, dg, n);
+            // Ausdehnung: the part that surrounds the listener, into the diffuse field
+            auto toDiffuse = [&](const float *x, const float *xr)
+            {
+                if ((v.dif0 <= 0.0f && v.dif1 <= 0.0f) || (int)difBus.size() < end)
+                    return;
+                const float da = v.dif0 + (v.dif1 - v.dif0) * (float)start * inv,
+                            dd = (v.dif1 - v.dif0) * inv;
+                float *db = difBus.data() + start;
+                for (int i = 0; i < n; ++i)
+                    db[i] += da * x[i] + dd * xr[i];
+                difUsed = true;
+            };
+            toDiffuse(dirBuf, dirRamp);
             if (v.near.q0.gL + v.near.q0.gR + v.near.q1.gL + v.near.q1.gR > 1.0e-7f &&
                 (int)nearL.size() >= start + n)
             {
@@ -2368,6 +2541,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
                     dg[c] = (b - a) * inv;
                 }
                 mixInto(outs, start, usedChannels, bufH, bufHRamp, ga, dg, n);
+                toDiffuse(bufH, bufHRamp);
                 juce::FloatVectorOperations::add(buf, bufH, n);
                 juce::FloatVectorOperations::add(bufRamp, bufHRamp, n);
             }
@@ -2442,6 +2616,7 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
         }
     }
     renderCloud(outs, start, n);
+    renderDiffuse(outs, start, n);
 
     // noise one-shots
     for (auto &nv : noise)
@@ -2581,6 +2756,43 @@ void OrganEngine::renderRange(juce::AudioBuffer<float> &out, int start, int end,
     // difference tones of the sounding pairs ("Differenzt\u00f6ne")
     if (p.ghostLevel > 0.0f || ghostsNow.load() > 0)
         renderGhosts(outs, start, n, inv);
+}
+
+/** Ausdehnung: the shared diffuse field. Every channel hears the field through its own sparse
+    noise filter (24 taps of +-1 over about 24 ms, decaying): the channels are decorrelated, so the
+    sound comes from everywhere at once instead of from inside the head. */
+void OrganEngine::renderDiffuse(float *const *outs, int start, int n) noexcept
+{
+    if (n <= 0 || (!difUsed && difLeft <= 0) || (int)difBus.size() < start + n ||
+        (int)difRing.size() < kDifRing)
+        return;
+    if (difUsed)
+        difLeft = difLen + n; // (rings out for the filters' length after the last sound)
+    float *db = difBus.data() + start;
+    const uint32_t mask = (uint32_t)kDifRing - 1u;
+    for (int i = 0; i < n; ++i)
+        difRing[(size_t)(((uint32_t)difW + (uint32_t)i) & mask)] = db[i];
+    const int K = order == 0 ? juce::jmin(2, usedChannels)
+                             : juce::jmin(usedChannels, (order + 1) * (order + 1));
+    // (Ambisonics: W keeps the pipe's own signal, see spreadGains - the field is in the directional
+    // channels, uncorrelated with it)
+    for (int c = order == 0 ? 0 : 1; c < K; ++c)
+    {
+        // (stereo: both sides as loud as an even field's middle)
+        const float cs = order == 0 ? (c == 0 ? 0.70710678f : 0.70710678f * 1.7320508f) : 1.0f;
+        float *o = outs[c] + start;
+        for (int k = 0; k < kDifTaps; ++k)
+        {
+            const float g = difGain[(size_t)c][(size_t)k] * cs;
+            const uint32_t from = (uint32_t)difW - (uint32_t)difPos[(size_t)c][(size_t)k];
+            for (int i = 0; i < n; ++i)
+                o[i] += g * difRing[(size_t)((from + (uint32_t)i) & mask)];
+        }
+    }
+    difW = (int)(((uint32_t)difW + (uint32_t)n) & mask);
+    std::fill_n(db, n, 0.0f);
+    difLeft -= n;
+    difUsed = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -3038,6 +3250,38 @@ void OrganEngine::updateSlotTaps(ErSlot &s, ErWork &w, Pos srcPos, float base,
             t.ch = (o + 1) * (o + 1);
         }
         std::copy(tmp, tmp + kErCh, t.enc.begin());
+        {
+            // where the sound leaves the source: from the image towards the listener, turned back
+            // through the walls (an axis with an odd number of reflections flips); the surfaces
+            // on the way
+            float ex = -dx, ey = -dy, ez = -dz;
+            if (std::abs(im.mx) % 2 == 1)
+                ex = -ex;
+            if (std::abs(im.my) % 2 == 1)
+                ey = -ey;
+            if (std::abs(im.mz) % 2 == 1)
+                ez = -ez;
+            const float el = 1.0f / juce::jmax(1.0e-6f, seen.dist);
+            t.ex = ex * el;
+            t.ey = ey * el;
+            t.ez = ez * el;
+            t.nsf = 0;
+            auto addSurf = [&](int surf, int times)
+            {
+                for (int q = 0; q < times && t.nsf < (int)t.sf.size(); ++q)
+                    t.sf[(size_t)t.nsf++] = (uint8_t)surf;
+            };
+            int lo, hi;
+            axisHits(im.mx, lo, hi);
+            addSurf(kSurfWall0 + 3, lo);
+            addSurf(kSurfWall0 + 1, hi);
+            axisHits(im.my, lo, hi);
+            addSurf(kSurfWall0 + 0, lo);
+            addSurf(kSurfWall0 + 2, hi);
+            axisHits(im.mz, lo, hi);
+            addSurf(kSurfFloor, lo);
+            addSurf(kSurfCeiling, hi);
+        }
         if (s.fresh || i >= s.numTaps)
         {
             t.d0 = t.d1;
@@ -3049,6 +3293,8 @@ void OrganEngine::updateSlotTaps(ErSlot &s, ErWork &w, Pos srcPos, float base,
     for (int i = n; i < s.numTaps; ++i)
         s.taps[(size_t)i].g1 = 0.0f; // order lowered: fade the extra taps out
     s.numTaps = juce::jmax(n, s.fresh ? n : s.numTaps);
+    s.lastS = S;
+    s.lastL = L;
     s.fresh = false;
 }
 
@@ -3284,6 +3530,37 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, ErWork &w, Pos srcPos, float bas
                 t.ch = (o + 1) * (o + 1);
             }
             std::copy(tmp, tmp + kErCh, t.enc.begin());
+            {
+                // where the sound leaves the source: from the image towards the listener, turned
+                // back through the walls of its path (the last wall first), floor and ceiling
+                // flipping the height; the surfaces on the way
+                float vx = L.x - ix, vy = L.y - iy, vz = L.z - iz;
+                const int kw = juce::jmin(3, t.k);
+                for (int j = kw - 1; j >= 0; --j)
+                {
+                    const int wi = juce::jmin((int)t.w[(size_t)j], juce::jmax(0, g.n - 1));
+                    const auto &wl = g.w[(size_t)wi];
+                    const float dd = vx * wl.nx + vy * wl.ny;
+                    vx -= 2.0f * dd * wl.nx;
+                    vy -= 2.0f * dd * wl.ny;
+                }
+                if (std::abs(t.mz) % 2 == 1)
+                    vz = -vz;
+                const float vl = 1.0f / juce::jmax(1.0e-6f, std::sqrt(vx * vx + vy * vy + vz * vz));
+                t.ex = vx * vl;
+                t.ey = vy * vl;
+                t.ez = vz * vl;
+                t.nsf = 0;
+                for (int j = 0; j < kw && t.nsf < (int)t.sf.size(); ++j)
+                    t.sf[(size_t)t.nsf++] =
+                        (uint8_t)(kSurfWall0 + juce::jmin((int)t.w[(size_t)j], kMaxPlanVerts - 1));
+                int lo, hi;
+                axisHits(t.mz, lo, hi);
+                for (int q = 0; q < lo && t.nsf < (int)t.sf.size(); ++q)
+                    t.sf[(size_t)t.nsf++] = (uint8_t)kSurfFloor;
+                for (int q = 0; q < hi && t.nsf < (int)t.sf.size(); ++q)
+                    t.sf[(size_t)t.nsf++] = (uint8_t)kSurfCeiling;
+            }
         }
         if (t.born || s.fresh)
         {
@@ -3302,12 +3579,63 @@ void OrganEngine::updateSlotTapsPlan(ErSlot &s, ErWork &w, Pos srcPos, float bas
     }
     s.numTaps = last + 1;
     s.fading = fading;
+    s.lastS = S;
+    s.lastL = L;
     s.fresh = false;
+}
+
+void OrganEngine::applyTapLive(ErSlot &s, int room, float face, float pat, bool wasFresh) noexcept
+{
+    room = juce::jlimit(0, kNumRooms - 1, room);
+    const bool walls = wallsOpen[(size_t)room], dir = pat > 1.0e-4f;
+    const auto &keep = wallKeep[(size_t)room];
+    // the facing in the plane: 'face' degrees (counter-clockwise seen from above) from the
+    // direction towards the listener
+    float fx = 0.0f, fy = 1.0f;
+    if (dir)
+    {
+        float hx = s.lastL.x - s.lastS.x, hy = s.lastL.y - s.lastS.y;
+        const float h = std::sqrt(hx * hx + hy * hy);
+        if (h > 1.0e-4f)
+        {
+            hx /= h;
+            hy /= h;
+        }
+        else
+        {
+            hx = 0.0f; // (right above or below the listener: as if it stood in front)
+            hy = -1.0f;
+        }
+        const float a = juce::degreesToRadians(face), c = std::cos(a), sn = std::sin(a);
+        fx = hx * c - hy * sn;
+        fy = hx * sn + hy * c;
+    }
+    for (int i = 0; i < s.numTaps; ++i)
+    {
+        auto &t = s.taps[(size_t)i];
+        t.gb = t.g1;
+        float f = 1.0f;
+        if (dir)
+            f = (1.0f - pat) + pat * (t.ex * fx + t.ey * fy);
+        if (walls)
+            for (int j = 0; j < t.nsf; ++j)
+                f *= keep[(size_t)t.sf[(size_t)j]];
+        t.g1 = t.gb * f;
+        if (wasFresh)
+            t.g0 = t.g1;
+    }
 }
 
 /** the early reflections of one group of slots, into the group's own bus */
 void OrganEngine::renderErGroup(int group) noexcept
 {
+    // (the taps' own gains back, before the geometry may be worked out again: the pattern and the
+    // walls go on top afterwards)
+    auto tapsToBase = [](ErSlot &s)
+    {
+        for (int i = 0; i < s.numTaps; ++i)
+            s.taps[(size_t)i].g1 = s.taps[(size_t)i].gb;
+    };
     auto &w = erWork[(size_t)group];
     const EngineParams &p = *erJob.p;
     const int n = erJob.n, K = erJob.K;
@@ -3341,8 +3669,11 @@ void OrganEngine::renderErGroup(int group) noexcept
             if (v.active && v.erSlot == (int)si)
             {
                 const int vr = juce::jlimit(0, kNumRooms - 1, p.stopRoom[(size_t)v.stop]);
+                const bool wasFresh = s.fresh;
+                tapsToBase(s);
                 updateSlotTaps(s, w, v.erPos, v.erBase, p, roomsEr[(size_t)vr], &roomsNow[(size_t)vr],
                                v.hasBody ? &v.bodyPos : nullptr);
+                applyTapLive(s, vr, v.erFace, v.erPat, wasFresh);
             }
             else
             {
@@ -3354,7 +3685,12 @@ void OrganEngine::renderErGroup(int group) noexcept
         {
             const auto &nv = noise[(size_t)s.noiseVoice];
             if (nv.active && nv.erSlot == (int)si)
+            {
+                const bool wasFresh = s.fresh;
+                tapsToBase(s);
                 updateSlotTaps(s, w, nv.where, 1.0f, p, roomsEr[0]);
+                applyTapLive(s, 0, 0.0f, 0.0f, wasFresh);
+            }
             else
             {
                 s.noiseVoice = -1;
@@ -3366,8 +3702,13 @@ void OrganEngine::renderErGroup(int group) noexcept
             const bool vox = s.input >= kVoxInput;
             const auto &is = vox ? voxSrc[(size_t)juce::jlimit(0, kVoxSources - 1, s.input - kVoxInput)] : inSrc[(size_t)juce::jmin(s.input, 1)];
             if ((vox ? voxRunning : inRunning) && is.erSlot == (int)si)
-                updateSlotTaps(s, w, is.pos, 1.0f, p,
-                               roomsEr[(size_t)juce::jlimit(0, kNumRooms - 1, vox ? p.vox.room : p.inputRoom)]);
+            {
+                const int ir = juce::jlimit(0, kNumRooms - 1, vox ? p.vox.room : p.inputRoom);
+                const bool wasFresh = s.fresh;
+                tapsToBase(s);
+                updateSlotTaps(s, w, is.pos, 1.0f, p, roomsEr[(size_t)ir]);
+                applyTapLive(s, ir, 0.0f, 0.0f, wasFresh);
+            }
             else
             {
                 s.input = -1;
@@ -3628,6 +3969,40 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         erListener[(size_t)ri] = listenerPos(roomsEr[(size_t)ri]);
         if (!roomsEr[(size_t)ri].box())
             erGeo[(size_t)ri] = planGeo(roomsEr[(size_t)ri]);
+        {
+            // the room keyboard: the surfaces its held keys take out (floor, ceiling, the wall in
+            // a key's direction from the listener), over the glide time
+            std::array<float, kMaxSurf> T;
+            T.fill(1.0f);
+            const auto &rk = p.roomKeys;
+            T[(size_t)kSurfFloor] = 1.0f - juce::jlimit(0.0f, 1.0f, rk.floorDepth);
+            T[(size_t)kSurfCeiling] = 1.0f - juce::jlimit(0.0f, 1.0f, rk.ceilingDepth);
+            for (int k = 0; k < juce::jmin(rk.numWalls, EngineParams::RoomKeys::kMax); ++k)
+            {
+                const int wi = wallToward(ri, rk.wallAz[(size_t)k]);
+                if (wi >= 0 && kSurfWall0 + wi < kMaxSurf)
+                    T[(size_t)(kSurfWall0 + wi)] =
+                        juce::jmin(T[(size_t)(kSurfWall0 + wi)],
+                                   1.0f - juce::jlimit(0.0f, 1.0f, rk.wallDepth[(size_t)k]));
+            }
+            const float kk =
+                1.0f - std::exp(-(float)juce::jmax(1, n) / (juce::jmax(0.005f, rk.glide) * (float)sr));
+            auto &keep = wallKeep[(size_t)ri];
+            bool open = false;
+            uint32_t gone = 0;
+            for (int sfc = 0; sfc < kMaxSurf; ++sfc)
+            {
+                float &kv = keep[(size_t)sfc];
+                kv += kk * (T[(size_t)sfc] - kv);
+                if (std::abs(kv - T[(size_t)sfc]) < 1.0e-4f)
+                    kv = T[(size_t)sfc];
+                open = open || kv < 0.9999f;
+                if (kv < 0.5f)
+                    gone |= 1u << sfc;
+            }
+            wallsOpen[(size_t)ri] = open;
+            wallsGone[(size_t)ri].store(gone, std::memory_order_relaxed);
+        }
         h.absW = rr.absWalls;
         h.absF = rr.absFloor;
         h.highD = rr.highDamp;
@@ -3754,6 +4129,64 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
                 juce::FloatVectorOperations::subtract(in0, rt[(size_t)ri].send.data() + roomOffset,
                                                       n);
     }
+    // doors: what sounds in a Saal goes through its door into the Saal behind it; the late reverb
+    // of that Saal comes back through the door, from where the door is. A Saal behind a door is
+    // rendered into scratch: heard directly only if it has sound of its own.
+    constexpr float kDoorIn = 0.5f, kDoorOut = 0.7f;
+    std::array<bool, kNumRooms> doorFed{}, doorTarget{};
+    std::array<float, kNumRooms> doorG0{}, doorG1{};
+    bool anyDoor = false;
+    if (n <= kDoorCap && (int)doorOut.size() >= kNumRooms * kMaxAmbiChannels * kDoorCap &&
+        (int)doorIn.size() >= kNumRooms * kDoorCap)
+    {
+        const float kd = 1.0f - std::exp(-(float)n / (0.03f * (float)sr));
+        for (int ri = 0; ri < kNumRooms; ++ri)
+        {
+            const auto &d = p.doors[(size_t)ri];
+            const int to = d.to >= 0 && d.to < kNumRooms && d.to != ri ? d.to : -1;
+            // (another Saal behind the door: it shuts first, then opens onto the new one)
+            if (to != doorToNow[(size_t)ri] && doorOpenSm[(size_t)ri] < 1.0e-4f)
+            {
+                doorToNow[(size_t)ri] = to;
+                doorOpenSm[(size_t)ri] = 0.0f;
+            }
+            const float target =
+                to >= 0 && to == doorToNow[(size_t)ri] ? juce::jlimit(0.0f, 1.0f, d.open) : 0.0f;
+            float &sm = doorOpenSm[(size_t)ri];
+            doorG0[(size_t)ri] = sm;
+            sm += kd * (target - sm);
+            if (std::abs(sm - target) < 1.0e-5f)
+                sm = target;
+            doorG1[(size_t)ri] = sm;
+            const int t = doorToNow[(size_t)ri];
+            if (t >= 0 && (doorG0[(size_t)ri] > 0.0f || doorG1[(size_t)ri] > 0.0f))
+            {
+                anyDoor = true;
+                doorTarget[(size_t)t] = true;
+            }
+        }
+        if (anyDoor)
+        {
+            std::fill(doorIn.begin(), doorIn.end(), 0.0f);
+            for (int t = 0; t < kNumRooms; ++t)
+                if (doorTarget[(size_t)t])
+                    std::fill_n(doorOut.data() + (size_t)t * (size_t)kMaxAmbiChannels * (size_t)kDoorCap,
+                                (size_t)kMaxAmbiChannels * (size_t)kDoorCap, 0.0f);
+            for (int ri = 0; ri < kNumRooms; ++ri)
+            {
+                const int t = doorToNow[(size_t)ri];
+                if (t < 0 || !((used >> ri) & 1) ||
+                    (doorG0[(size_t)ri] <= 0.0f && doorG1[(size_t)ri] <= 0.0f))
+                    continue;
+                const float *src = ri == 0 ? room0In.data() : rt[(size_t)ri].send.data() + roomOffset;
+                float *dst = doorIn.data() + (size_t)t * (size_t)kDoorCap;
+                const float a = kDoorIn * doorG0[(size_t)ri], b = kDoorIn * doorG1[(size_t)ri];
+                for (int i = 0; i < n; ++i)
+                    dst[i] += src[i] * (a + (b - a) * (float)(i + 1) * inv);
+                doorFed[(size_t)t] = true;
+            }
+        }
+    }
     float usedRoomsTail = 0.0f;
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
@@ -3769,7 +4202,8 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
                 rm.height *= ts;
             }
         }
-        if (!((used >> ri) & 1))
+        const bool own = (used >> ri) & 1, fed = doorFed[(size_t)ri];
+        if (!own && !fed)
         {
             // not used (any more): rings out with a silent input, then rests
             if (!R.running)
@@ -3779,11 +4213,36 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             }
         }
         R.running = true;
-        const float *in = (used >> ri) & 1 ? (ri == 0 ? room0In.data() : R.send.data() + roomOffset)
-                                           : zeroIn.data();
+        const float *in = own ? (ri == 0 ? room0In.data() : R.send.data() + roomOffset)
+                              : zeroIn.data();
+        if (fed)
+        {
+            // (what comes through a door, with the room's own sound)
+            float *din = doorIn.data() + (size_t)ri * (size_t)kDoorCap;
+            if (own)
+                juce::FloatVectorOperations::add(din, in, n);
+            in = din;
+        }
+        // a Saal behind a door: into scratch (see the doors above)
+        std::array<float *, kMaxAmbiChannels> oScr{};
+        const bool scr = doorTarget[(size_t)ri];
+        if (scr)
+            for (int c = 0; c < kMaxAmbiChannels; ++c)
+                oScr[(size_t)c] =
+                    doorOut.data() + ((size_t)ri * (size_t)kMaxAmbiChannels + (size_t)c) * (size_t)kDoorCap;
+        float *const *oo = scr ? oScr.data() : o.data();
         const TailIR *ir = R.tail.current();
-        const float rtL = ir != nullptr ? ir->rtLow : eyringRt(rm, false, p.air);
-        const float rtH = ir != nullptr ? ir->rtHigh : eyringRt(rm, true, p.air);
+        float rtL = ir != nullptr ? ir->rtLow : eyringRt(rm, false, p.air);
+        float rtH = ir != nullptr ? ir->rtHigh : eyringRt(rm, true, p.air);
+        if (wallsOpen[(size_t)ri])
+        {
+            // surfaces taken out by the room keyboard: the sound leaves there, the room rings
+            // shorter (and so quieter)
+            float fL = 1.0f, fH = 1.0f;
+            openedRt(rm, ri, fL, fH);
+            rtL = juce::jmax(0.05f, rtL * fL);
+            rtH = juce::jmax(0.05f, rtH * fH);
+        }
         const float V = roomVolume(rm);
         const float rc = juce::jmax(0.2f, 0.057f * std::sqrt(V / rtL)); // critical distance
         heard[(size_t)ri].rtLow = rtL;
@@ -3800,7 +4259,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         }
         // reverberant level from the critical distance, softly capped at +4 dB so very long, hard
         // rooms do not drown everything
-        const bool usedNow = (used >> ri) & 1;
+        const bool usedNow = own || fed;
         const bool useFdn = rm.tailModel == 1;
         // (a room no source plays into any more: its input is silent, and what it holds rings out
         //  at the level it had - the gain sits on the reverb's output, so turning it down would cut
@@ -3834,7 +4293,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
                                                (1.0f - std::exp(-(float)n / (0.05f * (float)sr)));
             R.tailGain = g1;
             // the response has unit energy (W)
-            R.tail.process(useFdn ? zeroIn.data() : in, o.data(), tailCh, n, g0, g1);
+            R.tail.process(useFdn ? zeroIn.data() : in, oo, tailCh, n, g0, g1);
             if (useFdn && (R.convRingOut -= n) <= 0)
             {
                 R.convRingOut = 0;
@@ -3850,7 +4309,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             // would compound)
             if (useFdn)
                 R.fdnLevelLast = level;
-            renderFdn(R, o.data(), K, useFdn ? in : zeroIn.data(), n, rtL, rtH, R.fdnLevelLast, rm);
+            renderFdn(R, oo, K, useFdn ? in : zeroIn.data(), n, rtL, rtH, R.fdnLevelLast, rm);
             if (!useFdn && (R.fdnRingOut -= n) <= 0)
             {
                 R.fdnRingOut = 0;
@@ -3867,11 +4326,169 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             resetFdn(R);
             R.running = false;
         }
+        if (scr && own)
+            for (int c = 0; c < tailCh; ++c)
+                juce::FloatVectorOperations::add(o[(size_t)c], oScr[(size_t)c], n);
         tailSerialInUseR[(size_t)ri] = R.tail.oldestSerialInUse();
     }
+    if (anyDoor)
+        for (int ri = 0; ri < kNumRooms; ++ri)
+        {
+            const int t = doorToNow[(size_t)ri];
+            if (t < 0 || (doorG0[(size_t)ri] <= 0.0f && doorG1[(size_t)ri] <= 0.0f))
+                continue;
+            // the Saal behind, through the door: its W (stereo: the middle), from the door's
+            // direction as the listener in this Saal sees it, blurred to the door's size
+            const float *t0 = doorOut.data() + (size_t)t * (size_t)kMaxAmbiChannels * (size_t)kDoorCap;
+            float mono[kDoorCap];
+            if (order == 0)
+                for (int i = 0; i < n; ++i)
+                    mono[i] = 0.70710678f * (t0[i] + t0[(size_t)kDoorCap + (size_t)i]);
+            else
+                std::copy_n(t0, n, mono);
+            const Vec3f L = erListener[(size_t)ri], D = doorPoint(ri, p.doors[(size_t)ri].wall);
+            const float dx = D.x - L.x, dy = D.y - L.y, dz = D.z - L.z;
+            const float rh = std::sqrt(dx * dx + dy * dy), dist = std::sqrt(rh * rh + dz * dz);
+            const float az = juce::radiansToDegrees(std::atan2(-dx, dy)),
+                        el = juce::radiansToDegrees(std::atan2(dz, juce::jmax(1.0e-4f, rh)));
+            float e[kMaxAmbiChannels]{};
+            if (order == 0)
+                encodeStereo(az, e);
+            else
+            {
+                encodeAmbiX(az, el, order, e);
+                const float sg = std::atan(1.2f / juce::jmax(0.5f, dist)), s2 = sg * sg;
+                for (int l = 1; l <= juce::jmin(order, kMaxOrder); ++l)
+                {
+                    const float a = std::exp(-0.5f * (float)(l * (l + 1)) * s2);
+                    for (int c = l * l; c < (l + 1) * (l + 1); ++c)
+                        e[c] *= a;
+                }
+            }
+            const float a = kDoorOut * doorG0[(size_t)ri], b = kDoorOut * doorG1[(size_t)ri];
+            for (int c = 0; c < tailCh; ++c)
+            {
+                if (std::abs(e[c]) < 1.0e-7f)
+                    continue;
+                float *dst = o[(size_t)c];
+                for (int i = 0; i < n; ++i)
+                    dst[i] += e[c] * mono[i] * (a + (b - a) * (float)(i + 1) * inv);
+            }
+        }
     roomTailSeconds.store(usedRoomsTail, std::memory_order_relaxed);
     tailSerialInUse = rt[0].tail.oldestSerialInUse();
     erClock += (uint32_t)n;
+}
+
+int OrganEngine::wallToward(int room, float azDeg) const noexcept
+{
+    room = juce::jlimit(0, kNumRooms - 1, room);
+    const auto &rr = roomsEr[(size_t)room];
+    const Vec3f L = erListener[(size_t)room];
+    const float a = juce::degreesToRadians(azDeg), dx = -std::sin(a), dy = std::cos(a);
+    float best = 1.0e9f;
+    int wi = -1;
+    if (rr.box())
+    {
+        auto tryWall = [&](int i, float t)
+        {
+            if (t > 0.0f && t < best)
+            {
+                best = t;
+                wi = i;
+            }
+        };
+        if (dy < -1.0e-6f)
+            tryWall(0, -L.y / dy);
+        if (dx > 1.0e-6f)
+            tryWall(1, (rr.W() - L.x) / dx);
+        if (dy > 1.0e-6f)
+            tryWall(2, (rr.L() - L.y) / dy);
+        if (dx < -1.0e-6f)
+            tryWall(3, -L.x / dx);
+        return wi;
+    }
+    const auto &g = erGeo[(size_t)room];
+    for (int i = 0; i < g.n; ++i)
+    {
+        // the ray L + t d meets the wall a + u (b - a)
+        const auto &w = g.w[(size_t)i];
+        const float sx = w.bx - w.ax, sy = w.by - w.ay;
+        const float den = dx * sy - dy * sx;
+        if (std::abs(den) < 1.0e-9f)
+            continue;
+        const float ox = w.ax - L.x, oy = w.ay - L.y;
+        const float t = (ox * sy - oy * sx) / den, u = (ox * dy - oy * dx) / den;
+        if (t > 1.0e-4f && u >= -1.0e-4f && u <= 1.0f + 1.0e-4f && t < best)
+        {
+            best = t;
+            wi = i;
+        }
+    }
+    return wi;
+}
+
+Vec3f OrganEngine::doorPoint(int room, int wall) const noexcept
+{
+    room = juce::jlimit(0, kNumRooms - 1, room);
+    const auto &rr = roomsEr[(size_t)room];
+    const float z = juce::jmin(1.6f, 0.45f * rr.H());
+    if (rr.box())
+    {
+        const float W = rr.W(), L = rr.L();
+        switch (((wall % 4) + 4) % 4)
+        {
+        case 0:
+            return {0.5f * W, 0.0f, z};
+        case 1:
+            return {W, 0.5f * L, z};
+        case 2:
+            return {0.5f * W, L, z};
+        default:
+            return {0.0f, 0.5f * L, z};
+        }
+    }
+    const auto &g = erGeo[(size_t)room];
+    if (g.n <= 0)
+        return {0.5f * rr.W(), rr.L(), z};
+    const auto &w = g.w[(size_t)(((wall % g.n) + g.n) % g.n)];
+    return {0.5f * (w.ax + w.bx), 0.5f * (w.ay + w.by), z};
+}
+
+void OrganEngine::openedRt(const RoomParams &rm, int room, float &fLow, float &fHigh) const noexcept
+{
+    // Sabine: the decay time goes with the volume over the absorption. A surface taken out
+    // absorbs everything that reaches it.
+    fLow = fHigh = 1.0f;
+    const auto &keep = wallKeep[(size_t)juce::jlimit(0, kNumRooms - 1, room)];
+    const auto ab = SurfAbs::from(rm);
+    const float W = rm.W(), L = rm.L(), H = rm.H();
+    float area[kMaxSurf]{};
+    if (rm.box())
+    {
+        area[kSurfFloor] = area[kSurfCeiling] = W * L;
+        area[kSurfWall0 + 0] = area[kSurfWall0 + 2] = W * H;
+        area[kSurfWall0 + 1] = area[kSurfWall0 + 3] = L * H;
+    }
+    else
+    {
+        const auto g = planGeo(rm);
+        area[kSurfFloor] = area[kSurfCeiling] = g.area;
+        for (int i = 0; i < g.n && kSurfWall0 + i < kMaxSurf; ++i)
+            area[kSurfWall0 + i] = g.w[(size_t)i].len * H;
+    }
+    float aL = 0.0f, aH = 0.0f, oL = 0.0f, oH = 0.0f;
+    for (int sfc = 0; sfc < kMaxSurf; ++sfc)
+    {
+        const float lo = ab.low[(size_t)sfc], hi = ab.high[(size_t)sfc], A = area[sfc];
+        const float gone = 1.0f - keep[(size_t)sfc];
+        aL += lo * A;
+        aH += hi * A;
+        oL += gone * A * (1.0f - lo);
+        oH += gone * A * (1.0f - hi);
+    }
+    fLow = juce::jlimit(0.03f, 1.0f, aL / juce::jmax(1.0e-3f, aL + oL));
+    fHigh = juce::jlimit(0.03f, 1.0f, aH / juce::jmax(1.0e-3f, aH + oH));
 }
 
 void OrganEngine::resetFdn(RoomTail &R) noexcept
@@ -4225,6 +4842,18 @@ void OrganEngine::advanceModulation(const EngineParams &p, double dt) noexcept
     globalSrc[srcInput] = inFollowVal;
     globalSrc[srcBeat] = juce::jlimit(0.0f, 1.0f, std::log2(1.0f + beatMaxNow.load()) / 5.044f);
     globalSrc[srcBellows] = juce::jlimit(0.0f, 1.0f, bellowsP);
+    {
+        // the room keyboard: how far its held keys pull now (the strongest, over the glide time)
+        const auto &rk = p.roomKeys;
+        float t = juce::jmax(rk.floorDepth, rk.ceilingDepth);
+        for (int k = 0; k < juce::jmin(rk.numPlaces, EngineParams::RoomKeys::kMax); ++k)
+            t = juce::jmax(t, rk.placeDepth[(size_t)k]);
+        for (int k = 0; k < juce::jmin(rk.numWalls, EngineParams::RoomKeys::kMax); ++k)
+            t = juce::jmax(t, rk.wallDepth[(size_t)k]);
+        roomKeyLevel += (1.0f - (float)std::exp(-dt / juce::jmax(0.005, (double)rk.glide))) *
+                        (juce::jlimit(0.0f, 1.0f, t) - roomKeyLevel);
+        globalSrc[srcRoomKeys] = roomKeyLevel;
+    }
     for (int i = 0; i < kNumSources; ++i)
         sourceOut[(size_t)i] = globalSrc[(size_t)i];
 }
@@ -4271,7 +4900,7 @@ Pos OrganEngine::displayPosition(int stop, int key, const EngineParams &p) const
                 v = (float)key / (float)(kNumKeys - 1) * 2.0f - 1.0f;
             else if (r.src == srcModWheel || r.src == srcPitchWheel || r.src == srcVelocity ||
                      r.src == srcPressure || r.src == srcSlide || r.src == srcInput ||
-                     r.src == srcBellows)
+                     r.src == srcBellows || r.src == srcRoomKeys)
                 v = sourceOut[(size_t)r.src].load();
             pm[(size_t)r.target] += r.amount * shapeSource(r.src, v, r.uni);
             any = true;
@@ -4342,6 +4971,8 @@ float OrganEngine::voiceSource(const Voice &v, int src, const EngineParams &p) c
         return v.beatNorm;
     case srcBellows:
         return juce::jlimit(0.0f, 1.0f, bellowsP);
+    case srcRoomKeys:
+        return roomKeyLevel;
     default:
         return 0.0f;
     }
@@ -5405,6 +6036,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         {
             v.g0 = v.g1;
             v.gh0 = v.gh1;
+            v.dif0 = v.dif1;
             v.send0 = v.send1;
             v.sendAz0 = v.sendAz1;
             v.modCents0 = v.modCents1;
@@ -5414,6 +6046,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         {
             v.g0 = v.g1;
             v.gh0 = v.gh1;
+            v.dif0 = v.dif1;
             v.send0 = v.send1;
             v.sendAz0 = v.sendAz1;
             v.modCents0 = v.modCents1;
@@ -5431,6 +6064,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
                 updateVoiceSpatial(v, p, blockSeconds);
                 v.g0 = v.g1;
                 v.gh0 = v.gh1;
+                v.dif0 = v.dif1;
                 v.send0 = v.send1;
                 v.sendAz0 = v.sendAz1;
                 v.modCents0 = v.modCents1;

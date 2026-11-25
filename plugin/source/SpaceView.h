@@ -304,7 +304,7 @@ private:
     bool hallTab = false, cloudTab = false, pipeTab = false;
     void showTab(int tab); // 0 = Bewegung, 1 = Hall, 2 = Wolke, 3 = Pfeife
     // the sound of the selected stop's pipes: Ansprache, Abriss, upper partials
-    std::array<std::unique_ptr<ParamRow>, 12> pipeRows; // the sound (8), then the stop's own effects (4)
+    std::array<std::unique_ptr<ParamRow>, 16> pipeRows; // the sound (8), the stop's own effects (4), how it radiates (4)
     juce::TextButton pipeAll{juce::String::fromUTF8("f\xc3\xbcr alle Register \xc3\xbc"
                                                     "bernehmen")};
     // grain cloud of the selected stop

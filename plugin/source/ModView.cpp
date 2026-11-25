@@ -69,6 +69,7 @@ void ModView::fillTargetMenu(juce::PopupMenu &menu, RysumProcessor &proc, int id
     group(rysum::tr("Pfeife: Verfall (nur \xe2\x80\x9epro Pfeife\xe2\x80\x9c)"),
           tgtDegGrain, tgtDegDrops);
     group(rysum::tr("Pfeife: Glitch"), tgtStutter, tgtClip);
+    group(rysum::tr("Pfeife: Abstrahlung"), tgtWidth, tgtSpin);
     menu.addSeparator();
     menu.addSectionHeader(rysum::tr("Global (ein Wert f\xc3\xbcr alle Pfeifen)"));
     const juce::StringArray groups{"Register",  juce::String::fromUTF8("Traktur \xc2\xb7 Ausgang"),

@@ -1,4 +1,4 @@
-Rysum - technical documentation (LaTeX), version 16 of 24 November 2026
+Rysum - technical documentation (LaTeX), version 17 of 25 November 2026
 
 Build (XeLaTeX is required for the plug-in's fonts):
    latexmk -xelatex main.tex
@@ -27,7 +27,7 @@ tests/          the logs of the test runs (Windows, Ryzen 5 2600X):
                 passed), uisnapshot.log (85 checks + all 181 patches of the folder, all passed), walk.log (48 checks,
                 47 passed: the walking check read this computer's pace x2.5), concert.log (20 checks, 19 passed: an
                 intermittent timing check of the input, passed in two reruns)
-main.pdf        compiled version (148 pages)
+main.pdf        compiled version (150 pages)
 
 New in version 12: the second recording session (30 October), the unstable wind's new mouth tone, several
 cores and the graphics card, built-in impulse responses, MIDI buttons, the dataset sampler, the 3D Saal as a
@@ -46,6 +46,10 @@ function (tuning, encoder, motion and layouts, the voice, degradation, partition
 room and its rotation per pipe, MagLS, crosstalk cancellation, AllRAD, the simulated room, Lucier, the output stage,
 modulation and the Verlauf, the living organ, spatial degradation, photographic operations, bodies and knocks, beats,
 echoes, the grain cloud, the reference tone, the Vox humana's glue and the clocks of Konzert), read off commit bfc83f3.
+
+New in version 17: how the pipes radiate (extent with a velvet-noise diffuse field, pattern and facing for the
+direct sound and every early reflection, spin), doors that couple two Saele, and the room keyboard (places pull the
+pipes, keys take walls out, the decay shortened by Sabine's law), in the sections on spatialisation and on the room.
 
 New in version 16: the 360-degree frames drawn by the graphics card (PanoGpu, about 15 times faster than the
 processor at 4K), and the video made by the plug-in itself: ffmpeg run on its own and the 360-degree and
