@@ -1423,7 +1423,7 @@ void WalkView::loadModel (const juce::File& f)
     repaint();
 }
 
-void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
+void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out, const DoorCut& door) const
 {
     out.clear();
     const float W = r.W(), L = r.L(), H = r.H();
@@ -1487,22 +1487,37 @@ void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
         const float len = std::hypot (bx - ax, by - ay);
         if (len < 1.0e-3f) return;
         const V3 n = normalised ({ -(by - ay), bx - ax, 0.0f });
-        const int nSeg = juce::jmax (1, (int) std::ceil (len / 2.5f));
         const float plinth = juce::jmin (0.9f, H * 0.2f);
-        for (int i = 0; i < nSeg; ++i)
+        // a stretch of the wall from t0 to t1 (0 .. 1 along it), from the height zFrom up (the plinth below 'plinth')
+        auto stretch = [&] (float ta, float tb, float zFrom)
         {
-            const float t0 = (float) i / (float) nSeg, t1 = (float) (i + 1) / (float) nSeg;
-            const V3 p0 { ax + (bx - ax) * t0, ay + (by - ay) * t0, 0 }, p1 { ax + (bx - ax) * t1, ay + (by - ay) * t1, 0 };
-            const float u0 = along + len * t0, u1 = along + len * t1;
-            quad (vt (p0, n, u0, 0), vt (p1, n, u1, 0), vt (p1 + V3 { 0, 0, plinth }, n, u1, plinth), vt (p0 + V3 { 0, 0, plinth }, n, u0, plinth), slot, 0.55f);
-            const int bands = juce::jmax (1, (int) std::ceil ((H - plinth) / 3.0f));
-            for (int b = 0; b < bands; ++b)
+            const int nSeg = juce::jmax (1, (int) std::ceil (len * (tb - ta) / 2.5f));
+            for (int i = 0; i < nSeg; ++i)
             {
-                const float z0 = plinth + (H - plinth) * (float) b / (float) bands, z1 = plinth + (H - plinth) * (float) (b + 1) / (float) bands;
-                quad (vt (p0 + V3 { 0, 0, z0 }, n, u0, z0), vt (p1 + V3 { 0, 0, z0 }, n, u1, z0),
-                      vt (p1 + V3 { 0, 0, z1 }, n, u1, z1), vt (p0 + V3 { 0, 0, z1 }, n, u0, z1), slot, 1.0f - 0.06f * (float) b / (float) bands);
+                const float t0 = ta + (tb - ta) * (float) i / (float) nSeg, t1 = ta + (tb - ta) * (float) (i + 1) / (float) nSeg;
+                const V3 p0 { ax + (bx - ax) * t0, ay + (by - ay) * t0, 0 }, p1 { ax + (bx - ax) * t1, ay + (by - ay) * t1, 0 };
+                const float u0 = along + len * t0, u1 = along + len * t1;
+                if (zFrom < plinth)
+                    quad (vt (p0, n, u0, 0), vt (p1, n, u1, 0), vt (p1 + V3 { 0, 0, plinth }, n, u1, plinth), vt (p0 + V3 { 0, 0, plinth }, n, u0, plinth), slot, 0.55f);
+                const float zb = juce::jmax (plinth, zFrom);
+                const int bands = juce::jmax (1, (int) std::ceil ((H - zb) / 3.0f));
+                for (int b = 0; b < bands; ++b)
+                {
+                    const float z0 = zb + (H - zb) * (float) b / (float) bands, z1 = zb + (H - zb) * (float) (b + 1) / (float) bands;
+                    quad (vt (p0 + V3 { 0, 0, z0 }, n, u0, z0), vt (p1 + V3 { 0, 0, z0 }, n, u1, z0),
+                          vt (p1 + V3 { 0, 0, z1 }, n, u1, z1), vt (p0 + V3 { 0, 0, z1 }, n, u0, z1), slot, 1.0f - 0.06f * (float) b / (float) bands);
+                }
             }
+        };
+        if (index == door.wall && door.height < H - 0.05f && 2.0f * door.halfW < len - 0.2f)
+        {
+            // the door: an opening in the middle (where the engine hears it), the lintel above it
+            const float ta = 0.5f - door.halfW / len, tb = 0.5f + door.halfW / len;
+            stretch (0.0f, ta, 0.0f);
+            stretch (tb, 1.0f, 0.0f);
+            stretch (ta, tb, door.height);
         }
+        else stretch (0.0f, 1.0f, 0.0f);
         along += len;
     };
     if (box)
@@ -1515,6 +1530,63 @@ void WalkView::buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const
             const int j = (i + 1) % r.plan.n;
             wall (r.plan.x[(size_t) i] * W, r.plan.y[(size_t) i] * L, r.plan.x[(size_t) j] * W, r.plan.y[(size_t) j] * L, i);
         }
+}
+
+void WalkView::addDoorView (const RoomParams& r, const DoorCut& door, float open, const RoomParams& next, float dim)
+{
+    const float W = r.W(), L = r.L();
+    const bool box = r.box() || r.plan.n < 3;
+    float ax, ay, bx, by;
+    if (box)
+    {
+        const float c[4][4] { { 0, 0, W, 0 }, { W, 0, W, L }, { W, L, 0, L }, { 0, L, 0, 0 } };
+        const int w = ((door.wall % 4) + 4) % 4;
+        ax = c[w][0]; ay = c[w][1]; bx = c[w][2]; by = c[w][3];
+    }
+    else
+    {
+        const int i = ((door.wall % r.plan.n) + r.plan.n) % r.plan.n, j = (i + 1) % r.plan.n;
+        ax = r.plan.x[(size_t) i] * W; ay = r.plan.y[(size_t) i] * L; bx = r.plan.x[(size_t) j] * W; by = r.plan.y[(size_t) j] * L;
+    }
+    const float len = std::hypot (bx - ax, by - ay);
+    if (len < 2.0f * door.halfW + 0.2f) return;
+    const V3 t { (bx - ax) / len, (by - ay) / len, 0.0f }, in { -t.y, t.x, 0.0f }, out = in * -1.0f;
+    const V3 mid { 0.5f * (ax + bx), 0.5f * (ay + by), 0.0f };
+    auto vt = [] (V3 p, V3 n, float u, float v) { Raster::Vert q; q.p = p; q.n = n; q.u = u; q.v = v; return q; };
+    auto quad = [&] (V3 a, V3 b, V3 c, V3 d, V3 n, int slot, float tone, bool level)
+    {
+        // (texture coordinates from the world, as the Saal's own surfaces have them)
+        auto uv = [&] (V3 p) { return level ? std::make_pair (p.x, p.y) : std::make_pair (dot (p, t), p.z); };
+        const auto ua = uv (a), ub = uv (b), uc = uv (c), ud = uv (d);
+        rast.triangle (vt (a, n, ua.first, ua.second), vt (b, n, ub.first, ub.second), vt (c, n, uc.first, uc.second), slot, tone);
+        rast.triangle (vt (a, n, ua.first, ua.second), vt (c, n, uc.first, uc.second), vt (d, n, ud.first, ud.second), slot, tone);
+    };
+    // the Saal behind: as wide as it is, as deep as it is long, its floor at ours; dimmer, as it is lit less
+    {
+        const float hw = juce::jlimit (door.halfW + 0.5f, 40.0f, 0.5f * next.W()), D = juce::jlimit (2.0f, 80.0f, next.L()),
+                    H2 = juce::jlimit (door.height + 0.2f, 40.0f, next.H());
+        const float tone = 0.15f + 0.85f * dim;
+        const V3 p0 = mid - t * hw, p1 = mid + t * hw, q0 = p0 + out * D, q1 = p1 + out * D, up { 0, 0, H2 };
+        quad (p0, p1, q1, q0, { 0, 0, 1 }, kSlotFloor, tone, true);                       // floor
+        quad (p0 + up, q0 + up, q1 + up, p1 + up, { 0, 0, -1 }, kSlotCeiling, tone * 0.85f, true);
+        quad (q0, q1, q1 + up, q0 + up, in, kSlotWall, tone * 0.9f, false);              // the far wall
+        quad (p0, q0, q0 + up, p0 + up, t, kSlotWall, tone, false);                       // the sides
+        quad (q1, p1, p1 + up, q1 + up, t * -1.0f, kSlotWall, tone, false);
+        // its own wall around the door, seen from behind ours (where our wall is thinner than its)
+    }
+    // the leaf: hinged at one side of the opening, swung into this Saal as far as the door is open
+    {
+        const float ang = juce::jlimit (0.0f, 1.0f, open) * 0.5f * juce::MathConstants<float>::pi * 0.95f;
+        const V3 hinge = mid - t * door.halfW;
+        const V3 dir = t * std::cos (ang) + in * std::sin (ang), side { -dir.y, dir.x, 0.0f };
+        const float lw = 2.0f * door.halfW, th = 0.05f;
+        const V3 up { 0, 0, door.height - 0.02f };
+        const V3 a = hinge + side * (0.5f * th), b = a + dir * lw, a2 = hinge - side * (0.5f * th), b2 = a2 + dir * lw;
+        quad (a, b, b + up, a + up, side, kSlotWood, 0.8f, false);
+        quad (b2, a2, a2 + up, b2 + up, side * -1.0f, kSlotWood, 0.8f, false);
+        quad (b, b2, b2 + up, b + up, dir, kSlotWood, 0.6f, false);                    // its edge
+        quad (a + up, b + up, b2 + up, a2 + up, { 0, 0, 1 }, kSlotWood, 0.6f, true);
+    }
 }
 
 /** the Saal's surface the middle of the view points at (kSurfFloor, kSurfCeiling, kSurfWall0 + wall), -1 = none */
@@ -2081,6 +2153,14 @@ void WalkView::buildScene (float phys)
             for (int c = 0; c < 3; ++c) look.tint[c] = 1.0f + (tint[c] - 1.0f) * lk.day;
         }
         rast.setLightDir (sunDir);
+        // (the pipes' shadows on the floor: with the time of day's light, the lower the sun the longer)
+        shadowAmt = 0.0f;
+        if (lk.day > 0.0f && sunDir.z > 0.05f)
+        {
+            float tint[3]; V3 d;
+            dayLight (lk.hour, d, tint);
+            shadowAmt = lk.day * juce::jlimit (0.0f, 1.0f, (tint[0] + tint[1] + tint[2]) / 3.0f - 0.3f) * 0.6f;
+        }
     }
     look.wear = lk.wear;
     look.cell = lk.wallGrain < 0.05f ? 0.0f : 0.05f + 0.6f * lk.wallGrain;
@@ -2224,11 +2304,26 @@ void WalkView::buildScene (float phys)
     }
     else
     {
-        buildRoomTris (r, roomTris);
+        // "Tueren sichtbar": the door of Saal 1 to another Saal, an opening with the other Saal behind it
+        DoorCut cut;
+        const auto& dr = params.doors[0];
+        const bool showDoor = lk.doors > 0.01f && dr.to > 0 && dr.to < kNumRooms;
+        if (showDoor)
+        {
+            cut.wall = dr.wall;
+            cut.halfW = 0.7f;
+            cut.height = juce::jmin (2.6f, 0.8f * r.H());
+        }
+        buildRoomTris (r, roomTris, cut);
         // (the surface the cross points at - the one M gives another material - a little lighter)
         aimSurf = surfaceAhead (r, eye);
         const int aimSlot = aimSurf < 0 ? -1 : (aimSurf == kSurfFloor ? (int) kSlotFloor : (aimSurf == kSurfCeiling ? (int) kSlotCeiling : kSlotWall0 + aimSurf - kSurfWall0));
         for (const auto& t : roomTris) rast.triangle (t.a, t.b, t.c, t.slot, t.slot == aimSlot && ! panoCapturing ? t.tone * 1.1f : t.tone);
+        if (showDoor)
+        {
+            RoomParams next = params.roomAt (dr.to);
+            addDoorView (r, cut, dr.open * juce::jmin (1.0f, lk.doors * 2.0f), next, lk.doorDim);
+        }
     }
 
     panoStatic = panoCalls.size();          // (the 360° recording: up to here the room, kept only when it changes)
@@ -2267,6 +2362,25 @@ void WalkView::buildScene (float phys)
             // the mouth towards the listener's place, turned by the pipe's Ausrichtung and Drehung (counter-clockwise from above)
             const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x) + juce::degreesToRadians (proc.engine.facingShown (s, k));
             addPipe (bottom, len, rad, face, metalTone, dark ? gl + 0.025f : gl, s);    // (light off: the barest shimmer of their own)
+            if (shadowAmt > 0.0f && ! dark && bottom.z > 0.02f)
+            {
+                // its shadow on the floor: the pipe's axis cast along the light (a little above the floor)
+                const V3 L = rast.lightDirNow();
+                const V3 top { bottom.x, bottom.y, bottom.z + len };
+                auto cast = [&] (V3 p) { const float k = p.z / juce::jmax (0.05f, L.z); return V3 { p.x - L.x * k, p.y - L.y * k, 0.004f }; };
+                const V3 b0 = cast (bottom), b1 = cast (top);
+                V3 sd { -(b1.y - b0.y), b1.x - b0.x, 0.0f };
+                const float sl = std::sqrt (sd.x * sd.x + sd.y * sd.y);
+                sd = sl > 1.0e-4f ? sd * (rad / sl) : V3 { rad, 0, 0 };
+                if (sl < 40.0f)
+                {
+                    const V3 nz { 0, 0, 1 };
+                    auto fv = [&] (V3 p) { Raster::Vert q; q.p = p; q.n = nz; q.u = p.x; q.v = p.y; return q; };
+                    const float tone = 1.0f - shadowAmt;
+                    rast.triangle (fv (b0 - sd), fv (b0 + sd), fv (b1 + sd), kSlotFloor, tone);
+                    rast.triangle (fv (b0 - sd), fv (b1 + sd), fv (b1 - sd), kSlotFloor, tone);
+                }
+            }
             shown[(size_t) s][(size_t) k] = { { c.x, c.y, c.z + bob }, len, rad, true };
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len, s });
         }

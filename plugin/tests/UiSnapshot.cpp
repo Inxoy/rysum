@@ -307,6 +307,34 @@ public:
                 setReal("lookWalls", 0.0f);
                 setReal("simKbCh", 0.0f);
             }
+            {
+                // a door to Saal 2 in the front wall: the opening, the leaf half open, the Saal behind
+                setReal("simDoorTo", 2.0f);
+                setReal("simDoorWall", 2.0f);
+                setReal("simDoorOpen", 0.6f);
+                run(10, {});
+                const auto noDoor = snap();
+                setReal("lookDoors", 1.0f);
+                run(10, {});
+                const auto withDoor = snap();
+                shot("walk_look_lookDoors.png");
+                const double pc = changed(withDoor, noDoor);
+                say("Tueren sichtbar: the door to Saal 2 and the Saal behind it, " + juce::String(pc, 1) + " % of the picture changes",
+                    pc > 1.0);
+                setReal("lookDoors", 0.0f);
+                setReal("simDoorTo", 0.0f);
+                // the pipes' shadows with a low morning sun (seen from the side)
+                setReal("lookDay", 1.0f);
+                setReal("lookHour", 7.5f);
+                wv.setPoseForTest(-4.0f, 2.0f, -60.0f);
+                wv.setPitchForTest(-25.0f);
+                run(10, {});
+                shot("walk_look_shadows.png");
+                setReal("lookDay", 0.0f);
+                setReal("lookHour", 12.0f);
+                wv.setPoseForTest(0.0f, -2.0f, 0.0f);
+                wv.setPitchForTest(-8.0f);
+            }
             if (std::getenv("RYSUM_ONLY_LOOK") != nullptr)
             {
                 wv.setLookAndFeel(nullptr);

@@ -200,7 +200,11 @@ private:
     void pushPose();
     void keepInside();
     RoomParams roomNow() const;
-    void buildRoomTris (const RoomParams& r, std::vector<RTri>& out) const;
+    /** a door to show: an opening in this wall (its middle, as the engine hears the door), so wide and high */
+    struct DoorCut { int wall = -1; float halfW = 0.7f, height = 2.2f; };
+    void buildRoomTris (const RoomParams& r, std::vector<RTri>& out, const DoorCut& door = {}) const;
+    /** the door's leaf (open as far as the door is) and the Saal behind it, dimmer */
+    void addDoorView (const RoomParams& r, const DoorCut& door, float open, const RoomParams& next, float dim);
     void loadModel (const juce::File& f);
     void chooseModel();
     void loadBuiltInRoom (int index);
@@ -286,7 +290,7 @@ private:
     float lookDt = 1.0f / 60.0f;              // (seconds since the last frame)
     std::array<Look::Ripple, Look::kMaxRipples> ripples {};
     int rippleNext = 0;
-    float shakeEnv = 0.0f, fogDensNow = 0.0f;
+    float shakeEnv = 0.0f, fogDensNow = 0.0f, shadowAmt = 0.0f;
     double lookClock = 0.0;                   // (seconds, for the idle sway)
     struct Scene
     {
