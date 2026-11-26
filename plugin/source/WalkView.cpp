@@ -2052,9 +2052,10 @@ void WalkView::buildScene (float phys)
     if (card && gpuTest)
     {
         ++gpuFrames;
-        if (gpuFrames >= 90 && gpuFrames <= 90 + 60 * 11)
+        if (gpuFrames >= 90 && gpuFrames <= 90 + 60 * 12)
         {
-            testStep = (gpuFrames - 60) / 60;          // 0 = as it is, 1 .. 9 = the kinds, 10 = the model, 11 = the model with the light off
+            testStep = (gpuFrames - 60) / 60;          // 0 = as it is, 1 .. 9 = the kinds, 10 = the model, 11 = the model with the light off,
+                                                       // 12 = the look (light's colour, wear, dissolving, a ripple, a coloured lamp)
             if (gpuFrames == 60 + 60 * 10)
             {
                 auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("rysum_gpu_test.obj");
@@ -2167,6 +2168,9 @@ void WalkView::buildScene (float phys)
             mats[(size_t) kSlotCeiling].gone = gone (kSurfCeiling);
             for (int i = 0; i < kMaxPlanVerts; ++i) mats[(size_t) (kSlotWall0 + i)].gone = gone (kSurfWall0 + i);
         }
+        if (testStep == 12)
+            for (int sl : { (int) kSlotWall, (int) kSlotFloor, (int) kSlotCeiling, (int) kSlotModel })
+                mats[(size_t) sl].gone = 0.35f;
         rast.setMaterials (mats);
     }
     wallLook = wm.kind;
@@ -2337,6 +2341,15 @@ void WalkView::buildScene (float phys)
     {
         for (auto& rp : ripples) rp.age = juce::jmin (1.0f, rp.age + lookDt / 1.6f);
         look.ripples = ripples;
+        if (testStep == 12)
+        {
+            // (the test of the look: everything the renderer does with it at once)
+            const float ya = juce::degreesToRadians (yaw);
+            look.tint[0] = 1.12f; look.tint[1] = 0.9f; look.tint[2] = 0.7f;
+            look.wear = 1.0f; look.cell = 0.3f; look.rippleAmt = 1.0f;
+            look.ripples = {};
+            look.ripples[0] = { eye + V3 { -std::sin (ya) * 4.0f, std::cos (ya) * 4.0f, -1.0f }, 0.3f, 1.0f };
+        }
         rast.setLook (look);
         lamps.clear();
         const float pl = lk.pipeLight;
@@ -2365,11 +2378,12 @@ void WalkView::buildScene (float phys)
             if (sum > cap)
                 for (auto& l : lamps) l.power *= cap / sum;
         }
-        if (testStep == 11)
+        if (testStep == 11 || testStep == 12)
         {
-            // (the test of the light off: one lamp three metres ahead, a little above the eyes)
+            // (the test of the light off: one lamp three metres ahead, a little above the eyes; the look's: a coloured one)
             const float ya = juce::degreesToRadians (yaw);
             lamps.push_back ({ eye + V3 { -std::sin (ya) * 3.0f, std::cos (ya) * 3.0f, 0.3f }, 1.5f, 3.0f });
+            if (testStep == 12) { lamps.back().r = 1.0f; lamps.back().g = 0.4f; lamps.back().b = 0.2f; }
         }
         rast.setLamps (lamps, dark ? kDarkRest : 1.0f);
     }
@@ -2411,8 +2425,8 @@ void WalkView::buildScene (float phys)
             // (test) the same frame from the processor, to be compared with what the card draws
             rast.finish();
             gpuFrame.compareWith = rast.image().createCopy();
-            static const char* const stepNames[] { "0_scene", "1_stone", "2_plaster", "3_wood", "4_glass", "5_curtain", "6_mirror", "7_slabs", "8_boards", "9_carpet", "10_model", "11_dark" };
-            gpuFrame.compareDir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("gpu-test").getChildFile (stepNames[juce::jlimit (0, 11, testStep)]);
+            static const char* const stepNames[] { "0_scene", "1_stone", "2_plaster", "3_wood", "4_glass", "5_curtain", "6_mirror", "7_slabs", "8_boards", "9_carpet", "10_model", "11_dark", "12_look" };
+            gpuFrame.compareDir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("gpu-test").getChildFile (stepNames[juce::jlimit (0, 12, testStep)]);
         }
         else
             rast.finishDepth();
