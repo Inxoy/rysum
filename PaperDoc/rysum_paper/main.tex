@@ -740,7 +740,7 @@ only gain entries at the end, because projects and patches store indices. Patche
 with the extension \fn{.rysum} in \fn{Documents/Rysum/Patches}. A patch contains everything that makes
 the sound -- stops, all sliders, pipe layouts and positions, muted pipes, modulation routings, drawn
 paths, Scala files and the path of a loaded impulse response -- but not the output format, the headphone
-settings or the samples folder, which belong to the session. A factory set (version~17, 175 patches,
+settings or the samples folder, which belong to the session. A factory set (version~19, 189 patches,
 Appendix~\ref{app:patches}) is written on first start; deleted factory patches stay deleted until a
 newer set is shipped. The room model of the 3D view belongs to the project, not to patches, with one exception: a patch saved
 while one of the six built-in rooms is loaded remembers that room and whether the light is off, and loading it loads the room
@@ -3352,6 +3352,32 @@ tuning, 157--158 the Tonnetz walker, 159 several of them together.}
 played with the hands (the mod wheel on speed, force, scenes or where one stands, velocity and pressure on the pipes, the pitch wheel $\pm2$
 semitones).}
 \label{tab:patches4}
+\end{table}
+
+\begin{table}[ht]
+\centering\footnotesize
+\begin{tabularx}{\linewidth}{@{}r>{\raggedright\arraybackslash}p{0.36\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+176 & Leuchtturm-Trompete & a narrow brass beam sweeps the hall; the mod wheel turns it faster, pressure narrows it \\
+177 & Rotor – Choral und Tremolo & figure-of-eight pipes turning, the two stops opposite ways; the mod wheel from chorale to tremolo \\
+178 & Aufblühen – Vom Punkt zum Raum & every note starts as a point and blooms over four seconds until it fills the room \\
+179 & Zur Wand gewandt – Umdrehen & the pipes face the back wall and are heard only from the walls; the mod wheel turns them round \\
+180 & Suchscheinwerfer & Mixtur and 2′ as searchlights, each sweeping on its own; pressure widens the beams \\
+181 & Drehende Glocken & bells that spin while they ring out, each its own way round, faster the harder they are struck \\
+182 & Tür zur Kathedrale & a small side chapel; the mod wheel opens a door to the cathedral of Saal 2 \\
+183 & Jeder Akkord stößt die Tür auf & every chord pushes the door to the cathedral open, and it swings slowly shut \\
+184 & Raumtastatur auf Kanal 2 & channel 1 plays, channel 2 calls the pipes to places and takes walls, floor and ceiling away \\
+185 & Unreine Terzen zerfließen & equal temperament measured as ratio: the fifths stay points, the thirds smear into the room \\
+186 & Pythagoreisch – Der Wolf dreht sich & pure fifths stand still, the wide thirds spin, the wolf whirls \\
+187 & Mittelton – Ferne Tonarten & meantone: the good keys sound near and calm, far keys from far away, turning with their beats \\
+188 & Ausdrucksorgel (MPE) & every finger its own pipe: pressure louder and brighter, slide turns its beam to the listener \\
+189 & Wirbel (Modrad) & the mod wheel turns the organ from a still bundle into a spinning cloud that fills the room \\
+\bottomrule
+\end{tabularx}
+\caption{Factory patches of set 19 (176--189): how the pipes radiate (\ui{Ausdehnung}, \ui{Abstrahlung}, \ui{Ausrichtung},
+\ui{Drehung}), doors between the Säle, the room keyboard and the source \ui{Schwebung} as a ratio. All are played with the hands;
+the spatial ones are heard best with an Ambisonics or binaural output (the omnidirectional channel hardly changes).}
+\label{tab:patches5}
 \end{table}
 
 \section{Building and installing}

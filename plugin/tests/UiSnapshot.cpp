@@ -2170,7 +2170,7 @@ public:
             for (auto &f : quick ? juce::Array<juce::File>() : RysumProcessor::getPatchFiles())
             {
                 const int num = f.getFileNameWithoutExtension().getIntValue();
-                if (num < 118 || num > 133)
+                if ((num < 118 || num > 133) && num < 176)
                     continue;
                 auto play = [&](int vel, int wheel, int bend, double &level, double &bright,
                                 juce::AudioBuffer<float> *keep)

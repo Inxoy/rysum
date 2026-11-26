@@ -5401,7 +5401,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 18;
+    constexpr int kFactoryVersion = 19;
     const auto marker = folder.getChildFile(".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion)
@@ -8367,6 +8367,291 @@ void RysumProcessor::writeFactoryPatches()
               {srcVelocity, pipe(tgtLevel), 0.3f},
               {srcPitchWheel, pipe(tgtPitch), bend2}},
              turm, 1);
+    }
+
+    // ---- set 19 (factory version 19): how the pipes radiate (extent, pattern, facing, spin), doors between the
+    // Saele, the room keyboard, the beat source as a ratio - played with the hands
+    currentSet = 19;
+    {
+        const float bend2 = 1.0f / 6.0f;
+        const int beatMo = (int)Motion::Beat;
+        auto span = [&](const char *id, float from, float to)
+        {
+            auto *prm = apvts.getParameter(id);
+            return prm == nullptr ? 0.0f : prm->convertTo0to1(to) - prm->convertTo0to1(from);
+        };
+        // a beam of brass sweeps the hall like a lighthouse; the mod wheel turns it faster,
+        // pressure narrows the beam
+        make(u8("176 Leuchtturm-Trompete"),
+             {{"stop6", 1},
+              {"simOn", 1},
+              {"master", -19.0f},
+              {"simW", 16.0f},
+              {"simL", 30.0f},
+              {"simH", 12.0f},
+              {"pipeDirPat6", 0.75f},
+              {"pipeSpin6", 0.2f}},
+             {{srcModWheel, pipe(tgtSpin), 0.5f},
+              {srcPressure, pipe(tgtDirPat), 0.25f},
+              {srcVelocity, pipe(tgtAttSharp), 0.6f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // every pipe a rotor horn with two lobes: slow chorale, the mod wheel throws it into
+        // tremolo (the lower stop turns the other way)
+        make(u8("177 Rotor \xe2\x80\x93 Choral und Tremolo"),
+             {{"stop1", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -16.0f},
+              {"pipeDirPat1", 1.0f},
+              {"pipeDirPat2", 1.0f},
+              {"pipeSpin1", 0.6f},
+              {"pipeSpin2", -0.7f},
+              {"lfo1Rate", 0.3f},
+              {"lfo1Spread", 1.0f},
+              {"lfo1SpreadMode", 1}},
+             {{srcModWheel, pipe(tgtSpin), 1.0f},
+              {srcLfo1, pipe(tgtSpin), 0.04f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPressure, pipe(tgtBright), 0.35f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // every note starts as a point and blooms until it fills the room; the mod wheel holds
+        // them all open
+        make(u8("178 Aufbl\xc3\xbchen \xe2\x80\x93 Vom Punkt zum Raum"),
+             {{"stop7", 1},
+              {"stop0", 1},
+              {"simOn", 1},
+              {"master", -22.0f},
+              {"env1Attack", 4.0f},
+              {"env1Decay", 2.0f},
+              {"env1Sustain", 1.0f},
+              {"env1Release", 3.0f}},
+             {{srcEnv1, pipe(tgtWidth), 1.0f},
+              {srcEnv1, pipe(tgtBright), 0.25f},
+              {srcModWheel, pipe(tgtWidth), 1.0f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the pipes face the back wall: you hear the organ only from the walls - the mod wheel
+        // turns them round to you
+        make(u8("179 Zur Wand gewandt \xe2\x80\x93 Umdrehen (Modrad)"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -14.0f},
+              {"simW", 12.0f},
+              {"simL", 20.0f},
+              {"simH", 9.0f},
+              {"pipeDirPat0", 0.8f},
+              {"pipeDirPat1", 0.8f},
+              {"pipeDirPat3", 0.8f},
+              {"pipeFace0", 180.0f},
+              {"pipeFace1", 180.0f},
+              {"pipeFace3", 180.0f}},
+             {{srcModWheel, pipe(tgtFacing), 1.0f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPressure, pipe(tgtBright), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the Mixtur's pipes as searchlights, each sweeping on its own; pressure widens the beams
+        make(u8("180 Suchscheinwerfer"),
+             {{"stop5", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -19.0f},
+              {"simW", 18.0f},
+              {"simL", 34.0f},
+              {"simH", 14.0f},
+              {"pipeDirPat5", 0.9f},
+              {"pipeDirPat3", 0.9f},
+              {"lfo2Rate", 0.18f},
+              {"lfo2Spread", 1.0f},
+              {"lfo2SpreadMode", 1},
+              {"lfo3Shape", (float)shSmooth},
+              {"lfo3Rate", 0.11f},
+              {"lfo3Spread", 1.0f},
+              {"lfo3SpreadMode", 1}},
+             {{srcLfo2, pipe(tgtFacing), 0.6f},
+              {srcLfo3, pipe(tgtEl), 0.12f},
+              {srcModWheel, "lfo2Rate", span("lfo2Rate", 0.18f, 1.2f)},
+              {srcPressure, pipe(tgtDirPat), -0.6f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // bells that spin as they ring out, every one its own way round; harder = faster
+        make(u8("181 Drehende Glocken"),
+             {{"stop4", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -20.0f},
+              {"pipeDirPat4", 0.6f},
+              {"pipeDirPat3", 0.6f},
+              {"pipeWidth4", 0.15f},
+              {"env1Attack", 0.005f},
+              {"env1Decay", 3.0f},
+              {"env1Sustain", 0.0f},
+              {"env1Release", 1.5f}},
+             {{srcEnv1, pipe(tgtLevel), 0.5f},
+              {srcRandom, pipe(tgtSpin), 0.35f},
+              {srcVelocity, pipe(tgtSpin), 0.25f},
+              {srcVelocity, pipe(tgtAttSharp), 0.7f},
+              {srcModWheel, pipe(tgtWidth), 0.8f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // a small side chapel with a door to the cathedral (Saal 2): the mod wheel opens it
+        make(u8("182 T\xc3\xbcr zur Kathedrale (Modrad)"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -20.0f},
+              {"simW", 7.0f},
+              {"simL", 10.0f},
+              {"simH", 5.0f},
+              {"simAbs", 0.25f},
+              {"simDoorTo", 2},
+              {"simDoorWall", 2},
+              {"simDoorOpen", 0.0f}},
+             {{srcModWheel, "simDoorOpen", 1.0f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPressure, pipe(tgtBright), 0.35f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // every chord pushes the door to the cathedral open; it swings slowly shut behind it
+        make(u8("183 Jeder Akkord st\xc3\xb6\xc3\x9ft die T\xc3\xbcr auf"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop5", 1},
+              {"simOn", 1},
+              {"master", -24.0f},
+              {"simW", 6.0f},
+              {"simL", 9.0f},
+              {"simH", 5.0f},
+              {"simAbs", 0.3f},
+              {"simDoorTo", 2},
+              {"simDoorWall", 2},
+              {"simDoorOpen", 0.0f},
+              {"env1Mode", 1},
+              {"env1Attack", 0.08f},
+              {"env1Decay", 5.0f},
+              {"env1Sustain", 0.0f},
+              {"env1Release", 5.0f}},
+             {{srcEnv1, "simDoorOpen", 1.0f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcModWheel, "simDoorOpen", 1.0f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // channel 1 plays, channel 2 is the room: its notes call the pipes to places (C4 up:
+        // round the clock, higher octaves higher up) and take walls away (C3-B3), floor and
+        // ceiling (C2-B2)
+        make(u8("184 Raumtastatur auf Kanal 2"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop6", 1},
+              {"simOn", 1},
+              {"master", -16.0f},
+              {"simW", 14.0f},
+              {"simL", 24.0f},
+              {"simH", 10.0f},
+              {"simKbCh", 2},
+              {"simKbGlide", 1.2f},
+              {"pipeDirPat6", 0.5f}},
+             {{srcRoomKeys, pipe(tgtWidth), 0.4f},
+              {srcRoomKeys, pipe(tgtSend), -0.3f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcModWheel, "simKbGlide", span("simKbGlide", 1.2f, 0.1f)},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // equal temperament, measured as ratio: pure fifths stay a point, the thirds smear
+        // into the room (the mod wheel: more)
+        make(u8("185 Unreine Terzen zerflie\xc3\x9f" "en"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -21.0f},
+              {"temperament", 6},
+              {"fxBeatMode", 1},
+              {"fxBeatInstant", 1}},
+             {{srcBeat, pipe(tgtWidth), 0.7f},
+              {srcBeat, pipe(tgtBright), -0.2f},
+              {srcModWheel, pipe(tgtWidth), 0.5f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // Pythagorean: the fifths are pure and stand still, the wide thirds spin, the wolf
+        // whirls
+        make(u8("186 Pythagoreisch \xe2\x80\x93 Der Wolf dreht sich"),
+             {{"stop0", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -11.0f},
+              {"temperament", 5},
+              {"fxBeatMode", 1},
+              {"pipeDirPat0", 0.7f},
+              {"pipeDirPat3", 0.7f}},
+             {{srcBeat, pipe(tgtSpin), 0.6f},
+              {srcBeat, pipe(tgtDist), 0.15f},
+              {srcModWheel, pipe(tgtSpin), 0.3f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // meantone: play in the good keys and the room is calm and near; far keys sound from
+        // far away and turn with their beats
+        make(u8("187 Mittelton \xe2\x80\x93 Ferne Tonarten"),
+             {{"stop1", 1},
+              {"stop2", 1},
+              {"stop4", 1},
+              {"simOn", 1},
+              {"master", -26.0f},
+              {"temperament", 1},
+              {"fxBeatMode", 1},
+              {"motion1", beatMo},
+              {"rate1", 0.06f},
+              {"motion2", beatMo},
+              {"rate2", -0.05f}},
+             {{srcBeat, pipe(tgtDist), 0.45f},
+              {srcBeat, pipe(tgtSend), 0.35f},
+              {srcBeat, pipe(tgtWidth), 0.5f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // for MPE (or polyphonic aftertouch): press = louder and brighter, slide = the pipe turns
+        // its beam towards you and away, velocity = the speech; every finger its own pipe
+        make(u8("188 Ausdrucksorgel (MPE)"),
+             {{"stop0", 1},
+              {"stop1", 1},
+              {"simOn", 1},
+              {"master", -11.0f},
+              {"pipeDirPat0", 0.7f},
+              {"pipeDirPat1", 0.7f},
+              {"pipeFace0", 120.0f},
+              {"pipeFace1", 120.0f}},
+             {{srcPressure, pipe(tgtLevel), 0.35f},
+              {srcPressure, pipe(tgtBright), 0.45f},
+              {srcPressure, pipe(tgtWidth), 0.3f},
+              {srcSlide, pipe(tgtFacing), -0.67f},
+              {srcVelocity, pipe(tgtAttack), 0.6f},
+              {srcVelocity, pipe(tgtAttSharp), 0.4f},
+              {srcModWheel, pipe(tgtSpin), 0.25f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the whole organ in one spinning bundle - the mod wheel goes from a still point to a
+        // whirling cloud that fills the room
+        make(u8("189 Wirbel (Modrad)"),
+             {{"stop7", 1},
+              {"stop0", 1},
+              {"stop2", 1},
+              {"stop5", 1},
+              {"simOn", 1},
+              {"master", -19.0f},
+              {"pipeDirPat7", 0.5f},
+              {"pipeDirPat0", 0.6f},
+              {"pipeDirPat2", 0.7f},
+              {"pipeDirPat5", 0.8f},
+              {"pipeSpin0", 0.05f},
+              {"pipeSpin2", -0.07f},
+              {"pipeSpin5", 0.09f},
+              {"lfo4Shape", (float)shSmooth},
+              {"lfo4Rate", 0.5f},
+              {"lfo4Spread", 1.0f},
+              {"lfo4SpreadMode", 1}},
+             {{srcModWheel, pipe(tgtSpin), 0.6f},
+              {srcModWheel, pipe(tgtWidth), 0.8f},
+              {srcModWheel, pipe(tgtAz), 0.3f},
+              {srcLfo4, pipe(tgtAz), 0.2f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPressure, pipe(tgtBright), 0.35f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
     }
 
     marker.replaceWithText(juce::String(kFactoryVersion));
