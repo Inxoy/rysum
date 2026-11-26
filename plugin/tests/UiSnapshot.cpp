@@ -799,6 +799,27 @@ public:
                     wv.setPitchForTest(8.0f);
                     run(4, {});
                     shot("walk_pipes_close.png");
+                    {
+                        // Ausrichtung: the pipes turn their mouths a quarter round (and back)
+                        const auto before = wv.createComponentSnapshot(wv.getLocalBounds());
+                        setReal("pipeFace1", 90.0f);
+                        setReal("pipeFace6", 90.0f);
+                        run(4, {});
+                        shot("walk_pipes_turned.png");
+                        const auto after = wv.createComponentSnapshot(wv.getLocalBounds());
+                        int changed = 0, n = 0;
+                        for (int y = 0; y < after.getHeight(); y += 2)
+                            for (int x = 0; x < after.getWidth(); x += 2, ++n)
+                                if (std::abs(after.getPixelAt(x, y).getBrightness() -
+                                             before.getPixelAt(x, y).getBrightness()) > 0.05f)
+                                    ++changed;
+                        setReal("pipeFace1", 0.0f);
+                        setReal("pipeFace6", 0.0f);
+                        run(4, {});
+                        say("Ausrichtung turns the pipes in the 3D Saal: " +
+                                juce::String(100.0 * changed / juce::jmax(1, n), 1) + " % of the picture changes",
+                            changed > n / 200);
+                    }
                     setReal(RysumProcessor::stopParamId(1), 0.0f); run(4, {}); wv.setPoseForTest(-1.0f, 1.0f, 20.0f); wv.setPitchForTest(48.0f);
                     run(4, {});
                     shot("walk_pipes_close2.png");

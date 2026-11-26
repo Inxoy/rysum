@@ -4812,6 +4812,43 @@ int main(int argc, char **argv)
                           std::abs(r60 - 0.471f) < 0.02f && third < 0.05f,
                       "Schwebung as ratio: the same in every octave (cents from pure), 0 for a pure third");
             }
+            {
+                // the 3D Saal turns the pipes as they radiate: a silent pipe turns at its stop's
+                // speed from its Ausrichtung, a note goes on from where the pipe stands
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = true;
+                p.outputMode = 1;
+                p.stopFace[0] = 30.0f;
+                p.stopSpin[0] = 0.5f; // half a turn a second
+                juce::AudioBuffer<float> b(4, B);
+                const int key = rysum::keyIndexForMidi(60);
+                auto runFor = [&](double secs, bool noteAtStart)
+                {
+                    for (int pos = 0; pos < (int)(secs * fsr); pos += B)
+                    {
+                        juce::MidiBuffer mb;
+                        if (noteAtStart && pos == 0)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
+                        e.process(b, mb, p);
+                    }
+                };
+                runFor(0.5, false);
+                const float silent = e.facingShown(0, key); // 30 + 90
+                runFor(0.5, true);
+                const float playing = e.facingShown(0, key); // 30 + 180, on from where it stood
+                p.stopSpin[0] = 0.0f;
+                runFor(0.2, false);
+                const float still = e.facingShown(0, key);
+                auto near = [](float a, float b) { return std::abs(std::remainder(a - b, 360.0f)) < 6.0f; };
+                std::cout << "3D Saal: a pipe faces " << silent << " deg silent, " << playing
+                          << " deg sounding, " << still << " deg stopped (30 + 90, 30 + 180)" << std::endl;
+                check(near(silent, 120.0f) && near(playing, 210.0f) && near(still, playing),
+                      "3D Saal: the pipes turn with Ausrichtung and Drehung, a note goes on from where the pipe stands");
+            }
         }
         if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
         {

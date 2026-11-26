@@ -2076,7 +2076,8 @@ void WalkView::buildScene (float phys)
             Vec3f bodyNow;
             const float bob = proc.engine.bodyAt (s, k, bodyNow) ? 0.0f : 0.06f * (float) std::sin (now * 0.7 + (double) (s * 41 + k) * 1.37);
             const V3 bottom { c.x, c.y, c.z - 0.5f * len + bob };
-            const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x);       // the mouth towards the listener's place
+            // the mouth towards the listener's place, turned by the pipe's Ausrichtung and Drehung (counter-clockwise from above)
+            const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x) + juce::degreesToRadians (proc.engine.facingShown (s, k));
             addPipe (bottom, len, rad, face, metalTone, dark ? gl + 0.025f : gl, s);    // (light off: the barest shimmer of their own)
             shown[(size_t) s][(size_t) k] = { { c.x, c.y, c.z + bob }, len, rad, true };
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });

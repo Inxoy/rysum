@@ -491,6 +491,14 @@ public:
     {
         return juce::jlimit(0.0f, 1.0f, windNow[(size_t)stop][(size_t)key].load(std::memory_order_relaxed));
     }
+    /** where a pipe's mouth faces right now, degrees counter-clockwise (seen from above) from the
+        direction towards the listener: its stop's Ausrichtung, its modulation and its own turning
+        (Drehung) - the 3D Saal turns the pipe by it */
+    float facingShown(int stop, int key) const noexcept
+    {
+        return faceNow[(size_t)stop][(size_t)key].load(std::memory_order_relaxed);
+    }
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> faceNow{};
 
     // ---- "Lebendige Orgel", for the display and the project state
     std::atomic<float> bellowsNow{1.0f},
@@ -880,7 +888,7 @@ private:
         // reflections; how far it has turned (Drehung); the part of its direct sound that goes to
         // the diffuse field (Ausdehnung), start / end of the block
         float erFace = 0.0f, erPat = 0.0f;
-        double facePhase = 0.0;
+        double facePhase = 0.0; // (taken from the pipe's own turn when the note starts)
         float dif0 = 0.0f, dif1 = 0.0f;
         float widNow = 0.0f, dirNow = 1.0f; // Ausdehnung now, the direct sound's share of the pattern
         // the room keyboard: the direction it is pulled to (unit vector, smoothed) and how far
@@ -1104,6 +1112,11 @@ private:
     // where it stood when each key and the last key were pressed
     double noteClock = 0.0, lastKeyClock = -1.0e9;
     std::array<double, kNumKeys> keyClock{};
+    // every pipe's own turn (Drehung), degrees: it goes on between its notes, so a pipe starts
+    // where it stood (and the 3D Saal shows it turning); a sounding voice carries it on, else it
+    // turns at its stop's speed. faceVoice: a voice carried it in the last slice
+    std::array<std::array<double, kNumKeys>, kNumStops> pipeTurn{};
+    std::array<std::array<uint8_t, kNumKeys>, kNumStops> faceVoice{};
     double noteBeatsOf(int key, const EngineParams &p) const noexcept
     {
         return p.noteClock - keyClock[(size_t)juce::jlimit(0, kNumKeys - 1, key)];

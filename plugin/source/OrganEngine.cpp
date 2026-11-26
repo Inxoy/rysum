@@ -1043,8 +1043,15 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
         const float pat = juce::jlimit(0.0f, 1.0f, p.stopDirPat[st] + pm[tgtDirPat]);
         const float spin = p.stopSpin[st] + 4.0f * pm[tgtSpin];
         v.facePhase =
-            v.fresh ? 0.0 : std::fmod(v.facePhase + 360.0 * (double)spin * blockSeconds, 360.0);
+            v.fresh ? v.facePhase : std::fmod(v.facePhase + 360.0 * (double)spin * blockSeconds, 360.0);
         v.erFace = p.stopFace[st] + 180.0f * pm[tgtFacing] + (float)v.facePhase;
+        {
+            // (the pipe keeps the turn; the 3D Saal shows it)
+            const auto kk = (size_t)juce::jlimit(0, kNumKeys - 1, v.key);
+            pipeTurn[st][kk] = v.facePhase;
+            faceVoice[st][kk] = 1;
+            faceNow[st][kk].store(v.erFace, std::memory_order_relaxed);
+        }
         v.erPat = pat;
         v.dirNow = pat > 1.0e-4f ? (1.0f - pat) + pat * std::cos(juce::degreesToRadians(dpos.el)) *
                                                       std::cos(juce::degreesToRadians(v.erFace))
@@ -1356,7 +1363,7 @@ void OrganEngine::startVoice(int stop, int key, int previewSamples, int noteId)
     v->cloudAcc = 0.0;
     v->cloudDry = 1.0f;
     v->dif0 = v->dif1 = 0.0f;
-    v->facePhase = 0.0;
+    v->facePhase = pipeTurn[(size_t)stop][(size_t)juce::jlimit(0, kNumKeys - 1, key)];
     v->widNow = 0.0f;
     v->dirNow = 1.0f;
     v->pmx.fill(0.0f);
@@ -6002,6 +6009,20 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
         }
         if (std::abs(ph) > 1.0e7)
             ph = std::fmod(ph, 1000.0);
+        // the silent pipes turn on at their stop's speed (Drehung), facing its Ausrichtung
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            auto &fv = faceVoice[(size_t)s][(size_t)k];
+            auto &tu = pipeTurn[(size_t)s][(size_t)k];
+            if (fv != 0)
+            {
+                fv = 0; // (a voice turned it in the last slice)
+                continue;
+            }
+            if (p.stopSpin[(size_t)s] != 0.0f)
+                tu = std::fmod(tu + 360.0 * (double)p.stopSpin[(size_t)s] * blockSeconds, 360.0);
+            faceNow[(size_t)s][(size_t)k].store(p.stopFace[(size_t)s] + (float)tu, std::memory_order_relaxed);
+        }
         // hard jumps need the phase at every sample of this block: start and end (a relocation = no
         // movement)
         phasePrev[(size_t)s] = motionPhase[(size_t)s].load();
