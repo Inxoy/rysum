@@ -2716,6 +2716,17 @@ void WalkView::buildScene (float phys)
         rast.setLamps (lamps, dark ? kDarkRest : 1.0f);
     }
     updateAir (r, params, glows);
+    {
+        // "Schaerfentiefe": sharp is what you look at - the pipe under the cross, else what lies in the middle of the
+        // view (as the last frame had it); the focus follows in a quarter of a second
+        float want = focusNow;
+        if (aimStop >= 0 && aimKey >= 0 && shown[(size_t) aimStop][(size_t) aimKey].on)
+            want = rast.viewDepth (shown[(size_t) aimStop][(size_t) aimKey].c);
+        else if (const float dc = rast.depthAt (rast.width() / 2, rast.height() / 2); dc > 0.0f)
+            want = dc;
+        focusNow += (juce::jlimit (0.3f, 200.0f, want) - focusNow) * (1.0f - std::exp (-lookDt / 0.25f));
+        rast.setFocus (focusNow, compareNow ? (testStep == 12 ? 1.0f : 0.0f) : lk.focus);
+    }
     if (panoCapturing)
     {
         // the 360° frame: its triangles, materials, light and glows to the renderer's thread
@@ -2747,6 +2758,8 @@ void WalkView::buildScene (float phys)
         gpuFrame.lamps = rast.lampsInView();
         rast.exportGpu (gpuFrame.verts, gpuFrame.mats);
         rast.lookForGpu (gpuFrame.tint, gpuFrame.look, gpuFrame.ripples.data());
+        gpuFrame.focus[0] = 1.0f / juce::jmax (0.2f, focusNow);
+        gpuFrame.focus[1] = compareNow ? (testStep == 12 ? 1.0f : 0.0f) : lk.focus;
         gpuFrame.fogTone = rast.fogToneNow(); gpuFrame.fogInv = rast.fogInvNow();
         gpuFrame.grain = grainAmt; gpuFrame.frameNo = frame;
         if (compareNow)
@@ -2758,7 +2771,12 @@ void WalkView::buildScene (float phys)
             gpuFrame.compareDir = RysumProcessor::getPatchFolder().getParentDirectory().getChildFile ("gpu-test").getChildFile (stepNames[juce::jlimit (0, 12, testStep)]);
         }
         else
+        {
             rast.finishDepth();
+            // (a comparison frame the card had not drawn yet comes back here when the next frame takes its place:
+            //  it must not ride along with this one, which has grain)
+            gpuFrame.compareWith = {};
+        }
         // the glow of the sounding pipes (where no wall hides them) and, with a model, the outline of the room
         // the sound is computed in: drawn by the card as well
         gpuFrame.glows.clear();

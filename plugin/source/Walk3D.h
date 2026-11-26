@@ -137,6 +137,10 @@ public:
     void setMaterials (const std::array<Material, 32>& m) noexcept { mats = m; }
     float grainNow() const noexcept { return grain; }
 
+    /** "Schaerfentiefe": sharp at this distance (m), the rest blurred the more the further from it (0 = off) */
+    void setFocus (float distance, float amount) noexcept { focusInv = 1.0f / juce::jmax (0.2f, distance); focusAmt = amount; }
+    /** the blur's widest radius, pixels per pixel of width */
+    static constexpr float kDofMaxR = 0.012f;
     /** rasterises and shades everything, writes the image */
     void finish();
     /** only the depths (for depthAt): when the graphics card draws the picture */
@@ -178,6 +182,9 @@ private:
     void emitClipped (const VV* v, int n, int slot, float tone, const float* nrm);
     void rasterBand (int band);
     void shadeBand (int band);
+    void dofBand (int band);
+    float focusInv = 0.0f, focusAmt = 0.0f;
+    std::vector<uint32_t> pixDof;
     void runParallel (int jobs, const std::function<void (int)>& fn);
 
     int w = 0, h = 0;

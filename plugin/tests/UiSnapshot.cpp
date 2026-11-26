@@ -383,6 +383,30 @@ public:
                 setReal(RysumProcessor::motionParamId(0), 0.0f);
                 run(30, {});
             }
+            {
+                // depth of field: looking at the near wall the pipes far off blur
+                wv.setPoseForTest(0.0f, -2.0f, 0.0f);
+                wv.setPitchForTest(-8.0f);
+                run(4, {});
+                const auto sharp = snap();
+                setReal("lookFocus", 1.0f);
+                for (int f = 0; f < 30; ++f)
+                    snap(); // (the focus follows over a quarter of a second)
+                const auto soft = snap();
+                shot("walk_look_lookFocus.png");
+                // (blur lowers the contrast between neighbouring pixels)
+                auto edges = [](const juce::Image &a)
+                {
+                    double s = 0;
+                    for (int y = 100; y < a.getHeight() - 100; y += 2)
+                        for (int x = 1; x < a.getWidth(); x += 2)
+                            s += std::abs(a.getPixelAt(x, y).getBrightness() - a.getPixelAt(x - 1, y).getBrightness());
+                    return s;
+                };
+                const double e0 = edges(sharp), e1 = edges(soft);
+                say("Schaerfentiefe: the picture's fine contrast " + juce::String(e0, 0) + " -> " + juce::String(e1, 0), e1 < e0 * 0.92);
+                setReal("lookFocus", 0.0f);
+            }
             if (std::getenv("RYSUM_ONLY_LOOK") != nullptr)
             {
                 wv.setLookAndFeel(nullptr);

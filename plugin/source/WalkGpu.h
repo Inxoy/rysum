@@ -24,6 +24,7 @@ struct GpuFrame
     std::vector<float> lamps;
     // the look (Raster::lookForGpu): the tint as the change from 1, wear / piece size / ripple amount / count, ripples
     float tint[3] {}, look[4] {};
+    float focus[2] {};                           // depth of field: 1 / the sharp distance, amount (0 = off)
     std::array<float, 20> ripples {};
     // over the picture: the glow of the sounding pipes (per vertex x, y, u, v, strength: six vertices a glow),
     // and lines (the outline of the room behind a model; per vertex x, y)
@@ -83,7 +84,12 @@ private:
     std::unique_ptr<juce::OpenGLShaderProgram> program, overProgram;
     unsigned int vao = 0, vbo = 0, overVao = 0, overVbo = 0;
     int uMat = -1, uFog = -1, uView = -1, uFrame = -1, uOverMode = -1, uDark = -1, uLamp = -1, uLampR = -1, uLampN = -1;
-    int uLampC = -1, uTint = -1, uLook = -1, uRip = -1, uRipS = -1;
+    int uLampC = -1, uTint = -1, uLook = -1, uRip = -1, uRipS = -1, uFocus = -1;
+    std::unique_ptr<juce::OpenGLShaderProgram> dofProgram;
+    int uDofImg = -1, uDofSize = -1, uDofMaxR = -1;
+    unsigned int fbo = 0, fboTex = 0, fboDepth = 0;
+    int fboW = 0, fboH = 0;
+    bool ensureFbo (int w, int h);
     void drawOver();
     juce::CriticalSection lock;
     GpuFrame pending, drawing;                   // (pending: under the lock)

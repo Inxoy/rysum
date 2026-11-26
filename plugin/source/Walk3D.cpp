@@ -820,6 +820,39 @@ void Raster::shadeBand (int band)
     }
 }
 
+void Raster::dofBand (int band)
+{
+    const int y0 = band * kBandRows, y1 = juce::jmin (h - 1, y0 + kBandRows - 1);
+    const float maxR = kDofMaxR * (float) w, k = focusAmt * 0.06f * focal;
+    // (how far out of focus, in pixels: from the depth; quantised as the card keeps it, in 8 bits of alpha)
+    auto coc = [&] (size_t i)
+    {
+        const float iz = juce::jmax (0.0f, zbuf[i]);
+        const float a = juce::jlimit (0.0f, 1.0f, k * std::abs (iz - focusInv) / maxR);
+        return std::floor (a * 255.0f + 0.5f) / 255.0f * maxR;
+    };
+    for (int y = y0; y <= y1; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            const size_t c = (size_t) y * (size_t) w + (size_t) x;
+            const float r = coc (c);
+            if (r < 0.5f) { pixDof[c] = pix[c]; continue; }
+            const uint32_t p0 = pix[c];
+            float sr = (float) ((p0 >> 16) & 255u), sg = (float) ((p0 >> 8) & 255u), sb = (float) (p0 & 255u), ws = 1.0f;
+            for (int i = 0; i < 16; ++i)
+            {
+                const float ang = (float) i * 2.39996323f, rr = std::sqrt (((float) i + 0.5f) / 16.0f) * r;
+                const int qx = juce::jlimit (0, w - 1, x + (int) std::floor (std::cos (ang) * rr + 0.5f));
+                const int qy = juce::jlimit (0, h - 1, y - (int) std::floor (std::sin (ang) * rr + 0.5f));
+                const size_t q = (size_t) qy * (size_t) w + (size_t) qx;
+                const float wt = coc (q) >= rr * 0.5f ? 1.0f : 0.25f;      // (a sharp thing in front does not smear over the blur)
+                const uint32_t pq = pix[q];
+                sr += wt * (float) ((pq >> 16) & 255u); sg += wt * (float) ((pq >> 8) & 255u); sb += wt * (float) (pq & 255u); ws += wt;
+            }
+            pixDof[c] = 0xff000000u | ((uint32_t) (sr / ws + 0.5f) << 16) | ((uint32_t) (sg / ws + 0.5f) << 8) | (uint32_t) (sb / ws + 0.5f);
+        }
+}
+
 void Raster::finishDepth()
 {
     const int bands = (int) bins.size();
@@ -865,6 +898,14 @@ void Raster::finish()
     const std::function<void (int)> both = [this] (int b) { rasterBand (b); shadeBand (b); };
     const double tA = juce::Time::getMillisecondCounterHiRes();
     runParallel (bands, both);
+    if (focusAmt > 0.0f)
+    {
+        // depth of field: every pixel gathers from a disc as wide as it is out of focus (the card does the same)
+        pixDof.resize (pix.size());
+        const std::function<void (int)> dof = [this] (int b) { dofBand (b); };
+        runParallel (bands, dof);
+        std::swap (pix, pixDof);
+    }
     rasterMs = (float) (juce::Time::getMillisecondCounterHiRes() - tA); shadeMs = 0.0f;
     juce::Image::BitmapData bd (img, juce::Image::BitmapData::writeOnly);
     for (int y = 0; y < h; ++y)

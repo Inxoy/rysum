@@ -54,6 +54,7 @@ uniform vec4 uFog;          // fog tone, 1 / fog distance, grain
 uniform vec2 uView;         // the picture's size in pixels
 uniform ivec2 uFrame;       // the grain's offset of this frame
 uniform vec4 uPano;         // a face of the 360 degree picture (1 / 0), the z of its right, up and forward
+uniform vec3 uFocus;        // depth of field: 1 / the sharp distance, amount, the widest blur (pixels); amount 0 = off
 out vec4 colour;
 
 float hash2 (int x, int y)
@@ -230,7 +231,46 @@ void main()
     float g2 = l * l * (3.0 - 2.0 * l) * 0.35 + l * 0.65;
     vec3 c = vec3 (13.0 + 222.0 * g2 + 6.0 * l * (1.0 - l), 13.0 + 219.0 * g2 + 2.0 * l * (1.0 - l), 12.0 + 214.0 * g2 - 5.0 * l * (1.0 - l))
              * (vec3 (1.0) + cl) * (vec3 (1.0) + uTint);
-    colour = vec4 (floor (clamp (c, 0.0, 255.0)) / 255.0, 1.0);
+    // (depth of field: how far out of focus, kept in the alpha for the pass after)
+    float coc = 1.0;
+    if (uFocus.y > 0.0)
+    {
+        float iz = vSlot < -0.5 ? 0.0 : max (0.0, vIz);
+        coc = clamp (uFocus.y * 0.06 * uDark.z * uView.x * abs (iz - uFocus.x) / uFocus.z, 0.0, 1.0);
+    }
+    colour = vec4 (floor (clamp (c, 0.0, 255.0)) / 255.0, coc);
+}
+)";
+// depth of field: every pixel gathers from a disc as wide as it is out of focus (Raster::dofBand, the same)
+const char* const kDofVertex = R"(#version 150
+in vec2 aPos;
+void main() { gl_Position = vec4 (aPos, 0.0, 1.0); }
+)";
+const char* const kDofFragment = R"(#version 150
+uniform sampler2D uImg;
+uniform vec2 uSize;
+uniform float uMaxR;
+out vec4 colour;
+float cocAt (vec4 s) { return floor (s.a * 255.0 + 0.5) / 255.0 * uMaxR; }
+void main()
+{
+    ivec2 p = ivec2 (gl_FragCoord.xy);
+    vec4 c0 = texelFetch (uImg, p, 0);
+    float r = cocAt (c0);
+    if (r < 0.5) { colour = vec4 (c0.rgb, 1.0); return; }
+    vec3 sum = c0.rgb * 255.0;
+    float ws = 1.0;
+    ivec2 hi = ivec2 (uSize) - 1;
+    for (int i = 0; i < 16; ++i)
+    {
+        float ang = float (i) * 2.39996323, rr = sqrt ((float (i) + 0.5) / 16.0) * r;
+        ivec2 q = clamp (p + ivec2 (int (floor (cos (ang) * rr + 0.5)), int (floor (sin (ang) * rr + 0.5))), ivec2 (0), hi);
+        vec4 s = texelFetch (uImg, q, 0);
+        float wt = cocAt (s) >= rr * 0.5 ? 1.0 : 0.25;
+        sum += wt * floor (s.rgb * 255.0 + 0.5);
+        ws += wt;
+    }
+    colour = vec4 (floor (sum / ws + 0.5) / 255.0, 1.0);
 }
 )";
 // what lies over the picture: a glow (the same soft light as the sprite the processor's picture uses), or a line
@@ -348,6 +388,18 @@ void GpuPicture::newOpenGLContextCreated()
     uLook = glGetUniformLocation (id, "uLook");
     uRip = glGetUniformLocation (id, "uRip");
     uRipS = glGetUniformLocation (id, "uRipS");
+    uFocus = glGetUniformLocation (id, "uFocus");
+    // (depth of field: without it the picture is still whole)
+    dofProgram = std::make_unique<juce::OpenGLShaderProgram> (context);
+    if (dofProgram->addVertexShader (kDofVertex) && dofProgram->addFragmentShader (kDofFragment))
+        glBindAttribLocation (dofProgram->getProgramID(), 0, "aPos");
+    if (dofProgram->link())
+    {
+        uDofImg = glGetUniformLocation (dofProgram->getProgramID(), "uImg");
+        uDofSize = glGetUniformLocation (dofProgram->getProgramID(), "uSize");
+        uDofMaxR = glGetUniformLocation (dofProgram->getProgramID(), "uMaxR");
+    }
+    else dofProgram.reset();
     glGenVertexArrays (1, &vao);
     glGenBuffers (1, &vbo);
     // (the glows and lines: without them the picture is still whole, so a failure here is no reason to give up)
@@ -382,8 +434,13 @@ void GpuPicture::openGLContextClosing()
     if (overVbo != 0) glDeleteBuffers (1, &overVbo);
     if (overVao != 0) glDeleteVertexArrays (1, &overVao);
     vbo = vao = overVbo = overVao = 0;
+    if (fboTex != 0) glDeleteTextures (1, &fboTex);
+    if (fboDepth != 0) glDeleteRenderbuffers (1, &fboDepth);
+    if (fbo != 0) glDeleteFramebuffers (1, &fbo);
+    fbo = fboTex = fboDepth = 0; fboW = fboH = 0;
     program.reset();
     overProgram.reset();
+    dofProgram.reset();
 }
 
 void GpuPicture::renderOpenGL()
@@ -404,6 +461,12 @@ void GpuPicture::renderOpenGL()
     glGetIntegerv (GL_VIEWPORT, vp);
     const int w = juce::jmax (1, vp[2]), h = juce::jmax (1, vp[3]);
 
+    // depth of field: the scene into a picture of its own first, then blurred onto the screen
+    GLint screenFbo = 0;
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &screenFbo);
+    const float maxR = Raster::kDofMaxR * (float) w;
+    const bool dof = drawing.focus[1] > 0.0f && dofProgram != nullptr && overVao != 0 && ensureFbo (w, h);
+    if (dof) glBindFramebuffer (GL_FRAMEBUFFER, fbo);
     glDisable (GL_BLEND);
     glDisable (GL_CULL_FACE);
     glDisable (GL_SCISSOR_TEST);
@@ -443,6 +506,7 @@ void GpuPicture::renderOpenGL()
         }
         glUniform4fv (uRip, 4, rp);
         glUniform1fv (uRipS, 4, rs);
+        glUniform3f (uFocus, drawing.focus[0], dof ? drawing.focus[1] : 0.0f, maxR);
     }
 
     glBindVertexArray (vao);
@@ -479,6 +543,27 @@ void GpuPicture::renderOpenGL()
     if (! drawing.verts.empty())
         glDrawArrays (GL_TRIANGLES, 6, (GLsizei) (drawing.verts.size() / (size_t) kFloats));
 
+    if (dof)
+    {
+        glBindFramebuffer (GL_FRAMEBUFFER, (GLuint) screenFbo);
+        glDisable (GL_DEPTH_TEST);
+        glDepthMask (GL_FALSE);
+        dofProgram->use();
+        glActiveTexture (GL_TEXTURE0);
+        glBindTexture (GL_TEXTURE_2D, fboTex);
+        glUniform1i (uDofImg, 0);
+        glUniform2f (uDofSize, (float) w, (float) h);
+        glUniform1f (uDofMaxR, maxR);
+        static const float quad[] { -1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1 };
+        glBindVertexArray (overVao);
+        glBindBuffer (GL_ARRAY_BUFFER, overVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) sizeof (quad), quad, GL_STREAM_DRAW);
+        glEnableVertexAttribArray (0);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, (GLsizei) (2 * sizeof (float)), (const void*) 0);
+        glDrawArrays (GL_TRIANGLES, 0, 6);
+        glBindTexture (GL_TEXTURE_2D, 0);
+        glDepthMask (GL_TRUE);
+    }
     if (drawing.compareWith.isValid())
     {
         compare (drawing, w, h);
@@ -550,6 +635,32 @@ void GpuPicture::drawOver()
     }
     glDisable (GL_BLEND);
     glDepthMask (GL_TRUE);
+}
+
+/** the picture of its own for the depth of field (made anew when the size changes) */
+bool GpuPicture::ensureFbo (int w, int h)
+{
+    if (fbo != 0 && fboW == w && fboH == h) return true;
+    if (fbo == 0) glGenFramebuffers (1, &fbo);
+    if (fboTex == 0) glGenTextures (1, &fboTex);
+    if (fboDepth == 0) glGenRenderbuffers (1, &fboDepth);
+    glBindTexture (GL_TEXTURE_2D, fboTex);
+    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture (GL_TEXTURE_2D, 0);
+    glBindRenderbuffer (GL_RENDERBUFFER, fboDepth);
+    glRenderbufferStorage (GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    glBindRenderbuffer (GL_RENDERBUFFER, 0);
+    GLint prev = 0;
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &prev);
+    glBindFramebuffer (GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fboTex, 0);
+    glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, fboDepth);
+    const bool ok = glCheckFramebufferStatus (GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer (GL_FRAMEBUFFER, (GLuint) prev);
+    fboW = ok ? w : 0; fboH = ok ? h : 0;
+    return ok;
 }
 
 /** test: the card's picture read back, saved beside the processor's picture of the same frame, and how far
