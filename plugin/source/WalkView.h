@@ -276,7 +276,23 @@ private:
     bool anyPinned() const noexcept { for (const auto& m : proc.engine.pinMask) if (m.load() != 0) return true; return false; }
     bool overlayBusy() const noexcept { return ! proc.walkLanterns.empty() || anyPinned() || whirlFx > 0.0 || earsAway || helpHeld || magnet != 0 || boxing || selectedCount() > 0; }
     // a frame in two parts: the picture (the room and the pipes as triangles), and what is drawn over it
-    struct Glow { V3 at; float amount, size; int stop = -1; };       // (stop: a sounding pipe's - its colour of light)
+    struct Glow { V3 at; float amount, size; int stop = -1; float px = 0.0f; };   // (stop: a sounding pipe's - its colour of light; px > 0: a mote of dust, so small)
+    // over the picture, in the view's pixels: soft bands of light (rays, trails) - a quad from the edge a0-a1 (colour ca)
+    // to the edge b0-b1 (colour cb)
+    struct Veil { juce::Point<float> a0, a1, b0, b1; juce::Colour ca, cb; };
+    std::vector<Veil> veils;
+    struct Beam { V3 a, b; float width, strength; juce::Colour colour; };
+    std::vector<Beam> beams;
+    struct Mote { V3 p, v; float seed; };
+    std::vector<Mote> motes;
+    int treadSeen = 0;
+    float meterPrev = 0.0f;
+    struct Trail { std::array<V3, 32> p {}; std::array<double, 32> t {}; int n = 0, head = 0; double last = -1.0; };
+    std::vector<Trail> trails;
+    std::vector<V3> knocksNow;                 // (this frame's knocks: they stir the dust)
+    /** the rays, the dust and the trails of this frame (after the lamps; the veils after the depths are known) */
+    void updateAir (const RoomParams& r, const EngineParams& params, std::vector<Glow>& glows);
+    void buildVeils (float compScale);
     // ---- "Stimmung": the look of the Saal (the look* parameters, as the modulation and the Verlauf set them)
     struct LookNow
     {

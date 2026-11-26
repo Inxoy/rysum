@@ -28,6 +28,8 @@ struct GpuFrame
     // over the picture: the glow of the sounding pipes (per vertex x, y, u, v, strength: six vertices a glow),
     // and lines (the outline of the room behind a model; per vertex x, y)
     std::vector<float> glows, lines;
+    // soft bands of light (rays, trails): triangles, per vertex x, y, r, g, b, a
+    std::vector<float> veils;
     void addGlow (float x, float y, float rx, float ry, float strength);
     // a test: the same frame as the processor drew it - the card's picture is read back and compared
     juce::Image compareWith;

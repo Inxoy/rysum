@@ -237,16 +237,20 @@ void main()
 const char* const kOverVertex = R"(#version 150
 in vec2 aPos;
 in vec3 aUv;
+in vec4 aCol;
 out vec3 vUv;
-void main() { gl_Position = vec4 (aPos, 0.0, 1.0); vUv = aUv; }
+out vec4 vCol;
+void main() { gl_Position = vec4 (aPos, 0.0, 1.0); vUv = aUv; vCol = aCol; }
 )";
 const char* const kOverFragment = R"(#version 150
 in vec3 vUv;
+in vec4 vCol;
 uniform int uMode;
 out vec4 colour;
 void main()
 {
     if (uMode == 1) { colour = vec4 (0.659, 0.267, 0.180, 0.55); return; }      // the rubric red
+    if (uMode == 2) { colour = vCol; return; }                                   // a band of light
     float d = length (vUv.xy);
     if (d >= 1.0) discard;
     vec4 c0 = vec4 (0.965, 0.957, 0.941, 0.5), c1 = vec4 (0.863, 0.855, 0.831, 0.2), c2 = vec4 (0.725, 0.718, 0.698, 0.06), c3 = vec4 (0.914, 0.906, 0.886, 0.0);
@@ -352,6 +356,7 @@ void GpuPicture::newOpenGLContextCreated()
     {
         glBindAttribLocation (overProgram->getProgramID(), 0, "aPos");
         glBindAttribLocation (overProgram->getProgramID(), 1, "aUv");
+        glBindAttribLocation (overProgram->getProgramID(), 2, "aCol");
     }
     if (overProgram->link())
     {
@@ -503,7 +508,7 @@ void GpuPicture::renderOpenGL()
 
 void GpuPicture::drawOver()
 {
-    if (overProgram == nullptr || overVao == 0 || (drawing.glows.empty() && drawing.lines.empty())) return;
+    if (overProgram == nullptr || overVao == 0 || (drawing.glows.empty() && drawing.lines.empty() && drawing.veils.empty())) return;
     glDisable (GL_DEPTH_TEST);
     glDepthMask (GL_FALSE);
     glEnable (GL_BLEND);
@@ -519,6 +524,20 @@ void GpuPicture::drawOver()
         glDisableVertexAttribArray (1);
         glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, (GLsizei) (2 * sizeof (float)), (const void*) 0);
         glDrawArrays (GL_LINES, 0, (GLsizei) (drawing.lines.size() / 2));
+    }
+    if (! drawing.veils.empty())
+    {
+        // the bands of light (rays, trails): added to the light
+        glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+        glUniform1i (uOverMode, 2);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (drawing.veils.size() * sizeof (float)), drawing.veils.data(), GL_STREAM_DRAW);
+        glDisableVertexAttribArray (1);
+        glEnableVertexAttribArray (2);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, (GLsizei) (6 * sizeof (float)), (const void*) 0);
+        glVertexAttribPointer (2, 4, GL_FLOAT, GL_FALSE, (GLsizei) (6 * sizeof (float)), (const void*) (2 * sizeof (float)));
+        glDrawArrays (GL_TRIANGLES, 0, (GLsizei) (drawing.veils.size() / 6));
+        glDisableVertexAttribArray (2);
+        glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
     if (! drawing.glows.empty())
     {

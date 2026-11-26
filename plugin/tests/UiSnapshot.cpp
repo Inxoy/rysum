@@ -335,6 +335,54 @@ public:
                 wv.setPoseForTest(0.0f, -2.0f, 0.0f);
                 wv.setPitchForTest(-8.0f);
             }
+            {
+                // rays of the morning sun with dust in them; then in the dark from the pipes
+                setReal("lookDay", 1.0f);
+                setReal("lookHour", 9.0f);
+                run(10, {});
+                const auto sunOnly = snap();
+                setReal("lookRays", 1.0f);
+                setReal("lookDust", 1.0f);
+                run(20, {});
+                for (int f = 0; f < 6; ++f)
+                    snap(); // (the dust drifts frame by frame)
+                const auto rays = snap();
+                shot("walk_look_rays.png");
+                const double pc = changed(rays, sunOnly);
+                say("Lichtstrahlen und Staub: " + juce::String(pc, 1) + " % of the picture changes", pc > 3.0 + noise);
+                setReal("lookDay", 0.0f);
+                setReal("lookHour", 12.0f);
+                wv.setDarkForTest(true);
+                run(10, {});
+                for (int f = 0; f < 6; ++f)
+                    snap();
+                shot("walk_look_rays_dark.png");
+                wv.setDarkForTest(false);
+                setReal("lookRays", 0.0f);
+                setReal("lookDust", 0.0f);
+            }
+            {
+                // trails: the Praestant flies through the Saal
+                setReal(RysumProcessor::motionParamId(0), 8.0f); // Flug
+                setReal("rate0", 0.6f);
+                run(60, {});
+                setReal("lookTrails", 1.0f);
+                setReal("lookTrailLen", 3.0f);
+                for (int f = 0; f < 90; ++f)
+                {
+                    run(2, {});
+                    snap();
+                }
+                const auto withTrails = snap();
+                shot("walk_look_trails.png");
+                setReal("lookTrails", 0.0f);
+                run(2, {});
+                const auto without = snap();
+                const double pc = changed(withTrails, without);
+                say("Leuchtspuren: flying pipes leave trails, " + juce::String(pc, 1) + " % of the picture changes", pc > 1.0);
+                setReal(RysumProcessor::motionParamId(0), 0.0f);
+                run(30, {});
+            }
             if (std::getenv("RYSUM_ONLY_LOOK") != nullptr)
             {
                 wv.setLookAndFeel(nullptr);

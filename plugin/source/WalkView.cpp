@@ -2058,6 +2058,219 @@ void dayLight (float hour, V3& dir, float* tint)
 }
 } // namespace
 
+/** the air of the Saal this frame: rays of light (the sun through the wall on its side; in the dark from the sounding
+    pipes down to the floor), dust drifting in it (stirred by the Kalkant, loud chords, knocks), the trails the flying
+    pipes leave */
+void WalkView::updateAir (const RoomParams& r, const EngineParams& params, std::vector<Glow>& glows)
+{
+    const auto& lk = lookNow;
+    const float W = r.W(), L = r.L(), H = r.H();
+    const float dt = lookDt;
+    juce::ignoreUnused (params);
+    // ---- the rays
+    beams.clear();
+    if (lk.rays > 0.0f)
+    {
+        const V3 Ls = rast.lightDirNow();
+        const bool sun = lk.day > 0.0f && Ls.z > 0.05f && ! proc.walkDark;
+        if (sun)
+        {
+            // the wall on the sun's side: the light comes in high up on it and falls through the room
+            const V3 hz = normalised ({ Ls.x, Ls.y, 0.0f });
+            const V3 ns[4] { { 0, 1, 0 }, { -1, 0, 0 }, { 0, -1, 0 }, { 1, 0, 0 } };
+            int wi = 0; float best = 1.0e9f;
+            for (int i = 0; i < 4; ++i) if (dot (ns[i], hz) < best) { best = dot (ns[i], hz); wi = i; }
+            float tint[3] { 1, 1, 1 }; V3 dd;
+            dayLight (lk.hour, dd, tint);
+            const juce::Colour c = juce::Colour::fromFloatRGBA (juce::jlimit (0.0f, 1.0f, 0.95f * tint[0] / juce::jmax (0.3f, tint[1])),
+                                                                0.93f, juce::jlimit (0.0f, 1.0f, 0.88f * tint[2] / juce::jmax (0.3f, tint[1])), 1.0f);
+            const float strength = lk.rays * juce::jlimit (0.2f, 1.0f, (tint[0] + tint[1] + tint[2]) / 3.0f) * juce::jmin (1.0f, lk.day * 1.5f);
+            constexpr int n = 4;
+            for (int i = 0; i < n; ++i)
+            {
+                const float f = ((float) i + 0.5f + 0.3f * (std::sin ((float) i * 2.3f))) / (float) n;
+                V3 a;
+                switch (wi)
+                {
+                    case 0:  a = { f * W, 0.05f, 0.82f * H }; break;
+                    case 1:  a = { W - 0.05f, f * L, 0.82f * H }; break;
+                    case 2:  a = { f * W, L - 0.05f, 0.82f * H }; break;
+                    default: a = { 0.05f, f * L, 0.82f * H }; break;
+                }
+                // down along the light until the floor or a wall
+                const V3 d = Ls * -1.0f;
+                float t = a.z / juce::jmax (0.05f, -d.z);
+                if (d.x > 1.0e-4f) t = juce::jmin (t, (W - a.x) / d.x); else if (d.x < -1.0e-4f) t = juce::jmin (t, -a.x / d.x);
+                if (d.y > 1.0e-4f) t = juce::jmin (t, (L - a.y) / d.y); else if (d.y < -1.0e-4f) t = juce::jmin (t, -a.y / d.y);
+                beams.push_back ({ a, a + d * juce::jmax (0.5f, t), lk.rayWidth, strength, c });
+            }
+        }
+        else
+        {
+            // in the dark (or without the sun): the brightest sounding pipes shine down to the floor
+            std::vector<const Glow*> lit;
+            for (const auto& gw : glows) if (gw.stop >= 0 && gw.amount > 0.1f) lit.push_back (&gw);
+            std::sort (lit.begin(), lit.end(), [] (const Glow* a, const Glow* b) { return a->amount > b->amount; });
+            for (size_t i = 0; i < lit.size() && i < 6; ++i)
+            {
+                const auto c = stopLightColour (lit[i]->stop).interpolatedWith (juce::Colours::white, 1.0f - lk.pipeHue);
+                beams.push_back ({ lit[i]->at, { lit[i]->at.x, lit[i]->at.y, 0.0f }, lk.rayWidth * 0.6f, lk.rays * lit[i]->amount, c });
+            }
+        }
+    }
+    // ---- the dust
+    knocksNow.erase (knocksNow.begin(), knocksNow.end() - (ptrdiff_t) juce::jmin ((size_t) 16, knocksNow.size()));
+    if (lk.dust > 0.0f)
+    {
+        juce::Random rnd ((juce::int64) (lookClock * 1000.0));
+        if (motes.size() != 260)
+        {
+            motes.clear();
+            for (int i = 0; i < 260; ++i)
+                motes.push_back ({ { rnd.nextFloat() * W, rnd.nextFloat() * L, rnd.nextFloat() * H }, {}, rnd.nextFloat() });
+        }
+        // what stirs it: a tread of the Kalkant, a loud chord setting in, a knock
+        float kick = 0.0f;
+        const int tread = proc.engine.treadCount.load();
+        if (tread != treadSeen) { treadSeen = tread; kick = juce::jmax (kick, 0.6f); }
+        const float meter = proc.engine.meterL.load();
+        if (meter > 0.08f && meter > meterPrev * 1.8f) kick = juce::jmax (kick, juce::jmin (1.0f, meter * 2.0f));
+        meterPrev = meterPrev * 0.9f + meter * 0.1f;
+        kick *= lk.dustStir;
+        const float t = (float) lookClock;
+        for (auto& m : motes)
+        {
+            // a slow wandering current, its own for every mote
+            const V3 flow { 0.03f * std::sin (0.21f * t + 7.0f * m.seed + 0.4f * m.p.y), 0.03f * std::cos (0.17f * t + 5.0f * m.seed + 0.3f * m.p.x),
+                            0.012f * std::sin (0.13f * t + 11.0f * m.seed) - 0.004f };
+            if (kick > 0.0f)
+                m.v = m.v + V3 { (rnd.nextFloat() - 0.5f) * 0.8f, (rnd.nextFloat() - 0.5f) * 0.8f, rnd.nextFloat() * 0.6f } * kick;
+            for (const auto& kp : knocksNow)
+            {
+                const V3 e = m.p - kp;
+                const float d2 = dot (e, e);
+                if (d2 < 9.0f) m.v = m.v + normalised (e) * (lk.dustStir * 1.2f / (1.0f + 3.0f * d2));
+            }
+            m.v = m.v * std::exp (-1.5f * dt);
+            m.p = m.p + (flow + m.v) * dt;
+            // (it stays in the Saal: what leaves comes in again at the other side)
+            if (m.p.x < 0) m.p.x += W; if (m.p.x > W) m.p.x -= W;
+            if (m.p.y < 0) m.p.y += L; if (m.p.y > L) m.p.y -= L;
+            if (m.p.z < 0.05f) { m.p.z = 0.05f; m.v.z = std::abs (m.v.z) * 0.3f; }
+            if (m.p.z > H) m.p.z -= H * 0.9f;
+            // how bright: the room's light, the rays it floats in, the pipes near it
+            float b = proc.walkDark ? 0.03f : 0.14f;
+            for (const auto& bm : beams)
+            {
+                const V3 ab = bm.b - bm.a;
+                const float tt = juce::jlimit (0.0f, 1.0f, dot (m.p - bm.a, ab) / juce::jmax (1.0e-4f, dot (ab, ab)));
+                const V3 q = bm.a + ab * tt - m.p;
+                if (dot (q, q) < 0.25f * bm.width * bm.width) b += 1.1f * bm.strength;
+            }
+            for (const auto& gw : glows)
+            {
+                if (gw.stop < 0) continue;
+                const V3 e = m.p - gw.at;
+                const float d2 = dot (e, e);
+                if (d2 < 4.0f) b += gw.amount * (1.0f - std::sqrt (d2) * 0.5f);
+            }
+            const float amt = lk.dust * juce::jmin (1.0f, b) * (0.6f + 0.4f * std::sin (3.0f * t + 20.0f * m.seed));      // (it glitters)
+            if (amt > 0.01f) glows.push_back ({ m.p, amt, 0.0f, -1, 1.0f + 0.8f * m.seed });
+        }
+    }
+    else motes.clear();
+    knocksNow.clear();
+    // ---- the trails: every pipe flying as a body remembers where it was
+    if (lk.trails > 0.0f)
+    {
+        if (trails.size() != (size_t) (kNumStops * kNumKeys)) trails.assign ((size_t) (kNumStops * kNumKeys), {});
+        const double every = juce::jmax (0.02, (double) lk.trailLen / 32.0);
+        for (int s = 0; s < kNumStops; ++s)
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                auto& tr = trails[(size_t) (s * kNumKeys + k)];
+                Vec3f b;
+                if (! params.stopOn[(size_t) s] || ! proc.engine.bodyAt (s, k, b)) { tr.n = 0; continue; }
+                if (tr.n > 0 && lookClock - tr.last < every) continue;
+                tr.p[(size_t) tr.head] = { b.x, b.y, b.z };
+                tr.t[(size_t) tr.head] = lookClock;
+                tr.head = (tr.head + 1) % 32;
+                tr.n = juce::jmin (32, tr.n + 1);
+                tr.last = lookClock;
+            }
+    }
+    else trails.clear();
+}
+
+/** the rays and trails as bands of light in the view's pixels (after the depths are known: hidden ones are left out) */
+void WalkView::buildVeils (float isc)
+{
+    veils.clear();
+    const auto& lk = lookNow;
+    const float focalPx = rast.focalPerWidth() * (float) rast.width() * isc;
+    auto toScreen = [&] (V3 p, juce::Point<float>& s, float& d)
+    {
+        float sx, sy;
+        if (! rast.project (p, sx, sy, d)) return false;
+        s = { sx * isc, sy * isc };
+        return true;
+    };
+    // a band from a to b, so wide (m) at each end, coloured ca .. cb
+    auto band = [&] (V3 a, V3 b, float wa, float wb, juce::Colour ca, juce::Colour cb)
+    {
+        // (pulled in front of the eye where it reaches behind it)
+        const float da0 = rast.viewDepth (a), db0 = rast.viewDepth (b);
+        if (da0 < 0.1f && db0 < 0.1f) return;
+        if (da0 < 0.1f) a = a + (b - a) * ((0.1f - da0) / (db0 - da0));
+        if (db0 < 0.1f) b = b + (a - b) * ((0.1f - db0) / (da0 - db0));
+        juce::Point<float> sa, sb; float da, db;
+        if (! toScreen (a, sa, da) || ! toScreen (b, sb, db)) return;
+        const auto dir = sb - sa;
+        const float len = dir.getDistanceFromOrigin();
+        juce::Point<float> nrm = len > 1.0e-3f ? juce::Point<float> (-dir.y / len, dir.x / len) : juce::Point<float> (1.0f, 0.0f);
+        const float pa = juce::jlimit (0.6f, 400.0f, 0.5f * wa / da * focalPx), pb = juce::jlimit (0.6f, 400.0f, 0.5f * wb / db * focalPx);
+        veils.push_back ({ sa - nrm * pa, sa + nrm * pa, sb - nrm * pb, sb + nrm * pb, ca, cb });
+    };
+    for (const auto& bm : beams)
+    {
+        // a core and a wider, fainter halo
+        const float s = juce::jlimit (0.0f, 1.0f, bm.strength);
+        band (bm.a, bm.b, bm.width, bm.width * 1.25f, bm.colour.withAlpha (0.16f * s), bm.colour.withAlpha (0.05f * s));
+        band (bm.a, bm.b, bm.width * 2.2f, bm.width * 2.6f, bm.colour.withAlpha (0.06f * s), bm.colour.withAlpha (0.015f * s));
+    }
+    if (lk.trails > 0.0f && ! trails.empty())
+    {
+        const double len = juce::jmax (0.05, (double) lk.trailLen);
+        for (int s = 0; s < kNumStops; ++s)
+        {
+            const auto c = stopLightColour (s).interpolatedWith (juce::Colours::white, 0.55f + 0.45f * (1.0f - lk.pipeHue));
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                const auto& tr = trails[(size_t) (s * kNumKeys + k)];
+                if (tr.n < 2) continue;
+                const float glowNow = juce::jmin (1.0f, glow[(size_t) s][(size_t) k]);
+                const float rad = juce::jmax (0.02f, shown[(size_t) s][(size_t) k].rad);
+                for (int i = 1; i < tr.n; ++i)
+                {
+                    const int i0 = (tr.head - i + 64) % 32, i1 = (tr.head - i - 1 + 64) % 32;      // (newest first)
+                    const float age0 = (float) ((lookClock - tr.t[(size_t) i0]) / len), age1 = (float) ((lookClock - tr.t[(size_t) i1]) / len);
+                    if (age1 >= 1.0f) break;
+                    const V3 p0 = tr.p[(size_t) i0], p1 = tr.p[(size_t) i1];
+                    if (dot (p1 - p0, p1 - p0) > 9.0f) continue;          // (a jump, not a path)
+                    // (hidden behind a wall: left out)
+                    float sx, sy, d;
+                    const V3 mid = (p0 + p1) * 0.5f;
+                    if (! rast.project (mid, sx, sy, d)) continue;
+                    const float zd = rast.depthAt ((int) sx, (int) sy);
+                    if (zd > 0.0f && zd < d * 0.95f - 0.4f) continue;
+                    const float a0 = lk.trails * (1.0f - age0) * (0.25f + 0.75f * glowNow), a1 = lk.trails * (1.0f - age1) * (0.25f + 0.75f * glowNow);
+                    band (p0, p1, 2.0f * rad, 2.0f * rad, c.withAlpha (0.55f * a0), c.withAlpha (0.55f * a1));
+                }
+            }
+        }
+    }
+}
+
 V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const
 {
     // a pipe flying in the room (Flug, Fall, Schwarm, Strömung) is where its body is
@@ -2428,6 +2641,7 @@ void WalkView::buildScene (float phys)
             f.strength = 0.4f + 0.6f * sh.strength.load();
             f.life = 1.0f;
             ripples[(size_t) rippleNext] = { f.at, 0.0f, f.strength };
+            knocksNow.push_back (f.at);
             rippleNext = (rippleNext + 1) % Look::kMaxRipples;
             // (the nearer and harder the knock, the more the view shakes)
             const float dd = std::sqrt (dot (f.at - eye, f.at - eye));
@@ -2501,6 +2715,7 @@ void WalkView::buildScene (float phys)
         }
         rast.setLamps (lamps, dark ? kDarkRest : 1.0f);
     }
+    updateAir (r, params, glows);
     if (panoCapturing)
     {
         // the 360° frame: its triangles, materials, light and glows to the renderer's thread
@@ -2517,7 +2732,7 @@ void WalkView::buildScene (float phys)
         job.fogDistance = fogDistNow;
         job.grain = grainAmt;
         job.frameNo = frame;
-        for (const auto& gw : glows) job.glows.push_back ({ gw.at, gw.amount, gw.size });
+        for (const auto& gw : glows) if (gw.px <= 0.0f) job.glows.push_back ({ gw.at, gw.amount, gw.size });
         job.upTo = proc.pano360.frameNow();
         if (panoForce) panoTestJob = std::move (job);
         else proc.pano360.addScene (std::move (job));
@@ -2556,14 +2771,34 @@ void WalkView::buildScene (float phys)
                 if (! rast.project (gw.at, sx, sy, d)) continue;
                 const float zd = rast.depthAt ((int) sx, (int) sy);
                 if (zd > 0.0f && zd < d * 0.95f - 0.4f) continue;
-                const float rad = juce::jlimit (6.0f, 260.0f, (0.6f + 0.35f * gw.size) / d * 0.5f * (float) area.getWidth());
+                const float rad = gw.px > 0.0f ? juce::jlimit (0.8f, 5.0f, gw.px * 4.0f / d)
+                                               : juce::jlimit (6.0f, 260.0f, (0.6f + 0.35f * gw.size) / d * 0.5f * (float) area.getWidth());
                 gpuFrame.addGlow (sx / rw * 2.0f - 1.0f, 1.0f - sy / rh * 2.0f, 2.0f * rad / (float) area.getWidth(), 2.0f * rad / (float) area.getHeight(),
                                   juce::jlimit (0.0f, 1.0f, gw.amount));
             }
+        buildVeils ((float) area.getWidth() / rw);
+        gpuFrame.veils.clear();
+        if (! compareNow)
+        {
+            const float aw = (float) area.getWidth(), ah = (float) area.getHeight();
+            auto put = [&] (juce::Point<float> p, juce::Colour c)
+            {
+                gpuFrame.veils.insert (gpuFrame.veils.end(), { p.x / aw * 2.0f - 1.0f, 1.0f - p.y / ah * 2.0f,
+                                                               c.getFloatRed(), c.getFloatGreen(), c.getFloatBlue(), c.getFloatAlpha() });
+            };
+            for (const auto& v : veils)
+            {
+                put (v.a0, v.ca); put (v.a1, v.ca); put (v.b1, v.cb);
+                put (v.a0, v.ca); put (v.b1, v.cb); put (v.b0, v.cb);
+            }
+        }
         gpu->submit (gpuFrame);
     }
     else
+    {
         rast.finish();
+        buildVeils ((float) area.getWidth() / (float) rast.width());
+    }
     // the pipe under the cross (Q takes it)
     if (! pickPipe (area.getCentre().toFloat(), 9.0f, aimStop, aimKey)) aimStop = aimKey = -1;
     const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
@@ -2607,6 +2842,19 @@ void WalkView::drawOver (juce::Graphics& g)
     }
     const float isc = (float) area.getWidth() / (float) rast.width();
 
+    // bands of light: the rays and the trails (added to the light)
+    if (! gpuOn() && ! veils.empty())
+    {
+        for (const auto& v : veils)
+        {
+            juce::Path p;
+            p.startNewSubPath (v.a0); p.lineTo (v.a1); p.lineTo (v.b1); p.lineTo (v.b0); p.closeSubPath();
+            const auto ma = (v.a0 + v.a1) * 0.5f, mb = (v.b0 + v.b1) * 0.5f;
+            if (v.ca == v.cb || ma.getDistanceFrom (mb) < 2.0f) g.setColour (v.ca);
+            else g.setGradientFill (juce::ColourGradient (v.ca, ma, v.cb, mb, false));
+            g.fillPath (p);
+        }
+    }
     // the sounding pipes shine (where they are not hidden behind a wall)
     for (const auto& gw : glows)
     {
@@ -2615,7 +2863,8 @@ void WalkView::drawOver (juce::Graphics& g)
         if (! rast.project (gw.at, sx, sy, d)) continue;
         const float zd = rast.depthAt ((int) sx, (int) sy);
         if (zd > 0.0f && zd < d * 0.95f - 0.4f) continue;         // (the pipe itself is drawn a little nearer than its axis)
-        const float rad = juce::jlimit (6.0f, 260.0f, (0.6f + 0.35f * gw.size) / d * 0.5f * (float) area.getWidth());
+        const float rad = gw.px > 0.0f ? juce::jlimit (0.8f, 5.0f, gw.px * 4.0f / d)
+                                       : juce::jlimit (6.0f, 260.0f, (0.6f + 0.35f * gw.size) / d * 0.5f * (float) area.getWidth());
         const juce::Point<float> c (sx * isc, sy * isc);
         // (a glow drawn once, only stretched here: gradients per frame cost several milliseconds)
         if (! glowSprite.isValid())
