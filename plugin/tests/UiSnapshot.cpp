@@ -566,6 +566,13 @@ public:
         setReal(RysumProcessor::roomParamId(0, "Shape"), 0.0f);
         run(10, {});
         // ---- smooth walking: the speed builds up, and dies away after the key is let go
+        // (at the usual pace: this computer's own walking pace, Steuerung, is given back afterwards)
+        const auto ownControls = rysum::ui::WalkView::controls();
+        {
+            auto c = ownControls;
+            c.walk = 1.0f;
+            rysum::ui::WalkView::setControls(c);
+        }
         wv.setPoseForTest(0, 0, 0);
         const float y0 = proc->walkPose[1].load();
         for (int i = 0; i < 6; ++i)
@@ -581,6 +588,7 @@ public:
                 juce::String(y1, 2) + " m, coasting on " + juce::String(y2 - y1, 2) + " m",
             yEarly > 0.01f && yEarly < 0.1f && y1 > 1.2f && y1 < 1.6f && y2 - y1 > 0.05f &&
                 y2 - y1 < 0.5f);
+        rysum::ui::WalkView::setControls(ownControls);
         // ---- a jump: up, and down again
         float top = 0.0f;
         wv.advanceForTest(1.0 / 60.0, false, false, false, false, true);
