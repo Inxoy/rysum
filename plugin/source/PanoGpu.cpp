@@ -283,12 +283,12 @@ bool PanoGpu::drawFace (int face, const std::vector<float>& verts, const std::ar
     glUniform4f (uPano, 1.0f, look.rightUpFwdZ.x, look.rightUpFwdZ.y, look.rightUpFwdZ.z);
     {
         const auto& lamps = *look.lamps;
-        const int nl = juce::jmin (24, (int) lamps.size() / 5);
+        const int nl = juce::jmin (24, (int) lamps.size() / 8);
         float lp[24 * 4] {}, lr[24] {};
         for (int i = 0; i < nl; ++i)
         {
-            for (int c = 0; c < 4; ++c) lp[4 * i + c] = lamps[(size_t) (5 * i + c)];
-            lr[i] = lamps[(size_t) (5 * i + 4)];
+            for (int c = 0; c < 4; ++c) lp[4 * i + c] = lamps[(size_t) (8 * i + c)];
+            lr[i] = lamps[(size_t) (8 * i + 4)];
         }
         glUniform3f (uDark, look.dark ? 1.0f : 0.0f, look.ambient, look.focalPerWidth);
         glUniform4fv (uLamp, 24, lp);

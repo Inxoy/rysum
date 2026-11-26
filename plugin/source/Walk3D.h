@@ -48,6 +48,19 @@ struct Material
     float tone = 0.7f;        // brightness 0..1
     float rough = 0.1f;       // how much the surface varies (scatter)
     float gloss = 0.1f;       // highlights (hard, smooth surfaces)
+    float gone = 0.0f;        // "Waende vergehen": how much of the surface has dissolved (0 = whole, 1 = gone)
+};
+
+/** the look of a frame beyond the light ("Stimmung", the 3D Saal's page): what the renderer itself does with it */
+struct Look
+{
+    float tint[3] { 1.0f, 1.0f, 1.0f };    // the light's colour and strength (time of day): the final picture times this
+    float wear = 0.0f;                      // traces of use: water stains on stone and plaster, stronger grain in wood, tarnish
+    float cell = 0.0f;                      // how a dissolving surface breaks up: 0 = pixel by pixel (it fades), else pieces of this size (m)
+    float rippleAmt = 0.0f;                 // knocks leave a ripple on the surfaces near them
+    struct Ripple { V3 at; float age = 1.0f, strength = 0.0f; };   // age 0 .. 1 (gone)
+    static constexpr int kMaxRipples = 4;
+    std::array<Ripple, kMaxRipples> ripples {};
 };
 
 /** the surfaces of the Saal from its acoustic parameters: what the walls are made of (the nearest of the
@@ -79,16 +92,25 @@ public:
     /** "Licht aus": the room lit only by these lamps (the sounding pipes, the flashes of knocks) and a faint
         'ambient' rest of the usual light. Per pixel, by the surface's facing and the lamp's distance (no
         shadows). Call after setCamera; no lamps and ambient 1 = the usual light. */
-    struct Lamp { V3 at; float power = 1.0f, reach = 3.0f; };
+    struct Lamp { V3 at; float power = 1.0f, reach = 3.0f; float r = 1.0f, g = 1.0f, b = 1.0f; };   // (r, g, b: its colour)
     static constexpr int kMaxLamps = 24;
     void setLamps (const std::vector<Lamp>& lamps, float ambient);
     bool darkNow() const noexcept { return dark; }
     float ambientNow() const noexcept { return ambient; }
-    /** the lamps in view space, kMaxLamps at most: x, y, z, power, 1 / reach^2 each */
+    /** the lamps in view space, kMaxLamps at most: x, y, z, power, 1 / reach^2, and the colour as the change
+        from white of the same brightness (r - 1, g - 1, b - 1: 0 = white) each */
     const std::vector<float>& lampsInView() const noexcept { return lampsV; }
     /** the focal length in pixels, per pixel of width (the graphics card works out its own pixels from it) */
     float focalPerWidth() const noexcept { return focal / (float) juce::jmax (1, w); }
 
+    /** the look beyond the light (after setCamera: the ripples are turned into view space) */
+    void setLook (const Look& l);
+    /** where the light of the room comes from (the sun of the time of day); kept for every later camera */
+    void setLightDir (V3 towardsLight) noexcept { sunDir = normalised (towardsLight); lightDir = sunDir; }
+    V3 lightDirNow() const noexcept { return sunDir; }
+    /** for the graphics card: the tint as the change from 1 (3), wear, piece size, ripple amount, number of ripples,
+        and per ripple x, y, z (view space), age, strength */
+    void lookForGpu (float* tint3, float* look4, float* ripples20) const noexcept;
     /** a material slot (0..31) used by the triangles below */
     void setMaterial (int slot, const Material& m);
 
@@ -120,7 +142,8 @@ public:
     /** only the depths (for depthAt): when the graphics card draws the picture */
     void finishDepth();
     /** the frame's triangles for the graphics card - per vertex 12 numbers: x, y (-1 .. 1, y up), 1 / depth,
-        brightness, u, v, emission, tone, material slot, the face normal (view space) - and per slot 4: kind, tone, roughness, 0 */
+        brightness, u, v, emission, tone, material slot, the face normal (view space) - and per slot 4: kind, tone, roughness,
+        how much of it has dissolved */
     void exportGpu (std::vector<float>& verts, std::array<float, 32 * 4>& materials) const;
     float fogToneNow() const noexcept { return fogTone; }
     float fogInvNow() const noexcept { return fogInv; }
@@ -166,6 +189,10 @@ private:
     bool dark = false;
     float ambient = 1.0f;
     std::vector<float> lampsV;
+    Look look;
+    float ripV[Look::kMaxRipples * 5] {};      // the ripples in view space: x, y, z, age, strength
+    int ripN = 0;
+    V3 sunDir = normalised ({ 0.35f, -0.25f, 0.9f });      // (as before)
     std::vector<ST> tris;
     static constexpr int kBandRows = 8;             // (a band and its buffers stay in the cache while it is drawn and shaded)
     std::vector<std::vector<int>> bins;

@@ -4083,6 +4083,9 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         }
         erActive = 0;
         roomTailSeconds.store(0.0f, std::memory_order_relaxed);
+        tailLevelNow.store(-120.0f, std::memory_order_relaxed);
+        for (auto &R : rt)
+            R.tailEnergy = 0.0;
         tailSerialInUse = rt[0].tail.oldestSerialInUse();
         return;
     }
@@ -4244,6 +4247,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         }
     }
     float usedRoomsTail = 0.0f;
+    float tailLevelMax = -120.0f; // (the 3D Saal's fog)
     for (int ri = 0; ri < kNumRooms; ++ri)
     {
         auto &R = rt[(size_t)ri];
@@ -4341,6 +4345,17 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
         const float level = usedNow
                                 ? juce::jmin(1.6f, distanceGain(rc, distAmountNow)) * rm.tailGain * wallGainNow[(size_t)ri]
                                 : (useFdn ? R.fdnLevelLast : R.tailGain);
+        {
+            // the late energy: what is fed in (times the reverb's level) and decaying 60 dB in RT60;
+            // normalised so a steady input reads as its own level
+            double e = 0.0;
+            for (int i = 0; i < n; ++i)
+                e += (double)in[i] * (double)in[i];
+            const double rt = juce::jmax(0.05, (double)rtL), dec = std::exp(-13.815510558 * (double)n / (sr * rt));
+            R.tailEnergy = R.tailEnergy * dec + e * (double)(level * level);
+            const double steady = juce::jmax(1.0, (double)n / juce::jmax(1.0e-9, 1.0 - dec));
+            tailLevelMax = juce::jmax(tailLevelMax, (float)(10.0 * std::log10(R.tailEnergy / steady + 1.0e-12)));
+        }
         if (useFdn != (R.lastTailModel == 1))
         {
             // switched: the other one keeps ringing out with a silent input
@@ -4446,6 +4461,7 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             }
         }
     roomTailSeconds.store(usedRoomsTail, std::memory_order_relaxed);
+    tailLevelNow.store(juce::jmax(-120.0f, tailLevelMax), std::memory_order_relaxed);
     tailSerialInUse = rt[0].tail.oldestSerialInUse();
     erClock += (uint32_t)n;
 }

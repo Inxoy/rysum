@@ -432,6 +432,10 @@ public:
         roomRtLow{0.0f}, roomRtHigh{0.0f}, roomCritDist{0.0f};
     /** how long the late reverb of the rooms in use rings after the last note (s; for the host) */
     std::atomic<float> roomTailSeconds{0.0f};
+    /** the late reverb's level now, dB (the loudest Saal): what goes into the tail, decaying at the
+        Saal's reverberation time as a diffuse field does (Sabine) - in a steady state the level of
+        what is fed in, after a chord it falls 60 dB in RT60. The 3D Saal's fog follows it. */
+    std::atomic<float> tailLevelNow{-120.0f};
     /** the surfaces the room keyboard has taken (more than half) out now: bit s = surface s */
     std::array<std::atomic<uint32_t>, kNumRooms> wallsGone{};
     /** how much of each surface is gone now (0 .. 1), for the processor's responses */
@@ -1247,6 +1251,7 @@ private:
         std::array<float, kFdnLines> fdnDelay{}, fdnLp{}, fdnGL{}, fdnGH{};
         std::array<std::array<float, kMaxAmbiChannels>, kFdnLines> fdnEnc{};
         float fdnPreDelay = -1.0f, fdnGain = 0.0f, fdnLevelLast = 0.0f;
+        double tailEnergy = 0.0; // (the 3D Saal's fog: the late energy, see tailLevelNow)
         std::array<float, kFdnLines> fdnModC{}, fdnModS{};
         int fdnEncOrder = -1;
         // switching between the two: the one switched off rings out on its own (input silent)

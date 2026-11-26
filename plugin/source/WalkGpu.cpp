@@ -44,7 +44,12 @@ uniform vec4 uMat[32];      // kind, tone, roughness
 uniform vec3 uDark;         // light off (0 / 1), what is left of the usual light, focal length per pixel of width
 uniform vec4 uLamp[24];     // view space x, y, z, power
 uniform float uLampR[24];   // 1 / reach^2
+uniform vec3 uLampC[24];    // its colour: the change from white (0 = white)
 uniform int uLampN;
+uniform vec3 uTint;         // the light's colour (time of day): the change from 1
+uniform vec4 uLook;         // wear, piece size of a dissolving surface, ripple amount, number of ripples
+uniform vec4 uRip[4];       // the ripples: view space x, y, z, age
+uniform float uRipS[4];     // their strength
 uniform vec4 uFog;          // fog tone, 1 / fog distance, grain
 uniform vec2 uView;         // the picture's size in pixels
 uniform ivec2 uFrame;       // the grain's offset of this frame
@@ -67,7 +72,16 @@ float vnoise (float u, float v)
     float top = h00 + (h10 - h00) * a;
     return top + ((h01 + (h11 - h01) * a) - top) * b;
 }
-float pattern (int kind, float r, float u, float v)
+float smooth01 (float a, float b, float x)
+{
+    float t = clamp ((x - a) / (b - a), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+float stains (float u, float v)
+{
+    return smooth01 (0.5, 0.85, vnoise (u * 0.9, v * 0.16 + 3.1)) * (0.6 + 0.4 * vnoise (u * 6.0, v * 2.0));
+}
+float pattern (int kind, float r, float u, float v, float wear)
 {
     if (kind == 1)          // stone
     {
@@ -75,18 +89,21 @@ float pattern (int kind, float r, float u, float v)
         float uu = u + float (int (row) & 1) * 0.31;
         float col = floor (uu / 0.62);
         float fu = uu - col * 0.62, fv = v - row * 0.32;
-        if (fu < 0.018 || fv < 0.018) return 0.5;
-        return (0.84 + 0.32 * hash2 (int (col), int (row))) * (1.0 + r * 1.4 * (vnoise (u * 7.0, v * 7.0) - 0.5));
+        float st = 1.0 - 0.45 * wear * stains (u, v);
+        if (fu < 0.018 || fv < 0.018) return 0.5 * st;
+        return (0.84 + 0.32 * hash2 (int (col), int (row))) * (1.0 + r * 1.4 * (vnoise (u * 7.0, v * 7.0) - 0.5)) * st;
     }
     if (kind == 2)          // plaster
-        return 1.0 + r * 1.3 * (vnoise (u * 0.7, v * 0.7) - 0.5) + 0.35 * r * (vnoise (u * 11.0, v * 11.0) - 0.5);
+        return (1.0 + r * 1.3 * (vnoise (u * 0.7, v * 0.7) - 0.5) + 0.35 * r * (vnoise (u * 11.0, v * 11.0) - 0.5))
+               * (1.0 - 0.35 * wear * stains (u, v));
     if (kind == 3)          // wood
     {
         float col = floor (u / 0.2);
         float fu = u - col * 0.2;
         if (fu < 0.008) return 0.42;
-        float grain = 0.9 + 0.1 * sin (u * 95.0 + 7.0 * vnoise (col * 3.1 + 0.3, v * 1.4));
-        return (0.8 + 0.3 * hash2 (int (col), 17)) * grain * (1.0 + r * (vnoise (u * 20.0, v * 3.0) - 0.5));
+        float grain = 0.9 + (0.1 + 0.12 * wear) * sin (u * 95.0 + 7.0 * vnoise (col * 3.1 + 0.3, v * 1.4));
+        return (0.8 + 0.3 * hash2 (int (col), 17)) * grain * (1.0 + r * (vnoise (u * 20.0, v * 3.0) - 0.5))
+               * (1.0 - 0.3 * wear * vnoise (u * 0.6 + 5.0, v * 0.6));
     }
     if (kind == 4)          // glass
     {
@@ -110,7 +127,8 @@ float pattern (int kind, float r, float u, float v)
         float cu = floor (u / 0.8), cv = floor (v / 0.8);
         float fu = u - cu * 0.8, fv = v - cv * 0.8;
         if (fu < 0.012 || fv < 0.012) return 0.55;
-        return (0.78 + 0.4 * hash2 (int (cu), int (cv))) * (1.0 + r * 1.2 * (vnoise (u * 5.0, v * 5.0) - 0.5));
+        return (0.78 + 0.4 * hash2 (int (cu), int (cv))) * (1.0 + r * 1.2 * (vnoise (u * 5.0, v * 5.0) - 0.5))
+               * (1.0 - 0.3 * wear * stains (u, v));
     }
     if (kind == 8)          // boards
     {
@@ -119,8 +137,8 @@ float pattern (int kind, float r, float u, float v)
         float uu = u + hash2 (int (row), 5) * 2.4;
         float fu = fract (uu / 2.4) * 2.4;
         if (fv < 0.006 || fu < 0.008) return 0.45;
-        float grain = 0.9 + 0.1 * sin (v * 120.0 + 6.0 * vnoise (uu * 1.2, row * 2.7));
-        return (0.82 + 0.3 * hash2 (int (row), int (floor (uu / 2.4)))) * grain;
+        float grain = 0.9 + (0.1 + 0.12 * wear) * sin (v * 120.0 + 6.0 * vnoise (uu * 1.2, row * 2.7));
+        return (0.82 + 0.3 * hash2 (int (row), int (floor (uu / 2.4)))) * grain * (1.0 - 0.3 * wear * vnoise (u * 0.6 + 5.0, v * 0.6));
     }
     if (kind == 9)          // carpet
         return 0.9 + 0.2 * (vnoise (u * 40.0, v * 40.0) - 0.5) + 0.12 * (vnoise (u * 2.0, v * 2.0) - 0.5);
@@ -130,7 +148,7 @@ float pattern (int kind, float r, float u, float v)
         if (uw < 0.075 && v > 0.175 && v < 0.215) return 0.1;
         if (uw < 0.085 && v >= 0.215 && v < 0.228) return 0.6;
         float foot = v < 0.16 ? 0.88 : 1.0;
-        return foot * (1.0 + 0.07 * (vnoise (u * 40.0, v * 70.0) - 0.5));
+        return foot * (1.0 + 0.07 * (vnoise (u * 40.0, v * 70.0) - 0.5)) * (1.0 - 0.25 * wear * vnoise (u * 6.0, v * 3.0));
     }
     if (kind == 11) return 0.12;        // dark
     return 1.0 + 0.1 * r * (vnoise (u * 3.0, v * 3.0) - 0.5);
@@ -139,6 +157,7 @@ void main()
 {
     float x = gl_FragCoord.x, y = uView.y - gl_FragCoord.y;      // (rows from the top, as Raster counts them)
     float l;
+    vec3 cl = vec3 (0.0);       // the coloured lamps' share (the change from grey)
     // a face of the 360 degree picture (PanoGpu): the ray's own direction, for the vault and the true distance
     bool pano = uPano.x > 0.5;
     float focalPx = uDark.z * uView.x;
@@ -158,25 +177,49 @@ void main()
     else
     {
         vec4 m = uMat[int (vSlot + 0.5)];
+        // a dissolving surface lets through what lies behind it - pixel by pixel, or in pieces
+        if (m.w > 0.0)
+        {
+            float h = uLook.y > 1.0e-3 ? hash2 (int (floor (vUV.x / uLook.y)), int (floor (vUV.y / uLook.y)) * 7 + int (vSlot + 0.5))
+                                       : hash2 (int (x), int (y) * 5 + 1);
+            if (h < m.w) discard;
+        }
         float d = 1.0 / vIz;
         float lit = vB;
+        float focal = uDark.z * uView.x;
+        vec3 p = vec3 ((gl_FragCoord.x - 0.5 * uView.x) / focal * d, (gl_FragCoord.y - 0.5 * uView.y) / focal * d, d);
+        float lampSum = 0.0;
+        vec3 lc = vec3 (0.0);
         if (uDark.x > 0.5)
         {
             lit *= uDark.y;
-            float focal = uDark.z * uView.x;
-            vec3 p = vec3 ((gl_FragCoord.x - 0.5 * uView.x) / focal * d, (gl_FragCoord.y - 0.5 * uView.y) / focal * d, d);
             for (int i = 0; i < uLampN; ++i)
             {
                 vec3 L = uLamp[i].xyz - p;
                 float d2 = dot (L, L);
                 float ndl = dot (vN, L) / sqrt (d2 + 1.0e-6);
-                if (ndl > 0.0) lit += uLamp[i].w * ndl / (1.0 + d2 * uLampR[i]);
+                if (ndl > 0.0)
+                {
+                    float c = uLamp[i].w * ndl / (1.0 + d2 * uLampR[i]);
+                    lit += c; lampSum += c; lc += c * uLampC[i];
+                }
             }
         }
-        l = m.y * vTone * lit * pattern (int (m.x + 0.5), m.z, vUV.x, vUV.y) + vE;
+        float base = m.y * vTone * pattern (int (m.x + 0.5), m.z, vUV.x, vUV.y, uLook.x);
+        l = base * lit + vE;
+        float share = lampSum > 0.0 ? clamp (base * lampSum / max (1.0e-4, l), 0.0, 1.0) / lampSum : 0.0;
+        cl = share * lc;
+        for (int i = 0; i < int (uLook.w + 0.5); ++i)
+        {
+            vec3 e = p - uRip[i].xyz;
+            float rr = length (e), front = 0.2 + 3.0 * uRip[i].w, wd = 0.12 + 0.25 * uRip[i].w;
+            float a = (rr - front) / wd, fade = (1.0 - uRip[i].w) * (1.0 - uRip[i].w);
+            l *= 1.0 + 0.4 * uLook.z * uRipS[i] * fade * exp (-a * a) * cos ((rr - front) * 18.0);
+        }
         float dr = d * rayLen;
         float f = dr * uFog.y / (1.0 + dr * uFog.y);
         l += (uFog.x - l) * f;
+        cl *= 1.0 - f;
     }
     float cx = 0.5 * uView.x, cy = 0.5 * uView.y;
     float dx = floor (x) - cx, dy = floor (y) - cy;
@@ -185,7 +228,8 @@ void main()
     l += uFog.z * gr * (0.3 + 0.6 * min (1.0, l * 2.0)) * (1.0 - 0.55 * min (1.0, l));
     l = clamp (l, 0.0, 1.0);
     float g2 = l * l * (3.0 - 2.0 * l) * 0.35 + l * 0.65;
-    vec3 c = vec3 (13.0 + 222.0 * g2 + 6.0 * l * (1.0 - l), 13.0 + 219.0 * g2 + 2.0 * l * (1.0 - l), 12.0 + 214.0 * g2 - 5.0 * l * (1.0 - l));
+    vec3 c = vec3 (13.0 + 222.0 * g2 + 6.0 * l * (1.0 - l), 13.0 + 219.0 * g2 + 2.0 * l * (1.0 - l), 12.0 + 214.0 * g2 - 5.0 * l * (1.0 - l))
+             * (vec3 (1.0) + cl) * (vec3 (1.0) + uTint);
     colour = vec4 (floor (clamp (c, 0.0, 255.0)) / 255.0, 1.0);
 }
 )";
@@ -295,6 +339,11 @@ void GpuPicture::newOpenGLContextCreated()
     uLamp = glGetUniformLocation (id, "uLamp");
     uLampR = glGetUniformLocation (id, "uLampR");
     uLampN = glGetUniformLocation (id, "uLampN");
+    uLampC = glGetUniformLocation (id, "uLampC");
+    uTint = glGetUniformLocation (id, "uTint");
+    uLook = glGetUniformLocation (id, "uLook");
+    uRip = glGetUniformLocation (id, "uRip");
+    uRipS = glGetUniformLocation (id, "uRipS");
     glGenVertexArrays (1, &vao);
     glGenBuffers (1, &vbo);
     // (the glows and lines: without them the picture is still whole, so a failure here is no reason to give up)
@@ -365,17 +414,30 @@ void GpuPicture::renderOpenGL()
     glUniform2i (uFrame, (GLint) (drawing.frameNo * 7919u), (GLint) (drawing.frameNo * 104729u));
     {
         // the lamps (light off)
-        const int nl = juce::jmin (24, (int) drawing.lamps.size() / 5);
-        float lp[24 * 4] {}, lr[24] {};
+        const int nl = juce::jmin (24, (int) drawing.lamps.size() / 8);
+        float lp[24 * 4] {}, lr[24] {}, lc[24 * 3] {};
         for (int i = 0; i < nl; ++i)
         {
-            for (int c = 0; c < 4; ++c) lp[4 * i + c] = drawing.lamps[(size_t) (5 * i + c)];
-            lr[i] = drawing.lamps[(size_t) (5 * i + 4)];
+            for (int c = 0; c < 4; ++c) lp[4 * i + c] = drawing.lamps[(size_t) (8 * i + c)];
+            lr[i] = drawing.lamps[(size_t) (8 * i + 4)];
+            for (int c = 0; c < 3; ++c) lc[3 * i + c] = drawing.lamps[(size_t) (8 * i + 5 + c)];
         }
         glUniform3f (uDark, drawing.dark ? 1.0f : 0.0f, drawing.ambient, drawing.focalPerWidth);
         glUniform4fv (uLamp, 24, lp);
         glUniform1fv (uLampR, 24, lr);
+        glUniform3fv (uLampC, 24, lc);
         glUniform1i (uLampN, nl);
+        // the look: the light's colour, wear, dissolving, ripples
+        glUniform3f (uTint, drawing.tint[0], drawing.tint[1], drawing.tint[2]);
+        glUniform4f (uLook, drawing.look[0], drawing.look[1], drawing.look[2], drawing.look[3]);
+        float rp[16] {}, rs[4] {};
+        for (int i = 0; i < 4; ++i)
+        {
+            for (int c = 0; c < 4; ++c) rp[4 * i + c] = drawing.ripples[(size_t) (5 * i + c)];
+            rs[i] = drawing.ripples[(size_t) (5 * i + 4)];
+        }
+        glUniform4fv (uRip, 4, rp);
+        glUniform1fv (uRipS, 4, rs);
     }
 
     glBindVertexArray (vao);

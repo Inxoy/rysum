@@ -197,6 +197,9 @@ int RysumProcessor::diceGroupOf(const juce::String &id) const
     // nor where the doors lead)
     if (id == "simKbCh" || id.endsWith("DoorTo") || id.endsWith("DoorWall"))
         return -1;
+    // (the 3D Saal's look makes no sound: the dice leave it)
+    if (id.startsWith("look"))
+        return -1;
     if (id.startsWith("sim") && id != "simOrder")
         return dgSaal;
     if (id == "detune" || id.startsWith("trem") || id == "freezeSmear" || id == "freezeRelease" ||

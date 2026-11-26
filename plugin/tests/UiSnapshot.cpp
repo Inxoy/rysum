@@ -176,6 +176,143 @@ public:
             wv.setLookAndFeel(nullptr);
             return;
         }
+        {
+            // "Stimmung": every look changes the picture, and all of them off it stays as it was
+            auto say = [](const juce::String &what, bool ok)
+            { std::cout << what << (ok ? "  ok" : "  FAIL") << std::endl; };
+            auto snap = [&] { return wv.createComponentSnapshot(wv.getLocalBounds(), true, 1.0f); };
+            auto changed = [](const juce::Image &a, const juce::Image &b)
+            {
+                int c = 0, n = 0;
+                for (int y = 0; y < a.getHeight(); y += 2)
+                    for (int x = 0; x < a.getWidth(); x += 2, ++n)
+                    {
+                        const auto p = a.getPixelAt(x, y), q = b.getPixelAt(x, y);
+                        if (std::abs((int)p.getRed() - (int)q.getRed()) + std::abs((int)p.getGreen() - (int)q.getGreen()) +
+                                std::abs((int)p.getBlue() - (int)q.getBlue()) > 24)
+                            ++c;
+                    }
+                return 100.0 * c / juce::jmax(1, n);
+            };
+            auto colourOf = [](const juce::Image &a)
+            {
+                // how far from grey the picture is (mean |r - b| + |g - b|)
+                double s = 0;
+                int n = 0;
+                for (int y = 0; y < a.getHeight(); y += 4)
+                    for (int x = 0; x < a.getWidth(); x += 4, ++n)
+                    {
+                        const auto p = a.getPixelAt(x, y);
+                        s += std::abs((int)p.getRed() - (int)p.getBlue()) + std::abs((int)p.getGreen() - (int)p.getBlue());
+                    }
+                return s / juce::jmax(1, n);
+            };
+            setReal(RysumProcessor::roomParamId(0, "Shape"), 0.0f);
+            setReal(RysumProcessor::stopParamId(6), 1.0f);
+            run(30, {48, 55, 60, 64, 67});
+            wv.setPoseForTest(0.0f, -2.0f, 0.0f);
+            wv.setPitchForTest(-8.0f);
+            run(6, {});
+            wv.setLookOpenForTest(true);
+            run(2, {});
+            shot("walk_look_panel.png");
+            wv.setLookOpenForTest(false);
+            run(2, {});
+            const auto base = snap();
+            run(2, {});
+            const auto base2 = snap();
+            const double noise = changed(base, base2);
+            shot("walk_look_0_off.png");
+            say("Stimmung all off: frame to frame " + juce::String(noise, 2) + " % of the picture changes (grain, the pipes' breath)",
+                noise < 30.0);
+            struct Try
+            {
+                const char *id;
+                float on, off;
+                const char *what;
+                double atLeast;
+            };
+            const Try tries[]{{"lookDay", 1.0f, 0.0f, "Tageslicht (evening, 19:30)", 5.0},
+                              {"lookPipeLight", 1.0f, 0.0f, "Pfeifenlicht (coloured)", 2.0},
+                              {"lookFog", 1.0f, 0.0f, "Hallnebel (constant)", 5.0},
+                              {"lookWear", 1.0f, 0.0f, "Gebrauchsspuren", 1.0}};
+            setReal("lookHour", 19.5f);
+            setReal("lookFogFollow", 0.0f);
+            for (const auto &t : tries)
+            {
+                setReal(t.id, t.on);
+                run(30, {});
+                const auto img = snap();
+                shot(juce::String("walk_look_") + t.id + ".png");
+                const double pc = changed(img, base2);
+                juce::String extra;
+                if (juce::String(t.id) == "lookPipeLight" || juce::String(t.id) == "lookDay")
+                    extra = ", colour " + juce::String(colourOf(base2), 1) + " -> " + juce::String(colourOf(img), 1);
+                say(juce::String("Stimmung ") + t.what + ": " + juce::String(pc, 1) + " % of the picture changes" + extra,
+                    pc >= t.atLeast + noise);
+                setReal(t.id, t.off);
+            }
+            setReal("lookHour", 12.0f);
+            setReal("lookFogFollow", 1.0f);
+            {
+                // the fog follows the late reverb: loud chord -> dense, later clears
+                setReal("lookFog", 1.0f);
+                run(60, {});
+                const float hung = proc->engine.tailLevelNow.load();
+                const auto withChord = snap();
+                juce::MidiBuffer offs;
+                for (int n2 : {48, 55, 60, 64, 67})
+                    offs.addEvent(juce::MidiMessage::noteOff(1, n2), 0);
+                st.clear();
+                proc->processBlock(st, offs);
+                run(900, {}); // ~10 s
+                const float cleared = proc->engine.tailLevelNow.load();
+                for (int f = 0; f < 40; ++f)
+                    snap(); // (the fog glides)
+                const auto after = snap();
+                shot("walk_look_fog_cleared.png");
+                const double pc = changed(withChord, after);
+                say("Hallnebel follows the reverb: tail " + juce::String(hung, 1) + " dB with the chord, " +
+                        juce::String(cleared, 1) + " dB 10 s after; the picture changes " + juce::String(pc, 1) + " %",
+                    hung > cleared + 20.0f && pc > 3.0);
+                setReal("lookFog", 0.0f);
+                run(30, {48, 55, 60, 64, 67});
+            }
+            {
+                // the room keyboard takes walls away (channel 2, C3 .. B3); "Waende vergehen" shows it
+                setReal("simKbCh", 2.0f);
+                setReal("simKbGlide", 0.2f);
+                setReal("lookWalls", 1.0f);
+                juce::MidiBuffer mb;
+                for (int n2 = 48; n2 < 60; ++n2)
+                    mb.addEvent(juce::MidiMessage::noteOn(2, n2, (juce::uint8)100), 0);
+                st.clear();
+                proc->processBlock(st, mb);
+                run(80, {});
+                const auto gone = snap();
+                shot("walk_look_lookWalls.png");
+                const double pc = changed(gone, base2);
+                say("Waende vergehen: walls taken away by the room keyboard dissolve, " + juce::String(pc, 1) +
+                        " % of the picture changes",
+                    pc > 5.0 + noise);
+                juce::MidiBuffer offs;
+                for (int n2 = 48; n2 < 60; ++n2)
+                    offs.addEvent(juce::MidiMessage::noteOff(2, n2), 0);
+                st.clear();
+                proc->processBlock(st, offs);
+                run(80, {});
+                const double back = changed(snap(), base2);
+                say("Waende vergehen: let go, the walls come back (" + juce::String(back, 1) + " % differs)",
+                    back < noise + 3.0);
+                setReal("lookWalls", 0.0f);
+                setReal("simKbCh", 0.0f);
+            }
+            if (std::getenv("RYSUM_ONLY_LOOK") != nullptr)
+            {
+                wv.setLookAndFeel(nullptr);
+                return;
+            }
+        }
         struct View
         {
             float x, y, yaw, pitch;

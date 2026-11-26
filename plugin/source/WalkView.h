@@ -272,7 +272,22 @@ private:
     bool anyPinned() const noexcept { for (const auto& m : proc.engine.pinMask) if (m.load() != 0) return true; return false; }
     bool overlayBusy() const noexcept { return ! proc.walkLanterns.empty() || anyPinned() || whirlFx > 0.0 || earsAway || helpHeld || magnet != 0 || boxing || selectedCount() > 0; }
     // a frame in two parts: the picture (the room and the pipes as triangles), and what is drawn over it
-    struct Glow { V3 at; float amount, size; };
+    struct Glow { V3 at; float amount, size; int stop = -1; };       // (stop: a sounding pipe's - its colour of light)
+    // ---- "Stimmung": the look of the Saal (the look* parameters, as the modulation and the Verlauf set them)
+    struct LookNow
+    {
+        float day = 0, hour = 12, rays = 0, rayWidth = 1.2f, dust = 0, dustStir = 0.5f, pipeLight = 0, pipeHue = 0.6f,
+              pipeReach = 3, trails = 0, trailLen = 2, fog = 0, fogFollow = 1, doors = 0, doorDim = 0.6f, walls = 0,
+              wallGrain = 0.5f, wear = 0, shine = 0, ripple = 0, sway = 0, shake = 0, focus = 0;
+    };
+    LookNow readLook() const;
+    LookNow lookNow;
+    double lookLastMs = 0.0;
+    float lookDt = 1.0f / 60.0f;              // (seconds since the last frame)
+    std::array<Look::Ripple, Look::kMaxRipples> ripples {};
+    int rippleNext = 0;
+    float shakeEnv = 0.0f, fogDensNow = 0.0f;
+    double lookClock = 0.0;                   // (seconds, for the idle sway)
     struct Scene
     {
         EngineParams params;
@@ -372,6 +387,15 @@ private:
     // the illusions: the room plays itself, pipes grow and break, a pipe at the ear, the far end plays the past,
     // a room heard larger than it is seen
     std::array<std::unique_ptr<ParamRow>, 6> illusions;
+    // "Stimmung": the look of the Saal - light, air, the room, the camera (a panel under the illusions)
+    static constexpr int kLookRows = 23;
+    std::array<std::unique_ptr<ParamRow>, kLookRows> lookRows;
+    juce::TextButton actLook { juce::String::fromUTF8 ("Atmosph\xc3\xa4re") };
+    juce::Rectangle<int> lookArea;
+    void showLook (bool on);
+public:
+    void setLookOpenForTest (bool on) { showLook (on); }
+private:
     juce::Image glowSprite;
     juce::String status;
     double statusUntil = 0.0;

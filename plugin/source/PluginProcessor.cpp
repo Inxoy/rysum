@@ -1358,6 +1358,56 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             ParameterID{"fxBeatMode", 1}, "Schwebung misst",
             StringArray{"Schwebungen (Hz)", String::fromUTF8("Verh\xc3\xa4ltnis (Cent von rein)")}, 0));
     }
+    {
+        // the 3D Saal's look ("Stimmung"): light, air, the room, the camera - all off at first, so
+        // older projects look as they did; every one can be modulated and drawn in the Verlauf
+        auto lpct = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(juce::roundToInt(v * 100)) + " %"; });
+        auto lm = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(v, v < 10.0f ? 1 : 0) + " m"; });
+        auto ls = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(v, v < 10.0f ? 1 : 0) + " s"; });
+        auto hour = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int)
+            {
+                const int mins = juce::roundToInt(v * 60.0f) % (24 * 60);
+                return String(mins / 60).paddedLeft('0', 2) + ":" + String(mins % 60).paddedLeft('0', 2);
+            });
+        auto F01 = [&](const char *id, const char *name, float def)
+        {
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{id, 1}, String::fromUTF8(name),
+                                                        NormalisableRange<float>(0, 1), def, lpct));
+        };
+        F01("lookDay", "Stimmung Tageslicht", 0.0f);
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lookHour", 1}, "Stimmung Uhrzeit",
+                                                    NormalisableRange<float>(0.0f, 24.0f, 0.01f), 12.0f, hour));
+        F01("lookRays", "Stimmung Lichtstrahlen", 0.0f);
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lookRayWidth", 1}, "Stimmung Strahlbreite",
+                                                    NormalisableRange<float>(0.2f, 4.0f, 0.01f, 0.6f), 1.2f, lm));
+        F01("lookDust", "Stimmung Staub", 0.0f);
+        F01("lookDustStir", "Stimmung Staub aufwirbeln", 0.5f);
+        F01("lookPipeLight", "Stimmung Pfeifenlicht", 0.0f);
+        F01("lookPipeHue", "Stimmung Pfeifenlicht Farbe", 0.6f);
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lookPipeReach", 1},
+                                                    "Stimmung Pfeifenlicht Reichweite",
+                                                    NormalisableRange<float>(0.5f, 12.0f, 0.01f, 0.5f), 3.0f, lm));
+        F01("lookTrails", "Stimmung Leuchtspuren", 0.0f);
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"lookTrailLen", 1},
+                                                    String::fromUTF8("Stimmung Leuchtspuren L\xc3\xa4nge"),
+                                                    NormalisableRange<float>(0.2f, 10.0f, 0.01f, 0.5f), 2.0f, ls));
+        F01("lookFog", "Stimmung Hallnebel", 0.0f);
+        F01("lookFogFollow", "Stimmung Hallnebel folgt dem Nachhall", 1.0f);
+        F01("lookDoors", "Stimmung T\xc3\xbcren sichtbar", 0.0f);
+        F01("lookDoorDim", "Stimmung Nachbarsaal Helligkeit", 0.6f);
+        F01("lookWalls", "Stimmung W\xc3\xa4nde vergehen", 0.0f);
+        F01("lookWallGrain", "Stimmung W\xc3\xa4nde zerfallen", 0.5f);
+        F01("lookWear", "Stimmung Gebrauchsspuren", 0.0f);
+        F01("lookShine", "Stimmung Glanz", 0.0f);
+        F01("lookRipple", "Stimmung Wellen beim Aufprall", 0.0f);
+        F01("lookSway", "Stimmung Kamera schwankt", 0.0f);
+        F01("lookShake", "Stimmung Kamera bebt", 0.0f);
+        F01("lookFocus", "Stimmung Sch\xc3\xa4rfentiefe", 0.0f);
+    }
     return l;
 }
 

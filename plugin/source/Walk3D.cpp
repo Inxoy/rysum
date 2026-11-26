@@ -264,7 +264,18 @@ inline float vnoise (float u, float v) noexcept
 }
 inline float fract (float x) noexcept { return x - ffloor (x); }
 
-float texture (const Material& m, float u, float v) noexcept
+inline float smooth01 (float a, float b, float x) noexcept
+{
+    const float t = juce::jlimit (0.0f, 1.0f, (x - a) / (b - a));
+    return t * t * (3.0f - 2.0f * t);
+}
+/** "Gebrauchsspuren": stains that run down a wall (water, soot), darker where they gather */
+inline float stains (float u, float v) noexcept
+{
+    return smooth01 (0.5f, 0.85f, vnoise (u * 0.9f, v * 0.16f + 3.1f)) * (0.6f + 0.4f * vnoise (u * 6.0f, v * 2.0f));
+}
+
+float texture (const Material& m, float u, float v, float wear) noexcept
 {
     const float r = m.rough;
     switch (m.kind)
@@ -276,19 +287,22 @@ float texture (const Material& m, float u, float v) noexcept
             const float uu = u + ((int) row & 1) * 0.31f;
             const float col = ffloor (uu / 0.62f);
             const float fu = (uu - col * 0.62f), fv = (v - row * 0.32f);
-            if (fu < 0.018f || fv < 0.018f) return 0.5f;
-            return (0.84f + 0.32f * hash2 ((int) col, (int) row)) * (1.0f + r * 1.4f * (vnoise (u * 7.0f, v * 7.0f) - 0.5f));
+            const float st = 1.0f - 0.45f * wear * stains (u, v);
+            if (fu < 0.018f || fv < 0.018f) return 0.5f * st;
+            return (0.84f + 0.32f * hash2 ((int) col, (int) row)) * (1.0f + r * 1.4f * (vnoise (u * 7.0f, v * 7.0f) - 0.5f)) * st;
         }
         case Material::plaster:
-            return 1.0f + r * 1.3f * (vnoise (u * 0.7f, v * 0.7f) - 0.5f) + 0.35f * r * (vnoise (u * 11.0f, v * 11.0f) - 0.5f);
+            return (1.0f + r * 1.3f * (vnoise (u * 0.7f, v * 0.7f) - 0.5f) + 0.35f * r * (vnoise (u * 11.0f, v * 11.0f) - 0.5f))
+                   * (1.0f - 0.35f * wear * stains (u, v));
         case Material::wood:
         {
             // upright panelling: boards of 20 cm, dark seams, grain
             const float col = ffloor (u / 0.2f);
             const float fu = u - col * 0.2f;
             if (fu < 0.008f) return 0.42f;
-            const float grain = 0.9f + 0.1f * fsin (u * 95.0f + 7.0f * vnoise (col * 3.1f + 0.3f, v * 1.4f));
-            return (0.8f + 0.3f * hash2 ((int) col, 17)) * grain * (1.0f + r * (vnoise (u * 20.0f, v * 3.0f) - 0.5f));
+            const float grain = 0.9f + (0.1f + 0.12f * wear) * fsin (u * 95.0f + 7.0f * vnoise (col * 3.1f + 0.3f, v * 1.4f));
+            return (0.8f + 0.3f * hash2 ((int) col, 17)) * grain * (1.0f + r * (vnoise (u * 20.0f, v * 3.0f) - 0.5f))
+                   * (1.0f - 0.3f * wear * vnoise (u * 0.6f + 5.0f, v * 0.6f));
         }
         case Material::glass:
         {
@@ -314,7 +328,8 @@ float texture (const Material& m, float u, float v) noexcept
             const float cu = ffloor (u / 0.8f), cv = ffloor (v / 0.8f);
             const float fu = u - cu * 0.8f, fv = v - cv * 0.8f;
             if (fu < 0.012f || fv < 0.012f) return 0.55f;
-            return (0.78f + 0.4f * hash2 ((int) cu, (int) cv)) * (1.0f + r * 1.2f * (vnoise (u * 5.0f, v * 5.0f) - 0.5f));
+            return (0.78f + 0.4f * hash2 ((int) cu, (int) cv)) * (1.0f + r * 1.2f * (vnoise (u * 5.0f, v * 5.0f) - 0.5f))
+                   * (1.0f - 0.3f * wear * stains (u, v));
         }
         case Material::boards:
         {
@@ -324,8 +339,8 @@ float texture (const Material& m, float u, float v) noexcept
             const float uu = u + hash2 ((int) row, 5) * 2.4f;
             const float fu = fract (uu / 2.4f) * 2.4f;
             if (fv < 0.006f || fu < 0.008f) return 0.45f;
-            const float grain = 0.9f + 0.1f * fsin (v * 120.0f + 6.0f * vnoise (uu * 1.2f, row * 2.7f));
-            return (0.82f + 0.3f * hash2 ((int) row, (int) ffloor (uu / 2.4f))) * grain;
+            const float grain = 0.9f + (0.1f + 0.12f * wear) * fsin (v * 120.0f + 6.0f * vnoise (uu * 1.2f, row * 2.7f));
+            return (0.82f + 0.3f * hash2 ((int) row, (int) ffloor (uu / 2.4f))) * grain * (1.0f - 0.3f * wear * vnoise (u * 0.6f + 5.0f, v * 0.6f));
         }
         case Material::carpet:
             return 0.9f + 0.2f * (vnoise (u * 40.0f, v * 40.0f) - 0.5f) + 0.12f * (vnoise (u * 2.0f, v * 2.0f) - 0.5f);
@@ -337,7 +352,7 @@ float texture (const Material& m, float u, float v) noexcept
             if (uw < 0.075f && v > 0.175f && v < 0.215f) return 0.1f;
             if (uw < 0.085f && v >= 0.215f && v < 0.228f) return 0.6f;
             const float foot = v < 0.16f ? 0.88f : 1.0f;
-            return foot * (1.0f + 0.07f * (vnoise (u * 40.0f, v * 70.0f) - 0.5f));
+            return foot * (1.0f + 0.07f * (vnoise (u * 40.0f, v * 70.0f) - 0.5f)) * (1.0f - 0.25f * wear * vnoise (u * 6.0f, v * 3.0f));
         }
         case Material::dark:  return 0.12f;
         default:              return 1.0f + 0.1f * r * (vnoise (u * 3.0f, v * 3.0f) - 0.5f);
@@ -425,7 +440,7 @@ void Raster::setCamera (V3 e, float yawDeg, float pitchDeg, float fovDeg)
     right = { std::cos (ya), std::sin (ya), 0.0f };
     up = cross (right, fwd);
     focal = 0.5f * (float) w / std::tan (0.5f * juce::degreesToRadians (juce::jlimit (30.0f, 120.0f, fovDeg)));
-    lightDir = normalised ({ 0.35f, -0.25f, 0.9f });
+    lightDir = sunDir;
 }
 
 void Raster::setCameraBasis (V3 e, V3 r, V3 f, float fovDeg)
@@ -435,7 +450,28 @@ void Raster::setCameraBasis (V3 e, V3 r, V3 f, float fovDeg)
     right = normalised (r - fwd * dot (r, fwd));
     up = cross (right, fwd);
     focal = 0.5f * (float) w / std::tan (0.5f * juce::degreesToRadians (juce::jlimit (30.0f, 120.0f, fovDeg)));
-    lightDir = normalised ({ 0.35f, -0.25f, 0.9f });
+    lightDir = sunDir;
+}
+
+void Raster::setLook (const Look& l)
+{
+    look = l;
+    ripN = 0;
+    if (l.rippleAmt > 0.0f)
+        for (const auto& r : l.ripples)
+        {
+            if (r.strength <= 0.0f || r.age >= 1.0f) continue;
+            const auto v = toView (r.at);
+            float* o = ripV + 5 * ripN++;
+            o[0] = v.x; o[1] = v.y; o[2] = v.z; o[3] = r.age; o[4] = r.strength;
+        }
+}
+
+void Raster::lookForGpu (float* tint3, float* look4, float* rip) const noexcept
+{
+    for (int i = 0; i < 3; ++i) tint3[i] = look.tint[i] - 1.0f;
+    look4[0] = look.wear; look4[1] = look.cell; look4[2] = look.rippleAmt; look4[3] = (float) ripN;
+    for (int i = 0; i < Look::kMaxRipples * 5; ++i) rip[i] = i < ripN * 5 ? ripV[i] : 0.0f;
 }
 
 void Raster::begin (float fog, float fogDistance, float grainAmt, uint32_t frame)
@@ -465,7 +501,10 @@ void Raster::setLamps (const std::vector<Lamp>& lamps, float amb)
     for (const auto* l : order)
     {
         const auto v = toView (l->at);
-        lampsV.insert (lampsV.end(), { v.x, v.y, v.z, l->power, 1.0f / juce::jmax (0.01f, l->reach * l->reach) });
+        // (its colour at the brightness of white: only the hue changes, not how much it lights)
+        const float lum = juce::jmax (1.0e-3f, 0.3f * l->r + 0.59f * l->g + 0.11f * l->b);
+        lampsV.insert (lampsV.end(), { v.x, v.y, v.z, l->power, 1.0f / juce::jmax (0.01f, l->reach * l->reach),
+                                       l->r / lum - 1.0f, l->g / lum - 1.0f, l->b / lum - 1.0f });
     }
 }
 
@@ -645,6 +684,8 @@ void Raster::rasterBand (int band)
         float e1r = ((x0 - x2) * (py - y2f) - (y0f - y2f) * (px - x2)) * inv;
         float e2r = ((x1 - x0) * (py - y0f) - (y1f - y0f) * (px - x0)) * inv;
         const float z0 = s.iz[0], z1 = s.iz[i1], z2 = s.iz[i2];
+        // "Waende vergehen": a dissolving surface lets through what lies behind it - pixel by pixel, or in pieces
+        const float gone = mats[s.slot].gone, cellInv = look.cell > 1.0e-3f ? 1.0f / look.cell : 0.0f;
         for (int y = ry0; y <= ry1; ++y)
         {
             float e0 = e0r, e1 = e1r, e2 = e2r;
@@ -655,6 +696,18 @@ void Raster::rasterBand (int band)
                 {
                     const float iz = e0 * z0 + e1 * z1 + e2 * z2;
                     const size_t k = row + (size_t) x;
+                    if (gone > 0.0f && iz > zbuf[k])
+                    {
+                        float h;
+                        if (cellInv > 0.0f)
+                        {
+                            const float rz = 1.0f / iz;
+                            const float u = (e0 * s.uz[0] + e1 * s.uz[i1] + e2 * s.uz[i2]) * rz, v = (e0 * s.vz[0] + e1 * s.vz[i1] + e2 * s.vz[i2]) * rz;
+                            h = hash2 ((int) ffloor (u * cellInv), (int) ffloor (v * cellInv) * 7 + (int) s.slot);
+                        }
+                        else h = hash2 (x, y * 5 + 1);
+                        if (h < gone) { e0 += s0; e1 += s1; e2 += s2; continue; }
+                    }
                     if (iz > zbuf[k])
                     {
                         zbuf[k] = iz;
@@ -689,7 +742,7 @@ void Raster::shadeBand (int band)
         for (int x = 0; x < w; ++x)
         {
             const size_t k = row + (size_t) x;
-            float l;
+            float l, cr = 0.0f, cg = 0.0f, cb = 0.0f;
             const float iz = zbuf[k];
             // (a panorama face: the ray's own direction, for the vault and the true distance)
             const float rx = panoFace ? ((float) x + 0.5f - cx) / focal : 0.0f;
@@ -710,25 +763,45 @@ void Raster::shadeBand (int band)
                 const auto& m = mats[gm[k]];
                 const float d = 1.0f / iz;
                 float lit = gb[k];
+                const float vx = ((float) x + 0.5f - cx) / focal * d, vy = (cy - ((float) y + 0.5f)) / focal * d;
+                float lampSum = 0.0f, lr = 0.0f, lg = 0.0f, lbl = 0.0f;
                 if (dark)
                 {
                     // light off: a faint rest of the usual light, and the lamps (the surface's facing, the lamp's
-                    // distance: softened within its reach)
+                    // distance: softened within its reach) - each its own colour
                     lit *= ambient;
                     const float* nf = tris[(size_t) gi[k]].n;
-                    const float vx = ((float) x + 0.5f - cx) / focal * d, vy = (cy - ((float) y + 0.5f)) / focal * d;
-                    for (size_t li = 0; li + 4 < lampsV.size(); li += 5)
+                    for (size_t li = 0; li + 7 < lampsV.size(); li += 8)
                     {
                         const float lx = lampsV[li] - vx, ly = lampsV[li + 1] - vy, lz = lampsV[li + 2] - d;
                         const float d2 = lx * lx + ly * ly + lz * lz;
                         const float ndl = (nf[0] * lx + nf[1] * ly + nf[2] * lz) / std::sqrt (d2 + 1.0e-6f);
-                        if (ndl > 0.0f) lit += lampsV[li + 3] * ndl / (1.0f + d2 * lampsV[li + 4]);
+                        if (ndl > 0.0f)
+                        {
+                            const float c = lampsV[li + 3] * ndl / (1.0f + d2 * lampsV[li + 4]);
+                            lit += c; lampSum += c;
+                            lr += c * lampsV[li + 5]; lg += c * lampsV[li + 6]; lbl += c * lampsV[li + 7];
+                        }
                     }
                 }
-                l = m.tone * gt[k] * lit * texture (m, gu[k], gv[k]) + ge[k];
+                const float base = m.tone * gt[k] * texture (m, gu[k], gv[k], look.wear);
+                l = base * lit + ge[k];
+                // the lamps' share of the light here (for their colour, below)
+                const float share = lampSum > 0.0f ? juce::jlimit (0.0f, 1.0f, base * lampSum / juce::jmax (1.0e-4f, l)) / lampSum : 0.0f;
+                cr = share * lr; cg = share * lg; cb = share * lbl;
+                // a knock's ripple running out over the surfaces near it
+                for (int ri = 0; ri < ripN; ++ri)
+                {
+                    const float* q = ripV + 5 * ri;
+                    const float ex = vx - q[0], ey = vy - q[1], ez = d - q[2];
+                    const float rr = std::sqrt (ex * ex + ey * ey + ez * ez), front = 0.2f + 3.0f * q[3], wd = 0.12f + 0.25f * q[3];
+                    const float a = (rr - front) / wd, fade = (1.0f - q[3]) * (1.0f - q[3]);
+                    l *= 1.0f + 0.4f * look.rippleAmt * q[4] * fade * std::exp (-a * a) * std::cos ((rr - front) * 18.0f);
+                }
                 const float dr = d * rayLen;           // (the distance along the ray; = d in the usual view, as before)
                 const float f = (panoFace ? dr : d) * fogInv / (1.0f + (panoFace ? dr : d) * fogInv);
                 l += (fogTone - l) * f;
+                cr *= 1.0f - f; cg *= 1.0f - f; cb *= 1.0f - f;
             }
             // vignette and grain (moving with every frame, like film)
             const float dx = (float) x - cx, dy = (float) y - cy;
@@ -738,9 +811,10 @@ void Raster::shadeBand (int band)
             // greys of an old print: ink-black to paper-white, the mids a touch warm
             l = juce::jlimit (0.0f, 1.0f, l);
             const float g2 = l * l * (3.0f - 2.0f * l) * 0.35f + l * 0.65f;       // a little more contrast
-            const int r = (int) (13.0f + 222.0f * g2 + 6.0f * l * (1.0f - l));
-            const int g = (int) (13.0f + 219.0f * g2 + 2.0f * l * (1.0f - l));
-            const int b = (int) (12.0f + 214.0f * g2 - 5.0f * l * (1.0f - l));
+            // (coloured lamps and the light's colour of the time of day: on top of the greys)
+            const int r = (int) ((13.0f + 222.0f * g2 + 6.0f * l * (1.0f - l)) * (1.0f + cr) * look.tint[0]);
+            const int g = (int) ((13.0f + 219.0f * g2 + 2.0f * l * (1.0f - l)) * (1.0f + cg) * look.tint[1]);
+            const int b = (int) ((12.0f + 214.0f * g2 - 5.0f * l * (1.0f - l)) * (1.0f + cb) * look.tint[2]);
             pix[k] = 0xff000000u | ((uint32_t) juce::jlimit (0, 255, r) << 16) | ((uint32_t) juce::jlimit (0, 255, g) << 8) | (uint32_t) juce::jlimit (0, 255, b);
         }
     }
@@ -780,7 +854,7 @@ void Raster::exportGpu (std::vector<float>& verts, std::array<float, 32 * 4>& ma
     for (size_t i = 0; i < 32; ++i)
     {
         materials[4 * i] = (float) mats[i].kind; materials[4 * i + 1] = mats[i].tone;
-        materials[4 * i + 2] = mats[i].rough; materials[4 * i + 3] = 0.0f;
+        materials[4 * i + 2] = mats[i].rough; materials[4 * i + 3] = mats[i].gone;
     }
 }
 

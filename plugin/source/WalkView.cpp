@@ -127,7 +127,7 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
 {
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::CrosshairCursor);
-    for (juce::Button* b : std::initializer_list<juce::Button*> { &back, &load, &clear, &fit, &zUp, &home, &hear, &immerse, &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience, &actPano, &controlsButton })
+    for (juce::Button* b : std::initializer_list<juce::Button*> { &back, &load, &clear, &fit, &zUp, &home, &hear, &immerse, &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience, &actPano, &controlsButton, &actLook })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -255,7 +255,56 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
             addAndMakeVisible (*illusions[(size_t) i]);
         }
     }
+    {
+        // "Stimmung": every part of the look its own control (each can be modulated and drawn in the Verlauf)
+        struct Row { const char* id; const char* name; const char* tip; };
+        static const Row rows[kLookRows] {
+            { "lookDay", "Tageslicht", "Wie sehr die Tageszeit das Licht bestimmt: woher es kommt, seine Farbe, wie hell. 0 = das gewohnte graue Licht." },
+            { "lookHour", "Uhrzeit", "Die Tageszeit: Morgen (goldenes, flaches Licht von rechts), Mittag (hell, von oben), Abend (orange, von links), Nacht (dunkelblaues Mondlicht). Wirkt mit \xe2\x80\x9eTageslicht\xe2\x80\x9c; die Schatten der Pfeifen werden mit tiefer Sonne l\xc3\xa4nger." },
+            { "lookRays", "Lichtstrahlen", "Lichtb\xc3\xbcndel, die schr\xc3\xa4g durch den Saal fallen (aus der Richtung der Sonne, mit \xe2\x80\x9eTageslicht\xe2\x80\x9c), im Dunkeln von den klingenden Pfeifen." },
+            { "lookRayWidth", "Strahlbreite", "Wie breit jedes Lichtb\xc3\xbcndel ist." },
+            { "lookDust", "Staub", "Staub, der in der Luft treibt und im Licht der Strahlen und Pfeifen aufleuchtet." },
+            { "lookDustStir", "Staub aufwirbeln", "Wie sehr der Staub aufgewirbelt wird, wenn der Kalkant tritt, ein lauter Akkord einsetzt oder eine Pfeife aufschl\xc3\xa4gt." },
+            { "lookPipeLight", "Pfeifenlicht", "Die klingenden Pfeifen werfen farbiges Licht auf Boden und W\xc3\xa4nde \xe2\x80\x93 auch bei Licht, im Dunkeln (L) st\xc3\xa4rker." },
+            { "lookPipeHue", "Lichtfarbe", "Von warmem Wei\xc3\x9f bis zur eigenen Farbe jedes Registers (Praestant gold, Gedackt bernstein, Trompete rot, Mixtur eisblau \xe2\x80\xa6)." },
+            { "lookPipeReach", "Reichweite", "Wie weit das Licht einer Pfeife reicht." },
+            { "lookTrails", "Leuchtspuren", "Pfeifen, die durch den Saal fliegen, fallen oder schw\xc3\xa4rmen, ziehen Lichtspuren hinter sich her \xe2\x80\x93 wie bei langer Belichtung." },
+            { "lookTrailLen", "Spurl\xc3\xa4nge", "Wie lange eine Lichtspur nachleuchtet." },
+            { "lookFog", "Hallnebel", "Ein Nebel, so dicht wie der Nachhall laut ist: nach einem Akkord h\xc3\xa4ngt er so lange in der Luft, wie der Saal nachklingt, dann klart es auf." },
+            { "lookFogFollow", "Nebel folgt Hall", "Wie sehr der Nebel dem Nachhall folgt: 0 = er steht immer im Saal, 100 % = nur so viel, wie gerade nachklingt." },
+            { "lookDoors", "T\xc3\xbcren sichtbar", "Die T\xc3\xbcr zu einem anderen Saal (Saal-Seite) ist zu sehen: ein T\xc3\xbcrfl\xc3\xbcgel, der so weit offen steht wie die T\xc3\xbcr, und dahinter der andere Saal." },
+            { "lookDoorDim", "Nachbarsaal hell", "Wie hell der Saal hinter der T\xc3\xbcr ist." },
+            { "lookWalls", "W\xc3\xa4nde vergehen", "W\xc3\xa4nde, Boden und Decke, die die Raumtastatur wegnimmt, l\xc3\xb6sen sich auf und kommen zur\xc3\xbc" "ck, wenn die Taste losgelassen wird." },
+            { "lookWallGrain", "Zerfall in St\xc3\xbc" "cke", "Wie eine Wand vergeht: 0 = sie verblasst Punkt f\xc3\xbcr Punkt, mehr = sie zerf\xc3\xa4llt in immer gr\xc3\xb6\xc3\x9f" "ere St\xc3\xbc" "cke." },
+            { "lookWear", "Gebrauchsspuren", "Wasserflecken auf Stein und Putz, deutlichere Maserung im Holz, angelaufenes Metall." },
+            { "lookShine", "Glanz", "Glas, Spiegel und Metall fangen das Licht: hellere Glanzlichter." },
+            { "lookRipple", "Wellen", "Wo eine Pfeife aufschl\xc3\xa4gt, l\xc3\xa4uft eine kurze Welle \xc3\xbc" "ber die Fl\xc3\xa4" "chen." },
+            { "lookSway", "Kamera schwankt", "Der Blick schwankt beim Gehen st\xc3\xa4rker, und im Stehen atmet er ein wenig." },
+            { "lookShake", "Kamera bebt", "Ein harter Aufprall in der N\xc3\xa4he ersch\xc3\xbcttert den Blick." },
+            { "lookFocus", "Sch\xc3\xa4rfentiefe", "Scharf ist, worauf du schaust (die Pfeife unter dem Kreuz); davor und dahinter verschwimmt es." } };
+        for (int i = 0; i < kLookRows; ++i)
+        {
+            auto row = std::make_unique<ParamRow> (proc.apvts, rows[i].id, rysum::tr (rows[i].name), true);
+            row->setTooltip (rysum::tr (rows[i].tip));
+            row->setWantsKeyboardFocus (false);
+            addChildComponent (*row);
+            lookRows[(size_t) i] = std::move (row);
+        }
+        actLook.setClickingTogglesState (true);
+        actLook.setTooltip (rysum::tr ("Die Stimmung des Saals: Tageslicht, Lichtstrahlen und Staub, das Licht der Pfeifen, Leuchtspuren, Hallnebel, "
+                                       "sichtbare T\xc3\xbcren, vergehende W\xc3\xa4nde, Gebrauchsspuren, Glanz, Wellen, die Kamera. Alles l\xc3\xa4sst sich "
+                                       "modulieren (Rechtsklick) und im Verlauf zeichnen."));
+        actLook.onClick = [this] { showLook (actLook.getToggleState()); };
+    }
     updateButtons();
+}
+
+void WalkView::showLook (bool on)
+{
+    actLook.setToggleState (on, juce::dontSendNotification);
+    for (auto& r : lookRows) if (r != nullptr) r->setVisible (on);
+    resized();
+    repaint();
 }
 
 WalkView::~WalkView()
@@ -293,10 +342,10 @@ void WalkView::resized()
         // the hands: a row above the hints at the bottom
         auto h = getLocalBounds().reduced (18, 0).withTrimmedBottom (26).removeFromBottom (22);
         handsArea = h;
-        const int widths[] { 104, 88, 92, 104, 96, 92, 78, 96, 80, 92 };
-        juce::Button* hands[] { &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience, &controlsButton };
+        const int widths[] { 104, 88, 92, 104, 96, 92, 78, 96, 80, 92, 84 };
+        juce::Button* hands[] { &actShock, &actGrab, &actFreeze, &actHome, &actClap, &actMat, &actJump, &actLight, &actAudience, &controlsButton, &actLook };
         const bool sp = isSpectator();
-        for (int i = 0; i < 10; ++i)
+        for (int i = 0; i < 11; ++i)
         {
             // (listening: only jumping, the light and the controls - packed together)
             if (sp && ! shownWhileListening (hands[i])) continue;
@@ -313,6 +362,19 @@ void WalkView::resized()
         {
             if (il != nullptr) il->setBounds (row.removeFromLeft (w));
             row.removeFromLeft (16);
+        }
+    }
+    {
+        // "Stimmung": four columns under the illusions
+        auto area = getLocalBounds().reduced (18, 0).withTrimmedTop (104).removeFromTop (6 * 34 + 12);
+        lookArea = area;
+        area = area.reduced (10, 6);
+        const int cw = (area.getWidth() - 3 * 20) / 4;
+        for (int i = 0; i < kLookRows; ++i)
+        {
+            const int col = i / 6, rw = i % 6;
+            if (lookRows[(size_t) i] != nullptr)
+                lookRows[(size_t) i]->setBounds (area.getX() + col * (cw + 20), area.getY() + rw * 34, cw, 32);
         }
     }
     home.setBounds (r.removeFromRight (82));
@@ -690,7 +752,7 @@ bool WalkView::shownWhileListening (juce::Component* c) const
 {
     // walking and looking always; the hands the player allows
     if (c == &back) return ! alwaysSpectator;
-    if (c == &immerse || c == &home || c == &actJump || c == &controlsButton || c == &actLight || c == &actPano) return true;
+    if (c == &immerse || c == &home || c == &actJump || c == &controlsButton || c == &actLight || c == &actPano || c == &actLook) return true;
     if (c == &actShock || c == &actClap) return handsMay (1);
     if (c == &actGrab || c == &actHome) return handsMay (2);
     return false;
@@ -1861,6 +1923,69 @@ void WalkView::addVoxHumana (const RoomParams& r, V3 homeP, bool dark)
     voxLevelMax = juce::jmax (1.0e-4f, juce::jmax (levelTop, voxLevelMax * 0.995f));
 }
 
+WalkView::LookNow WalkView::readLook() const
+{
+    // (as the modulation and the Verlauf have them right now, else as the controls stand)
+    auto v = [this] (const char* id, float def)
+    {
+        auto* prm = proc.apvts.getParameter (id);
+        if (prm == nullptr) return def;
+        const int i = proc.getParamIndex (id);
+        const float mn = proc.getModulatedNorm (i);
+        if (! std::isnan (mn)) return prm->convertFrom0to1 (juce::jlimit (0.0f, 1.0f, mn));
+        if (auto* raw = proc.apvts.getRawParameterValue (id)) return raw->load();
+        return def;
+    };
+    LookNow l;
+    l.day = v ("lookDay", 0); l.hour = v ("lookHour", 12); l.rays = v ("lookRays", 0); l.rayWidth = v ("lookRayWidth", 1.2f);
+    l.dust = v ("lookDust", 0); l.dustStir = v ("lookDustStir", 0.5f); l.pipeLight = v ("lookPipeLight", 0);
+    l.pipeHue = v ("lookPipeHue", 0.6f); l.pipeReach = v ("lookPipeReach", 3); l.trails = v ("lookTrails", 0);
+    l.trailLen = v ("lookTrailLen", 2); l.fog = v ("lookFog", 0); l.fogFollow = v ("lookFogFollow", 1);
+    l.doors = v ("lookDoors", 0); l.doorDim = v ("lookDoorDim", 0.6f); l.walls = v ("lookWalls", 0);
+    l.wallGrain = v ("lookWallGrain", 0.5f); l.wear = v ("lookWear", 0); l.shine = v ("lookShine", 0);
+    l.ripple = v ("lookRipple", 0); l.sway = v ("lookSway", 0); l.shake = v ("lookShake", 0); l.focus = v ("lookFocus", 0);
+    return l;
+}
+
+namespace
+{
+/** the colour each stop's pipes light the room with (Pfeifenlicht), at full colour */
+juce::Colour stopLightColour (int s)
+{
+    static const juce::uint32 c[] { 0xffffc46b,      // Praestant 8': gold
+                                    0xffff8a3d,      // Gedackt: amber (wood)
+                                    0xffa8ffb0,      // Octave 4': pale green
+                                    0xff8fd8ff,      // Octave 2': sky blue
+                                    0xffd29bff,      // Sesquialtera: violet
+                                    0xffbfe8ff,      // Mixtur: ice
+                                    0xffff5a4a,      // Trompete: red
+                                    0xffffe0a0 };    // Praestant 16': warm white
+    return juce::Colour (c[(size_t) juce::jlimit (0, 7, s)]);
+}
+/** the time of day: where the light comes from, its colour and strength (hour 0 .. 24) */
+void dayLight (float hour, V3& dir, float* tint)
+{
+    const float pi = juce::MathConstants<float>::pi;
+    const float t = (hour - 5.0f) / 16.0f;                            // 0 = sunrise (5:00), 1 = sunset (21:00)
+    const float sunEl = std::sin (pi * juce::jlimit (-0.25f, 1.25f, t));      // (below 0: night)
+    const float day = juce::jlimit (0.0f, 1.0f, sunEl * 3.0f + 0.2f);         // 0 = night .. 1 = day
+    // the sun from the east (right) over the front to the west; at night the moon, high in the south-west
+    const float az = pi * juce::jlimit (0.0f, 1.0f, t);
+    const float el = juce::jmax (0.08f, sunEl) * 1.1f;
+    V3 sun { std::cos (az) * std::cos (el), 0.45f * std::cos (el), std::sin (el) };
+    V3 moon { -0.4f, 0.5f, 0.75f };
+    dir = normalised (sun * day + moon * (1.0f - day));
+    // low sun: gold to orange; high: neutral; night: a dim blue
+    const float low = juce::jlimit (0.0f, 1.0f, 1.0f - sunEl * 2.2f) * day;
+    float r = 1.02f, g = 1.0f, b = 0.96f;
+    r += 0.18f * low; g -= 0.12f * low; b -= 0.36f * low;
+    const float bright = 0.32f + 0.68f * day * (0.82f + 0.18f * juce::jmax (0.0f, sunEl));
+    tint[0] = (r * day + 0.62f * (1.0f - day)) * bright;
+    tint[1] = (g * day + 0.74f * (1.0f - day)) * bright;
+    tint[2] = (b * day + 1.18f * (1.0f - day)) * bright;
+}
+} // namespace
+
 V3 WalkView::pipeAt (const RoomParams& r, V3 homeP, Pos pos, int stop, int key) const
 {
     // a pipe flying in the room (Flug, Fall, Schwarm, Strömung) is where its body is
@@ -1895,8 +2020,25 @@ void WalkView::buildScene (float phys)
                                      || proc.engine.meshActive.load());
     const V3 homeP { listenerPos (r).x, listenerPos (r).y, listenerPos (r).z };
     // the eyes: where you stand (or jump), swaying a little with the steps, giving in the knees after a jump
-    const float sway = 0.022f * bobAmt * std::sin (bobPhase) - landDip;
+    // "Stimmung": read once a frame; the time since the last frame for what moves with it
+    lookNow = readLook();
+    {
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        lookDt = lookLastMs > 0.0 ? (float) juce::jlimit (0.0, 0.1, (nowMs - lookLastMs) / 1000.0) : 1.0f / 60.0f;
+        lookLastMs = nowMs;
+        lookClock += lookDt;
+    }
+    const auto& lk = lookNow;
+    // (Kamera schwankt: the steps sway more, and standing still the body breathes a little)
+    const float swayMore = 1.0f + 3.0f * lk.sway;
+    const float breath = lk.sway * 0.012f * (float) std::sin (lookClock * 1.1);
+    const float sway = 0.022f * bobAmt * swayMore * std::sin (bobPhase) + breath - landDip;
     const V3 eye { homeP.x + px, homeP.y + py, juce::jmax (0.25f, homeP.z + fz + sway) };
+    // (Kamera bebt: a hard knock shakes the view, dying away fast)
+    shakeEnv *= std::exp (-7.0f * lookDt);
+    const float shakeYaw = shakeEnv * 1.6f * (float) (std::sin (lookClock * 57.0) + 0.6 * std::sin (lookClock * 91.0 + 1.3));
+    const float shakePitch = shakeEnv * 1.2f * (float) (std::sin (lookClock * 63.0 + 0.7) + 0.5 * std::sin (lookClock * 103.0));
+    const float swayYaw = lk.sway * (0.5f * bobAmt * (float) std::sin (0.5f * bobPhase) + 0.35f * (float) std::sin (lookClock * 0.37));
     const auto area = getLocalBounds();
 
     // as sharp as the screen allows (in full screen the window is scaled up), less when a frame takes too long
@@ -1925,14 +2067,40 @@ void WalkView::buildScene (float phys)
     const float sc = compareNow ? phys : (card ? 0.5f : juce::jlimit (0.4f, 2.5f, phys * resScale));
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     rast.setSize (juce::roundToInt ((float) area.getWidth() * sc), juce::roundToInt ((float) area.getHeight() * sc));
-    rast.setCamera (eye, yaw, pitch, fov);
+    rast.setCamera (eye, yaw + shakeYaw + swayYaw, pitch + shakePitch, fov);
+    // the time of day: where the light comes from (before the triangles: it shapes their light) and its colour
+    Look look;
+    {
+        V3 sunDir { 0.35f, -0.25f, 0.9f };          // (as before; normalised by the renderer)
+        if (lk.day > 0.0f)
+        {
+            V3 d; float tint[3];
+            dayLight (lk.hour, d, tint);
+            sunDir = normalised (sunDir * (1.0f - lk.day) + d * lk.day);
+            for (int c = 0; c < 3; ++c) look.tint[c] = 1.0f + (tint[c] - 1.0f) * lk.day;
+        }
+        rast.setLightDir (sunDir);
+    }
+    look.wear = lk.wear;
+    look.cell = lk.wallGrain < 0.05f ? 0.0f : 0.05f + 0.6f * lk.wallGrain;
+    look.rippleAmt = lk.ripple;
     viewScale = (float) area.getWidth() / (float) juce::jmax (1, rast.width());
     const float fogDist = juce::jmax (12.0f, 1.5f * juce::jmax (r.W(), r.L()));      // (floor and ceiling stay readable to the far end)
     // (light off: what is far away sinks into the dark, not into a grey haze)
     const bool dark = (proc.walkDark && ! compareNow) || testStep == 11;      // (the test: one lamp, below)
     // (a comparison: without the film grain; in the dark less of it, so nothing glitters where no lamp shines)
     const float grainAmt = compareNow ? 0.0f : (dark ? 0.05f : 0.12f);
-    rast.begin (dark ? 0.0f : 0.07f, fogDist, grainAmt, ++frame);
+    // "Hallnebel": a mist as dense as the late reverb is loud - after a chord it hangs for the reverb's length
+    {
+        const float tailDb = proc.engine.tailLevelNow.load (std::memory_order_relaxed);
+        const float tail = juce::jlimit (0.0f, 1.0f, (tailDb + 54.0f) / 48.0f);
+        const float want = lk.fog * ((1.0f - lk.fogFollow) + lk.fogFollow * tail);
+        fogDensNow += (want - fogDensNow) * (1.0f - std::exp (-lookDt / 0.15f));
+    }
+    const float fogTone0 = dark ? 0.0f : 0.07f;
+    const float fogToneNow = fogTone0 + (dark ? 0.12f : 0.62f) * fogDensNow;
+    const float fogDistNow = fogDist / (1.0f + 16.0f * fogDensNow);
+    rast.begin (fogToneNow, fogDistNow, grainAmt, ++frame);
     // the 360° recording: this frame's triangles are kept (all around the eye: nothing left out for lying
     // behind the view) when the next video frame is due and the renderer is free
     {
@@ -1985,6 +2153,22 @@ void WalkView::buildScene (float phys)
     { Material m; m.kind = Material::dark; m.tone = 1.0f; m.gloss = 0.0f; rast.setMaterial (kSlotDark, m); }
     { Material m; m.kind = Material::wood; m.tone = 0.62f; m.gloss = 0.12f; m.rough = 0.35f; rast.setMaterial (kSlotWood, m); }      // (the Gedackt)
     { Material m; m.kind = Material::plain; m.tone = 1.3f; m.gloss = 1.0f; m.rough = 0.0f; rast.setMaterial (kSlotGlass, m); }      // (the Vox humana: smooth, light, no mouth)
+    {
+        // "Glanz": glass, mirrors and metal catch the light; "Waende vergehen": the surfaces the room keyboard takes
+        // away dissolve (as far as it has taken them, gliding)
+        auto mats = rast.materials();
+        for (auto& m : mats)
+            if (m.kind == Material::glass || m.kind == Material::mirror || m.kind == Material::metal || (m.kind == Material::plain && m.gloss >= 1.0f))
+                m.gloss = juce::jmin (4.0f, m.gloss * (1.0f + 3.0f * lk.shine) + 0.6f * lk.shine);
+        if (lk.walls > 0.0f)
+        {
+            auto gone = [&] (int surf) { return juce::jlimit (0.0f, 1.0f, proc.engine.wallGoneNow[0][(size_t) surf].load (std::memory_order_relaxed) * lk.walls); };
+            mats[(size_t) kSlotFloor].gone = gone (kSurfFloor);
+            mats[(size_t) kSlotCeiling].gone = gone (kSurfCeiling);
+            for (int i = 0; i < kMaxPlanVerts; ++i) mats[(size_t) (kSlotWall0 + i)].gone = gone (kSurfWall0 + i);
+        }
+        rast.setMaterials (mats);
+    }
     wallLook = wm.kind;
 
     scene.mesh = proc.getWalkMesh();
@@ -2080,7 +2264,7 @@ void WalkView::buildScene (float phys)
             const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x) + juce::degreesToRadians (proc.engine.facingShown (s, k));
             addPipe (bottom, len, rad, face, metalTone, dark ? gl + 0.025f : gl, s);    // (light off: the barest shimmer of their own)
             shown[(size_t) s][(size_t) k] = { { c.x, c.y, c.z + bob }, len, rad, true };
-            if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len });
+            if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len, s });
         }
     }
     addVoxHumana (r, homeP, dark);
@@ -2125,6 +2309,11 @@ void WalkView::buildScene (float phys)
             f.at = { sh.x.load(), sh.y.load(), sh.z.load() };
             f.strength = 0.4f + 0.6f * sh.strength.load();
             f.life = 1.0f;
+            ripples[(size_t) rippleNext] = { f.at, 0.0f, f.strength };
+            rippleNext = (rippleNext + 1) % Look::kMaxRipples;
+            // (the nearer and harder the knock, the more the view shakes)
+            const float dd = std::sqrt (dot (f.at - eye, f.at - eye));
+            shakeEnv = juce::jmax (shakeEnv, lk.shake * f.strength * juce::jlimit (0.15f, 1.0f, 3.0f / (1.0f + dd)));
         }
         for (auto& f : flashes)
             if (f.life > 0.0f)
@@ -2143,20 +2332,38 @@ void WalkView::buildScene (float phys)
             glows.push_back ({ { l.x, l.y, l.z }, flicker, 0.6f });
         }
     }
-    // light off: the sounding pipes (and the flashes of knocks) are the lamps of the room
+    // light off: the sounding pipes (and the flashes of knocks) are the lamps of the room; "Pfeifenlicht": they
+    // light it also with the light on, each stop in its colour, as far as it reaches
     {
+        for (auto& rp : ripples) rp.age = juce::jmin (1.0f, rp.age + lookDt / 1.6f);
+        look.ripples = ripples;
+        rast.setLook (look);
         lamps.clear();
-        if (dark)
+        const float pl = lk.pipeLight;
+        if (dark || pl > 0.0f)
         {
             // (each a small light; a full chord of many stops is brighter than one pipe, but not without end)
             float sum = 0.0f;
             for (const auto& gw : glows)
             {
-                lamps.push_back ({ gw.at, 0.8f * juce::jmin (1.0f, gw.amount), 1.8f + 0.45f * juce::jmin (3.0f, gw.size) });
+                if (! dark && gw.stop < 0) continue;          // (with the light on only the pipes)
+                Raster::Lamp lp { gw.at, (dark ? 0.8f * (1.0f + pl) : 0.9f * pl) * juce::jmin (1.0f, gw.amount),
+                                  pl > 0.0f ? lk.pipeReach * (0.75f + 0.12f * juce::jmin (3.0f, gw.size)) : 1.8f + 0.45f * juce::jmin (3.0f, gw.size) };
+                if (pl > 0.0f && gw.stop >= 0)
+                {
+                    // (from a warm white to the stop's own colour)
+                    const auto c = stopLightColour (gw.stop);
+                    const float hue = lk.pipeHue;
+                    lp.r = 1.0f + (c.getFloatRed() - 1.0f) * hue;
+                    lp.g = 0.92f + (c.getFloatGreen() - 0.92f) * hue;
+                    lp.b = 0.78f + (c.getFloatBlue() - 0.78f) * hue;
+                }
+                lamps.push_back (lp);
                 sum += lamps.back().power;
             }
-            if (sum > 3.0f)
-                for (auto& l : lamps) l.power *= 3.0f / sum;
+            const float cap = dark ? 3.0f * (1.0f + pl) : 2.5f * pl;
+            if (sum > cap)
+                for (auto& l : lamps) l.power *= cap / sum;
         }
         if (testStep == 11)
         {
@@ -2179,7 +2386,7 @@ void WalkView::buildScene (float phys)
         job.ambient = dark ? kDarkRest : 1.0f;
         job.eye = earsAway ? earEye : eye;          // (the ears left behind: the film is shot where they listen)
         job.fogTone = rast.fogToneNow();
-        job.fogDistance = fogDist;
+        job.fogDistance = fogDistNow;
         job.grain = grainAmt;
         job.frameNo = frame;
         for (const auto& gw : glows) job.glows.push_back ({ gw.at, gw.amount, gw.size });
@@ -2196,6 +2403,7 @@ void WalkView::buildScene (float phys)
         gpuFrame.focalPerWidth = rast.focalPerWidth();
         gpuFrame.lamps = rast.lampsInView();
         rast.exportGpu (gpuFrame.verts, gpuFrame.mats);
+        rast.lookForGpu (gpuFrame.tint, gpuFrame.look, gpuFrame.ripples.data());
         gpuFrame.fogTone = rast.fogToneNow(); gpuFrame.fogInv = rast.fogInvNow();
         gpuFrame.grain = grainAmt; gpuFrame.frameNo = frame;
         if (compareNow)
@@ -2326,6 +2534,13 @@ void WalkView::drawOver (juce::Graphics& g)
         g.setColour (col::ink);
         g.setFont (A.monoFont (10.0f));
         g.drawFittedText (overText, box.reduced (6, 3), juce::Justification::topLeft, 9);
+    }
+    if (actLook.getToggleState() && ! immersive)
+    {
+        g.setColour (col::bg.withAlpha (0.82f));
+        g.fillRect (lookArea);
+        g.setColour (col::border);
+        g.drawRect (lookArea, 1);
     }
     drawAudience (g, area);     // (also in the immersive view: it is what the room is shown)
     drawArranging (g, area);
