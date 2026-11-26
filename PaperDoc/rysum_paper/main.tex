@@ -1951,6 +1951,27 @@ engine publishes per pipe next to the mask of sounding pipes; the glows in the 3
 all use it, so a starved stop glows dimly), lighting
 what faces it and fading with distance (there are no shadows); a knock flashes as a spark. A full chord is brighter than one pipe, but not without end.
 In the test the mean brightness of the picture is 0.319 with the light on, 0.134 in the dark with a chord and 0.054 dark and silent.
+\paragraph{Atmosphäre.} A panel of 23 parameters (\fn{look*}, appended to the layout, all off by default, left out of the dice) sets the look
+of the Saal; as parameters they can be modulated, held in scenes and drawn in the Verlauf. The view reads them as modulated.
+Most act inside the renderer and are the same formulas in \fn{Raster} and in the fragment shader (the GPU test gained a step with all of them on,
+including the depth of field: mean difference 0.059 of 255):
+\emph{time of day} sets the light's direction (the sun from the east over the front to the west between 5 and 21 o'clock, the moon at night)
+and multiplies the picture by a colour and strength (gold to orange at a low sun, a dim blue at night); \emph{coloured lamps}: every lamp carries
+its colour as the change from white of the same luminance, and a pixel's grey is tinted by the lamps' share of its light, weighted by their
+colours -- so the pipes, with \ui{Pfeifenlicht}, light the room in their stop's colour also with the light on; \emph{traces of use} darken stone
+and plaster with stains that run down (a stretched value noise) and strengthen the grain of wood; \emph{ripples}: up to four knocks, each a ring
+$1 + 0.4\,a\,s\,(1-t)^2 e^{-((r-R)/w)^2}\cos(18(r-R))$ with $R = 0.2 + 3t$, $w = 0.12 + 0.25t$ over its life $t$ of \SI{1.6}{s};
+\emph{dissolving}: a surface the room keyboard has taken away (as far as it has, gliding) drops its pixels -- or pieces of up to \SI{65}{cm} --
+whose hash is below what is gone, and shows what lies behind. The \emph{reverb fog} needs the engine: per Saal it integrates the energy fed into
+the late tail times the reverb's level, decaying 60\,dB in RT60, $E \leftarrow E\,e^{-13.8\,n/(f_s T)} + \sum x^2 g^2$, normalised so that a
+steady input reads as its own level (\fn{tailLevelNow}); the fog's density follows it (in the test \SI{-8}{dB} with a chord, \SI{-120}{dB} ten
+seconds after). \emph{Geometry} serves everywhere, the 360-degree picture included: the pipes' shadows (their axis cast along the light onto
+the floor), and a door of Saal~1 as an opening in its wall (where the engine hears the door) with a swinging leaf and the other Saal behind it.
+Laid \emph{over} the picture as bands of light and small glows: rays (from the wall on the sun's side, or down from the brightest pipes in the
+dark), dust (260 motes drifting on a slow current, stirred by the Kalkant's treads, loud onsets and knocks, lit by the rays and the pipes) and
+the trails of pipes flying as bodies (32 points each). The \emph{depth of field} gathers 16 taps on a disc as wide as a pixel's circle of
+confusion ($0.06\,a\,f\,|1/d - 1/d_f|$, at most 1.2\,\% of the width), focused on the pipe under the cross or the middle of the view;
+on the card the scene is drawn into a picture of its own first.
 \textbf{K} puts a \emph{lantern} where the cross points (a hand's breadth short of the surface, at least \SI{15}{cm} above the floor; up to 16):
 in the dark each lights the room around it like a sounding pipe and shows a small flame (one lantern on the floor raised the mean brightness of a
 silent dark room from 0.121 to 0.164). \textbf{Shift+K} takes the nearest away, \textbf{Ctrl+K} all of them. The light and the lanterns are saved with the project.

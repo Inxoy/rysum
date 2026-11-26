@@ -772,6 +772,32 @@ The pipes look like what they are: the Gedackt as square wooden pipes with a mou
 front and a stopper on top, the Trompete as reed pipes - a round boot below and a long funnel
 widening up to its open top; the others as tin flue pipes.
 
+*Atmosphäre* (button in the row at the bottom) opens the look of the Saal: 23 controls in four columns,
+all off at first, each a plugin parameter (so modulation, scenes and the Verlauf move them; right-click
+a slider for its modulation). *Tageslicht* and *Uhrzeit*: the light's direction, colour and strength from
+the time of day (golden low morning sun from the right, white at noon, orange evening from the left,
+dark blue moonlight at night), and the pipes cast shadows on the floor, longer the lower the sun.
+*Lichtstrahlen* (*Strahlbreite*): shafts of light falling in through the wall on the sun's side; in the
+dark they fall from the brightest sounding pipes. *Staub* (*Staub aufwirbeln*): dust drifting in the air,
+lit by the rays and the pipes, stirred up when the Kalkant treads, a loud chord sets in or a pipe hits
+something. *Pfeifenlicht* (*Lichtfarbe*, *Reichweite*): the sounding pipes light floor and walls in colour,
+also with the light on, from warm white to each stop's own colour (Praestant gold, Gedackt amber,
+Octave 4' green, Octave 2' sky blue, Sesquialtera violet, Mixtur ice, Trompete red, 16' warm white).
+*Leuchtspuren* (*Spurlänge*): pipes that fly, fall, swarm or drift as bodies leave trails of light like
+a long exposure. *Hallnebel* (*Nebel folgt Hall*): a mist as dense as the late reverb is loud – the
+engine integrates what goes into each Saal's tail and lets it decay 60 dB in RT60, as a diffuse field
+does, so after a chord the mist hangs as long as the hall rings and then clears. *Türen sichtbar*
+(*Nachbarsaal hell*): the door of Saal 1 is an opening in its wall with a wooden leaf, open as far as
+the door is, and the other Saal behind it, dimmer. *Wände vergehen* (*Zerfall in Stücke*): what the room
+keyboard takes away dissolves – point by point, or in pieces up to 65 cm – and comes back when the key is
+let go. *Gebrauchsspuren*: water stains on stone and plaster, stronger grain in wood, tarnished metal.
+*Glanz*: glass, mirrors and metal catch brighter highlights. *Wellen*: a knock sends a ripple over the
+surfaces near it. *Kamera schwankt*: the view sways more while walking and breathes while standing;
+*Kamera bebt*: a hard knock nearby shakes it; *Schärfentiefe*: what is under the cross (a pipe, else the
+middle of the view) is sharp, nearer and further things blur. The graphics card and the processor draw
+all of it the same way (the GPU test compares them, including a frame with every effect on: 0.06 of 255).
+The rays, dust and trails lie over the picture and are not in the 360° recording.
+
 *Immersiv* (button in the top row, or the key **I**): nothing but the picture. The 3D view fills
 the whole screen (the window goes to full screen for it and comes back afterwards), with no
 buttons, no writing and no map – only the small cross in the middle stays. The mouse looks around
