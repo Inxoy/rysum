@@ -5629,7 +5629,7 @@ void RysumProcessor::writeFactoryPatches()
     // written once per factory-set version, so deleted patches stay deleted until a new set comes
     // each patch belongs to a set; only sets newer than the last one written are added
     // (deleted patches stay deleted, edited ones are not overwritten)
-    constexpr int kFactoryVersion = 19;
+    constexpr int kFactoryVersion = 20;
     const auto marker = folder.getChildFile(".factory_written");
     const int written = marker.existsAsFile() ? marker.loadFileAsString().trim().getIntValue() : 0;
     if (written >= kFactoryVersion)
@@ -8879,6 +8879,186 @@ void RysumProcessor::writeFactoryPatches()
               {srcLfo4, pipe(tgtAz), 0.2f},
               {srcVelocity, pipe(tgtLevel), 0.3f},
               {srcPressure, pipe(tgtBright), 0.35f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+    }
+
+    // ---- set 20 (factory version 20): the 3D Saal's Atmosphaere, open Saele, the wind chests, the choreography
+    currentSet = 20;
+    {
+        const float bend2 = 1.0f / 6.0f;
+        const int flow = (int)Motion::Flow;
+        auto span = [&](const char *id, float from, float to)
+        {
+            auto *prm = apvts.getParameter(id);
+            return prm == nullptr ? 0.0f : prm->convertTo0to1(to) - prm->convertTo0to1(from);
+        };
+        auto dark = [&](const juce::String &name, Values values, std::vector<Route> routesIn)
+        { makeFull(name, std::move(values), std::move(routesIn), {}, false, {}, nullptr, 1); };
+        // a courtyard at dawn: the mod wheel moves the sun from six to ten o'clock, rays and dust in the air
+        make(u8("190 Morgenandacht im Hof \xe2\x80\x93 Modrad hebt die Sonne"),
+             {{"stop1", 1},
+              {"stop0", 1},
+              {"simOn", 1},
+              {"master", -14.5f},
+              {"simOpen", 1},
+              {"lookDay", 1.0f},
+              {"lookHour", 6.0f},
+              {"lookRays", 0.8f},
+              {"lookRayWidth", 1.5f},
+              {"lookDust", 0.6f},
+              {"lookPipeLight", 0.3f},
+              {"lookPipeHue", 0.3f},
+              {"fxChestLevel", 0.25f}},
+             {{srcModWheel, "lookHour", span("lookHour", 6.0f, 10.0f)},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPressure, pipe(tgtBright), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // a ruin in the mist: the stones breathe - the Kalkant treads, the chests rush, the leaks follow the bellows;
+        // the mod wheel thickens the fog
+        make(u8("191 Ruine im Nebel \xe2\x80\x93 Atem der Steine"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -10.0f},
+              {"simOpen", 2},
+              {"lookDay", 1.0f},
+              {"lookHour", 9.0f},
+              {"lookFog", 0.6f},
+              {"lookFogFollow", 0.5f},
+              {"lookWear", 1.0f},
+              {"lookWalls", 1.0f},
+              {"lookWallGrain", 0.6f},
+              {"lvBellows", 0.5f},
+              {"lvBellowsSize", 5.0f},
+              {"fxChestLevel", 0.5f},
+              {"fxChestTone", 0.3f},
+              {"fxLeakLevel", 0.35f},
+              {"fxLeakFollow", 1.0f}},
+             {{srcModWheel, "lookFog", 0.4f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // midnight mass: the light off, the pipes light the nave in their colours, drift on a current and leave trails
+        dark(u8("192 Mitternachtsmesse"),
+             {{"stop0", 1},
+              {"stop7", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -22.0f},
+              {"motion3", flow},
+              {"rate3", 0.12f},
+              {"depth3", 60.0f},
+              {"lookPipeLight", 1.0f},
+              {"lookPipeHue", 0.8f},
+              {"lookPipeReach", 5.0f},
+              {"lookRays", 0.6f},
+              {"lookDust", 0.4f},
+              {"lookTrails", 0.5f},
+              {"lookTrailLen", 4.0f},
+              {"lookFog", 0.4f},
+              {"lookFocus", 0.4f}},
+             {{srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPressure, pipe(tgtBright), 0.35f},
+              {srcModWheel, "lookTrails", 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // a field at sunset: no walls, no roof - the mod wheel sinks the sun, the organ grows dry and near
+        make(u8("193 Feld bei Sonnenuntergang (Modrad)"),
+             {{"stop1", 1},
+              {"stop4", 1},
+              {"simOn", 1},
+              {"master", -13.0f},
+              {"simOpen", 4},
+              {"lookDay", 1.0f},
+              {"lookHour", 18.0f},
+              {"lookRays", 0.7f},
+              {"lookDust", 0.5f},
+              {"lookDustStir", 0.8f},
+              {"fxChestLevel", 0.2f}},
+             {{srcModWheel, "lookHour", span("lookHour", 18.0f, 21.5f)},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPressure, pipe(tgtBright), 0.35f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the wind tells: a pavilion, the Kalkant treads, chests and leaks breathe with him; the mod wheel turns the
+        // rush from a rumble to a hiss
+        make(u8("194 Der Wind erz\xc3\xa4hlt (Pavillon)"),
+             {{"stop1", 1},
+              {"stop2", 1},
+              {"simOn", 1},
+              {"master", -10.0f},
+              {"simOpen", 3},
+              {"lookDay", 0.7f},
+              {"lookHour", 16.0f},
+              {"lookDust", 0.7f},
+              {"lookDustStir", 1.0f},
+              {"lvBellows", 0.6f},
+              {"lvBellowsSize", 4.0f},
+              {"fxChestLevel", 0.8f},
+              {"fxChestTone", 0.2f},
+              {"fxLeakLevel", 0.6f},
+              {"fxLeakCount", 5},
+              {"fxLeakFollow", 1.0f}},
+             {{srcModWheel, "fxChestTone", 0.7f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the pipes dance: play the figures on channel 2 (C1 to B1, the velocity how far) or press J in the 3D view;
+        // the mod wheel makes the figures wider
+        make(u8("195 Tanzende Pfeifen (Kanal 2, C1\xe2\x80\x93H1)"),
+             {{"stop0", 1},
+              {"stop2", 1},
+              {"stop6", 1},
+              {"simOn", 1},
+              {"master", -16.5f},
+              {"simKbCh", 2},
+              {"choreoPattern", 3},
+              {"choreoTime", 3.0f},
+              {"choreoAmt", 0.6f},
+              {"lookPipeLight", 0.4f},
+              {"lookTrails", 0.3f}},
+             {{srcModWheel, "choreoAmt", 0.4f},
+              {srcVelocity, pipe(tgtAttack), 0.5f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // a spiral over the courtyard at night: the figure climbs into the stars (J, or C1 on channel 2)
+        make(u8("196 Spirale \xc3\xbc" "ber dem Hof"),
+             {{"stop7", 1},
+              {"stop3", 1},
+              {"simOn", 1},
+              {"master", -20.0f},
+              {"simOpen", 1},
+              {"simKbCh", 2},
+              {"lookDay", 1.0f},
+              {"lookHour", 23.0f},
+              {"lookPipeLight", 0.8f},
+              {"lookPipeHue", 0.6f},
+              {"lookTrails", 0.6f},
+              {"choreoPattern", 0},
+              {"choreoTime", 8.0f}},
+             {{srcModWheel, "choreoTime", span("choreoTime", 8.0f, 2.0f)},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
+              {srcPitchWheel, pipe(tgtPitch), bend2}});
+        // the abandoned church: worn walls, dust in the afternoon light; pipes fall from the vault, every knock
+        // ripples over the stones and shakes the view
+        make(u8("197 Verlassene Kirche"),
+             {{"stop3", 1},
+              {"stop5", 1},
+              {"simOn", 1},
+              {"master", -24.0f},
+              {"motion3", (int)Motion::Fall},
+              {"motion5", (int)Motion::Fall},
+              {"rate3", 0.5f},
+              {"rate5", 0.55f},
+              {"depth3", 120.0f},
+              {"depth5", 130.0f},
+              {"lvImpLevel", -8.0f},
+              {"lvSelfPlay", 0.3f},
+              {"lookDay", 0.8f},
+              {"lookHour", 15.0f},
+              {"lookWear", 1.0f},
+              {"lookDust", 0.8f},
+              {"lookRays", 0.7f},
+              {"lookShine", 0.2f},
+              {"lookRipple", 0.8f},
+              {"lookShake", 0.5f}},
+             {{srcModWheel, "lvSelfPlay", 0.5f},
+              {srcVelocity, pipe(tgtLevel), 0.3f},
               {srcPitchWheel, pipe(tgtPitch), bend2}});
     }
 

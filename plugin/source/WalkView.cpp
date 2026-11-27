@@ -298,6 +298,21 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
                                        "sichtbare T\xc3\xbcren, vergehende W\xc3\xa4nde, Gebrauchsspuren, Glanz, Wellen, die Kamera. Alles l\xc3\xa4sst sich "
                                        "modulieren (Rechtsklick) und im Verlauf zeichnen."));
         actLook.onClick = [this] { showLook (actLook.getToggleState()); };
+        // the named looks
+        lookPreset.setTextWhenNothingSelected (rysum::tr ("Stimmung laden \xe2\x80\xa6"));
+        const auto names = lookPresetNames();
+        for (int i = 0; i < names.size(); ++i) lookPreset.addItem (rysum::tr (names[i]), i + 1);
+        lookPreset.setWantsKeyboardFocus (false);
+        lookPreset.setTooltip (rysum::tr ("Eine fertige Stimmung: alle Regler der Atmosph\xc3\xa4re auf einmal (was sie nicht nennt, wie am Anfang), "
+                                          "ob der Saal offen ist und das Licht. Danach frei weiter einstellbar."));
+        lookPreset.onChange = [this]
+        {
+            const int i = lookPreset.getSelectedItemIndex();
+            if (i >= 0) applyLookPreset (i);
+            lookPreset.setSelectedItemIndex (-1, juce::dontSendNotification);
+            if (isShowing()) grabKeyboardFocus();
+        };
+        addChildComponent (lookPreset);
         actChoreo.setTooltip (rysum::tr ("Die Pfeifen tanzen die Figur (J)"));
         actChoreo.setWantsKeyboardFocus (false);
         actChoreo.onClick = [this] { ++proc.engine.choreoUiCount; };
@@ -306,11 +321,61 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     updateButtons();
 }
 
+juce::StringArray WalkView::lookPresetNames()
+{
+    return { "Klarer Blick", "Morgenandacht", "Mittagslicht", "Abendrot", "Mitternachtsmesse", "Ruine im Nebel",
+             "Hof unter Sternen", "Verlassene Kirche" };
+}
+
+void WalkView::applyLookPreset (int index)
+{
+    struct P { std::vector<std::pair<const char*, float>> v; int open; bool dark; };
+    static const P presets[] {
+        { {}, 0, false },
+        { { { "lookDay", 1.0f }, { "lookHour", 7.5f }, { "lookRays", 0.8f }, { "lookRayWidth", 1.5f }, { "lookDust", 0.6f },
+            { "lookDustStir", 0.4f }, { "lookPipeLight", 0.3f }, { "lookPipeHue", 0.3f }, { "lookFog", 0.2f }, { "lookShine", 0.3f },
+            { "lookSway", 0.2f } }, 0, false },
+        { { { "lookDay", 1.0f }, { "lookHour", 12.5f }, { "lookRays", 0.4f }, { "lookDust", 0.3f }, { "lookShine", 0.5f } }, 0, false },
+        { { { "lookDay", 1.0f }, { "lookHour", 19.8f }, { "lookRays", 1.0f }, { "lookRayWidth", 2.0f }, { "lookDust", 0.5f },
+            { "lookPipeLight", 0.5f }, { "lookPipeHue", 0.6f }, { "lookFog", 0.3f }, { "lookWear", 0.3f } }, 0, false },
+        { { { "lookPipeLight", 1.0f }, { "lookPipeHue", 0.8f }, { "lookPipeReach", 5.0f }, { "lookRays", 0.6f }, { "lookDust", 0.4f },
+            { "lookTrails", 0.4f }, { "lookFog", 0.4f }, { "lookFocus", 0.5f } }, 0, true },
+        { { { "lookDay", 1.0f }, { "lookHour", 9.0f }, { "lookFog", 0.8f }, { "lookFogFollow", 0.3f }, { "lookWear", 1.0f },
+            { "lookWalls", 1.0f }, { "lookWallGrain", 0.6f }, { "lookDust", 0.3f }, { "lookSway", 0.3f } }, 2, false },
+        { { { "lookDay", 1.0f }, { "lookHour", 23.0f }, { "lookPipeLight", 0.8f }, { "lookPipeHue", 0.6f }, { "lookTrails", 0.6f },
+            { "lookDust", 0.2f } }, 1, false },
+        { { { "lookDay", 0.8f }, { "lookHour", 15.0f }, { "lookWear", 1.0f }, { "lookDust", 0.8f }, { "lookRays", 0.7f },
+            { "lookShine", 0.2f }, { "lookRipple", 0.6f }, { "lookShake", 0.5f } }, 0, false } };
+    if (index < 0 || index >= (int) (sizeof (presets) / sizeof (presets[0]))) return;
+    const auto& pr = presets[index];
+    auto set = [this] (const juce::String& id, float real, bool asDefault)
+    {
+        auto* prm = proc.apvts.getParameter (id);
+        if (prm == nullptr) return;
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost (asDefault ? prm->getDefaultValue() : prm->convertTo0to1 (real));
+        prm->endChangeGesture();
+    };
+    // every look control: what the preset names, else as at first
+    for (const auto& row : lookRows)
+    {
+        if (row == nullptr) continue;
+        const auto id = row->getParamId();
+        if (id.startsWith ("choreo")) continue;
+        auto it = std::find_if (pr.v.begin(), pr.v.end(), [&] (const auto& kv) { return id == kv.first; });
+        set (id, it != pr.v.end() ? it->second : 0.0f, it == pr.v.end());
+    }
+    set ("simOpen", (float) pr.open, false);
+    if (pr.dark != proc.walkDark) setDark (pr.dark);
+    say (rysum::tr ("Stimmung: ") + rysum::tr (lookPresetNames()[index]));
+}
+
 void WalkView::showLook (bool on)
 {
     actLook.setToggleState (on, juce::dontSendNotification);
     for (auto& r : lookRows) if (r != nullptr) r->setVisible (on);
     actChoreo.setVisible (on);
+    lookPreset.setVisible (on);
     resized();
     repaint();
 }
@@ -385,6 +450,7 @@ void WalkView::resized()
                 lookRows[(size_t) i]->setBounds (area.getX() + col * (cw + 20), area.getY() + rw * 34, cw, 32);
         }
         actChoreo.setBounds (area.getX() + 3 * (cw + 20), area.getY() + 5 * 34 + 4, 90, 24);
+        lookPreset.setBounds (area.getX() + 3 * (cw + 20), area.getY() + 6 * 34 + 4, juce::jmin (cw, 240), 24);
     }
     home.setBounds (r.removeFromRight (82));
     r.removeFromRight (6);

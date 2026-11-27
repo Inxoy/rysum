@@ -411,6 +411,13 @@ private:
     // "Stimmung": the look of the Saal - light, air, the room, the camera (a panel under the illusions)
     static constexpr int kLookRows = 26;
     juce::TextButton actChoreo { "Los (J)" };
+    juce::ComboBox lookPreset;
+public:
+    /** a named look ("Stimmung"): all of the panel's controls at once (what it does not name: as at first), whether the
+        Saal is open, the light (index into lookPresetNames) */
+    static juce::StringArray lookPresetNames();
+    void applyLookPreset (int index);
+private:
     std::array<std::unique_ptr<ParamRow>, kLookRows> lookRows;
     juce::TextButton actLook { juce::String::fromUTF8 ("Atmosph\xc3\xa4re") };
     juce::Rectangle<int> lookArea;

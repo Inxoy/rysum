@@ -539,6 +539,27 @@ public:
                 say("Schaerfentiefe: the picture's fine contrast " + juce::String(e0, 0) + " -> " + juce::String(e1, 0), e1 < e0 * 0.92);
                 setReal("lookFocus", 0.0f);
             }
+            {
+                // a named look: all at once, and back to the clear view
+                wv.applyLookPreset(5); // Ruine im Nebel
+                run(150, {});
+                for (int f = 0; f < 10; ++f)
+                    snap();
+                shot("walk_look_preset_ruin.png");
+                const bool ruin = proc->apvts.getRawParameterValue("simOpen")->load() > 1.5f &&
+                                  proc->apvts.getRawParameterValue("lookFog")->load() > 0.7f;
+                wv.applyLookPreset(4); // Mitternachtsmesse
+                run(10, {});
+                snap();
+                shot("walk_look_preset_midnight.png");
+                const bool mid = proc->walkDark && proc->apvts.getRawParameterValue("lookPipeLight")->load() > 0.9f &&
+                                 proc->apvts.getRawParameterValue("lookFog")->load() < 0.5f &&
+                                 proc->apvts.getRawParameterValue("simOpen")->load() < 0.5f;
+                wv.applyLookPreset(0);
+                run(150, {});
+                const bool clear = !proc->walkDark && proc->apvts.getRawParameterValue("lookPipeLight")->load() < 0.01f;
+                say("Stimmungen: Ruine im Nebel, Mitternachtsmesse, Klarer Blick set all at once", ruin && mid && clear);
+            }
             if (std::getenv("RYSUM_ONLY_LOOK") != nullptr)
             {
                 wv.setLookAndFeel(nullptr);
