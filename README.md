@@ -644,8 +644,34 @@ renders the organ itself, from wherever they stand and walk in the 3D Saal, with
 - Not mirrored yet (the Tonnetz-Wanderer and *Selbstspiel* stay off at listeners): the
   Tonnetz-Wanderer, *Selbstspiel*, *Publikum* and loaded room models other than the six built-in
   ones. MIDI Tuning SysEx is not forwarded (Scala files are).
-- For now this is for one home network: a player on the internet needs a relay server (planned).
-  Both sides must have the same version of the plugin.
+- **Password**: type one into *Passwort* before *Spielen*; listeners type the same. It never
+  travels itself: the player sends every listener a random challenge and the listener answers with
+  SHA-256 of the challenge and the password. A wrong one is refused ("Falsches Passwort"); ten wrong
+  ones within a minute shut the door for half a minute. Empty = anyone who reaches you may listen.
+- **Sprechen** (talk): the player's audio input (the microphone of the standalone's audio device)
+  goes to the listeners as a voice of its own – mono, about 16 kHz, ~250 kbit/s per listener – also
+  with *Eingang* off. It is not put into the room and not heard at the player (no feedback); the
+  listener hears it on top of the organ (both ears, W in AmbiX, every loudspeaker), in time with the
+  playing, as loud as *Stimme des Spielers* says (the listener app: the small slider next to the
+  volume). The listener's status line says "der Spieler spricht".
+- **Over the internet: the relay.** `scripts/rysum_relay.py` is a small relay server (Python 3.8+,
+  nothing to install). Run it on a computer the internet can reach – a small rented server (VPS) is
+  enough – and open its port (TCP 8790) in that server's firewall:
+
+  ```
+  python3 rysum_relay.py               # port 8790
+  python3 rysum_relay.py --port 9000
+  ```
+
+  The player types `server[:port]/room` under *Relay* (e.g. `relay.example.org/abendmusik`) and clicks
+  *Spielen*; the window then shows exactly what listeners type as their address. Neither side needs
+  an open port or a router setting: both connect out to the relay, which joins a fresh connection of
+  the player's to each listener's and passes the bytes on – the password check is still between the
+  two of them. Room names: letters, digits, `-` and `_`, up to 32. If the relay or the player is not
+  there yet, listeners keep trying. Without a relay, a router port forward (TCP 8790 to the player's
+  computer) or a VPN such as Tailscale works too.
+- Both sides must have the same version of the plugin (the protocol changed with the password and
+  the voice: older listener apps are told so).
 
 #### Rysum Konzert – the app for listeners
 
@@ -654,9 +680,10 @@ Listeners do not need the organ itself: *Rysum Konzert* is a program of its own 
 samples come with it: hand out the zip (build the target `RysumKonzertZip`; it holds the program
 and the folder `rysum-samples` next to it), unpack it anywhere and start the program.
 
-- At the top: the player's address, *Zuhören* / *Verlassen*, the delay (more = safer on an
+- At the top: the player's address (an IP at home, `server/room` through a relay), the password,
+  *Zuhören* / *Verlassen*, the delay (more = safer on an
   uneven network), how one hears (*Binaural* for headphones by default, stereo, loudspeakers …),
-  the volume and *Audio …* (output device, sample rate, buffer).
+  the player's voice (small slider), the volume and *Audio …* (output device, sample rate, buffer).
 - Below, the Saal: W A S D to walk, drag the mouse to look, space to jump, I for the immersive
   view, L for the light, H to leave the ears where one stands.
 - The address, delay, output and volume are remembered (in AppData, folder Rysum).

@@ -1935,6 +1935,7 @@ void RysumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     lucPiece.prepare(sampleRate);
     lucRecScratch.assign((size_t)juce::jmax(512, samplesPerBlock), 0.0f);
     inBuf.setSize(2, juce::jmax(512, samplesPerBlock), false, true, false);
+    voiceBuf.setSize(1, juce::jmax(512, samplesPerBlock), false, true, false);
     voxStop.prepare(sampleRate, juce::jmax(8192, samplesPerBlock));
     for (size_t i = 0; i < kVoxIds.size(); ++i)
         voxIdx[i] = getParamIndex(kVoxIds[i]);
@@ -2953,6 +2954,8 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         }
         // Konzert: the player's input goes to the listeners; a listener hears the player's input
         // (in time with the notes), never its own
+        if (concertRole == rysum::ConcertLink::Role::performer && any)
+            concert.captureVoice(inBuf.getReadPointer(0), inBuf.getReadPointer(1), n, concertBlockTime, concertSr);
         if (concertRole == rysum::ConcertLink::Role::performer && any &&
             apvts.getRawParameterValue("inpOn")->load() > 0.5f)
             concert.captureAudio(inBuf.getReadPointer(0), inBuf.getReadPointer(1), n, concertBlockTime, concertSr);
@@ -3251,6 +3254,28 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
             masterBus.process(buffer.getArrayOfWritePointers(), buffer.getNumChannels(), n, ms);
         else
             masterBus.reductionDb.store(0.0f, std::memory_order_relaxed);
+    }
+
+    // ---- Konzert, the listener: the player's voice on top of everything (not in the room): on both ears
+    //      or the two front channels, on W in AmbiX, on every loudspeaker
+    if (concertRole == rysum::ConcertLink::Role::listener && buffer.getNumChannels() > 0)
+    {
+        if (voiceBuf.getNumSamples() < n)
+            voiceBuf.setSize(1, n, false, false, true);
+        if (concert.playVoiceInto(voiceBuf.getWritePointer(0), n, concertBlockTime, concertSr))
+        {
+            const float g = concert.getVoiceGain();
+            const int nch = buffer.getNumChannels();
+            const bool ambix = !binaural && !speakers && params.outputMode > 0;
+            if (ambix)
+                buffer.addFrom(0, 0, voiceBuf, 0, 0, n, g);
+            else if (speakers)
+                for (int c = 0; c < nch; ++c)
+                    buffer.addFrom(c, 0, voiceBuf, 0, 0, n, g / std::sqrt((float)nch));
+            else
+                for (int c = 0; c < juce::jmin(2, nch); ++c)
+                    buffer.addFrom(c, 0, voiceBuf, 0, 0, n, g * 0.7f);
+        }
     }
 
     midi.clear();

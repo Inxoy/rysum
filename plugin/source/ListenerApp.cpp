@@ -55,7 +55,26 @@ public:
         };
         nameField.onReturnKey = [this] { walk.grabKeyboardFocus(); };
         address.setText(settings.getValue("host"), false);
-        address.setTextToShowWhenEmpty(u("Adresse des Spielers, z. B. 192.168.1.20"), col::faint);
+        address.setTextToShowWhenEmpty(u("Adresse: 192.168.1.20 oder server/raum"), col::faint);
+        address.setTooltip(u("Die Adresse aus dem Konzert-Fenster des Spielers: im Heimnetz seine IP, "
+                             "\xc3\xbc" "ber das Internet server[:port]/raum (ein Relay)"));
+        password.setPasswordCharacter((juce::juce_wchar)0x2022);
+        password.setTextToShowWhenEmpty(u("Passwort"), col::faint);
+        password.setFont(Assets::get().monoFont(13.0f));
+        password.setTooltip(u("Das Passwort des Konzerts (leer, wenn der Spieler keins hat)"));
+        password.onReturnKey = [this] { join.triggerClick(); };
+        voice.setSliderStyle(juce::Slider::LinearBar);
+        voice.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
+        voice.setRange(0.0, 2.0);
+        voice.setValue(settings.getDoubleValue("voice", 1.0), juce::dontSendNotification);
+        proc.concert.setVoiceGain((float)voice.getValue());
+        voice.setTooltip(u("Wie laut du die Stimme des Spielers h\xc3\xb6rst"));
+        voice.setWantsKeyboardFocus(false);
+        voice.onValueChange = [this]
+        {
+            proc.concert.setVoiceGain((float)voice.getValue());
+            settings.setValue("voice", voice.getValue());
+        };
         address.setFont(Assets::get().monoFont(13.0f));
         address.onReturnKey = [this] { join.triggerClick(); };
         join.setTooltip(u("Beim Spieler zuh\xc3\xb6ren (die Adresse steht in seinem Konzert-Fenster)"));
@@ -66,6 +85,7 @@ public:
             else if (address.getText().trim().isNotEmpty())
             {
                 settings.setValue("host", address.getText().trim());
+                proc.concert.setPassword(password.getText());
                 proc.concert.startListener(address.getText().trim());
                 walk.grabKeyboardFocus();
             }
@@ -157,12 +177,16 @@ public:
         top.removeFromLeft(6);
         address.setBounds(top.removeFromLeft(200));
         top.removeFromLeft(6);
+        password.setBounds(top.removeFromLeft(100));
+        top.removeFromLeft(6);
         join.setBounds(top.removeFromLeft(96));
         top.removeFromLeft(10);
         delay.setBounds(top.removeFromLeft(170));
         audio.setBounds(top.removeFromRight(78));
         top.removeFromRight(6);
         volume.setBounds(top.removeFromRight(90).reduced(0, 4));
+        top.removeFromRight(6);
+        voice.setBounds(top.removeFromRight(60).reduced(0, 4));
         top.removeFromRight(6);
         output.setBounds(top.removeFromRight(150));
         top.removeFromRight(10);
@@ -183,14 +207,14 @@ private:
     juce::AudioDeviceManager &devices;
     juce::PropertiesFile &settings;
     WalkView walk;
-    juce::TextEditor address, nameField;
+    juce::TextEditor address, nameField, password;
     juce::TextButton join{u("Zuh\xc3\xb6ren")}, audio{u("Audio \xe2\x80\xa6")};
-    juce::Slider volume;
+    juce::Slider volume, voice;
     juce::ComboBox delay;
     juce::ComboBox output;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> volumeAtt;
-    std::vector<juce::Component *> bar{&nameField, &address, &join, &delay, &output, &volume, &audio};
+    std::vector<juce::Component *> bar{&nameField, &address, &password, &join, &delay, &output, &voice, &volume, &audio};
     juce::Rectangle<int> statusArea;
     juce::String statusNow;
     bool immersive = false;
@@ -205,6 +229,7 @@ private:
         const bool listening = proc.concert.role() == ConcertLink::Role::listener;
         join.setButtonText(listening ? u("Verlassen") : u("Zuh\xc3\xb6ren"));
         address.setEnabled(!listening);
+        password.setEnabled(!listening);
         juce::String s;
         if (proc.getLibrary() == nullptr)
             s = proc.getLoadStatus();
@@ -214,6 +239,8 @@ private:
             const int hands = proc.concert.allowedHands();
             if (hands > 0)
                 s << (hands == 1 ? u("  \xc2\xb7  du darfst anklopfen") : u("  \xc2\xb7  du darfst die Pfeifen bewegen"));
+            if (proc.concert.voiceHeard())
+                s << u("  \xc2\xb7  der Spieler spricht");
         }
         else
             s = u("Adresse eingeben, Zuh\xc3\xb6ren \xe2\x80\x93 dann gehen: WASD, Maus ziehen, Leertaste, I immersiv");

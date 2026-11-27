@@ -1,12 +1,13 @@
 // "Konzert": one standalone plays, the others listen and render it themselves (see Concert.h)
 #include "Concert.h"
 #include "PluginProcessor.h"
+#include <cstring>
 
 namespace rysum
 {
 namespace
 {
-constexpr int kProtocol = 2; // 2: the pipes as bodies, the sounds of the hands
+constexpr int kProtocol = 3; // 2: the pipes as bodies, the sounds of the hands; 3: the password, the voice
 constexpr int kMaxListeners = 32;
 constexpr int kMaxStateBytes = 16 * 1024 * 1024;
 constexpr int kMaxFrameBytes = 4096;
@@ -71,6 +72,109 @@ bool sendAll(juce::StreamingSocket &s, const juce::MemoryBlock &b)
     return s.write(b.getData(), (int)b.getSize()) == (int)b.getSize();
 }
 
+/** SHA-256 (FIPS 180-4): the password's answer to the player's challenge */
+std::array<uint8_t, 32> sha256(const uint8_t *data, size_t len)
+{
+    static const uint32_t K[64]{
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
+        0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+        0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,
+        0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819,
+        0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+        0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2};
+    uint32_t h[8]{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    std::vector<uint8_t> m(data, data + len);
+    m.push_back(0x80);
+    while (m.size() % 64 != 56)
+        m.push_back(0);
+    const uint64_t bits = (uint64_t)len * 8;
+    for (int i = 7; i >= 0; --i)
+        m.push_back((uint8_t)(bits >> (8 * i)));
+    auto rotr = [](uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
+    for (size_t off = 0; off < m.size(); off += 64)
+    {
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i)
+            w[i] = (uint32_t)m[off + 4 * i] << 24 | (uint32_t)m[off + 4 * i + 1] << 16 | (uint32_t)m[off + 4 * i + 2] << 8 |
+                   (uint32_t)m[off + 4 * i + 3];
+        for (int i = 16; i < 64; ++i)
+        {
+            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (int i = 0; i < 64; ++i)
+        {
+            const uint32_t S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25), ch = (e & f) ^ (~e & g);
+            const uint32_t t1 = hh + S1 + ch + K[i] + w[i];
+            const uint32_t S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22), mj = (a & b) ^ (a & c) ^ (b & c);
+            const uint32_t t2 = S0 + mj;
+            hh = g;
+            g = f;
+            f = e;
+            e = d + t1;
+            d = c;
+            c = b;
+            b = a;
+            a = t1 + t2;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+        h[5] += f;
+        h[6] += g;
+        h[7] += hh;
+    }
+    std::array<uint8_t, 32> out{};
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 4; ++j)
+            out[(size_t)(4 * i + j)] = (uint8_t)(h[i] >> (24 - 8 * j));
+    return out;
+}
+
+/** the answer to a challenge: SHA-256 of the challenge and the password (UTF-8) */
+std::array<uint8_t, 32> passwordAnswer(const std::array<uint8_t, 16> &nonce, const juce::String &pw)
+{
+    std::vector<uint8_t> b(nonce.begin(), nonce.end());
+    const char *u = pw.toRawUTF8();
+    b.insert(b.end(), u, u + std::strlen(u));
+    return sha256(b.data(), b.size());
+}
+
+/** a line of the relay's protocol (at most 200 bytes, within the time) */
+bool readLine(juce::StreamingSocket &s, juce::String &line, int timeoutMs)
+{
+    std::string got;
+    const double end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+    while (got.size() < 200)
+    {
+        const int left = (int)(end - juce::Time::getMillisecondCounterHiRes());
+        if (left <= 0 || s.waitUntilReady(true, left) != 1)
+            return false;
+        char c = 0;
+        if (s.read(&c, 1, false) != 1)
+            return false;
+        if (c == '\n')
+        {
+            line = juce::String(got).trim();
+            return true;
+        }
+        got.push_back(c);
+    }
+    return false;
+}
+
+bool sendLine(juce::StreamingSocket &s, const juce::String &line)
+{
+    const auto t = (line + "\n").toStdString();
+    return s.write(t.data(), (int)t.size()) == (int)t.size();
+}
+
 /** a MIDI message a listener may play: notes, controllers, pressure, pitch wheel (no SysEx) */
 bool playableMidi(const uint8_t *b, int n)
 {
@@ -103,7 +207,7 @@ ConcertLink::~ConcertLink()
         listenerSocket->close();
     if (sock != nullptr)
         sock->close();
-    stopThread(3000);
+    stopThread(9000);
 }
 
 juce::StringArray ConcertLink::localAddresses()
@@ -119,6 +223,58 @@ juce::StringArray ConcertLink::localAddresses()
             out.addIfNotAlreadyThere(a.toString());
     }
     return out;
+}
+
+juce::String ConcertLink::sha256Hex(const void *data, size_t n)
+{
+    const auto h = sha256(static_cast<const uint8_t *>(data), n);
+    return juce::String::toHexString(h.data(), (int)h.size(), 0);
+}
+
+bool ConcertLink::parseAddress(const juce::String &text, juce::String &h, int &p, juce::String &room)
+{
+    auto t = text.trim();
+    room = {};
+    if (t.containsChar('/'))
+    {
+        room = t.fromFirstOccurrenceOf("/", false, false).trim().toLowerCase();
+        t = t.upToFirstOccurrenceOf("/", false, false).trim();
+        if (room.isEmpty() || room.length() > 32 || !room.containsOnly("abcdefghijklmnopqrstuvwxyz0123456789-_"))
+            return false;
+    }
+    p = kDefaultPort;
+    // "host:port" (one colon only: an IPv6 address stays whole)
+    if (t.indexOfChar(':') > 0 && t.indexOfChar(':') == t.lastIndexOfChar(':'))
+    {
+        const auto ps = t.fromFirstOccurrenceOf(":", false, false);
+        if (!ps.containsOnly("0123456789") || ps.isEmpty())
+            return false;
+        p = ps.getIntValue();
+        t = t.upToFirstOccurrenceOf(":", false, false);
+        if (p < 1 || p > 65535)
+            return false;
+    }
+    h = t;
+    return h.isNotEmpty() && !h.containsAnyOf(" /\\");
+}
+
+void ConcertLink::setPassword(const juce::String &pw)
+{
+    const juce::ScopedLock sl(statusLock);
+    password = pw.substring(0, 128);
+}
+
+juce::String ConcertLink::getPassword() const
+{
+    const juce::ScopedLock sl(statusLock);
+    return password;
+}
+
+juce::String ConcertLink::relayAddress() const
+{
+    if (!relayMode.load())
+        return {};
+    return relayHost + (relayPort != kDefaultPort ? ":" + juce::String(relayPort) : juce::String()) + "/" + relayRoom;
 }
 
 void ConcertLink::setStatus(const juce::String &s)
@@ -165,7 +321,42 @@ bool ConcertLink::startPerformer(int p, bool loopbackOnly)
     }
     listenerSocket = std::move(s);
     port = p;
+    relayMode = false;
+    beginPerformer();
+    return true;
+}
+
+bool ConcertLink::startPerformerRelay(const juce::String &address)
+{
+    stop();
+    juce::String h, room;
+    int p = kDefaultPort;
+    if (!parseAddress(address, h, p, room) || room.isEmpty())
+    {
+        setStatus(juce::String::fromUTF8("Relay-Adresse: server[:port]/raum"));
+        return false;
+    }
+    relayHost = h;
+    relayPort = p;
+    relayRoom = room;
+    relayCtl.reset();
+    relayBuf.clear();
+    relayRetryMs = 0.0;
+    relayMode = true;
+    beginPerformer();
+    setStatus(juce::String::fromUTF8("Verbinde mit dem Relay ") + relayAddress() + juce::String::fromUTF8(" \xe2\x80\xa6"));
+    return true;
+}
+
+void ConcertLink::beginPerformer()
+{
     numParams = proc.getNumParams();
+    failedAt.clear();
+    refuseUntil = 0.0;
+    voiceOutFifo.reset();
+    vCur.n = 0;
+    vCnt = 0;
+    vAcc = vLp1 = vLp2 = 0.0f;
     lastSent.assign((size_t)numParams, 0.0f);
     for (int i = 0; i < numParams; ++i)
         lastSent[(size_t)i] = proc.getParamAt(i)->getValue();
@@ -190,14 +381,23 @@ bool ConcertLink::startPerformer(int p, bool loopbackOnly)
     setStatus(juce::String::fromUTF8("Spielt \xe2\x80\x93 noch niemand h\xc3\xb6rt zu"));
     startThread();
     startTimerHz(50);
-    return true;
 }
 
 bool ConcertLink::startListener(const juce::String &h, int p)
 {
     stop();
-    host = h.trim();
-    port = p;
+    {
+        juce::String hh, room;
+        int pp = p;
+        if (!parseAddress(h, hh, pp, room))
+        {
+            setStatus(juce::String::fromUTF8("Adresse: host, host:port oder server[:port]/raum"));
+            return false;
+        }
+        host = hh;
+        port = h.containsChar(':') ? pp : p; // (no port typed: the one asked for)
+        listenRoom = room;
+    }
     numParams = proc.getNumParams();
     mirrored.reset(new std::atomic<float>[(size_t)numParams]);
     for (int i = 0; i < numParams; ++i)
@@ -255,9 +455,15 @@ void ConcertLink::stop()
         listenerSocket->close();
     if (sock != nullptr)
         sock->close();
-    stopThread(3000);
+    // (the relay's line is the network thread's own: it lets go within a few ms - or, in the middle of
+    //  connecting to the relay, within a few seconds)
+    stopThread(9000);
     listenerSocket.reset();
     sock.reset();
+    relayCtl.reset();
+    relayMode = false;
+    relayUp = false;
+    talking = false;
     clients.clear();
     numListeners = 0;
     {
@@ -564,20 +770,15 @@ void ConcertLink::runPerformer()
     while (!threadShouldExit())
     {
         const double now = juce::Time::getMillisecondCounterHiRes();
-        // someone new
-        if (listenerSocket->waitUntilReady(true, 3) == 1)
-            if (auto *c = listenerSocket->waitForNextConnection())
-            {
-                std::unique_ptr<juce::StreamingSocket> s(c);
-                if ((int)clients.size() < kMaxListeners)
-                {
-                    auto cl = std::make_unique<Client>();
-                    cl->sock = std::move(s);
-                    cl->connectedMs = now;
-                    cl->id = nextClientId++;
-                    clients.push_back(std::move(cl));
-                }
-            }
+        // someone new: straight here, or through the relay
+        if (listenerSocket != nullptr)
+        {
+            if (listenerSocket->waitUntilReady(true, 3) == 1)
+                if (auto *c = listenerSocket->waitForNextConnection())
+                    admit(std::unique_ptr<juce::StreamingSocket>(c), now);
+        }
+        else
+            relayPoll(now);
         // hellos, then where each listener stands (and what its hands do)
         for (auto &c : clients)
         {
@@ -606,15 +807,30 @@ void ConcertLink::runPerformer()
             {
                 juce::MemoryInputStream in(pl, false);
                 const int version = in.readInt(), params = in.readInt();
-                if (version == kProtocol && params == numParams)
+                std::array<uint8_t, 32> answer{};
+                const bool hasAnswer = in.getNumBytesRemaining() >= 32 && in.read(answer.data(), 32) == 32;
+                const auto pw = getPassword();
+                // the password: the answer to this listener's own challenge (none set: anyone may listen)
+                const bool passOk = pw.isEmpty() || (hasAnswer && answer == passwordAnswer(c->nonce, pw));
+                if (version == kProtocol && params == numParams && passOk)
                 {
                     c->helloOk = true;
                     ++joinsWanted; // (the message thread makes the join package)
                 }
                 else
                 {
-                    sendAll(*c->sock, frame('X', [](juce::MemoryOutputStream &o) { o.writeString("version"); }));
+                    const bool wrongPw = version == kProtocol && params == numParams;
+                    sendAll(*c->sock, frame('X', [&](juce::MemoryOutputStream &o) { o.writeString(wrongPw ? "password" : "version"); }));
                     c->sock.reset();
+                    if (wrongPw)
+                    {
+                        // (guessing: ten wrong ones within a minute shut the door for half a minute)
+                        failedAt.push_back(now);
+                        while (!failedAt.empty() && now - failedAt.front() > 60000.0)
+                            failedAt.pop_front();
+                        if (failedAt.size() >= 10)
+                            refuseUntil = now + 30000.0;
+                    }
                 }
             }
             else if (c->helloOk)
@@ -655,6 +871,27 @@ void ConcertLink::runPerformer()
             for (int i = 0; i < n2; ++i)
                 enc(audioOut[(size_t)(s2 + i)]);
             audioOutFifo.finishedRead(n1 + n2);
+        }
+        {
+            // the voice
+            int s1, n1, s2, n2;
+            voiceOutFifo.prepareToRead(voiceOutFifo.getNumReady(), s1, n1, s2, n2);
+            auto enc = [&](const VoiceChunk &v)
+            {
+                frames.push_back({v.t, frame('V',
+                                             [&](juce::MemoryOutputStream &o)
+                                             {
+                                                 o.writeDouble(v.t);
+                                                 o.writeInt(v.sr);
+                                                 o.writeShort((short)v.n);
+                                                 o.write(v.s.data(), (size_t)v.n * sizeof(int16_t));
+                                             })});
+            };
+            for (int i = 0; i < n1; ++i)
+                enc(voiceOut[(size_t)(s1 + i)]);
+            for (int i = 0; i < n2; ++i)
+                enc(voiceOut[(size_t)(s2 + i)]);
+            voiceOutFifo.finishedRead(n1 + n2);
         }
         std::deque<juce::MemoryBlock> joins;
         {
@@ -745,6 +982,116 @@ void ConcertLink::runPerformer()
             n += c->joined ? 1 : 0;
         numListeners = n;
         wait(2);
+    }
+}
+
+void ConcertLink::admit(std::unique_ptr<juce::StreamingSocket> s, double now)
+{
+    // a new listener: its own challenge first (the hello must answer it with the password)
+    if ((int)clients.size() >= kMaxListeners || now < refuseUntil || s == nullptr)
+        return;
+    auto cl = std::make_unique<Client>();
+    juce::Random rnd;
+    rnd.setSeedRandomly();
+    const auto t = (int64_t)juce::Time::getHighResolutionTicks();
+    for (size_t i = 0; i < cl->nonce.size(); ++i)
+        cl->nonce[i] = (uint8_t)(rnd.nextInt(256) ^ (int)((t >> (8 * (i % 8))) & 0xff));
+    if (!sendAll(*s, frame('N', [&](juce::MemoryOutputStream &o) { o.write(cl->nonce.data(), cl->nonce.size()); })))
+        return;
+    cl->sock = std::move(s);
+    cl->connectedMs = now;
+    cl->id = nextClientId++;
+    clients.push_back(std::move(cl));
+}
+
+bool ConcertLink::relayConnect(double now)
+{
+    // the player's line to the relay: "this room is mine"; then the relay names every listener who comes
+    relayRetryMs = now + 3000.0;
+    auto s = std::make_unique<juce::StreamingSocket>();
+    if (!s->connect(relayHost, relayPort, 3000))
+    {
+        setStatus(juce::String::fromUTF8("Relay ") + relayHost + ":" + juce::String(relayPort) +
+                  juce::String::fromUTF8(" nicht erreichbar \xe2\x80\x93 versuche weiter \xe2\x80\xa6"));
+        return false;
+    }
+    juce::String reply;
+    if (!sendLine(*s, "RYSUM-RELAY 1 HOST " + relayRoom) || !readLine(*s, reply, 4000) || reply != "OK")
+    {
+        setStatus(reply.startsWith("ERR taken")
+                      ? juce::String::fromUTF8("Den Raum \xe2\x80\x9e") + relayRoom +
+                            juce::String::fromUTF8("\xe2\x80\x9c gibt es beim Relay schon \xe2\x80\x93 ein anderer Name?")
+                      : juce::String::fromUTF8("Das Relay antwortet nicht richtig (") + reply + ")");
+        return false;
+    }
+    relayCtl = std::move(s);
+    relayBuf.clear();
+    relayPingMs = now;
+    relayUp = true;
+    setStatus(juce::String::fromUTF8("Spielt \xc3\xbc" "ber das Relay ") + relayAddress() +
+              juce::String::fromUTF8(" \xe2\x80\x93 noch niemand h\xc3\xb6rt zu"));
+    return true;
+}
+
+void ConcertLink::relayPoll(double now)
+{
+    if (relayCtl == nullptr)
+    {
+        if (now >= relayRetryMs)
+            relayConnect(now);
+        else
+            wait(3);
+        return;
+    }
+    const int ready = relayCtl->waitUntilReady(true, 3);
+    if (ready < 0)
+    {
+        relayCtl.reset();
+        relayUp = false;
+        setStatus(juce::String::fromUTF8("Relay weg \xe2\x80\x93 verbinde erneut \xe2\x80\xa6"));
+        return;
+    }
+    if (ready == 1)
+    {
+        char buf[256];
+        const int got = relayCtl->read(buf, (int)sizeof(buf), false);
+        if (got <= 0)
+        {
+            relayCtl.reset();
+            relayUp = false;
+            setStatus(juce::String::fromUTF8("Relay weg \xe2\x80\x93 verbinde erneut \xe2\x80\xa6"));
+            return;
+        }
+        relayBuf.append(buf, (size_t)got);
+        if (relayBuf.size() > 4096)
+            relayBuf.clear();
+        for (size_t nl; (nl = relayBuf.find('\n')) != std::string::npos;)
+        {
+            const auto line = juce::String(relayBuf.substr(0, nl)).trim();
+            relayBuf.erase(0, nl + 1);
+            if (line.startsWith("L "))
+            {
+                // a listener waits at the relay: a line of our own to it, joined to theirs
+                const auto id = line.substring(2).trim();
+                if (!id.containsOnly("0123456789") || id.isEmpty())
+                    continue;
+                auto s = std::make_unique<juce::StreamingSocket>();
+                juce::String reply;
+                if (s->connect(relayHost, relayPort, 3000) && sendLine(*s, "RYSUM-RELAY 1 ATTACH " + relayRoom + " " + id) &&
+                    readLine(*s, reply, 4000) && reply == "OK")
+                    admit(std::move(s), juce::Time::getMillisecondCounterHiRes());
+            }
+        }
+    }
+    // (the line stays open: a word every 15 s)
+    if (now - relayPingMs > 15000.0)
+    {
+        relayPingMs = now;
+        if (!sendLine(*relayCtl, "P"))
+        {
+            relayCtl.reset();
+            relayUp = false;
+        }
     }
 }
 
@@ -1010,6 +1357,29 @@ void ConcertLink::receiveFrame(char type, juce::MemoryInputStream &in)
         audioInFifo.finishedWrite(n);
         return;
     }
+    if (type == 'V')
+    {
+        // the player's voice: into its ring, with the time its end is due here
+        const int rsr = in.readInt(), n = (int)(uint16_t)in.readShort();
+        if (rsr < 4000 || rsr > 96000 || n < 1 || n > 512 || in.getNumBytesRemaining() < n * 2)
+            return;
+        std::array<int16_t, 512> s{};
+        in.read(s.data(), n * 2);
+        const double at = scheduleAt(t);
+        if (!isJoined.load())
+            return;
+        int s1, n1, s2, n2;
+        voiceInFifo.prepareToWrite(n, s1, n1, s2, n2);
+        if (n1 + n2 < n)
+            return;
+        for (int i = 0; i < n; ++i)
+            voiceIn[(size_t)(i < n1 ? s1 + i : s2 + i - n1)] = s[(size_t)i] * (1.0f / 32767.0f);
+        voiceSr = rsr;
+        voiceDueEnd = at + n / (double)rsr;
+        voiceInFifo.finishedWrite(n);
+        voiceHeardMs = juce::Time::getMillisecondCounterHiRes();
+        return;
+    }
     if (type == 'J')
     {
         const int seq = in.readInt();
@@ -1167,19 +1537,51 @@ bool ConcertLink::listenSession()
     if (!sock->connect(host, port, 4000))
     {
         setStatus(juce::String::fromUTF8("Keine Verbindung zu ") + host + ":" + juce::String(port));
-        return everJoined; // (once there was a concert: keep trying)
+        return everJoined || listenRoom.isNotEmpty(); // (once there was a concert, or a relay: keep trying)
     }
-    sendAll(*sock, frame('H',
-                         [&](juce::MemoryOutputStream &o)
-                         {
-                             o.writeInt(kProtocol);
-                             o.writeInt(numParams);
-                         }));
+    if (listenRoom.isNotEmpty())
+    {
+        // through the relay: it joins this line to one of the player's (it may take a moment)
+        juce::String reply;
+        if (!sendLine(*sock, "RYSUM-RELAY 1 JOIN " + listenRoom) || !readLine(*sock, reply, 20000) || reply != "OK")
+        {
+            setStatus(reply.startsWith("ERR noroom")
+                          ? juce::String::fromUTF8("Beim Relay spielt niemand in \xe2\x80\x9e") + listenRoom +
+                                juce::String::fromUTF8("\xe2\x80\x9c \xe2\x80\x93 warte \xe2\x80\xa6")
+                          : juce::String::fromUTF8("Das Relay antwortet nicht \xe2\x80\x93 versuche weiter \xe2\x80\xa6"));
+            sock->close();
+            wait(2000);
+            return true;
+        }
+    }
+    {
+        // the player's challenge, answered with the password (it never travels itself)
+        char ctype = 0;
+        juce::MemoryBlock cpl;
+        if (sock->waitUntilReady(true, 5000) != 1 || !readFrame(*sock, ctype, cpl, 512) || ctype != 'N' ||
+            cpl.getSize() < 16)
+        {
+            setStatus(juce::String::fromUTF8("Der Spieler antwortet nicht (eine andere Version?)"));
+            sock->close();
+            return everJoined || listenRoom.isNotEmpty();
+        }
+        std::array<uint8_t, 16> nonce{};
+        std::memcpy(nonce.data(), cpl.getData(), 16);
+        const auto answer = passwordAnswer(nonce, getPassword());
+        sendAll(*sock, frame('H',
+                             [&](juce::MemoryOutputStream &o)
+                             {
+                                 o.writeInt(kProtocol);
+                                 o.writeInt(numParams);
+                                 o.write(answer.data(), answer.size());
+                             }));
+    }
     lastHeardMs = juce::Time::getMillisecondCounterHiRes();
     myId = -1;
     lastGrabSent = -2;
     allowedLevel = 0;
     ++audioSession; // (what is left of the last connection's input is not played)
+    ++voiceSession;
     while (!threadShouldExit())
     {
         {
@@ -1260,7 +1662,10 @@ bool ConcertLink::listenSession()
             break;
         if (type == 'X')
         {
-            setStatus(juce::String::fromUTF8("Der Spieler hat eine andere Version des Plugins"));
+            juce::MemoryInputStream xin(pl, false);
+            const auto why = xin.readString();
+            setStatus(why == "password" ? juce::String::fromUTF8("Falsches Passwort \xe2\x80\x93 Beenden, Passwort eingeben, neu verbinden")
+                                        : juce::String::fromUTF8("Der Spieler hat eine andere Version des Plugins"));
             return false;
         }
         juce::MemoryInputStream in(pl, false);
@@ -1393,6 +1798,148 @@ void ConcertLink::captureAudio(const float *l, const float *r, int n, double blo
         audioOutFifo.finishedWrite(1);
         done += m;
     }
+}
+
+void ConcertLink::captureVoice(const float *l, const float *r, int n, double blockTime, double sr) noexcept
+{
+    // the player's voice: the input, mono, low-passed (about 6 kHz) and taken down to about 16 kHz
+    if (roleNow.load() != Role::performer || !talking.load() || l == nullptr || n <= 0 || sr <= 0.0)
+    {
+        vCur.n = 0;
+        vCnt = 0;
+        vAcc = 0.0f;
+        return;
+    }
+    if (r == nullptr)
+        r = l;
+    const int D = juce::jmax(1, (int)std::lround(sr / 16000.0));
+    const float a = std::exp(-juce::MathConstants<float>::twoPi * 6000.0f / (float)sr);
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = 0.5f * (l[i] + r[i]);
+        vLp1 = x + a * (vLp1 - x);
+        vLp2 = vLp1 + a * (vLp2 - vLp1);
+        vAcc += vLp2;
+        if (++vCnt < D)
+            continue;
+        if (vCur.n == 0)
+        {
+            vCur.t = blockTime + (i + 1 - D) / sr;
+            vCur.sr = juce::roundToInt(sr / D);
+        }
+        vCur.s[(size_t)vCur.n++] = (int16_t)juce::roundToInt(juce::jlimit(-1.0f, 1.0f, vAcc / (float)D) * 32767.0f);
+        vAcc = 0.0f;
+        vCnt = 0;
+        if (vCur.n == (int)vCur.s.size())
+        {
+            int s1, n1, s2, n2;
+            voiceOutFifo.prepareToWrite(1, s1, n1, s2, n2);
+            if (n1 + n2 > 0)
+            {
+                voiceOut[(size_t)(n1 > 0 ? s1 : s2)] = vCur;
+                voiceOutFifo.finishedWrite(1);
+            }
+            vCur.n = 0;
+        }
+    }
+    // (what this block made goes now: a voice should not wait for half a chunk)
+    if (vCur.n > 0)
+    {
+        int s1, n1, s2, n2;
+        voiceOutFifo.prepareToWrite(1, s1, n1, s2, n2);
+        if (n1 + n2 > 0)
+        {
+            voiceOut[(size_t)(n1 > 0 ? s1 : s2)] = vCur;
+            voiceOutFifo.finishedWrite(1);
+        }
+        vCur.n = 0;
+    }
+}
+
+bool ConcertLink::playVoiceInto(float *out, int n, double blockTime, double sr) noexcept
+{
+    // the listener: the player's voice, each sample at the moment it is due (as the input below)
+    if (roleNow.load() != Role::listener || !isJoined.load() || out == nullptr)
+    {
+        voiceRunning = false;
+        return false;
+    }
+    if (const auto ses = voiceSession.load(); ses != voiceSessionSeen)
+    {
+        voiceSessionSeen = ses;
+        voiceInFifo.finishedRead(voiceInFifo.getNumReady());
+        voiceRunning = false;
+    }
+    const double rsr = (double)voiceSr.load();
+    auto pop = [&](float &x)
+    {
+        int s1, n1, s2, n2;
+        voiceInFifo.prepareToRead(1, s1, n1, s2, n2);
+        if (n1 + n2 < 1)
+            return false;
+        x = voiceIn[(size_t)(n1 > 0 ? s1 : s2)];
+        voiceInFifo.finishedRead(1);
+        return true;
+    };
+    const int avail = voiceInFifo.getNumReady();
+    const double headDue = voiceDueEnd.load() - avail / rsr;
+    if (!voiceRunning)
+    {
+        if (avail < 2 || headDue > blockTime + n / sr)
+            return false;
+        const int late = (int)std::floor((blockTime - headDue) * rsr);
+        if (late > 0)
+            voiceInFifo.finishedRead(juce::jmin(late, juce::jmax(0, avail - 2)));
+        if (!pop(vA) || !pop(vB))
+            return false;
+        vStartAt = juce::jlimit(0, n - 1, (int)std::lround((headDue - blockTime) * sr));
+        vFrac = 0.0;
+        vErr = 0.0;
+        voiceRunning = true;
+    }
+    else
+    {
+        const double err = headDue - blockTime;
+        if (err < -0.12 && avail > 0)
+        {
+            voiceInFifo.finishedRead(juce::jmin(avail, (int)((-err) * rsr)));
+            vErr = 0.0;
+        }
+        else if (err > 0.12)
+        {
+            voiceRunning = false;
+            return false;
+        }
+        else
+            vErr += (err - vErr) * juce::jmin(1.0, n / sr / 0.5);
+    }
+    const int first = vStartAt;
+    vStartAt = 0;
+    for (int i = 0; i < first; ++i)
+        out[i] = 0.0f;
+    const double rate = rsr / sr * (1.0 - juce::jlimit(-0.003, 0.003, vErr * 0.3));
+    float peak = voicePeak.load();
+    for (int i = first; i < n; ++i)
+    {
+        out[i] = vA + (float)vFrac * (vB - vA);
+        peak = juce::jmax(peak, std::abs(out[i]));
+        vFrac += rate;
+        while (vFrac >= 1.0)
+        {
+            vFrac -= 1.0;
+            vA = vB;
+            if (!pop(vB))
+            {
+                for (int j = i + 1; j < n; ++j)
+                    out[j] = 0.0f;
+                voiceRunning = false;
+                voicePeak = peak;
+                return true;
+            }
+        }
+    }
+    voicePeak = peak;
+    return true;
 }
 
 bool ConcertLink::playAudioInto(float *l, float *r, int n, double blockTime, double sr) noexcept
@@ -1654,8 +2201,12 @@ void ConcertLink::timerCallback()
         applyGuestActs();
         scanParameters();
         const int n = numListeners.load();
-        setStatus(n == 0 ? juce::String::fromUTF8("Spielt \xe2\x80\x93 noch niemand h\xc3\xb6rt zu")
-                         : juce::String::fromUTF8("Spielt \xc2\xb7 ") + juce::String(n) +
+        if (relayMode.load() && !relayUp.load())
+            return; // (the network thread says how the relay goes)
+        const auto how = relayMode.load() ? juce::String::fromUTF8("Spielt \xc3\xbc" "ber das Relay ") + relayAddress()
+                                          : juce::String::fromUTF8("Spielt");
+        setStatus(n == 0 ? how + juce::String::fromUTF8(" \xe2\x80\x93 noch niemand h\xc3\xb6rt zu")
+                         : how + juce::String::fromUTF8(" \xc2\xb7 ") + juce::String(n) +
                                juce::String::fromUTF8(" Zuh\xc3\xb6rer"));
         return;
     }

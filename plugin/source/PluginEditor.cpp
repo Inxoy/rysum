@@ -944,13 +944,43 @@ public:
         playButton.setTooltip(rysum::tr("Spielen: andere verbinden sich mit diesem Computer und h\xc3\xb6ren zu"));
         playButton.onClick = [this]
         {
-            if (!proc.concert.startPerformer())
-                refresh();
+            proc.concert.setPassword(pwField.getText());
+            lastRelay() = relayField.getText().trim();
+            if (lastRelay().isNotEmpty())
+                proc.concert.startPerformerRelay(lastRelay());
+            else
+                proc.concert.startPerformer();
             refresh();
         };
+        relayField.setText(lastRelay(), false);
+        relayField.setTextToShowWhenEmpty(rysum::tr("Relay \xc3\xbc" "ber das Internet: server[:port]/raum (leer = Heimnetz)"), col::faint);
+        relayField.setFont(Assets::get().monoFont(12.0f));
+        relayField.setTooltip(rysum::tr("Ein Relay-Server (scripts/rysum_relay.py auf einem Server im Internet) verbindet Spieler und "
+                                        "Zuh\xc3\xb6rer ohne offenen Port: hier server[:port]/raum eintragen, die Zuh\xc3\xb6rer geben "
+                                        "dasselbe als Adresse ein. Leer = direkt im Heimnetz."));
+        pwField.setPasswordCharacter((juce::juce_wchar)0x2022);
+        pwField.setText(lastPassword(), false);
+        pwField.setTextToShowWhenEmpty(rysum::tr("Passwort (leer = keins)"), col::faint);
+        pwField.setFont(Assets::get().monoFont(12.0f));
+        pwField.setTooltip(rysum::tr("Wer zuh\xc3\xb6ren will, braucht dieses Passwort (Spieler und Zuh\xc3\xb6rer tragen es hier ein). "
+                                     "Es reist nie selbst \xc3\xbc" "ber das Netz."));
+        pwField.onTextChange = [this] { lastPassword() = pwField.getText(); };
+        talkButton.setClickingTogglesState(true);
+        talkButton.setToggleState(link.isTalking(), juce::dontSendNotification);
+        talkButton.setTooltip(rysum::tr("Sprechen: dein Audio-Eingang (Mikrofon) geht als Stimme an die Zuh\xc3\xb6rer \xe2\x80\x93 auch "
+                                        "ohne \xe2\x80\x9e" "Eingang\xe2\x80\x9c, nicht in den Raum, nicht bei dir zu h\xc3\xb6ren."));
+        talkButton.onClick = [this] { proc.concert.setTalking(talkButton.getToggleState()); };
+        voiceRow.format = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+        voiceRow.slider.setValue(link.getVoiceGain(), juce::dontSendNotification);
+        voiceRow.onChange = [this](double v) { proc.concert.setVoiceGain((float)v); };
+        voiceRow.slider.setTooltip(rysum::tr("Wie laut du die Stimme des Spielers h\xc3\xb6rst"));
+        for (juce::Component *c : {(juce::Component *)&relayField, (juce::Component *)&pwField,
+                                   (juce::Component *)&talkButton, (juce::Component *)&voiceRow})
+            addAndMakeVisible(c);
         listenButton.setTooltip(rysum::tr("Bei einem Spieler zuh\xc3\xb6ren (seine Adresse aus seinem Konzert-Fenster)"));
         listenButton.onClick = [this]
         {
+            proc.concert.setPassword(pwField.getText());
             lastHost() = hostField.getText().trim();
             if (lastHost().isNotEmpty())
                 proc.concert.startListener(lastHost());
@@ -962,7 +992,7 @@ public:
             refresh();
         };
         hostField.setText(lastHost(), false);
-        hostField.setTextToShowWhenEmpty(rysum::tr("Adresse des Spielers, z. B. 192.168.1.20"), col::faint);
+        hostField.setTextToShowWhenEmpty(rysum::tr("Adresse des Spielers: 192.168.1.20 oder server/raum"), col::faint);
         hostField.setFont(Assets::get().monoFont(12.0f));
         hostField.onReturnKey = [this] { listenButton.triggerClick(); };
         delayRow.format = [](double v) { return juce::String(juce::roundToInt(v)) + " ms"; };
@@ -982,7 +1012,7 @@ public:
         handsBox.setTooltip(rysum::tr("Was die Zuh\xc3\xb6rer im 3D-Saal mit den Pfeifen tun d\xc3\xbc" "rfen. Was sie tun, geschieht bei dir "
                                "und alle sehen und h\xc3\xb6ren es."));
         addAndMakeVisible(handsBox);
-        setSize(460, 304);
+        setSize(460, 390);
         refresh();
         startTimerHz(4);
     }
@@ -1002,16 +1032,22 @@ public:
                          r.removeFromTop(44), juce::Justification::topLeft, 3);
         if (role == rysum::ConcertLink::Role::performer)
         {
-            auto addr = rysum::ConcertLink::localAddresses().joinIntoString(rysum::tr("  oder  "));
             g.setFont(A.monoFont(12.0f));
             g.setColour(col::ink);
-            g.drawFittedText(rysum::tr("Zuh\xc3\xb6rer verbinden sich mit:  ") + addr + "   (Port " +
-                                 juce::String(rysum::ConcertLink::kDefaultPort) + ")",
-                             addrBox, juce::Justification::centredLeft, 2);
+            if (proc.concert.viaRelay())
+                g.drawFittedText(rysum::tr("Zuh\xc3\xb6rer geben ein:  ") + proc.concert.relayAddress(), addrBox,
+                                 juce::Justification::centredLeft, 2);
+            else
+            {
+                auto addr = rysum::ConcertLink::localAddresses().joinIntoString(rysum::tr("  oder  "));
+                g.drawFittedText(rysum::tr("Zuh\xc3\xb6rer verbinden sich mit:  ") + addr + "   (Port " +
+                                     juce::String(rysum::ConcertLink::kDefaultPort) + ")",
+                                 addrBox, juce::Justification::centredLeft, 2);
+            }
         }
         g.setFont(A.monoFont(9.5f));
         g.setColour(col::faint);
-        g.drawFittedText(rysum::tr("Im Netz zu Hause. Nicht mitgespielt werden: Tonnetz-Wanderer, "
+        g.drawFittedText(rysum::tr("Im Heimnetz direkt, \xc3\xbc" "ber das Internet mit einem Relay. Nicht mitgespielt werden: Tonnetz-Wanderer, "
                             "Selbstspiel, Publikum und eigene Raummodelle. Zuh\xc3\xb6rer brauchen nur die App \xe2\x80\x9eRysum Konzert\xe2\x80\x9c."),
                          getLocalBounds().reduced(16, 8).removeFromBottom(26), juce::Justification::bottomLeft, 2);
     }
@@ -1023,6 +1059,15 @@ public:
         playButton.setBounds(row1.removeFromLeft(120));
         row1.removeFromLeft(10);
         addrBox = row1;
+        r.removeFromTop(6);
+        relayField.setBounds(r.removeFromTop(24));
+        r.removeFromTop(6);
+        {
+            auto row = r.removeFromTop(24);
+            talkButton.setBounds(row.removeFromRight(100));
+            row.removeFromRight(10);
+            pwField.setBounds(row);
+        }
         r.removeFromTop(10);
         auto row2 = r.removeFromTop(26);
         listenButton.setBounds(row2.removeFromLeft(120));
@@ -1035,10 +1080,22 @@ public:
         delayRow.setBounds(row3);
         r.removeFromTop(8);
         handsBox.setBounds(r.removeFromTop(26).withWidth(330));
+        r.removeFromTop(4);
+        voiceRow.setBounds(r.removeFromTop(32).withWidth(330));
     }
 
 private:
     static juce::String &lastHost()
+    {
+        static juce::String h;
+        return h;
+    }
+    static juce::String &lastRelay()
+    {
+        static juce::String h;
+        return h;
+    }
+    static juce::String &lastPassword()
     {
         static juce::String h;
         return h;
@@ -1051,6 +1108,11 @@ private:
         playButton.setEnabled(role == rysum::ConcertLink::Role::off);
         listenButton.setEnabled(role == rysum::ConcertLink::Role::off);
         hostField.setEnabled(role == rysum::ConcertLink::Role::off);
+        relayField.setEnabled(role == rysum::ConcertLink::Role::off);
+        pwField.setEnabled(role == rysum::ConcertLink::Role::off);
+        talkButton.setEnabled(role == rysum::ConcertLink::Role::performer);
+        talkButton.setToggleState(proc.concert.isTalking(), juce::dontSendNotification);
+        voiceRow.setEnabled(role != rysum::ConcertLink::Role::performer);
         stopButton.setEnabled(role != rysum::ConcertLink::Role::off);
         delayRow.setEnabled(role != rysum::ConcertLink::Role::performer);
         repaint();
@@ -1061,7 +1123,9 @@ private:
     }
     RysumProcessor &proc;
     juce::TextButton playButton{"Spielen"}, listenButton{u8("Zuh\xc3\xb6ren bei")}, stopButton{"Beenden"};
-    juce::TextEditor hostField;
+    juce::TextEditor hostField, relayField, pwField;
+    juce::TextButton talkButton{"Sprechen"};
+    FreeRow voiceRow{u8("Stimme des Spielers"), 0.0, 2.0, 1.0};
     juce::ComboBox handsBox;
     FreeRow delayRow{u8("Verz\xc3\xb6gerung (Zuh\xc3\xb6rer)"), 60.0, 1000.0, 250.0};
     juce::Rectangle<int> addrBox;

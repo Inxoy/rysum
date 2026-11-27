@@ -6070,12 +6070,31 @@ private:
              A.apvts.getParameter(RysumProcessor::motionParamId(0))->convertTo0to1((float)rysum::Motion::Rotation));
         setN(A, RysumProcessor::rateParamId(0), A.apvts.getParameter(RysumProcessor::rateParamId(0))->convertTo0to1(0.5f));
 
+        {
+            // the password's answer: SHA-256 (the FIPS test vector), and the address forms
+            const char abc[] = "abc";
+            const auto h = rysum::ConcertLink::sha256Hex(abc, 3);
+            juce::String ah, ar, bh, br;
+            int ap = 0, bp = 0;
+            const bool a1 = rysum::ConcertLink::parseAddress("relay.example.org:9000/Abend", ah, ap, ar);
+            const bool a2 = rysum::ConcertLink::parseAddress("192.168.1.20", bh, bp, br);
+            juce::String xh, xr;
+            int xp = 0;
+            const bool a3 = rysum::ConcertLink::parseAddress("server/raum mit leer", xh, xp, xr);
+            say("concert: SHA-256 of 'abc' " + h.substring(0, 16) + "..., addresses read (" + ah + " " + juce::String(ap) + " " + ar +
+                    "; " + bh + " " + juce::String(bp) + ")",
+                h == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" && a1 && ah == "relay.example.org" &&
+                    ap == 9000 && ar == "abend" && a2 && bh == "192.168.1.20" && bp == rysum::ConcertLink::kDefaultPort &&
+                    br.isEmpty() && !a3);
+        }
+        A.concert.setPassword("orgel");
+        B->concert.setPassword("orgel");
         const bool started = A.concert.startPerformer(8791, true);
         B->concert.setDelayMs(200.0);
         B->concert.testJitterMs = 80.0;
         B->concert.startListener("127.0.0.1", 8791);
         run(1.5);
-        say("concert: the listener joins (player sees " + juce::String(A.concert.listenerCount()) + ")",
+        say("concert: the listener joins with the password (player sees " + juce::String(A.concert.listenerCount()) + ")",
             started && B->concert.joined() && A.concert.listenerCount() == 1);
         {
             // the panel, as the player sees it
@@ -6319,6 +6338,29 @@ private:
             setN(A, "inpOn", 0.0f);
             run(0.5);
         }
+        // the player talks: the input goes to the listeners as a voice (the input itself is off)
+        {
+            B->concert.testResetLoud();
+            A.concert.setTalking(true);
+            feedA = [&](long long k)
+            {
+                for (int c = 0; c < juce::jmin(2, A.getTotalNumInputChannels()); ++c)
+                    for (int i = 0; i < bs; ++i)
+                        ba.setSample(c, i, 0.5f * (float)std::sin(2.0 * juce::MathConstants<double>::pi * 300.0 * (double)(k * bs + i) / sr));
+            };
+            run(1.2);
+            const float spoke = B->concert.testVoicePeak();
+            const bool heard = B->concert.voiceHeard();
+            A.concert.setTalking(false);
+            run(0.3);
+            B->concert.testResetLoud();
+            run(1.0);
+            feedA = {};
+            const float after = B->concert.testVoicePeak();
+            say("concert: the player talks - the listener hears the voice (peak " + juce::String(spoke, 3) + ", " +
+                    (heard ? "shown" : "not shown") + "), not after the button is off (" + juce::String(after, 4) + ")",
+                A.getTotalNumInputChannels() > 0 && spoke > 0.3f && spoke < 0.7f && heard && after < 1.0e-3f);
+        }
         // the others in the Saal: the player sees the listener where it stands, the listener the player
         {
             B->concert.setName("Anna");
@@ -6417,6 +6459,87 @@ private:
                     juce::String(heard, 4) + ")",
                 B->concert.joined() && heard > 1e-3 && heard > quiet * 4.0);
         }
+        // a wrong password: no way in
+        {
+            B->concert.stop();
+            B->concert.setPassword("falsch");
+            B->concert.startListener("127.0.0.1", 8791);
+            run(1.5);
+            const auto why = B->concert.status();
+            say("concert: a wrong password is refused (" + why + ")", !B->concert.joined() && why.contains("Passwort") &&
+                                                                     A.concert.listenerCount() == 0);
+            B->concert.stop();
+            B->concert.setPassword("orgel");
+        }
+        // through a relay (scripts/rysum_relay.py on this computer): the player and the listener both connect out
+        juce::ChildProcess relay;
+        {
+            const auto script = samples.getParentDirectory().getChildFile("scripts").getChildFile("rysum_relay.py");
+            bool up = false;
+            for (auto *py : {"py", "python3", "python"})
+            {
+                juce::StringArray cmd;
+                cmd.add(py);
+                if (juce::String(py) == "py")
+                    cmd.add("-3");
+                cmd.addArray({script.getFullPathName(), "--host", "127.0.0.1", "--port", "8797", "--quiet", "--lifetime", "90"});
+                if (!script.existsAsFile() || !relay.start(cmd, 0))
+                    continue;
+                for (int i = 0; i < 60 && !up; ++i)
+                {
+                    juce::StreamingSocket probe;
+                    up = probe.connect("127.0.0.1", 8797, 200);
+                    if (!up)
+                        juce::Thread::sleep(100);
+                }
+                if (up)
+                    break;
+                relay.kill();
+            }
+            if (!up)
+                say("concert: the relay starts (Python 3 and scripts/rysum_relay.py)", false);
+            else
+            {
+                run(0.2, [&](long long k, juce::MidiBuffer &m)
+                    {
+                        if (k == 0)
+                            m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+                    });
+                A.concert.stop();
+                run(1.5);
+                A.concert.startPerformerRelay("127.0.0.1:8797/probe");
+                run(1.0);
+                const auto playerSays = A.concert.status();
+                B->concert.startListener("127.0.0.1:8797/probe");
+                double took = 0.0;
+                while (took < 6.0 && !(B->concert.joined() && A.concert.listenerCount() == 1))
+                {
+                    run(0.1);
+                    took += 0.1;
+                }
+                const bool joinedVia = B->concert.joined() && A.concert.listenerCount() == 1;
+                std::cout << "concert: through the relay the listener joined after " << took << " s (" << B->concert.status()
+                          << ")" << std::endl;
+                run(0.5);
+                const auto quiet = rmsLast(0.3);
+                run(1.2, [&](long long k, juce::MidiBuffer &m)
+                    {
+                        if (k == 0)
+                            for (int n : {60, 64, 67})
+                                m.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                    });
+                const auto heard = rmsLast(0.5);
+                run(0.2, [&](long long k, juce::MidiBuffer &m)
+                    {
+                        if (k == 0)
+                            m.addEvent(juce::MidiMessage::allNotesOff(1), 0);
+                    });
+                say("concert: through the relay - the player is there (" + playerSays + "), the listener joins (" +
+                        juce::String(A.concert.listenerCount()) + ") and hears a chord (rms " + juce::String(quiet, 4) + " -> " +
+                        juce::String(heard, 4) + ")",
+                    A.concert.viaRelay() && joinedVia && heard > 1e-3 && heard > quiet * 4.0);
+            }
+        }
         // the player leaves: the listener falls silent and gets its own setup back
         {
             A.concert.stop();
@@ -6430,6 +6553,7 @@ private:
                 std::abs(getN(*B, "air") - airOwn) < 1e-4f && std::abs(getN(*B, "output") - outOwn) < 1e-6f);
         }
         setN(*B, "output", outBefore);
+        relay.kill();
         listenerAudio.stopThread(3000);
         B->releaseResources();
         B.reset();

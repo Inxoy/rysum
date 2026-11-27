@@ -1308,6 +1308,7 @@ private:
     std::atomic<int> timeChannels{0};                 // channels the audio thread needs
     rysum::DsfReferenceInstrument referenceTone;
     juce::AudioBuffer<float> inBuf;
+    juce::AudioBuffer<float> voiceBuf; // Konzert, the listener: the player's voice for this block
     bool inputThisBlock = false;     // the audio input of the block (main input + side chain)
     // Vox humana (the neural stop) and "Eingang spielt die Orgel"
     rysum::VoxStop voxStop;

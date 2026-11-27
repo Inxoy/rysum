@@ -50,8 +50,52 @@ public:
     // ---- message thread
     /** play: listeners connect to this port (loopbackOnly: 127.0.0.1, for the tests) */
     bool startPerformer(int port = kDefaultPort, bool loopbackOnly = false);
-    /** listen to a player at host:port */
-    bool startListener(const juce::String &host, int port = kDefaultPort);
+    /** play through a relay server, "server[:port]/room": listeners join with the same text. The
+        player connects out to the relay (no router, no open port here); for every listener the relay
+        joins a connection of the player's to the listener's, so all else - the password too - is
+        between the two of them */
+    bool startPerformerRelay(const juce::String &relayAddress);
+    /** listen to a player: "host", "host:port", or a relay's "server[:port]/room" */
+    bool startListener(const juce::String &address, int port = kDefaultPort);
+    /** the concert's password (set before starting; empty = none). It never travels: the player sends
+        every listener a random challenge, the listener answers with SHA-256(challenge, password) */
+    void setPassword(const juce::String &pw);
+    juce::String getPassword() const;
+    /** the player: through a relay now, and what listeners type ("server:port/room") */
+    bool viaRelay() const noexcept
+    {
+        return relayMode.load();
+    }
+    juce::String relayAddress() const;
+    /** "host[:port][/room]" -> its parts (false = not an address) */
+    static bool parseAddress(const juce::String &text, juce::String &host, int &port, juce::String &room);
+    /** SHA-256 of some bytes, as hex (the password's answer; tests) */
+    static juce::String sha256Hex(const void *data, size_t n);
+
+    /** the player: talk to the listeners - the audio input goes to them as a voice of its own (also
+        with the input "Eingang" off, not into the room, not heard here) */
+    void setTalking(bool on) noexcept
+    {
+        talking = on;
+    }
+    bool isTalking() const noexcept
+    {
+        return talking.load();
+    }
+    /** the listener: how loud the player's voice is (linear, 0..2) */
+    void setVoiceGain(float g) noexcept
+    {
+        voiceGain = juce::jlimit(0.0f, 2.0f, g);
+    }
+    float getVoiceGain() const noexcept
+    {
+        return voiceGain.load();
+    }
+    /** the listener: the player spoke within the last second */
+    bool voiceHeard() const noexcept
+    {
+        return juce::Time::getMillisecondCounterHiRes() - voiceHeardMs.load() < 1000.0;
+    }
     /** back to playing alone (a listener gets their own setup back) */
     void stop();
     Role role() const noexcept
@@ -127,6 +171,10 @@ public:
     void captureAudio(const float *l, const float *r, int n, double blockTime, double sr) noexcept;
     /** the listener: the player's input for this block, in time with the notes (false = none) */
     bool playAudioInto(float *l, float *r, int n, double blockTime, double sr) noexcept;
+    /** the player: this block's audio input as the voice (only while talking) */
+    void captureVoice(const float *l, const float *r, int n, double blockTime, double sr) noexcept;
+    /** the listener: the player's voice for this block, mono (false = none) */
+    bool playVoiceInto(float *out, int n, double blockTime, double sr) noexcept;
     /** both: the audio clock (seconds of audio processed), set at the start of every block */
     void setAudioTime(double t) noexcept
     {
@@ -152,6 +200,12 @@ public:
     void testResetLoud() noexcept
     {
         loudAt = -1.0;
+        voicePeak = 0.0f;
+    }
+    /** the listener: the loudest of the player's voice so far */
+    float testVoicePeak() const noexcept
+    {
+        return voicePeak.load();
     }
     /** the listener: knocks of the player's pipes heard so far */
     int knocksHeardForTest() const noexcept
@@ -207,6 +261,7 @@ private:
     struct Client
     {
         std::unique_ptr<juce::StreamingSocket> sock;
+        std::array<uint8_t, 16> nonce{}; // the challenge it must answer with the password
         bool helloOk = false, joined = false;
         double since = 0.0; // events before the join state are in it already
         double connectedMs = 0.0;
@@ -216,6 +271,49 @@ private:
         bool hasFig = false;
     };
     std::vector<std::unique_ptr<Client>> clients; // network thread
+    void admit(std::unique_ptr<juce::StreamingSocket> s, double now); // network thread: a new listener
+    std::deque<double> failedAt;   // network thread: wrong passwords, the last minute
+    double refuseUntil = 0.0;      // network thread: too many - nobody for a while
+    juce::String password;         // (statusLock)
+    // the relay (player)
+    std::atomic<bool> relayMode{false}, relayUp{false};
+    juce::String relayHost, relayRoom; // (set before the thread runs)
+    int relayPort = kDefaultPort;
+    std::unique_ptr<juce::StreamingSocket> relayCtl; // network thread
+    std::string relayBuf;
+    double relayRetryMs = 0.0, relayPingMs = 0.0;
+    bool relayConnect(double now);   // network thread
+    void relayPoll(double now);      // network thread
+    void beginPerformer();           // message thread: what both ways of playing start with
+    // the listener through a relay: the room (empty = straight to the player)
+    juce::String listenRoom;
+    // the voice: the player's input, mono, at about 16 kHz, 16-bit (player: audio -> network thread)
+    std::atomic<bool> talking{false};
+    struct VoiceChunk
+    {
+        double t = 0.0;
+        int sr = 16000, n = 0;
+        std::array<int16_t, 512> s{};
+    };
+    static constexpr int kVoiceChunks = 128;
+    juce::AbstractFifo voiceOutFifo{kVoiceChunks};
+    std::vector<VoiceChunk> voiceOut = std::vector<VoiceChunk>((size_t)kVoiceChunks);
+    VoiceChunk vCur;          // audio thread: the chunk being filled
+    float vLp1 = 0, vLp2 = 0, vAcc = 0;
+    int vCnt = 0;
+    // ... and at the listener: a ring of samples, each due at its moment (as the input)
+    static constexpr int kVoiceRing = 1 << 17;
+    juce::AbstractFifo voiceInFifo{kVoiceRing};
+    std::vector<float> voiceIn = std::vector<float>((size_t)kVoiceRing);
+    std::atomic<double> voiceDueEnd{0.0}, voiceHeardMs{-1.0e9};
+    std::atomic<int> voiceSr{16000};
+    std::atomic<uint32_t> voiceSession{0};
+    uint32_t voiceSessionSeen = 0;
+    bool voiceRunning = false;
+    float vA = 0, vB = 0;
+    double vFrac = 0.0, vErr = 0.0;
+    int vStartAt = 0;
+    std::atomic<float> voiceGain{1.0f}, voicePeak{0.0f};
     int nextClientId = 1;
     double lastFiguresMs = 0.0, lastPoseMs = 0.0; // network thread
     mutable juce::CriticalSection figLock;

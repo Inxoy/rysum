@@ -2964,8 +2964,20 @@ audience and imported room models other than the six built-in ones are not mirro
 own that is only the 3D Saal and a line to join a player -- address, \ui{Zuhören}/\ui{Verlassen}, delay, output, volume and the audio device --, shipped as a
 zip with the samples next to it (CMake target \fn{RysumKonzertZip}). A listener walks, looks, jumps and switches the light; the room and the Saal's
 settings are the player's. The test (\code{RYSUM\_ONLY\_CONCERT}, \S\ref{sec:verification}) connects a player and a listener on the computer's own
-address and drives the listener from its own audio thread. For now this is for one local network: a player on the internet would need a relay server,
-and both sides must run the same version.
+address and drives the listener from its own audio thread. Both sides must run the same version.
+
+\paragraph{Password, voice and relay (since 27~November).} A concert can have a password. It never travels: the player sends every listener that connects
+a random 16-byte challenge first, the listener's hello carries SHA-256 of the challenge and the password (UTF-8), and the player compares it with its own
+(the hash is the plug-in's own, checked against the FIPS test vector); a wrong answer is refused with a reason the listener shows, and ten wrong answers
+within a minute close the door for half a minute. \ui{Sprechen} sends the player's audio input as a voice of its own, also with the input switched off:
+mono, low-passed twice at \SI{6}{kHz}, averaged down to about \SI{16}{kHz}, 16-bit, about \SI{250}{kbit/s} per listener, on the player's clock. The
+listener plays it from a ring of its own with the same adaptive reading as the input and adds it after the decoder and the master section -- to both ears
+or the two front channels, to W in AmbiX, to every loudspeaker -- with a gain of its own; it is neither placed in the room nor heard at the player.
+For the internet the repository has a relay (\fn{scripts/rysum\_relay.py}, Python's \code{asyncio}, no dependencies). The player connects out and claims a
+room (\code{RYSUM-RELAY 1 HOST room}); a listener connects out and asks for it (\code{JOIN}); the relay names the listener to the player (\code{L id}), the
+player opens a fresh connection for it (\code{ATTACH room id}), and from then on the relay copies bytes both ways. So nobody needs an open port, and
+everything above -- the challenge, the state, the clocks -- runs unchanged between player and listener: the relay sees the traffic but not the
+password. The test starts the relay on the computer and plays a chord to a listener through it (joined after \SI{0.1}{s}).
 
 % =====================================================================
 \section{User interface}
@@ -3268,8 +3280,9 @@ run); the \ui{Verlauf} in hosts other than the standalone and the test tool.
   \item \textbf{The audience.} Plain HTTP on the local network, without any login: anyone on the network can join, which suits a concert
         hall's own network and not a public one. Windows' firewall and guest networks that isolate their devices are the usual obstacles
         (\S\ref{sec:audience}).
-  \item \textbf{The concert.} \ui{Konzert} works in one local network over plain TCP, without login or encryption; a player on the internet needs a
-        relay server, which is planned. Player and listeners must run the same version. It has been tested with player and listener on one computer
+  \item \textbf{The concert.} \ui{Konzert} runs over plain TCP: the password keeps strangers out, but nothing is encrypted, so the relay and anyone
+        on the way can read the playing (and the voice). The player sends every listener its own copy (through a relay too), so the player's upload
+        grows with the listeners. Player and listeners must run the same version. It has been tested with player and listener on one computer
         (the test of \S\ref{sec:verification}), not yet with many listeners on uneven networks. The Tonnetz walker, \ui{Selbstspiel}, the phone audience,
         MIDI Tuning SysEx and imported room models are not mirrored.
   \item \textbf{The \ui{Vox humana}.} The lowest octave is detected slowly (\SI{33}{ms} at C2) and sometimes an octave too high, the onset head practically
