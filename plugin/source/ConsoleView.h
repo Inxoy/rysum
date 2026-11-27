@@ -133,6 +133,13 @@ private:
     std::vector<std::unique_ptr<ParamRow>> resRows;
     bool resTab = false;
     void showNoiseTab (bool res);
+    // the third tab: the stop arpeggio
+    juce::TextButton tabArp { "Arpeggio" };
+    juce::ComboBox arpMode, arpRate, arpOrder;
+    juce::Label arpModeLabel, arpRateLabel, arpOrderLabel, arpNote;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> arpModeAtt, arpRateAtt, arpOrderAtt;
+    int actionTab = 0;     // 0 noises, 1 resonance, 2 arpeggio
+    void showActionTab (int tab);
     juce::String shownSpaceInfo;
     juce::String spaceInfo() const;
     juce::Slider volume;

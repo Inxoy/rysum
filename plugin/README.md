@@ -1123,6 +1123,15 @@ How the audio gets in:
   - *zufällig*: a random stop, never twice the same in a row.
   Muted pipes are skipped (the note goes to the next stop that has that pipe). Pulling a stop
   while notes are held does not add them to it.
+- **Register-Arpeggio** (Spieltisch, Traktur, tab *Arpeggio*): while a chord is held, the pulled
+  stops join it one after another at the project tempo. *aufbauen*: one stop, then two … then all,
+  and they stay; *auf und ab*: up to all and back down to one, again and again; *im Kreis*: up to all,
+  then from the first alone again; *einzeln wandern*: always one stop, the next one every step.
+  *Schritt*: a note value (1/1 … 1/16, and triplets), counted from the chord's first note (a key added
+  later joins the stops sounding now). *Reihenfolge*: as on the console, low to high (by footage, 16′ first;
+  stops of one pitch as on the console), high to low, or shuffled for every chord. With *Töne verteilen* each note also keeps
+  sounding on its own stop, and the arpeggio adds the others. A stop pulled during a chord comes in on
+  its turn. All three are automatable (not touched by the dice). Not in free tuning (Scala, MTS-ESP).
 
 ## 4. MIDI
 

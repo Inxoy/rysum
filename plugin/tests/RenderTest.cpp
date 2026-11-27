@@ -2098,6 +2098,75 @@ static void testRoomsAndSpread(std::shared_ptr<const SampleLibrary> lib)
     const int k48 = keyIndexForMidi(48);
     check(k48 >= 0 && ((m3[0] >> k48) & 1) == 1,
           "spread: by position, the lowest note on the first stop");
+
+    {
+        // the stop arpeggio: a chord held for 4 s at 120 BPM in quarters (a step every 0.5 s), four stops pulled;
+        // how many stops sound late in every step, and which one comes first
+        auto arpRun = [&](int mode, int order, std::vector<int> &counts, int &first)
+        {
+            OrganEngine e;
+            e.prepare(sr, B);
+            e.setLibrary(lib);
+            EngineParams p;
+            p.stopOn = {};
+            for (int s2 : {0, 1, 2, 6})
+                p.stopOn[(size_t)s2] = true;
+            p.clickLevel = 0;
+            p.stopArp = mode;
+            p.stopArpRate = 2;
+            p.stopArpOrder = order;
+            p.bpm = 120.0;
+            juce::AudioBuffer<float> b(2, B);
+            counts.clear();
+            first = -1;
+            const int total = (int)(4.0 * sr / B);
+            int nextStep = 0;
+            for (int k = 0; k < total; ++k)
+            {
+                juce::MidiBuffer mb;
+                if (k == 0)
+                    for (int n : {48, 52, 55})
+                        mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                e.process(b, mb, p);
+                const double t = (double)(k + 1) * B / sr;
+                const uint32_t held = e.stopsHeldNow();
+                if (k == 1)
+                    for (int s2 = 0; s2 < kNumStops; ++s2)
+                        if (((held >> s2) & 1u) != 0u)
+                            first = s2;
+                if (t >= 0.5 * nextStep + 0.25 && nextStep < 8)
+                {
+                    int c = 0;
+                    for (int s2 = 0; s2 < kNumStops; ++s2)
+                        c += ((held >> s2) & 1u) != 0u ? 1 : 0;
+                    counts.push_back(c);
+                    ++nextStep;
+                }
+            }
+        };
+        auto str = [](const std::vector<int> &v)
+        {
+            juce::String s;
+            for (int x : v)
+                s << x << " ";
+            return s.trim();
+        };
+        std::vector<int> build, updown, round, single, low;
+        int f0 = -1, f1 = -1, f2 = -1, f3 = -1, f4 = -1;
+        arpRun(1, 0, build, f0);
+        arpRun(2, 0, updown, f1);
+        arpRun(3, 0, round, f2);
+        arpRun(4, 0, single, f3);
+        arpRun(1, 2, low, f4);
+        std::cout << "stop arpeggio, stops sounding step by step: building up " << str(build) << " (first stop " << f0
+                  << "); up and down " << str(updown) << "; round " << str(round) << "; one at a time " << str(single)
+                  << "; high to low starts on stop " << f4 << std::endl;
+        check(build == std::vector<int>{1, 2, 3, 4, 4, 4, 4, 4} && f0 == 0 &&
+                  updown == std::vector<int>{1, 2, 3, 4, 3, 2, 1, 2} && round == std::vector<int>{1, 2, 3, 4, 1, 2, 3, 4} &&
+                  single == std::vector<int>{1, 1, 1, 1, 1, 1, 1, 1} && f4 == 2,
+              "stop arpeggio: the pulled stops join a held chord at the tempo (building up, up and down, round, one at a time, "
+              "high to low)");
+    }
     // a muted pipe is skipped: in turn, the first note would go to the Praestant - muted there, it
     // goes to the Gedackt
     std::array<uint64_t, kNumStops> m4{};

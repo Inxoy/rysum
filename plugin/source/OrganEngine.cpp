@@ -1863,11 +1863,30 @@ void OrganEngine::keyDown(int key, float velocity, const EngineParams &p, int no
     // notes to single pipes: only one stop sounds this note (the others still let an old one on
     // this key go)
     const int only = p.noteSpread > 0 ? spreadStopFor(key, p) : -2;
+    keySpreadStop[(size_t)key] = only;
+    // the stop arpeggio: the first key of a chord starts it on its first step; a key added later joins
+    // the stops it is on now
+    const bool arp = p.stopArp > 0 && noteId < 0 && !freeMode;
+    if (arp)
+    {
+        bool others = false;
+        for (int k = 0; k < kNumKeys; ++k)
+            others = others || (k != key && (keyHeld[(size_t)k] || keySustained[(size_t)k]));
+        if (!others || !arpChord)
+        {
+            arpChord = true;
+            arpBeats = 0.0;
+            arpStepNow = 0;
+            arpShuffle();
+            arpIn = arpSetFor(0, p);
+            arpShownStep = 0;
+        }
+    }
     for (int s = 0; s < kNumStops; ++s)
         if (p.stopOn[(size_t)s])
         {
             releaseStopKey(s, key, noteId);
-            if (only != -2 && s != only)
+            if (arp ? !(arpIn[(size_t)s] || (only >= 0 && s == only)) : (only != -2 && s != only))
                 continue;
             if (wait)
             {
@@ -1882,6 +1901,128 @@ void OrganEngine::keyDown(int key, float velocity, const EngineParams &p, int no
             else
                 startVoice(s, key, -1, noteId);
         }
+}
+
+double OrganEngine::arpStepBeats(int rate) noexcept
+{
+    static const double beats[9]{4.0, 2.0, 1.0, 0.5, 0.25, 4.0 / 3.0, 2.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0};
+    return beats[juce::jlimit(0, 8, rate)];
+}
+
+uint32_t OrganEngine::stopsHeldNow() const noexcept
+{
+    uint32_t m = 0;
+    for (const auto &v : voices)
+        if (v.active && v.held && v.previewRemain < 0)
+            m |= 1u << v.stop;
+    return m;
+}
+
+void OrganEngine::arpShuffle() noexcept
+{
+    for (auto &r : arpRank)
+        r = rng.uni();
+}
+
+/** the stops the arpeggio's step sounds: the pulled ones in its order, so many of them as the step says */
+std::array<bool, kNumStops> OrganEngine::arpSetFor(int step, const EngineParams &p) const noexcept
+{
+    std::array<int, kNumStops> list{};
+    std::array<float, kNumStops> ord{};
+    int n = 0;
+    for (int slot = 0; slot < kNumStops; ++slot)
+    {
+        const int s = kDisplayOrder[(size_t)slot];
+        if (!p.stopOn[(size_t)s])
+            continue;
+        // (the order: the console's, the lowest stop first or last by its pitch in feet - a stopped Gedackt
+        //  sounds 8' -, at random; stops of one pitch as on the console)
+        static const float feet[kNumStops]{8.0f, 8.0f, 4.0f, 2.0f, 2.6667f, 1.3333f, 8.0f, 16.0f};
+        const float ft = feet[(size_t)s] + 0.001f * (float)slot * (p.stopArpOrder == 1 ? -1.0f : 1.0f);
+        ord[(size_t)n] = p.stopArpOrder == 1 ? -ft : p.stopArpOrder == 2 ? ft : p.stopArpOrder == 3 ? arpRank[(size_t)s] : (float)slot;
+        list[(size_t)n++] = s;
+    }
+    std::array<bool, kNumStops> in{};
+    if (n == 0)
+        return in;
+    // (a stable sort of a handful)
+    for (int i = 1; i < n; ++i)
+        for (int j = i; j > 0 && ord[(size_t)j] < ord[(size_t)j - 1]; --j)
+        {
+            std::swap(ord[(size_t)j], ord[(size_t)j - 1]);
+            std::swap(list[(size_t)j], list[(size_t)j - 1]);
+        }
+    step = juce::jmax(0, step);
+    int count = 1, from = 0;
+    switch (p.stopArp)
+    {
+    case 1: // building up, and staying full
+        count = juce::jmin(step + 1, n);
+        break;
+    case 2: // up and down: 1, 2 .. n .. 2, 1, 2 ..
+    {
+        const int period = juce::jmax(1, 2 * n - 2), j = step % period;
+        count = j < n ? j + 1 : 2 * n - 1 - j;
+        break;
+    }
+    case 3: // building up, and from the first one again
+        count = step % n + 1;
+        break;
+    default: // one stop at a time, walking through them
+        from = step % n;
+        break;
+    }
+    for (int i = from; i < from + count && i < n; ++i)
+        in[(size_t)list[(size_t)i]] = true;
+    return in;
+}
+
+/** the stop arpeggio, every slice: the held chord moves on to the next step at the tempo; the stops that
+    come in start on every held key, those that leave let go */
+void OrganEngine::stepStopArp(const EngineParams &p, double seconds) noexcept
+{
+    bool anyHeld = false;
+    for (int k = 0; k < kNumKeys && !anyHeld; ++k)
+        anyHeld = keyHeld[(size_t)k] || keySustained[(size_t)k];
+    if (p.stopArp <= 0 || freeMode || !anyHeld)
+    {
+        arpChord = false;
+        arpStepNow = -1;
+        arpShownStep = -1;
+        return;
+    }
+    if (!arpChord)
+    {
+        // (switched on while a chord is held: it starts from here)
+        arpChord = true;
+        arpBeats = 0.0;
+        arpShuffle();
+        for (int s = 0; s < kNumStops; ++s)
+            arpIn[(size_t)s] = p.stopOn[(size_t)s];
+    }
+    const int step = (int)std::floor(arpBeats / arpStepBeats(p.stopArpRate) + 1.0e-9);
+    arpBeats += seconds * juce::jmax(1.0, p.bpm) / 60.0;
+    arpStepNow = step;
+    arpShownStep = step;
+    const auto want = arpSetFor(step, p); // (every slice: a stop pulled or pushed in joins at once)
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        if (want[(size_t)s] == arpIn[(size_t)s])
+            continue;
+        arpIn[(size_t)s] = want[(size_t)s];
+        for (int k = 0; k < kNumKeys; ++k)
+        {
+            if (!(keyHeld[(size_t)k] || keySustained[(size_t)k]) || keySpreadStop[(size_t)k] == s)
+                continue; // (a note's own stop of "Toene verteilen" sounds throughout)
+            if (want[(size_t)s] && p.stopOn[(size_t)s])
+            {
+                releaseStopKey(s, k);
+                startVoice(s, k);
+            }
+            else
+                releaseStopKey(s, k);
+        }
+    }
 }
 
 int OrganEngine::spreadStopFor(int key, const EngineParams &p) noexcept
@@ -5493,6 +5634,7 @@ void OrganEngine::process(juce::AudioBuffer<float> &out, const juce::MidiBuffer 
                 timeSeconds.load() - choreoT0.load() > (double)choreoDur.load() + 0.1)
                 choreoPat.store(-1, std::memory_order_relaxed);
         }
+        stepStopArp(pc, len / sr);
         lastMod = pc.mod;
         haveLastMod = true;
         roomOffset = start;
@@ -6157,7 +6299,7 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
                       console.data(), lastPull, 0.5f);
         for (int k = 0; k < kNumKeys; ++k)
         {
-            if (p.stopOn[(size_t)s] && keyHeld[(size_t)k] && !freeMode && p.noteSpread == 0)
+            if (p.stopOn[(size_t)s] && keyHeld[(size_t)k] && !freeMode && p.noteSpread == 0 && p.stopArp == 0)
                 startVoice(s, k);
             if (!p.stopOn[(size_t)s])
                 releaseStopKey(s, k);

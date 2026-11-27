@@ -2751,6 +2751,16 @@ moment it is played: the lowest held note on the first stop, the next above on t
 \ui{zufällig} (a random stop, never the same twice in a row). Muted pipes are skipped, so the note goes to the next stop
 that has that pipe, and pulling a stop while notes are held does not add them to it.
 
+The \ui{Register-Arpeggio} (same panel, tab \ui{Arpeggio}) brings the pulled stops in one after another while a chord is
+held. The steps are a note value $\ell$ in beats (1/1 \ldots{} 1/16 and triplets) at the host tempo, counted from the chord's
+first note: step $i = \lfloor b/\ell \rfloor$ for the beats $b$ since then. With the $n$ pulled stops in an order (the console's,
+the lowest by footage first or last, or shuffled per chord), step $i$ sounds the first $c$ of them: \ui{aufbauen} $c = \min(i+1, n)$,
+\ui{auf und ab} $c = j+1$ for $j < n$ and $2n-1-j$ otherwise, with $j = i \bmod (2n-2)$, \ui{im Kreis} $c = (i \bmod n) + 1$;
+\ui{einzeln wandern} sounds the $(i \bmod n)$-th alone. A stop that comes in starts on every held key, one that leaves lets go;
+with \ui{Töne verteilen} a note's own stop sounds throughout. In the test, a chord held over four stops at 120\,BPM in quarters
+sounds 1, 2, 3, 4, 4, \ldots{} stops when building up, 1, 2, 3, 4, 3, 2, 1, 2 up and down, and from high to low starts on the
+Octave 4′.
+
 \subsection{MPE}
 \label{sec:mpe}
 MPE (MIDI Polyphonic Expression, used by controllers such as the Lumatone, LinnStrument, Seaboard and

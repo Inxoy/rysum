@@ -1460,6 +1460,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             0));
         l.add(std::make_unique<AudioParameterFloat>(ParameterID{"dopSnap", 1}, "Doppler einrasten",
                                                     NormalisableRange<float>(0, 1), 0.0f, pc));
+        // the stop arpeggio: while a chord is held, the pulled stops come in one after another in time
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"stopArp", 1}, "Register-Arpeggio",
+            StringArray{"aus", "aufbauen", "auf und ab", "im Kreis", "einzeln wandern"}, 0));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"stopArpRate", 1}, "Register-Arpeggio Schritt",
+            StringArray{"1/1", "1/2", "1/4", "1/8", "1/16", "1/2 T", "1/4 T", "1/8 T", "1/16 T"}, 2));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"stopArpOrder", 1}, "Register-Arpeggio Reihenfolge",
+            StringArray{String::fromUTF8("Spieltisch (links \xe2\x86\x92 rechts)"), String::fromUTF8("tief \xe2\x86\x92 hoch"),
+                        String::fromUTF8("hoch \xe2\x86\x92 tief"), String::fromUTF8("zuf\xc3\xa4llig")},
+            0));
     }
     return l;
 }
@@ -1663,6 +1675,9 @@ RysumProcessor::RysumProcessor()
     ix.dop[2] = I("dopDown");
     ix.dop[3] = I("dopGrid");
     ix.dop[4] = I("dopSnap");
+    ix.arp[0] = I("stopArp");
+    ix.arp[1] = I("stopArpRate");
+    ix.arp[2] = I("stopArpOrder");
     ix.air = I("air");
     ix.distAmount = I("distAmount");
     ix.temperament = I("temperament");
@@ -1955,6 +1970,9 @@ EngineParams RysumProcessor::readParams(const float *vals) const
     p.dopDown = V(ix.dop[2]);
     p.dopGrid = juce::roundToInt(V(ix.dop[3]));
     p.dopSnap = V(ix.dop[4]);
+    p.stopArp = juce::roundToInt(V(ix.arp[0]));
+    p.stopArpRate = juce::roundToInt(V(ix.arp[1]));
+    p.stopArpOrder = juce::roundToInt(V(ix.arp[2]));
     p.air = V(ix.air);
     p.distAmount = V(ix.distAmount);
     p.tuning = tunings[(size_t)juce::jlimit(

@@ -375,6 +375,11 @@ struct EngineParams
     /** notes to single pipes: 0 = every pulled stop sounds (as an organ), 1 = one stop per note in
        turn, 2 = by position among the held notes (lowest -> first stop), 3 = random */
     int noteSpread = 0;
+    // the stop arpeggio: while a chord is held, the pulled stops come in one after another in time
+    // (0 off, 1 building up, 2 up and down, 3 round again, 4 one stop at a time), every step a note value
+    // (0 1/1, 1 1/2, 2 1/4, 3 1/8, 4 1/16, 5 1/2 T, 6 1/4 T, 7 1/8 T, 8 1/16 T) at the tempo, in an order
+    // (0 the console's, 1 low to high, 2 high to low, 3 at random)
+    int stopArp = 0, stopArpRate = 2, stopArpOrder = 0;
 
     // room sends: circular harmonics of every pipe's direction (see Convolver)
     int roomHarmonics = 0;   // 0 = only the plain sum
@@ -1362,6 +1367,24 @@ private:
     uint32_t spreadCounter = 0;
     int lastSpreadStop = -1;
     int spreadStopFor(int key, const EngineParams &p) noexcept;
+    // the stop arpeggio (key mode): which stops the held chord sounds on now
+    bool arpChord = false;
+    double arpBeats = 0.0;
+    int arpStepNow = -1;
+    std::array<bool, kNumStops> arpIn{};
+    std::array<float, kNumStops> arpRank{};
+    std::array<int, kNumKeys> keySpreadStop{};
+    void arpShuffle() noexcept;
+    std::array<bool, kNumStops> arpSetFor(int step, const EngineParams &p) const noexcept;
+    void stepStopArp(const EngineParams &p, double seconds) noexcept;
+
+public:
+    std::atomic<int> arpShownStep{-1}; // the step it is on (-1: no chord held), for the console
+    static double arpStepBeats(int rate) noexcept;
+    /** the stops that have a voice held as a key now (not dying away), as bits: the tests */
+    uint32_t stopsHeldNow() const noexcept;
+
+private:
     std::vector<ErSlot> erSlots;
     std::array<std::array<FloorPlan, 2>, kNumRooms> drawnPlans{};
     std::array<std::atomic<int>, kNumRooms> drawnPlanActive{};

@@ -203,7 +203,7 @@ int RysumProcessor::diceGroupOf(const juce::String &id) const
     // (nor whether a Saal is open to the sky)
     if (id.endsWith("Open") || id.endsWith("OpenAmt"))
         return -1;
-    if (id.startsWith("choreo"))
+    if (id.startsWith("choreo") || id.startsWith("stopArp"))
         return -1;
     if (id.startsWith("sim") && id != "simOrder")
         return dgSaal;

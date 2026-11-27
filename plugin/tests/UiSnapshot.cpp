@@ -3745,6 +3745,14 @@ public:
             shoot(0, "ui_spieltisch_glitch_resonanz.png");
             setN("degStutter", 0.0f);
             setN("clickRes", 0.0f);
+            if (auto *b = findView(content, true) ? findButton(findView(content, true), "Arpeggio") : nullptr)
+            {
+                b->triggerClick();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(80);
+                shoot(0, "ui_spieltisch_arpeggio.png");
+            }
+            else
+                std::cout << "Arpeggio tab button not found  FAIL" << std::endl;
             if (auto *b = findView(content, true)
                               ? findButton(findView(content, true),
                                            juce::String::fromUTF8("Ger\xc3\xa4usche"))

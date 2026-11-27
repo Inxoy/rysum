@@ -575,13 +575,48 @@ ConsoleView::ConsoleView(RysumProcessor &p) : proc(p), keys(p)
             resRows.back()->setTooltip(rysum::tr(rtips[ri++]));
             addChildComponent(*resRows.back());
         }
-        for (auto *b : {&tabNoise, &tabRes})
+        // Traktur · Arpeggio: the pulled stops come in one after another while a chord is held
+        {
+            auto combo = [this](juce::ComboBox &c, juce::Label &l, const char *id, const char *label,
+                                std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> &att)
+            {
+                if (auto *choice = dynamic_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter(id)))
+                    c.addItemList(choice->choices, 1);
+                att = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(proc.apvts, id, c);
+                l.setText(rysum::tr(juce::String::fromUTF8(label)), juce::dontSendNotification);
+                l.setFont(Assets::get().sansFont(14.0f));
+                l.setColour(juce::Label::textColourId, col::ink);
+                addChildComponent(c);
+                addChildComponent(l);
+            };
+            combo(arpMode, arpModeLabel, "stopArp", "Register-Arpeggio", arpModeAtt);
+            combo(arpRate, arpRateLabel, "stopArpRate", "Schritt", arpRateAtt);
+            combo(arpOrder, arpOrderLabel, "stopArpOrder", "Reihenfolge", arpOrderAtt);
+            arpMode.setTooltip(rysum::tr("Solange ein Akkord gehalten wird, kommen die gezogenen Register im Tempo nacheinander "
+                                         "hinzu: aufbauen (eins nach dem anderen, dann alle), auf und ab (wieder zur\xc3\xbc"
+                                         "ck bis zum ersten), im Kreis (alle, dann von vorn), einzeln wandern (immer nur eins). "
+                                         "Mit T\xc3\xb6ne verteilen klingt jeder Ton dazu auf seinem eigenen Register."));
+            arpRate.setTooltip(rysum::tr("Wie lang ein Schritt ist, als Notenwert im Tempo des Projekts (T = Triole). "
+                                         "Gez\xc3\xa4hlt ab dem ersten Ton des Akkords."));
+            arpOrder.setTooltip(rysum::tr("In welcher Reihenfolge die Register kommen: wie am Spieltisch, die tiefen zuerst, "
+                                          "die hohen zuerst, oder bei jedem Akkord neu gemischt."));
+            arpNote.setText(rysum::tr("Ein gehaltener Akkord beginnt auf dem ersten Register; mit jedem Schritt kommt das "
+                                      "n\xc3\xa4" "chste dazu. Freie Stimmung (Scala, MTS-ESP): ohne Arpeggio."),
+                            juce::dontSendNotification);
+            arpNote.setFont(Assets::get().monoFont(13.0f));
+            arpNote.setColour(juce::Label::textColourId, col::dim);
+            arpNote.setJustificationType(juce::Justification::topLeft);
+            addChildComponent(arpNote);
+        }
+        for (auto *b : {&tabNoise, &tabRes, &tabArp})
         {
             b->setClickingTogglesState(false);
             addAndMakeVisible(*b);
         }
-        tabNoise.onClick = [this] { showNoiseTab(false); };
-        tabRes.onClick = [this] { showNoiseTab(true); };
+        tabNoise.onClick = [this] { showActionTab(0); };
+        tabRes.onClick = [this] { showActionTab(1); };
+        tabArp.onClick = [this] { showActionTab(2); };
+        tabArp.setTooltip(rysum::tr("Register-Arpeggio: die gezogenen Register kommen im Tempo nacheinander zum gehaltenen Akkord hinzu"));
         tabSound.setTooltip(rysum::tr("Verfall des Klangs: K\xc3\xb6rnung, Bittiefe, Abtastrate, Windschwankung, Aussetzer"));
         tabSpace.setTooltip(rysum::tr("Verfall des Raumbilds: die Ambisonics-Kugel nutzt sich ab (Ambisonics, Binaural, "
             "Lautsprecher; in Stereo nur das Richtungsraster)"));
@@ -722,6 +757,19 @@ void ConsoleView::resized()
     }
     tabNoise.setBounds(noiseArea.getX() + 104, noiseArea.getY() + 8, 76, 20);
     tabRes.setBounds(tabNoise.getRight() + 4, noiseArea.getY() + 8, 74, 20);
+    tabArp.setBounds(tabRes.getRight() + 4, noiseArea.getY() + 8, 72, 20);
+    {
+        auto a = noiseArea.withTrimmedTop(44);
+        for (auto [c, l] : {std::pair<juce::ComboBox *, juce::Label *>{&arpMode, &arpModeLabel}, {&arpRate, &arpRateLabel},
+                            {&arpOrder, &arpOrderLabel}})
+        {
+            auto line = a.removeFromTop(26);
+            l->setBounds(line.removeFromLeft(140));
+            c->setBounds(line);
+            a.removeFromTop(10);
+        }
+        arpNote.setBounds(a.removeFromTop(60));
+    }
     // three tabs and the two mode buttons share one line: narrow enough that the mode buttons do
     // not lie over "Glitch"
     tabSound.setBounds(decayArea.getX() + 112, decayArea.getY() + 8, 50, 20);
@@ -762,14 +810,25 @@ void ConsoleView::resized()
 
 void ConsoleView::showNoiseTab(bool res)
 {
-    resTab = res;
-    tabNoise.setToggleState(!res, juce::dontSendNotification);
-    tabRes.setToggleState(res, juce::dontSendNotification);
+    showActionTab(res ? 1 : 0);
+}
+
+void ConsoleView::showActionTab(int tab)
+{
+    actionTab = tab;
+    resTab = tab == 1;
+    tabNoise.setToggleState(tab == 0, juce::dontSendNotification);
+    tabRes.setToggleState(tab == 1, juce::dontSendNotification);
+    tabArp.setToggleState(tab == 2, juce::dontSendNotification);
     for (auto &r : noiseRows)
-        r->setVisible(!res);
+        r->setVisible(tab == 0);
     for (auto &r : resRows)
-        r->setVisible(res);
-    spreadChoice.setVisible(!res);
+        r->setVisible(tab == 1);
+    spreadChoice.setVisible(tab == 0);
+    for (juce::Component *c : {(juce::Component *)&arpMode, (juce::Component *)&arpRate, (juce::Component *)&arpOrder,
+                               (juce::Component *)&arpModeLabel, (juce::Component *)&arpRateLabel,
+                               (juce::Component *)&arpOrderLabel, (juce::Component *)&arpNote})
+        c->setVisible(tab == 2);
     repaint(noiseArea);
 }
 
@@ -864,7 +923,7 @@ void ConsoleView::paint(juce::Graphics &g)
     drawSectionTitle(g, noiseArea, rysum::tr("Traktur"));
     g.setFont(Assets::get().sansFont(14.0f));
     g.setColour(col::ink);
-    if (!resTab)
+    if (actionTab == 0)
         g.drawText(rysum::tr("T\xc3\xb6ne verteilen"), spreadLabel,
                    juce::Justification::centredLeft);
     drawSectionTitle(g, decayArea, rysum::tr("Verfall"), spaceTab ? shownSpaceInfo : juce::String());
