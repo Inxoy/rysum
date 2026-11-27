@@ -607,7 +607,72 @@ void OrganEngine::requestPreview(int stop, int key)
         previewQueue[(size_t)scope.startIndex2] = {stop, key};
 }
 
+void OrganEngine::triggerChoreo(int pattern, float extent) noexcept
+{
+    choreoDur.store(juce::jlimit(0.5f, 30.0f, choreoNextTime), std::memory_order_relaxed);
+    choreoExt.store(juce::jlimit(0.0f, 1.0f, extent * choreoNextAmt), std::memory_order_relaxed);
+    choreoT0.store(timeSeconds.load(), std::memory_order_relaxed);
+    choreoPat.store(juce::jlimit(0, 5, pattern), std::memory_order_relaxed);
+}
+
+/** the choreography: where a pipe is while the figure runs - every pipe a little later than the one below it (a
+    wave through the keyboard), out and back again within the figure's length */
+Pos OrganEngine::choreoApply(Pos q, int stop, int key) const noexcept
+{
+    const int pat = choreoPat.load(std::memory_order_relaxed);
+    if (pat < 0)
+        return q;
+    const float dur = juce::jmax(0.1f, choreoDur.load(std::memory_order_relaxed));
+    const float t = (float)((timeSeconds.load(std::memory_order_relaxed) - choreoT0.load(std::memory_order_relaxed)) / dur);
+    if (t <= 0.0f || t >= 1.0f)
+        return q;
+    const float kk = (float)key / (float)(kNumKeys - 1);
+    const float tk = juce::jlimit(0.0f, 1.0f, (t - 0.3f * kk) / 0.7f);
+    const float pi = juce::MathConstants<float>::pi;
+    const float e = std::sin(pi * tk) * choreoExt.load(std::memory_order_relaxed);
+    const float h1 = (float)((stop * 131 + key * 71) % 997) / 997.0f, h2 = (float)((stop * 37 + key * 113) % 991) / 991.0f;
+    switch (pat)
+    {
+    case 0: // spiral up: once round, up and in
+        q.az = wrapAz(q.az + 360.0f * tk * (e > 0.0f ? 1.0f : 0.0f) * juce::jmin(1.0f, 4.0f * e));
+        q.el = juce::jlimit(-90.0f, 90.0f, q.el + 60.0f * e);
+        q.dist *= 1.0f - 0.35f * e;
+        break;
+    case 1: // collapse: down to the floor, scattering a little outwards
+        q.el = q.el + (-70.0f - q.el) * e;
+        q.az = wrapAz(q.az + 25.0f * (h1 - 0.5f) * e);
+        q.dist *= 1.0f + 0.4f * e;
+        break;
+    case 2: // bloom: drawn in to a point, then opening wider than before, rising
+        q.dist *= std::exp2(2.0f * e * (tk < 0.5f ? -1.0f : 0.6f));
+        q.el = juce::jlimit(-90.0f, 90.0f, q.el + 30.0f * e);
+        break;
+    case 3: // whirl: one and a half turns, bobbing
+        q.az = wrapAz(q.az + 540.0f * e);
+        q.el = juce::jlimit(-90.0f, 90.0f, q.el + 15.0f * std::sin(6.0f * pi * t) * e);
+        break;
+    case 4: // a wave running through the keyboard
+        q.el = juce::jlimit(-90.0f, 90.0f, q.el + 35.0f * e * std::sin(2.0f * pi * (2.0f * t - kk)));
+        break;
+    default: // scatter: every pipe its own way, and back
+        q.az = wrapAz(q.az + 240.0f * (h1 - 0.5f) * e);
+        q.el = juce::jlimit(-90.0f, 90.0f, q.el + 120.0f * (h2 - 0.5f) * e);
+        q.dist *= 1.0f + 0.8f * e;
+        break;
+    }
+    q.dist = juce::jlimit(kMinDist, kMaxDist, q.dist);
+    return q;
+}
+
 Pos OrganEngine::currentPosition(int stop, int key, const EngineParams &p) const noexcept
+{
+    // (a pipe flying as a body in the Saal is where its body is: the figure leaves it alone)
+    if (isRoomMotion(p.motionMode[(size_t)stop]))
+        return currentPositionBase(stop, key, p);
+    return choreoApply(currentPositionBase(stop, key, p), stop, key);
+}
+
+Pos OrganEngine::currentPositionBase(int stop, int key, const EngineParams &p) const noexcept
 {
     // in the room modes the pipe is a body in the Saal: seen from the usual listening place (no
     // orbit, no shaping)
@@ -5351,6 +5416,20 @@ void OrganEngine::process(juce::AudioBuffer<float> &out, const juce::MidiBuffer 
         advanceModulation(pc, len / sr);
         if (modHook != nullptr)
             modHook->modulate(pc, globalSrc.data());
+        {
+            // the choreography: what it is set to, set off by its switch (a lane, a MIDI button) or the view's button
+            choreoNextPattern = pc.choreoPattern;
+            choreoNextTime = pc.choreoTime;
+            choreoNextAmt = pc.choreoAmt;
+            const int ui = choreoUiCount.load(std::memory_order_relaxed);
+            if ((pc.choreoGo && !choreoGoWas) || ui != choreoUiSeen)
+                triggerChoreo(pc.choreoPattern, 1.0f);
+            choreoGoWas = pc.choreoGo;
+            choreoUiSeen = ui;
+            if (choreoPat.load(std::memory_order_relaxed) >= 0 &&
+                timeSeconds.load() - choreoT0.load() > (double)choreoDur.load() + 0.1)
+                choreoPat.store(-1, std::memory_order_relaxed);
+        }
         lastMod = pc.mod;
         haveLastMod = true;
         roomOffset = start;

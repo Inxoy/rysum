@@ -15,6 +15,8 @@ bool RysumProcessor::isAutoTarget(int i) const
     for (int s = 0; s < kNumStops; ++s)
         if (id == stopParamId(s) || id == motionParamId(s) || id == jumpHardParamId(s))
             return true;
+    if (id == "choreoGo" || id == "choreoPattern")
+        return true; // (a lane sets the figure off: bounces dance it the same)
     // (only switches the engine reads in every slice: others - Saal, Lucier, tuning, the IR - are
     // read once per block or off the audio thread, so a lane would not reach them)
     static const juce::StringArray sw{"freeze", "tremOn", "windModel"};

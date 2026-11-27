@@ -901,6 +901,7 @@ private:
         std::array<std::array<int, 3>, rysum::kNumRooms> door{};    // DoorTo DoorWall DoorOpen
         int kbGlide = -1;
         int chestLevel = -1, chestTone = -1, leakFollow = -1;
+        std::array<int, 4> choreo{};
         std::array<std::array<int, 2>, rysum::kNumRooms> open{};
         int beatInstant = -1, beatMode = -1;
         int inputRoom = 0, noteSpread = 0;

@@ -281,7 +281,10 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
             { "lookRipple", "Wellen", "Wo eine Pfeife aufschl\xc3\xa4gt, l\xc3\xa4uft eine kurze Welle \xc3\xbc" "ber die Fl\xc3\xa4" "chen." },
             { "lookSway", "Kamera schwankt", "Der Blick schwankt beim Gehen st\xc3\xa4rker, und im Stehen atmet er ein wenig." },
             { "lookShake", "Kamera bebt", "Ein harter Aufprall in der N\xc3\xa4he ersch\xc3\xbcttert den Blick." },
-            { "lookFocus", "Sch\xc3\xa4rfentiefe", "Scharf ist, worauf du schaust (die Pfeife unter dem Kreuz); davor und dahinter verschwimmt es." } };
+            { "lookFocus", "Sch\xc3\xa4rfentiefe", "Scharf ist, worauf du schaust (die Pfeife unter dem Kreuz); davor und dahinter verschwimmt es." },
+            { "choreoPattern", "Choreografie", "Eine Figur, die alle Pfeifen einmal tanzen: Spirale aufw\xc3\xa4rts, Einsturz, Erbl\xc3\xbchen, Wirbel, Welle, Zerstreuen \xe2\x80\x93 jede Pfeife etwas sp\xc3\xa4ter als die unter ihr. Los mit J, dem Knopf, dem Schalter \xe2\x80\x9e" "Choreografie los\xe2\x80\x9c (MIDI, Verlauf) oder auf dem Kanal der Raumtastatur mit C1 bis H1 (jede Taste eine Figur, der Anschlag wie weit)." },
+            { "choreoTime", "Dauer", "Wie lange die Figur dauert." },
+            { "choreoAmt", "Weite", "Wie weit die Pfeifen sich bewegen." } };
         for (int i = 0; i < kLookRows; ++i)
         {
             auto row = std::make_unique<ParamRow> (proc.apvts, rows[i].id, rysum::tr (rows[i].name), true);
@@ -295,6 +298,10 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
                                        "sichtbare T\xc3\xbcren, vergehende W\xc3\xa4nde, Gebrauchsspuren, Glanz, Wellen, die Kamera. Alles l\xc3\xa4sst sich "
                                        "modulieren (Rechtsklick) und im Verlauf zeichnen."));
         actLook.onClick = [this] { showLook (actLook.getToggleState()); };
+        actChoreo.setTooltip (rysum::tr ("Die Pfeifen tanzen die Figur (J)"));
+        actChoreo.setWantsKeyboardFocus (false);
+        actChoreo.onClick = [this] { ++proc.engine.choreoUiCount; };
+        addChildComponent (actChoreo);
     }
     updateButtons();
 }
@@ -303,6 +310,7 @@ void WalkView::showLook (bool on)
 {
     actLook.setToggleState (on, juce::dontSendNotification);
     for (auto& r : lookRows) if (r != nullptr) r->setVisible (on);
+    actChoreo.setVisible (on);
     resized();
     repaint();
 }
@@ -366,16 +374,17 @@ void WalkView::resized()
     }
     {
         // "Stimmung": four columns under the illusions
-        auto area = getLocalBounds().reduced (18, 0).withTrimmedTop (104).removeFromTop (6 * 34 + 12);
+        auto area = getLocalBounds().reduced (18, 0).withTrimmedTop (104).removeFromTop (7 * 34 + 12);
         lookArea = area;
         area = area.reduced (10, 6);
         const int cw = (area.getWidth() - 3 * 20) / 4;
         for (int i = 0; i < kLookRows; ++i)
         {
-            const int col = i / 6, rw = i % 6;
+            const int col = i / 7, rw = i % 7;
             if (lookRows[(size_t) i] != nullptr)
                 lookRows[(size_t) i]->setBounds (area.getX() + col * (cw + 20), area.getY() + rw * 34, cw, 32);
         }
+        actChoreo.setBounds (area.getX() + 3 * (cw + 20), area.getY() + 5 * 34 + 4, 90, 24);
     }
     home.setBounds (r.removeFromRight (82));
     r.removeFromRight (6);
@@ -829,6 +838,7 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
             return true;
         }
         if ((kc == 'M' || kc == 'm') && mods.isAltDown()) { materialAll(); return true; }
+        if (! ctrlKey && (kc == 'J' || kc == 'j')) { ++proc.engine.choreoUiCount; return true; }      // (the figure)
         if (kc == 'B' || kc == 'b')
         {
             // painting: B paints the cell under the cross, Shift+B wipes it off, Ctrl+B the next material

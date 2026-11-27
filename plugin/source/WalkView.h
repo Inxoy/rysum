@@ -409,7 +409,8 @@ private:
     // a room heard larger than it is seen
     std::array<std::unique_ptr<ParamRow>, 6> illusions;
     // "Stimmung": the look of the Saal - light, air, the room, the camera (a panel under the illusions)
-    static constexpr int kLookRows = 23;
+    static constexpr int kLookRows = 26;
+    juce::TextButton actChoreo { "Los (J)" };
     std::array<std::unique_ptr<ParamRow>, kLookRows> lookRows;
     juce::TextButton actLook { juce::String::fromUTF8 ("Atmosph\xc3\xa4re") };
     juce::Rectangle<int> lookArea;

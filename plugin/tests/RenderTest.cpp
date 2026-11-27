@@ -4918,6 +4918,41 @@ int main(int argc, char **argv)
                 check(field < closed - 10.0 && yard < closed && yard > field,
                       "Saal offen: a courtyard rings out sooner than the closed Saal, a field sooner still");
             }
+            {
+                // the choreography: the switch sets the figure off, the pipes whirl round and come back
+                OrganEngine e;
+                e.prepare(fsr, B);
+                e.setLibrary(lib);
+                EngineParams p;
+                p.stopOn = {};
+                p.stopOn[0] = true;
+                p.outputMode = 1;
+                p.choreoPattern = 3;     // Wirbel
+                p.choreoTime = 1.0f;
+                juce::AudioBuffer<float> b(4, B);
+                const int key = rysum::keyIndexForMidi(60);
+                auto runFor = [&](double secs)
+                {
+                    for (int pos = 0; pos < (int)(secs * fsr); pos += B)
+                    {
+                        juce::MidiBuffer mb;
+                        e.process(b, mb, p);
+                    }
+                };
+                runFor(0.2);
+                const float az0 = e.currentPosition(0, key, p).az;
+                p.choreoGo = true;
+                runFor(0.5);
+                const float azMid = e.currentPosition(0, key, p).az;
+                const bool running = e.choreoRunning();
+                runFor(0.8);
+                const float azEnd = e.currentPosition(0, key, p).az;
+                auto turn = [](float a, float b) { return std::abs(std::remainder(a - b, 360.0f)); };
+                std::cout << "choreography (Wirbel, 1 s): a pipe at " << az0 << " deg, mid-figure " << azMid << ", after it " << azEnd
+                          << (running ? " (it ran)" : " (it did not run)") << std::endl;
+                check(running && turn(azMid, az0) > 30.0f && turn(azEnd, az0) < 1.0f && !e.choreoRunning(),
+                      "Choreografie: the switch sets the figure off, the pipes move and come back");
+            }
         }
         if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
         {

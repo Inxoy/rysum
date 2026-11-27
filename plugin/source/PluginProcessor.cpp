@@ -1429,6 +1429,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             l.add(std::make_unique<AudioParameterFloat>(ParameterID{roomParamId(r, "OpenAmt"), 1}, sn + "wie offen",
                                                         NormalisableRange<float>(0, 1), 1.0f, pc));
         }
+        // the pipes' choreography: a figure all of them dance once (Los, a key, a lane in the Verlauf)
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"choreoPattern", 1}, "Choreografie",
+            StringArray{String::fromUTF8("Spirale aufw\xc3\xa4rts"), "Einsturz", String::fromUTF8("Erbl\xc3\xbchen"), "Wirbel", "Welle",
+                        "Zerstreuen"},
+            0));
+        l.add(std::make_unique<AudioParameterFloat>(
+            ParameterID{"choreoTime", 1}, "Choreografie Dauer", NormalisableRange<float>(0.5f, 30.0f, 0.01f, 0.5f), 4.0f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(v, v < 10.0f ? 1 : 0) + " s"; })));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"choreoAmt", 1}, "Choreografie Weite",
+                                                    NormalisableRange<float>(0, 1), 1.0f, pc));
+        l.add(std::make_unique<AudioParameterBool>(ParameterID{"choreoGo", 1}, "Choreografie los", false));
     }
     return l;
 }
@@ -1745,6 +1758,10 @@ RysumProcessor::RysumProcessor()
         }
         ix.kbGlide = I("simKbGlide");
         ix.chestLevel = I("fxChestLevel");
+        ix.choreo[0] = I("choreoPattern");
+        ix.choreo[1] = I("choreoTime");
+        ix.choreo[2] = I("choreoAmt");
+        ix.choreo[3] = I("choreoGo");
         ix.chestTone = I("fxChestTone");
         ix.leakFollow = I("fxLeakFollow");
         for (int r = 0; r < rysum::kNumRooms; ++r)
@@ -2192,6 +2209,10 @@ EngineParams RysumProcessor::readParams(const float *vals) const
     }
     p.roomKeys.glide = V(ix.kbGlide); // (the held keys: processBlock)
     p.fx.chestLevel = V(ix.chestLevel);
+    p.choreoPattern = juce::roundToInt(V(ix.choreo[0]));
+    p.choreoTime = V(ix.choreo[1]);
+    p.choreoAmt = V(ix.choreo[2]);
+    p.choreoGo = V(ix.choreo[3]) > 0.5f;
     p.fx.chestTone = V(ix.chestTone);
     p.fx.leakFollow = V(ix.leakFollow);
     for (int r = 0; r < rysum::kNumRooms; ++r)
@@ -2474,6 +2495,9 @@ void RysumProcessor::takeRoomKeys(juce::MidiBuffer &midi)
             const auto m = meta.getMessage();
             if (m.getChannel() == ch && (m.isNoteOnOrOff() || m.isAllNotesOff() || m.isAllSoundOff()))
             {
+                // (C1 .. B1: the pipes dance a figure - the next six keys each one, the velocity how far)
+                if (m.isNoteOn() && m.getNoteNumber() >= 24 && m.getNoteNumber() < 36)
+                    engine.triggerChoreo((m.getNoteNumber() - 24) % 6, (float)m.getVelocity() / 127.0f);
                 if (m.isNoteOn())
                     roomKeyVel[(size_t)m.getNoteNumber()] = (uint8_t)juce::jmax(1, (int)m.getVelocity());
                 else if (m.isNoteOff())

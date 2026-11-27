@@ -331,6 +331,10 @@ struct EngineParams
         sounds in the Saal goes through it into the room behind, and that room's late reverb comes
         back through the door (from the door's direction). A Saal with no sound of its own is then
         heard only through its door. */
+    // the choreography: a figure every pipe dances once (0 spiral up, 1 collapse, 2 bloom, 3 whirl, 4 wave, 5 scatter)
+    int choreoPattern = 0;
+    float choreoTime = 4.0f, choreoAmt = 1.0f;
+    bool choreoGo = false; // on: the figure starts (a lane, a MIDI button)
     // an open Saal: no ceiling, broken walls, ... (openGone, RoomSim.h)
     struct Open
     {
@@ -732,6 +736,7 @@ public:
 
     /** position of a pipe right now (base + motion), for the UI */
     Pos currentPosition(int stop, int key, const EngineParams &p) const noexcept;
+    Pos currentPositionBase(int stop, int key, const EngineParams &p) const noexcept;
 
     /** position as heard: motion + per-pipe modulation (direction, height, distance). UI thread.
         Sounding pipes use the engine's own values (incl. per-pipe envelopes / random per note),
@@ -1132,6 +1137,22 @@ private:
     // audio thread works it out - the views read it too (pathPerNote: the stop has such a lane now)
     std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> pathPhase{};
     std::array<std::atomic<bool>, kNumStops> pathPerNote{};
+    // the choreography running now (-1 = none): its figure, start (timeSeconds), length, extent
+    std::atomic<int> choreoPat{-1};
+    std::atomic<double> choreoT0{0.0};
+    std::atomic<float> choreoDur{4.0f}, choreoExt{1.0f};
+    bool choreoGoWas = false;
+    int choreoUiSeen = 0;
+    Pos choreoApply(Pos q, int stop, int key) const noexcept;
+public:
+    /** a figure for all the pipes, starting now (audio thread: the room keyboard) */
+    void triggerChoreo(int pattern, float extent) noexcept;
+    /** the view's button: the figure the parameters say (message thread) */
+    std::atomic<int> choreoUiCount{0};
+    bool choreoRunning() const noexcept { return choreoPat.load(std::memory_order_relaxed) >= 0; }
+private:
+    int choreoNextPattern = 0;
+    float choreoNextTime = 4.0f, choreoNextAmt = 1.0f;
 public:
     float pathPhaseShown(int stop, int key) const noexcept { return pathPhase[(size_t)stop][(size_t)key].load(std::memory_order_relaxed); }
 private:
