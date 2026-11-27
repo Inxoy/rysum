@@ -83,6 +83,43 @@ private:
     float lastYaw = 0.0f;
 };
 
+/** turns an AmbiX (ACN / SN3D) scene as a head turns that looks around: the head turned by +yaw degrees (to
+   the left) and then tilted by +pitch degrees (looking up) turns the scene by the inverse - a source in front
+   moves to the right and down. Every order up to 5 (the rotation of each band by the recursion of Ivanic and
+   Ruedenberg, which holds for SN3D as for N3D: the two differ by a factor per band). The turn glides from the
+   last call's over the block. Used on the AmbiX outputs while the 3D view is open. */
+class AmbiRotator
+{
+public:
+    static constexpr int kMaxOrder = 5;
+    static constexpr int kSize = 286; // sum of (2l + 1)^2 for l = 0..5
+    static constexpr int bandOffset(int l) noexcept
+    {
+        return l <= 0 ? 0 : bandOffset(l - 1) + (2 * l - 1) * (2 * l - 1);
+    }
+    /** the bands' matrices (band l at bandOffset(l), row-major, rows and columns m = -l..l) */
+    static void matrices(float yawDeg, float pitchDeg, int order, float *out) noexcept;
+    /** one frame of (order + 1)^2 channels through the matrices (tests) */
+    static void apply(const float *m, int order, const float *in, float *out) noexcept;
+    void process(float *const *ch, int n, int order, float yawDeg, float pitchDeg) noexcept;
+    void reset() noexcept
+    {
+        lastYaw = lastPitch = 0.0f;
+    }
+    float lastYawDeg() const noexcept
+    {
+        return lastYaw;
+    }
+    float lastPitchDeg() const noexcept
+    {
+        return lastPitch;
+    }
+
+private:
+    float lastYaw = 0.0f, lastPitch = 0.0f;
+    float m0[kSize]{}, m1[kSize]{};
+};
+
 /** real-time part: uniformly partitioned convolution (block 128, PFFFT, the older partitions
    computed spread over the block) of up to 36 Ambisonics channels into two ears, plus a rotation
    about the vertical axis (head turned). Latency: 128 samples. */

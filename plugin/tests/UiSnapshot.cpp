@@ -2026,11 +2026,13 @@ public:
                 setReal(RysumProcessor::stopParamId(0), 1.0f);
                 setReal(RysumProcessor::motionParamId(0), 0.0f);
                 juce::AudioBuffer<float> ab(36, 512);
-                auto direction = [&](float yaw, double &level)
+                double lastEl = 0.0;
+                auto direction = [&](float yaw, double &level, float pitch = 0.0f)
                 {
                     proc->engine.viewWalkOn = true;
                     proc->engine.viewYaw = yaw;
-                    double wx = 0.0, wy = 0.0, ww = 0.0;
+                    proc->engine.viewPitch = pitch;
+                    double wx = 0.0, wy = 0.0, wz = 0.0, ww = 0.0;
                     for (int b = 0; b < 60; ++b)
                     {
                         juce::MidiBuffer mb;
@@ -2041,11 +2043,13 @@ public:
                         proc->processBlock(ab, mb);
                         if (b < 20)
                             continue;
-                        const float *w = ab.getReadPointer(0), *y = ab.getReadPointer(1), *x = ab.getReadPointer(3);
+                        const float *w = ab.getReadPointer(0), *y = ab.getReadPointer(1), *z = ab.getReadPointer(2),
+                                    *x = ab.getReadPointer(3);
                         for (int i = 0; i < ab.getNumSamples(); ++i)
                         {
                             wx += (double)w[i] * x[i];
                             wy += (double)w[i] * y[i];
+                            wz += (double)w[i] * z[i];
                             ww += (double)w[i] * w[i];
                         }
                     }
@@ -2058,11 +2062,20 @@ public:
                         proc->processBlock(ab, mb);
                     }
                     level = ww;
+                    lastEl = juce::radiansToDegrees(std::atan2(wz, std::sqrt(wx * wx + wy * wy)));
                     return juce::radiansToDegrees(std::atan2(wy, wx));
                 };
-                double l0 = 0.0, l1 = 0.0;
-                const double a0 = direction(0.0f, l0), a1 = direction(90.0f, l1);
+                double l0 = 0.0, l1 = 0.0, l2 = 0.0;
+                const double a0 = direction(0.0f, l0);
+                const double e0 = lastEl;
+                const double a1 = direction(90.0f, l1);
+                const double a2 = direction(0.0f, l2, 30.0f);
+                const double e2 = lastEl;
                 proc->engine.viewYaw = 0.0f;
+                proc->engine.viewPitch = 0.0f;
+                say("AmbiX out: looking up 30 deg lowers the scene from " + juce::String(e0, 1) + " to " + juce::String(e2, 1) +
+                        " deg (expected about -30), its direction stays at " + juce::String(a2, 1) + " deg",
+                    l2 > 1.0e-6 && std::abs((e2 - e0) + 30.0) < 8.0 && std::abs(rysum::wrapAz((float)(a2 - a0))) < 10.0f);
                 const double turned = rysum::wrapAz((float)(a1 - a0));
                 say("AmbiX out: the scene at " + juce::String(a0, 1) + " deg, with the head turned 90 deg left at " +
                         juce::String(a1, 1) + " deg (turned " + juce::String(turned, 1) + ", expected -90)",

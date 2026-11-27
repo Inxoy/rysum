@@ -395,6 +395,61 @@ static void testBinaural(const juce::File &sofa)
                   << " dB, head turned left 90 deg: " << ild90 << " dB" << std::endl;
         check(std::abs(ild0) < 2.0 && ild90 < -6.0, "head rotation turns the scene");
 
+        {
+            // the full turn of the AmbiX out (looking around and up in the 3D view): a source encoded and then
+            // turned is the source encoded where the turn puts it, at every order up to 5
+            double worst = 0.0;
+            juce::Random rr(7);
+            for (int trial = 0; trial < 40; ++trial)
+            {
+                const int order = 1 + trial % 5;
+                const float yaw = rr.nextFloat() * 360.0f - 180.0f, pitch = rr.nextFloat() * 170.0f - 85.0f;
+                const float az = rr.nextFloat() * 360.0f - 180.0f, elv = rr.nextFloat() * 170.0f - 85.0f;
+                float m[AmbiRotator::kSize], in[36], out[36], want[36];
+                AmbiRotator::matrices(yaw, pitch, order, m);
+                encodeAmbiX(az, elv, order, in);
+                AmbiRotator::apply(m, order, in, out);
+                // where it goes: Ry(pitch) Rz(-yaw) of its direction (x front, y left, z up)
+                const double a = juce::degreesToRadians((double)az), e = juce::degreesToRadians((double)elv);
+                double x = std::cos(e) * std::cos(a), y = std::cos(e) * std::sin(a), z = std::sin(e);
+                const double ya = -juce::degreesToRadians((double)yaw), pa = juce::degreesToRadians((double)pitch);
+                const double x1 = x * std::cos(ya) - y * std::sin(ya), y1 = x * std::sin(ya) + y * std::cos(ya);
+                x = x1 * std::cos(pa) + z * std::sin(pa);
+                z = -x1 * std::sin(pa) + z * std::cos(pa);
+                y = y1;
+                encodeAmbiX((float)juce::radiansToDegrees(std::atan2(y, x)),
+                            (float)juce::radiansToDegrees(std::asin(juce::jlimit(-1.0, 1.0, z))), order, want);
+                for (int c = 0; c < (order + 1) * (order + 1); ++c)
+                    worst = std::max(worst, (double)std::abs(out[c] - want[c]));
+            }
+            // and a turn about the vertical alone is what the yaw rotator does
+            double vsYaw = 0.0;
+            {
+                std::vector<std::vector<float>> s1(36, std::vector<float>(256)), s2 = s1;
+                for (int c = 0; c < 36; ++c)
+                    for (int i = 0; i < 256; ++i)
+                        s1[(size_t)c][(size_t)i] = s2[(size_t)c][(size_t)i] = rr.nextFloat() - 0.5f;
+                std::vector<float *> q1, q2;
+                for (int c = 0; c < 36; ++c)
+                {
+                    q1.push_back(s1[(size_t)c].data());
+                    q2.push_back(s2[(size_t)c].data());
+                }
+                AmbiYawRotator yr;
+                AmbiRotator fr;
+                yr.process(q1.data(), 0, 5, 40.0f); // (already there: no glide)
+                fr.process(q2.data(), 0, 5, 40.0f, 0.0f);
+                yr.process(q1.data(), 256, 5, 40.0f);
+                fr.process(q2.data(), 256, 5, 40.0f, 0.0f);
+                for (int c = 0; c < 36; ++c)
+                    for (int i = 0; i < 256; ++i)
+                        vsYaw = std::max(vsYaw, (double)std::abs(s1[(size_t)c][(size_t)i] - s2[(size_t)c][(size_t)i]));
+            }
+            std::cout << "AmbiX turn (yaw and pitch, orders 1-5): worst error " << worst
+                      << ", against the yaw rotator " << vsYaw << std::endl;
+            check(worst < 1.0e-4 && vsYaw < 1.0e-4, "the AmbiX turn with looking up and down is exact at every order");
+        }
+
         // level: diffuse noise (random directions) about as loud per ear as an equal-power stereo
         // pan
         double eOut = 0, eIn = 0;

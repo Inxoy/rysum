@@ -1295,7 +1295,7 @@ private:
     void rebuildSpeakers(bool force);
     juce::ValueTree speakersState() const;
     std::shared_ptr<rysum::BinauralDecoder> binActive;  // audio thread
-    rysum::AmbiYawRotator ambiViewRot;                   // audio thread: AmbiX out turned by the 3D view's head
+    rysum::AmbiRotator ambiViewRot;                      // audio thread: AmbiX out turned and tilted by the 3D view's head
     std::shared_ptr<rysum::BinauralDecoder> pendingBin; // handed over (atomic_store / exchange)
     std::shared_ptr<rysum::BinauralDecoder> binUi, retiredBin; // message thread keeps them alive
     // Zeit als Entfernung: the memory (built by the timer once it is wanted, for the channels in use)

@@ -555,6 +555,7 @@ public:
     //      like binYaw)
     std::atomic<bool> viewWalkOn{false};
     std::atomic<float> viewX{0.0f}, viewY{0.0f}, viewYaw{0.0f};
+    std::atomic<float> viewPitch{0.0f}; // degrees, up = + (the AmbiX out tilts with it)
     std::atomic<float> viewZ{0.0f}; // m above standing on the Saal's floor (a jump, a step)
     /** a loaded room model (Saal 1): pipes behind its walls are heard around them. Message thread;
         the caller keeps the model alive for as long as the engine may use it. */

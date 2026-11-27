@@ -1858,9 +1858,12 @@ The keys \textbf{W A S D} walk, dragging the mouse looks around, the left and ri
 same offset as \ui{Hörer}, \S\ref{sec:live}, with a quicker glide of \SI{40}{ms}) and the walls stop one. The turn of the head is heard on
 headphones (binaural, transaural) and, since 15 November, on the AmbiX outputs as well: the whole field that is sent out (orders 1--5, the room
 included) is turned about the vertical axis by the view's yaw, gliding within the block, and glides back to the front when the view closes; a host bus
-with fewer channels than the order is turned in the orders it carries. Both use the same rotation (\fn{AmbiYawRotator}), so headphones and AmbiX turn
-alike; in the test the direction of a held chord, read from the first-order intensity, turns by \SI{-90.0}{\degree} when the head turns \SI{90}{\degree}
-to the left. With loudspeaker outputs the field stays where it is, since the room around the loudspeakers does not turn with the head. While the view holds the keyboard the
+with fewer channels than the order is turned in the orders it carries. Since 27 November the AmbiX outputs also tilt with looking up and down
+(\fn{AmbiRotator}: the scene turned by $R_y(\text{pitch})\,R_z(-\text{yaw})$, every band by the recursion of Ivanic and Ruedenberg, which holds for SN3D
+as for N3D since the two differ by one factor per band; the glide within the block crossfades the field turned at the block's start and at its
+end); the headphones still turn about the vertical alone (\fn{AmbiYawRotator}). In the test the direction of a held chord, read from the first-order
+intensity, turns by \SI{-90.0}{\degree} when the head turns \SI{90}{\degree} to the left, and looking up by \SI{30}{\degree} lowers it by \SI{29}{\degree};
+a source encoded and turned matches the source encoded where the turn puts it to $2.5\cdot10^{-7}$ at every order up to 5. With loudspeaker outputs the field stays where it is, since the room around the loudspeakers does not turn with the head. While the view holds the keyboard the
 walking keys do not play notes; one plays over MIDI, or holds a chord with \ui{Halten}. A small map at the bottom right turns with the view.
 Walking is smooth: the speed builds up and dies away (after \SI{0.1}{s} one has gone \SI{6}{cm}, after a second \SI{1.4}{m}, and one coasts
 on about a quarter of a metre), the view follows the mouse within a few hundredths of a second, a jump rises about \SI{0.8}{m} and lands after

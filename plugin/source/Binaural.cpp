@@ -697,6 +697,136 @@ void AmbiYawRotator::process(float *const *in, int n, int order, float yawDeg) n
     }
 }
 
+void AmbiRotator::matrices(float yawDeg, float pitchDeg, int order, float *out) noexcept
+{
+    order = juce::jlimit(0, kMaxOrder, order);
+    // the scene turns by Ry(pitch) Rz(-yaw) (x front, y left, z up): first the head's turn undone, then its tilt
+    const double a = -juce::degreesToRadians((double)yawDeg), p = juce::degreesToRadians((double)pitchDeg);
+    const double ca = std::cos(a), sa = std::sin(a), cp = std::cos(p), sp = std::sin(p);
+    const double Rz[3][3]{{ca, -sa, 0.0}, {sa, ca, 0.0}, {0.0, 0.0, 1.0}};
+    const double Ry[3][3]{{cp, 0.0, sp}, {0.0, 1.0, 0.0}, {-sp, 0.0, cp}};
+    double R[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            R[i][j] = Ry[i][0] * Rz[0][j] + Ry[i][1] * Rz[1][j] + Ry[i][2] * Rz[2][j];
+    // the bands, in doubles: band l's element (m, n) at [l][m + l][n + l]
+    double B[kMaxOrder + 1][2 * kMaxOrder + 1][2 * kMaxOrder + 1]{};
+    B[0][0][0] = 1.0;
+    // band 1 in the order of m = -1, 0, 1: y, z, x
+    const int axis[3]{1, 2, 0};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            B[1][i][j] = R[axis[i]][axis[j]];
+    auto r1 = [&](int i, int j) { return B[1][i + 1][j + 1]; };
+    for (int l = 2; l <= order; ++l)
+    {
+        auto prev = [&](int m, int n) { return B[l - 1][m + l - 1][n + l - 1]; };
+        auto P = [&](int i, int m, int n)
+        {
+            if (n == l)
+                return r1(i, 1) * prev(m, l - 1) - r1(i, -1) * prev(m, -l + 1);
+            if (n == -l)
+                return r1(i, 1) * prev(m, -l + 1) + r1(i, -1) * prev(m, l - 1);
+            return r1(i, 0) * prev(m, n);
+        };
+        for (int m = -l; m <= l; ++m)
+            for (int n = -l; n <= l; ++n)
+            {
+                const int am = std::abs(m);
+                const double d = m == 0 ? 1.0 : 0.0;
+                const double den = std::abs(n) == l ? (double)(2 * l) * (2 * l - 1) : (double)(l + n) * (l - n);
+                const double u = std::sqrt((double)(l + m) * (l - m) / den);
+                const double v = 0.5 * std::sqrt((1.0 + d) * (l + am - 1) * (l + am) / den) * (1.0 - 2.0 * d);
+                const double w = -0.5 * std::sqrt(juce::jmax(0.0, (double)(l - am - 1) * (l - am) / den)) * (1.0 - d);
+                double val = 0.0;
+                if (u != 0.0 && std::abs(m) < l)
+                    val += u * P(0, m, n);
+                if (v != 0.0)
+                {
+                    double V;
+                    if (m == 0)
+                        V = P(1, 1, n) + P(-1, -1, n);
+                    else if (m > 0)
+                    {
+                        const double d1 = m == 1 ? 1.0 : 0.0;
+                        V = P(1, m - 1, n) * std::sqrt(1.0 + d1) - P(-1, -m + 1, n) * (1.0 - d1);
+                    }
+                    else
+                    {
+                        const double d1 = m == -1 ? 1.0 : 0.0;
+                        V = P(1, m + 1, n) * (1.0 - d1) + P(-1, -m - 1, n) * std::sqrt(1.0 + d1);
+                    }
+                    val += v * V;
+                }
+                if (w != 0.0)
+                {
+                    const double W = m > 0 ? P(1, m + 1, n) + P(-1, -m - 1, n) : P(1, m - 1, n) - P(-1, -m + 1, n);
+                    val += w * W;
+                }
+                B[l][m + l][n + l] = val;
+            }
+    }
+    for (int l = 0; l <= order; ++l)
+    {
+        const int s = 2 * l + 1;
+        float *o = out + bandOffset(l);
+        for (int i = 0; i < s; ++i)
+            for (int j = 0; j < s; ++j)
+                o[i * s + j] = (float)B[l][i][j];
+    }
+}
+
+void AmbiRotator::apply(const float *m, int order, const float *in, float *out) noexcept
+{
+    for (int l = 0; l <= juce::jmin(order, kMaxOrder); ++l)
+    {
+        const int s = 2 * l + 1, c0 = l * l;
+        const float *b = m + bandOffset(l);
+        for (int i = 0; i < s; ++i)
+        {
+            float acc = 0.0f;
+            for (int j = 0; j < s; ++j)
+                acc += b[i * s + j] * in[c0 + j];
+            out[c0 + i] = acc;
+        }
+    }
+}
+
+void AmbiRotator::process(float *const *ch, int n, int order, float yawDeg, float pitchDeg) noexcept
+{
+    order = juce::jlimit(0, kMaxOrder, order);
+    const float y0 = lastYaw, p0 = lastPitch;
+    lastYaw = yawDeg;
+    lastPitch = pitchDeg;
+    if (n <= 0 || order < 1)
+        return;
+    if (std::abs(y0) < 1.0e-4f && std::abs(p0) < 1.0e-4f && std::abs(yawDeg) < 1.0e-4f && std::abs(pitchDeg) < 1.0e-4f)
+        return;
+    const bool still = y0 == yawDeg && p0 == pitchDeg;
+    matrices(y0, p0, order, m0);
+    if (!still)
+        matrices(yawDeg, pitchDeg, order, m1);
+    float x[36], a[36], b[36];
+    const int nch = (order + 1) * (order + 1);
+    for (int i = 0; i < n; ++i)
+    {
+        for (int c = 1; c < nch; ++c)
+            x[c] = ch[c][i];
+        x[0] = ch[0][i];
+        apply(m0, order, x, a);
+        if (still)
+        {
+            for (int c = 1; c < nch; ++c)
+                ch[c][i] = a[c];
+            continue;
+        }
+        apply(m1, order, x, b);
+        const float w = (float)(i + 1) / (float)n;
+        for (int c = 1; c < nch; ++c)
+            ch[c][i] = a[c] + w * (b[c] - a[c]);
+    }
+}
+
 void BinauralDecoder::process(float *const *in, int n, float *left, float *right,
                               float yawDeg) noexcept
 {

@@ -3141,9 +3141,11 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
         int order = juce::jmin(params.outputMode, 5);
         while (order > 0 && (order + 1) * (order + 1) > buffer.getNumChannels())
             --order; // (a host bus with fewer channels: only the orders it carries)
-        const float yaw = engine.viewWalkOn.load() ? engine.viewYaw.load() : 0.0f;
+        const bool view = engine.viewWalkOn.load();
+        const float yaw = view ? engine.viewYaw.load() : 0.0f;
+        const float pitch = view ? juce::jlimit(-89.0f, 89.0f, engine.viewPitch.load()) : 0.0f; // (looking up and down too)
         if (order > 0)
-            ambiViewRot.process(buffer.getArrayOfWritePointers(), n, order, yaw);
+            ambiViewRot.process(buffer.getArrayOfWritePointers(), n, order, yaw, pitch);
     }
     else
         ambiViewRot.reset();

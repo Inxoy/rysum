@@ -507,6 +507,7 @@ void WalkView::pushPose()
     // (the ears left behind with H: the engine hears from there while you walk on)
     proc.engine.viewX = earsAway ? earPose[0] : px; proc.engine.viewY = earsAway ? earPose[1] : py;
     proc.engine.viewYaw = earsAway ? earPose[2] : yaw;
+    proc.engine.viewPitch = earsAway ? 0.0f : pitch;           // (the ears left behind look straight ahead)
     proc.engine.viewZ = earsAway ? earPose[3] : fz;          // (a jump, a step of the model: the ears go up with it)
 }
 
