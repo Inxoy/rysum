@@ -822,8 +822,10 @@ does not name goes back to its start, and everything can be changed afterwards.
 from – *Spirale aufwärts*, *Einsturz*, *Erblühen*, *Wirbel*, *Welle*, *Zerstreuen* –, every pipe a little
 later than the one below it, so it runs through the keyboard. **J** or *Los (J)* starts it, so does
 the switch *Choreografie los* (MIDI learn, a lane in the Verlauf: a bounce dances it the same) and
-C1–B1 on the room keyboard's channel. The sound moves with the pipes; pipes flying as bodies in the
-Saal are left out.
+C1–B1 on the room keyboard's channel. The sound moves with the pipes. Pipes flying as bodies in the
+Saal (Schweben, Flug, Fall, Schwarm, Strömung, and so whenever *Publikum* is on) dance it too: they are
+carried through the figure around where they were when it started (kept inside the walls), and go on
+from there afterwards.
 
 **B** paints the material of the brush onto the square metre under the cross (walls, floor,
 ceiling of the Saal, not of a loaded model), **Shift+B** wipes it off, **Ctrl+B** takes the next
@@ -882,12 +884,14 @@ fast the mouse looks around, the mouse upside down (up = look down), and the wal
 appears in the corner of the 3D view (also in the immersive view, so it can be projected) with the
 address under it; phones on the same network open a small page there, nothing to install. Every
 phone gets one pipe of its own, marked with a ring of its colour in the view, and its name on the
-phone. **Tapping** knocks that pipe, a quick **swipe** sends a shockwave from where the player
-stands, **holding and dragging** blows all the pipes like wind (up on the phone = the way the view
-looks). Only pipes that are free in the Saal take part; when *Publikum* is switched on, the pulled
+phone. **Holding the pipe's picture** plays it like a held key (for as long as the finger stays on
+it; a phone that goes quiet lets it go after 0.7 s; two phones on one pipe share it), **tapping**
+beside the picture knocks the pipe, a quick **swipe** sends it off with a shockwave from where the
+player stands, **holding and dragging** blows it like wind (up on the phone = the way the view
+looks). Every phone moves only its own pipe. Only pipes that are free in the Saal take part; when *Publikum* is switched on, the pulled
 stops that stand still start to hover (once, then the phones change no settings). A phone can knock
 about ten times a second and send a shockwave every 1.5 s; all together, at most one shockwave every
-0.35 s. Up to 48 phones; a phone that leaves gives its pipe back after a few seconds. *Publikum* is
+0.15 s. At most 24 pipes are held by phones at once. Up to 48 phones; a phone that leaves gives its pipe back after a few seconds. *Publikum* is
 never saved: opening a project does not open the page. The page is plain HTTP on port 8787 (8788 …
 for a second Rysum). Windows asks once whether Rysum may use the network – allow it for private
 networks. If that question was cancelled, Windows quietly blocks Rysum: the page then opens on the

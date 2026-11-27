@@ -573,12 +573,12 @@ public:
     // ---- the player's actions (the keys of the 3D view). Message thread -> audio thread.
     enum class Act
     {
-        Shock,  // a burst at the player's place: every pipe that is a body in the Saal is pushed away
+        Shock,  // a burst at the player's place: every pipe that is a body in the Saal is pushed away (stop, key given: only that one)
         Home,   // every pipe flies back to its place in the organ
         Throw,  // the pipe (stop, key) let go with the speed v (m/s) added
         Strike, // the pipe (stop, key), at the place v, knocked: it rings without its key
         Clap,   // a hand clap where the player stands: the room answers
-        Wind,   // every pipe that is a body in the Saal gets the speed v (m/s) added (the audience)
+        Wind,   // every pipe that is a body in the Saal gets the speed v (m/s) added (stop, key given: only that one - the audience)
         Arrange, // the pipes marked in goMask fly to goX/goY/goZ and stay there (formations, layouts, undo)
         Whirl,   // a whirlwind at the place v for a few seconds: the pipes near it are spun around it (amount: strength)
         BowOn,   // the pipe (stop, key) sounds like a held key, for as long as the hand holds it
@@ -1144,6 +1144,11 @@ private:
     bool choreoGoWas = false;
     int choreoUiSeen = 0;
     Pos choreoApply(Pos q, int stop, int key) const noexcept;
+    Pos choreoAt(Pos q, int stop, int key, float t, int pat) const noexcept;
+    // the pipes that are bodies in the Saal dance it too: they fly through the figure around where they were
+    // when it started (and come back there)
+    std::array<std::array<Vec3f, kNumKeys>, kNumStops> choreoAnchor{};
+    std::array<double, kNumStops> choreoAnchorT0{};
 public:
     /** a figure for all the pipes, starting now (audio thread: the room keyboard) */
     void triggerChoreo(int pattern, float extent) noexcept;
@@ -1436,8 +1441,8 @@ private:
         Vec3f v;
         float amount = 1.0f;
     };
-    juce::AbstractFifo actFifo{32};
-    std::array<ActCmd, 32> actQueue{};
+    juce::AbstractFifo actFifo{128};
+    std::array<ActCmd, 128> actQueue{};
     float homing = 0.0f; // s left of the flight home
     float whirlLeft = 0.0f, whirlAmt = 1.0f; // s left of a whirlwind, and how strong
     Vec3f whirlAt;

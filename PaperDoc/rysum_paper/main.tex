@@ -1986,8 +1986,10 @@ surface; the tail's and the early reflections' keys include them) -- curtain ove
 RT60 from 3.0 to 1.8\,s. The \emph{choreography} moves every pipe through a figure of $t \in [0,1]$ over \ui{Dauer}: each pipe runs
 $t_k = (t - 0.3\,k)/0.7$ for its place $k \in [0,1]$ on the keyboard, with the extent $e = \sin(\pi t_k)$ times \ui{Weite} (spiral: once round,
 up $60^\circ e$, in by $0.35e$; collapse: down towards $-70^\circ$; bloom: the distance $\times 2^{\mp 2e}$; whirl: $540^\circ e$; wave:
-$35^\circ e\sin 2\pi(2t - k)$; scatter: each its own way). It acts in the engine's position of every pipe, so the sound follows, and leaves the
-pipes flying as bodies alone; a test whirl took a pipe from $29^\circ$ to $-151^\circ$ and back to $29^\circ$.
+$35^\circ e\sin 2\pi(2t - k)$; scatter: each its own way). It acts in the engine's position of every pipe, so the sound follows; a test whirl took a pipe from $29^\circ$ to
+$-151^\circ$ and back to $29^\circ$. The pipes flying as bodies in the Saal are carried through the same figure, around where each was when it
+started (seen from the listening place, kept inside the walls; no force could follow a whirl of a second), and fly on from there afterwards:
+in the test tool, \textbf{J} took a hovering pipe from $42^\circ$ to $102^\circ$ and back to $42^\circ$.
 \textbf{K} puts a \emph{lantern} where the cross points (a hand's breadth short of the surface, at least \SI{15}{cm} above the floor; up to 16):
 in the dark each lights the room around it like a sounding pipe and shows a small flame (one lantern on the floor raised the mean brightness of a
 silent dark room from 0.121 to 0.164). \textbf{Shift+K} takes the nearest away, \textbf{Ctrl+K} all of them. The light and the lanterns are saved with the project.
@@ -2197,11 +2199,13 @@ automated and put on MIDI controllers.
 The last button of the row lets an audience play along with their phones (Figure~\ref{fig:audience}). A QR code appears in the corner of the view (also in the
 immersive view, so it can be projected) with the address under it; phones on the same network open a small page there, with nothing to install. The page
 (\fn{Audience.*}) is set in the plug-in's own typefaces on its grain, served by the plug-in itself together with the photograph of the stop knob of the
-phone's pipe. Every phone gets one pipe of its own, marked in the view with a ring of its colour and named on the phone. \emph{Tapping} knocks that pipe, a
-quick \emph{swipe} sends a shockwave from where the player stands, and \emph{holding and dragging} blows all the pipes like wind (up on the phone is the
-way the view looks; a full drag accelerates them by \SI{6}{m/s^2}). Only pipes that are free in the Saal take part; when \ui{Publikum} is switched on, the
+phone's pipe. Every phone gets one pipe of its own, marked in the view with a ring of its colour and named on the phone. \emph{Holding the picture} plays
+that pipe like a held key: the page says so every \SI{0.25}{s} while the finger stays, and a phone that falls silent lets the pipe go after \SI{0.7}{s}
+(two phones on one pipe share it; at most 24 pipes are held at once). \emph{Tapping} beside the picture knocks the pipe, a quick \emph{swipe} sends it off
+with a shockwave from where the player stands, and \emph{holding and dragging} blows it like wind (up on the phone is the way the view looks; a full drag
+accelerates it by \SI{6}{m/s^2}). Every phone moves only its own pipe. Only pipes that are free in the Saal take part; when \ui{Publikum} is switched on, the
 pulled stops that stand still start to hover once, and after that the phones change no settings. A phone can knock about ten times a second (a second tap
-within \SI{90}{ms} is ignored) and send a shockwave every \SI{1.5}{s}; all phones together send at most one shockwave every \SI{0.35}{s}. Up to 48 phones
+within \SI{90}{ms} is ignored) and send a shockwave every \SI{1.5}{s}; all phones together send at most one shockwave every \SI{0.15}{s}. Up to 48 phones
 take part; a phone that leaves gives its pipe back after a few seconds.
 
 The page is plain HTTP on port 8787 (the next free port for a second instance). The server thread only queues what the phones send; the message thread

@@ -624,7 +624,15 @@ Pos OrganEngine::choreoApply(Pos q, int stop, int key) const noexcept
         return q;
     const float dur = juce::jmax(0.1f, choreoDur.load(std::memory_order_relaxed));
     const float t = (float)((timeSeconds.load(std::memory_order_relaxed) - choreoT0.load(std::memory_order_relaxed)) / dur);
-    if (t <= 0.0f || t >= 1.0f)
+    q = choreoAt(q, stop, key, t, pat);
+    q.dist = juce::jlimit(kMinDist, kMaxDist, q.dist);
+    return q;
+}
+
+/** the figure at its time t (0..1 over its length): where a pipe at q goes, seen from the listening place */
+Pos OrganEngine::choreoAt(Pos q, int stop, int key, float t, int pat) const noexcept
+{
+    if (pat < 0 || t <= 0.0f || t >= 1.0f)
         return q;
     const float kk = (float)key / (float)(kNumKeys - 1);
     const float tk = juce::jlimit(0.0f, 1.0f, (t - 0.3f * kk) / 0.7f);
@@ -660,7 +668,6 @@ Pos OrganEngine::choreoApply(Pos q, int stop, int key) const noexcept
         q.dist *= 1.0f + 0.8f * e;
         break;
     }
-    q.dist = juce::jlimit(kMinDist, kMaxDist, q.dist);
     return q;
 }
 

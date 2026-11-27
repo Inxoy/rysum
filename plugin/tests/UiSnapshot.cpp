@@ -1305,6 +1305,44 @@ public:
             }
             proc->clearWalkModel();
         }
+        // ---- the choreography through the 3D view's key J: a plain stop dances it, and so does one whose pipes
+        // hover in the Saal as bodies
+        {
+            setReal("choreoPattern", 3.0f); // Wirbel
+            setReal("choreoTime", 1.0f);
+            setReal("choreoAmt", 1.0f);
+            const auto homeC = listenerPos(roomOf());
+            auto angleOf = [&](int key)
+            {
+                Vec3f b;
+                if (proc->engine.bodyAt(0, key, b))
+                    return juce::radiansToDegrees(std::atan2(-(b.x - homeC.x), b.y - homeC.y));
+                return proc->engine.displayPosition(0, key, proc->readParams()).az;
+            };
+            auto turned = [](float a, float b) { return std::abs(std::remainder(a - b, 360.0f)); };
+            const float modeWas = proc->apvts.getRawParameterValue(RysumProcessor::motionParamId(0))->load();
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                if (pass == 1)
+                {
+                    setReal(RysumProcessor::motionParamId(0), (float)(int)Motion::Hover);
+                    run(200, {});
+                }
+                const float a0 = angleOf(30);
+                wv.keyPressed(juce::KeyPress('j'));
+                run(40, {}); // (0.43 s of the 1 s figure)
+                const float aMid = angleOf(30);
+                const bool running = proc->engine.choreoRunning();
+                run(150, {});
+                const float aEnd = angleOf(30);
+                say(juce::String(pass == 0 ? "choreography: J whirls a plain stop's pipe: "
+                                           : "choreography: J whirls a hovering stop's pipe too: ") +
+                        juce::String(a0, 0) + " -> " + juce::String(aMid, 0) + " -> " + juce::String(aEnd, 0) + " deg",
+                    running && turned(aMid, a0) > 30.0f && turned(aEnd, a0) < (pass == 0 ? 1.0f : 8.0f));
+            }
+            setReal(RysumProcessor::motionParamId(0), modeWas);
+            run(30, {});
+        }
         // ---- the player and the pipes: a stop hovers in the Saal, the player pulls / pushes
         {
             setReal(RysumProcessor::motionParamId(0), (float)(int)Motion::Hover);
@@ -1774,44 +1812,79 @@ public:
                         " knock), a second tap within 90 ms does not (" + juce::String((int)(k2 - k1)) + ")",
                     k1 == k0 + 1 && k2 == k1);
 
+                // ---- holding the picture plays the phone's pipe like a key; letting go (or a phone gone quiet) ends it
+                const int myKey = au->hands()[0].key, otherKey = (myKey + 17) % kNumKeys;
+                {
+                    auto sounds = [&] { return ((proc->engine.soundingMask[0].load() >> myKey) & 1u) != 0u; };
+                    run(100, {});
+                    const bool before = sounds();
+                    http("POST /act?p=testphone1&a=n");
+                    au->tickForTest();
+                    run(10, {});
+                    const bool held = sounds() && au->holdingCount() == 1;
+                    http("POST /act?p=testphone1&a=n"); // (the page says it again while held: nothing new starts)
+                    au->tickForTest();
+                    run(10, {});
+                    const bool still = sounds();
+                    http("POST /act?p=testphone1&a=o");
+                    au->tickForTest();
+                    run(150, {});
+                    const bool gone = !sounds() && au->holdingCount() == 0;
+                    say("audience: holding the picture plays the phone's pipe (" + juce::String(before ? "sounding before!" : "silent") +
+                            " -> " + (held ? "sounds" : "silent") + ", " + (still ? "held on" : "cut") + "), letting go ends it (" +
+                            (gone ? "silent" : "still sounding") + ")",
+                        !before && held && still && gone);
+                    http("POST /act?p=testphone1&a=n");
+                    au->tickForTest();
+                    run(10, {});
+                    const bool held2 = sounds();
+                    juce::Thread::sleep((int)AudienceHands::kHoldTimeoutMs + 150); // (the phone goes quiet)
+                    au->tickForTest();
+                    run(150, {});
+                    say("audience: a phone that goes quiet while holding lets its pipe go after " +
+                            juce::String(AudienceHands::kHoldTimeoutMs / 1000.0, 1) + " s",
+                        held2 && !sounds() && au->holdingCount() == 0);
+                }
+
+                auto distOf = [&](int k)
+                {
+                    Vec3f b;
+                    if (!proc->engine.bodyAt(0, k, b))
+                        return -1.0f;
+                    return std::sqrt((b.x - home.x) * (b.x - home.x) + (b.y - home.y) * (b.y - home.y));
+                };
                 wv.callHome();
                 run(400, {});
-                const float s0 = meanDist();
+                const float s0 = distOf(myKey), o0 = distOf(otherKey);
                 http("POST /act?p=testphone1&a=s&s=1.2");
                 au->tickForTest();
                 run(60, {});
-                const float s1 = meanDist();
-                say("audience: a swipe sends a shockwave: the pipes " + juce::String(s0, 2) + " -> " + juce::String(s1, 2) + " m away",
-                    s1 > s0 + 0.5f);
+                const float s1 = distOf(myKey), o1 = distOf(otherKey);
+                say("audience: a swipe sends the phone's own pipe off: " + juce::String(s0, 2) + " -> " + juce::String(s1, 2) +
+                        " m away, another pipe stays (" + juce::String(o0, 2) + " -> " + juce::String(o1, 2) + ")",
+                    s1 > s0 + 0.5f && std::abs(o1 - o0) < 0.15f);
 
                 wv.callHome();
                 run(400, {});
-                auto alongRight = [&]
+                auto alongRight = [&](int k)
                 {
                     const float ya = juce::degreesToRadians(proc->walkPose[2].load());
-                    float sum = 0.0f;
-                    int n = 0;
-                    for (int k = 0; k < kNumKeys; ++k)
-                    {
-                        Vec3f b;
-                        if (!proc->engine.bodyAt(0, k, b))
-                            continue;
-                        sum += (b.x - home.x) * std::cos(ya) + (b.y - home.y) * std::sin(ya);
-                        ++n;
-                    }
-                    return n > 0 ? sum / (float)n : 0.0f;
+                    Vec3f b;
+                    if (!proc->engine.bodyAt(0, k, b))
+                        return 0.0f;
+                    return (b.x - home.x) * std::cos(ya) + (b.y - home.y) * std::sin(ya);
                 };
-                const float w0 = alongRight();
+                const float w0 = alongRight(myKey), wo0 = alongRight(otherKey);
                 for (int i = 0; i < 10; ++i)
                 {
                     http("POST /act?p=testphone1&a=w&x=1&y=0");
                     au->tickForTest();
                     run(8, {});
                 }
-                const float w1 = alongRight();
-                say("audience: dragging to the right blows the pipes to the right of the view: " + juce::String(w0, 2) +
-                        " -> " + juce::String(w1, 2) + " m",
-                    w1 > w0 + 0.3f);
+                const float w1 = alongRight(myKey), wo1 = alongRight(otherKey);
+                say("audience: dragging to the right blows the phone's own pipe to the right of the view: " + juce::String(w0, 2) +
+                        " -> " + juce::String(w1, 2) + " m, another pipe stays (" + juce::String(wo0, 2) + " -> " + juce::String(wo1, 2) + ")",
+                    w1 > w0 + 0.3f && std::abs(wo1 - wo0) < 0.15f);
 
                 juce::StreamingSocket idle;
                 idle.connect("127.0.0.1", port, 1000); // (opened, never sends)

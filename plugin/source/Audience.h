@@ -16,10 +16,12 @@ namespace rysum
 {
 /** "Publikum": the audience's phones as hands. The plugin serves a small page on the local network
     (a QR code in the 3D view leads there); every phone that opens it gets one pipe of its own, in
-    a colour of its own. Tapping knocks that pipe, a swipe sends a shockwave from where the player
-    stands, holding and dragging blows the pipes like wind (up on the phone: the way the 3D view
-    looks). Only pipes that are bodies in the Saal (Schweben, Flug, Fall, Schwarm, Stroemung) take
-    part. Off by default and never saved: a project that opens does not open a port.
+    a colour of its own. Holding the pipe's picture plays it like a held key (for as long as the finger
+    stays; a phone that goes quiet lets it go after 0.7 s), tapping beside it knocks the pipe, a swipe
+    sends it off with a shockwave from where the player stands, holding and dragging blows it like wind
+    (up on the phone: the way the 3D view looks) - every phone moves only its own pipe. Only pipes that
+    are bodies in the Saal (Schweben, Flug, Fall, Schwarm, Stroemung) take part. Off by default and
+    never saved: a project that opens does not open a port.
 
     The server is one thread that answers plain HTTP (no files from disk, no outside addresses, a few
     short paths; the page's fonts and photographs come from the plugin's own data); it never touches the engine. What the phones do is queued and played on the message
@@ -44,7 +46,8 @@ public:
     struct Event
     {
         int phone = -1;
-        char act = 0; // 'k' knock, 's' shockwave, 'w' wind (x, y: -1..1, y up on the phone)
+        char act = 0; // 'k' knock, 's' shockwave, 'w' wind (x, y: -1..1, y up on the phone),
+                      // 'n' the pipe held down (sent again while held), 'o' let go
         float amount = 1.0f, x = 0.0f, y = 0.0f;
     };
     /** message thread: what the phones did since the last call */
@@ -111,7 +114,12 @@ public:
     {
         int phone = -1, stop = -1, key = -1, colour = 0;
         double lastAct = 0.0; // ms: when it last knocked (the view flashes it)
+        bool holding = false; // its pipe sounds, held down on the phone
+        double holdSeen = 0.0; // ms: when the phone last said it still holds it
     };
+    /** how many phones hold their pipe down now */
+    int holdingCount() const noexcept;
+    static constexpr double kHoldTimeoutMs = 700.0;
     /** the phones there are now, with their pipes */
     const std::vector<Hand> &hands() const noexcept
     {
@@ -139,6 +147,8 @@ public:
 private:
     void timerCallback() override;
     void assign();
+    void press(Hand &h, double t);
+    void letGo(Hand &h);
     RysumProcessor &proc;
     AudienceServer server;
     juce::String address;

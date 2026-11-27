@@ -219,6 +219,22 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
         const float whirlFade = juce::jlimit (0.0f, 1.0f, whirlLeft / 1.5f) * whirlAmt;
         const int heldKey = grabStop.load() == s ? grabKey.load() : -1;
         const Vec3f hand { grabX.load(), grabY.load(), grabZ.load() };
+        // the choreography: the bodies fly through the figure too, around where they were when it started
+        // (seen from the listening place, as the figure is drawn), and come back there
+        const int chPat = followPlayer ? -1 : choreoPat.load (std::memory_order_relaxed);
+        const double chT0 = choreoT0.load (std::memory_order_relaxed);
+        const double chDur = (double) juce::jmax (0.1f, choreoDur.load (std::memory_order_relaxed));
+        const double chNow = timeSeconds.load (std::memory_order_relaxed);
+        if (chPat >= 0 && choreoAnchorT0[(size_t) s] != chT0)
+        {
+            choreoAnchorT0[(size_t) s] = chT0;
+            for (int k = 0; k < kNumKeys; ++k)
+            {
+                const auto& b = bs[(size_t) k];
+                choreoAnchor[(size_t) s][(size_t) k] = { b.x, b.y, b.z };
+            }
+        }
+        const Vec3f chHome = br.home;
         // (and the listeners' hands, Konzert: a pipe in one of them follows that hand)
         std::array<int8_t, kNumKeys> heldBy;
         heldBy.fill (-1);
@@ -311,6 +327,27 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     b.vx += (tx - b.vx) * k2; b.vy += (ty - b.vy) * k2; b.vz += (tz - b.vz) * k2;
                     b.hx = b.x; b.hy = b.y; b.hz = b.z;
                     b.pushed = 3.0f; b.loose = false; b.rest = 0.0f;
+                }
+                // ---- dancing the choreography: after the figure's place for now, and resting where it began
+                else if (chPat >= 0 && chNow - chT0 > 0.0 && chNow - chT0 < chDur + 0.6)
+                {
+                    const auto& A = choreoAnchor[(size_t) s][(size_t) k];
+                    const float tf = (float) ((chNow + (double) st * kBodyStep - chT0) / chDur);
+                    const float ax = A.x - chHome.x, ay = A.y - chHome.y, az = A.z - chHome.z;
+                    const float d = juce::jmax (0.05f, len3 (ax, ay, az));
+                    Pos q { juce::radiansToDegrees (std::atan2 (-ax, ay)), juce::radiansToDegrees (std::asin (juce::jlimit (-1.0f, 1.0f, az / d))), d };
+                    q = choreoAt (q, s, k, tf, chPat);
+                    const float qa = juce::degreesToRadians (q.az), qe = juce::degreesToRadians (q.el);
+                    float tx = chHome.x - std::sin (qa) * std::cos (qe) * q.dist;
+                    float ty = chHome.y + std::cos (qa) * std::cos (qe) * q.dist;
+                    const float tz = juce::jlimit (zMin, zMax, chHome.z + std::sin (qe) * q.dist);
+                    // (carried along the figure - it is too quick for any force to follow -, inside the walls)
+                    if (! br.free (tx, ty, kWallMargin)) br.nudge (tx, ty);
+                    b.x = tx; b.y = ty; b.z = tz;
+                    b.vx = b.vy = b.vz = 0.0f;
+                    b.hx = A.x; b.hy = A.y; b.hz = A.z;
+                    b.rest = 0.0f; b.going = 0.0f; b.loose = false; b.clear = 0.0f; b.meshClear = 0.0f;
+                    continue;
                 }
                 // ---- arranged (a formation, a layout, undo): straight to its new place, and there it rests
                 else if (b.going > 0.0f)
@@ -742,6 +779,24 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
             {
                 // away from the player, strongest close by, fading over sixteen metres; a little upwards
                 const float amt = juce::jlimit (0.1f, 3.0f, c.amount);
+                if (valid (c.stop, c.key))
+                {
+                    // (one pipe only - a phone of the audience: its own pipe flies off, wherever it is)
+                    if (isBody (c.stop))
+                    {
+                        const int ri = juce::jlimit (0, kNumRooms - 1, p.stopRoom[(size_t) c.stop]);
+                        const Vec3f P = c.act == Act::ShockAt ? c.v : erListener[(size_t) ri];
+                        auto& b = bodies[(size_t) c.stop][(size_t) c.key];
+                        float dx = b.x - P.x, dy = b.y - P.y, dz = b.z - P.z;
+                        if (len3 (dx, dy, dz) < 1.0e-3f) { dx = b.rng.bi(); dy = b.rng.bi(); dz = 0.0f; }
+                        const float l = juce::jmax (1.0e-3f, len3 (dx, dy, dz));
+                        const float dv = 9.0f * amt;
+                        b.vx += dv * dx / l; b.vy += dv * dy / l; b.vz += dv * (dz / l + 0.3f);
+                        b.pushed = 5.0f; b.rest = 0.0f; b.going = 0.0f;
+                    }
+                    startBurst (1, 0.08f * juce::jmin (1.5f, amt), 0.4f);
+                    break;
+                }
                 for (int s = 0; s < kNumStops; ++s)
                 {
                     if (! isBody (s)) continue;
@@ -763,6 +818,17 @@ void OrganEngine::handleActs (const EngineParams& p) noexcept
                 break;
             }
             case Act::Wind:
+                if (valid (c.stop, c.key))
+                {
+                    // (one pipe only: a phone of the audience blows its own)
+                    if (isBody (c.stop))
+                    {
+                        auto& b = bodies[(size_t) c.stop][(size_t) c.key];
+                        b.vx += c.v.x; b.vy += c.v.y; b.vz += c.v.z;
+                        b.pushed = juce::jmax (b.pushed, 1.0f); b.rest = 0.0f;
+                    }
+                    break;
+                }
                 for (int s = 0; s < kNumStops; ++s)
                 {
                     if (! isBody (s)) continue;

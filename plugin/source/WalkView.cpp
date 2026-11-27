@@ -153,8 +153,8 @@ WalkView::WalkView (RysumProcessor& p) : proc (p)
     actLight.onClick = [this] { setDark (actLight.getToggleState()); };
     actAudience.setClickingTogglesState (true);
     actAudience.setTooltip (rysum::tr("Das Publikum spielt mit: ein QR-Code f\xc3\xbchrt die Handys im selben WLAN zu einer kleinen Seite. Jedes Handy bekommt "
-                               "eine Pfeife in eigener Farbe: Tippen schl\xc3\xa4gt sie an, schnell Wischen schickt eine Druckwelle, Halten und Ziehen "
-                               "bl\xc3\xa4st die Pfeifen wie Wind (nach oben = wohin der Blick geht). Nur Pfeifen, die frei im Saal sind, spielen mit; "
+                               "eine Pfeife in eigener Farbe: das Bild gedr\xc3\xbc" "ckt halten spielt sie wie eine Taste, daneben Tippen schl\xc3\xa4gt sie an, schnell Wischen schickt sie mit einer Druckwelle fort, Halten und Ziehen "
+                               "bl\xc3\xa4st sie wie Wind (nach oben = wohin der Blick geht) \xe2\x80\x93 jedes Handy bewegt nur seine eigene Pfeife. Nur Pfeifen, die frei im Saal sind, spielen mit; "
                                "beim Einschalten schweben alle gezogenen Register, die stillstehen. Wird nicht gespeichert."));
     actAudience.onClick = [this] { setAudience (actAudience.getToggleState()); };
     actPano.onClick = [this] { panoClicked(); };

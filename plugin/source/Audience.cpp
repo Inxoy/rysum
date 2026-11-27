@@ -39,7 +39,8 @@ main{flex:1;display:flex;flex-direction:column;align-items:center;justify-conten
 #frame.mine{border-color:var(--ink)}
 #frame.mine::after{border-color:rgba(13,13,12,.35)}
 #photo{width:100%;height:100%;background:var(--panel) center/cover no-repeat;filter:grayscale(1) sepia(.32) contrast(1.06) brightness(.92);transition:filter .1s,transform .08s}
-#frame.hit #photo{filter:grayscale(1) sepia(.2) contrast(1.1) brightness(1.35);transform:scale(.97)}
+#frame.hit #photo,#frame.held #photo{filter:grayscale(1) sepia(.2) contrast(1.1) brightness(1.35);transform:scale(.97)}
+#frame.held{border-color:var(--rubric2)}
 #mark{position:absolute;left:50%;bottom:-11px;width:16px;height:20px;margin-left:-8px;background:var(--me);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);transition:background .4s}
 #wait{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-style:italic;color:var(--faint);font-size:15px;text-align:center;padding:0 12px}
 #name{margin-top:26px;font-size:28px;line-height:1.1;text-align:center;min-height:1.1em}
@@ -69,7 +70,7 @@ li::before{content:"";flex:none;width:6px;height:9px;background:var(--faint);cli
 <div id="name"></div><div id="key"></div></main>
 <section><div class="rule"><i></i></div>
 <div class="head"><span class="i">S</span><span class="r">PIELEN</span><span class="n">deine Pfeife</span></div>
-<ul><li>Tippen<em>anschlagen</em></li><li>Schnell wischen<em>Druckwelle</em></li><li>Halten und ziehen<em>Wind</em></li></ul></section>
+<ul><li>Bild gedr&uuml;ckt halten<em>spielen</em></li><li>Daneben tippen<em>anschlagen</em></li><li>Schnell wischen<em>Druckwelle</em></li><li>Halten und ziehen<em>Wind</em></li></ul></section>
 <div id="state"></div>
 </div>
 <div id="ring"></div><div id="wind"></div>
@@ -96,10 +97,15 @@ function send(a,extra){
   .then(function(r){return r.json()}).then(show).catch(function(){st.textContent='keine Verbindung zur Orgel';st.classList.add('off')});
 }
 function cl(v){return Math.max(-1,Math.min(1,v))}
-var d=null,windT=0;
-pad.addEventListener('pointerdown',function(e){try{pad.setPointerCapture(e.pointerId)}catch(x){}d={x:e.clientX,y:e.clientY,t:performance.now(),wind:false}});
+var d=null,windT=0,holdT=0;
+function hold(on){
+ if(on){if(holdT||stop<0)return;send('n');holdT=setInterval(function(){send('n')},250);fr.classList.add('held');if(navigator.vibrate)navigator.vibrate(10);return}
+ if(!holdT)return;clearInterval(holdT);holdT=0;fr.classList.remove('held');send('o');
+}
+pad.addEventListener('pointerdown',function(e){try{pad.setPointerCapture(e.pointerId)}catch(x){}
+ d={x:e.clientX,y:e.clientY,t:performance.now(),wind:false,key:fr.contains(e.target)};if(d.key)hold(true)});
 pad.addEventListener('pointermove',function(e){
- if(!d)return;var dx=e.clientX-d.x,dy=e.clientY-d.y,el=performance.now()-d.t;
+ if(!d||d.key)return;var dx=e.clientX-d.x,dy=e.clientY-d.y,el=performance.now()-d.t;
  if(!d.wind&&el>280&&Math.hypot(dx,dy)>14)d.wind=true;
  if(d.wind){
   wd.style.left=d.x+'px';wd.style.top=d.y+'px';wd.style.width=Math.hypot(dx,dy)+'px';wd.style.transform='rotate('+Math.atan2(dy,dx)+'rad)';wd.style.opacity=.7;
@@ -108,7 +114,7 @@ pad.addEventListener('pointermove',function(e){
  }
 });
 function up(e,cancel){
- if(!d)return;var dx=e.clientX-d.x,dy=e.clientY-d.y,dist=Math.hypot(dx,dy),el=performance.now()-d.t;
+ if(!d)return;if(d.key){hold(false);d=null;return}var dx=e.clientX-d.x,dy=e.clientY-d.y,dist=Math.hypot(dx,dy),el=performance.now()-d.t;
  wd.style.opacity=0;
  if(!cancel&&!d.wind){
   if(dist<24){send('k','&s=1');fr.classList.add('hit');setTimeout(function(){fr.classList.remove('hit')},120);if(navigator.vibrate)navigator.vibrate(15)}
@@ -119,6 +125,9 @@ function up(e,cancel){
 }
 pad.addEventListener('pointerup',function(e){up(e,false)});
 pad.addEventListener('pointercancel',function(e){up(e,true)});
+function away(){if(holdT){clearInterval(holdT);holdT=0;fr.classList.remove('held');try{navigator.sendBeacon('/act?p='+id+'&a=o')}catch(x){}}d=null}
+document.addEventListener('visibilitychange',function(){if(document.hidden)away()});
+addEventListener('pagehide',away);addEventListener('blur',away);
 send('');setInterval(function(){send('')},2000);
 })();
 </script></body></html>
@@ -272,7 +281,7 @@ juce::MemoryBlock AudienceServer::answer(const juce::String &request)
     const double now = juce::Time::getMillisecondCounterHiRes();
     phones[(size_t)phone].seen = now;
     const auto a = q["a"];
-    if (path == "/act" && a.length() == 1 && juce::String("ksw").containsChar(a[0]) && events.size() < 256)
+    if (path == "/act" && a.length() == 1 && juce::String("kswno").containsChar(a[0]) && events.size() < 256)
     {
         Event e;
         e.phone = phone;
@@ -420,6 +429,8 @@ bool AudienceHands::start(bool loopbackOnly)
 void AudienceHands::stop()
 {
     stopTimer();
+    for (auto &h : byPhone)
+        letGo(h); // (nothing stays sounding)
     server.stop();
     now.clear();
     byPhone = {};
@@ -455,6 +466,7 @@ void AudienceHands::assign()
         h.colour = i;
         if (h.stop < 0 || !ok[(size_t)h.stop])
         {
+            letGo(h);
             h.stop = h.key = -1;
             if (stopsOk > 0)
             {
@@ -486,6 +498,46 @@ void AudienceHands::assign()
     }
 }
 
+int AudienceHands::holdingCount() const noexcept
+{
+    int n = 0;
+    for (const auto &h : byPhone)
+        n += h.holding ? 1 : 0;
+    return n;
+}
+
+/** a phone holds its pipe down: it sounds as a held key (shared with another phone on the same pipe) */
+void AudienceHands::press(Hand &h, double t)
+{
+    if (h.stop < 0 || h.key < 0)
+        return;
+    h.holdSeen = t;
+    h.lastAct = t; // (the view shows it lit)
+    if (h.holding)
+        return;
+    bool shared = false;
+    for (const auto &o : byPhone)
+        shared = shared || (&o != &h && o.holding && o.stop == h.stop && o.key == h.key);
+    if (!shared && holdingCount() >= 24)
+        return; // (enough at once)
+    if (!shared)
+        proc.engine.playerAct(OrganEngine::Act::BowOn, h.stop, h.key);
+    h.holding = true;
+}
+
+/** ... and lets it go (the last phone on that pipe silences it) */
+void AudienceHands::letGo(Hand &h)
+{
+    if (!h.holding)
+        return;
+    h.holding = false;
+    bool shared = false;
+    for (const auto &o : byPhone)
+        shared = shared || (o.holding && o.stop == h.stop && o.key == h.key);
+    if (!shared && h.stop >= 0 && h.key >= 0)
+        proc.engine.playerAct(OrganEngine::Act::BowOff, h.stop, h.key);
+}
+
 void AudienceHands::timerCallback()
 {
     const double t = juce::Time::getMillisecondCounterHiRes();
@@ -494,8 +546,8 @@ void AudienceHands::timerCallback()
     assign();
     auto &en = proc.engine;
     int knocks = 0;
-    Vec3f wind{};
-    int winds = 0;
+    std::array<Vec3f, AudienceServer::kMaxPhones> wind{};
+    std::array<bool, AudienceServer::kMaxPhones> blew{};
     for (const auto &e : server.takeEvents())
     {
         if (e.phone < 0 || e.phone >= AudienceServer::kMaxPhones)
@@ -511,31 +563,47 @@ void AudienceHands::timerCallback()
             h.lastAct = t;
             ++knocks;
         }
+        else if (e.act == 'n')
+            press(h, t);
+        else if (e.act == 'o')
+            letGo(h);
         else if (e.act == 's')
         {
-            // a shockwave from where the player stands (each phone one every 1.5 s, all of them
-            // together one every 0.35 s)
-            if (t - lastShockOf[(size_t)e.phone] < 1500.0 || t - lastShock < 350.0)
+            // a shockwave from where the player stands, for the phone's own pipe only (each phone one
+            // every 1.5 s, all of them together one every 0.15 s)
+            if (h.stop < 0 || t - lastShockOf[(size_t)e.phone] < 1500.0 || t - lastShock < 150.0)
                 continue;
-            en.playerAct(OrganEngine::Act::Shock, -1, -1, {}, e.amount);
+            en.playerAct(OrganEngine::Act::Shock, h.stop, h.key, {}, e.amount);
             lastShockOf[(size_t)e.phone] = lastShock = t;
         }
-        else if (e.act == 'w' && winds < 4)
+        else if (e.act == 'w' && h.stop >= 0)
         {
-            // wind: up on the phone is the way the 3D view looks
+            // wind on its own pipe: up on the phone is the way the 3D view looks
             const float ya = juce::degreesToRadians(proc.walkPose[2].load());
             const float fx = -std::sin(ya), fy = std::cos(ya), rx = std::cos(ya), ry = std::sin(ya);
-            wind.x += rx * e.x + fx * e.y;
-            wind.y += ry * e.x + fy * e.y;
-            ++winds;
+            auto &w = wind[(size_t)e.phone];
+            w.x += rx * e.x + fx * e.y;
+            w.y += ry * e.x + fy * e.y;
+            blew[(size_t)e.phone] = true;
         }
     }
-    if (winds > 0)
-    {
-        // (a phone sends every 0.1 s while dragging: one push per message, as if it blew 0.1 s)
-        juce::ignoreUnused(dt);
-        const float accel = 6.0f; // m/s^2 at a full drag
-        en.playerAct(OrganEngine::Act::Wind, -1, -1, {wind.x * accel * 0.1f, wind.y * accel * 0.1f, 0.0f});
-    }
+    // (a phone sends every 0.1 s while dragging: one push per message, as if it blew 0.1 s)
+    juce::ignoreUnused(dt);
+    const float accel = 6.0f; // m/s^2 at a full drag
+    for (int i = 0; i < AudienceServer::kMaxPhones; ++i)
+        if (blew[(size_t)i] && byPhone[(size_t)i].stop >= 0)
+        {
+            const auto &h = byPhone[(size_t)i];
+            const auto &w = wind[(size_t)i];
+            en.playerAct(OrganEngine::Act::Wind, h.stop, h.key, {w.x * accel * 0.1f, w.y * accel * 0.1f, 0.0f});
+        }
+    // a pipe held by a phone that has gone quiet (its page closed, the network gone): let go
+    for (auto &h : byPhone)
+        if (h.holding && t - h.holdSeen > kHoldTimeoutMs)
+            letGo(h);
+    // (what the view shows: the holding as it is now)
+    for (auto &n : now)
+        if (n.phone >= 0 && n.phone < AudienceServer::kMaxPhones)
+            n = byPhone[(size_t)n.phone];
 }
 } // namespace rysum
