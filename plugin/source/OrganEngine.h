@@ -71,6 +71,9 @@ struct FxParams
     // wind leaks: hissing spots
     float leakLevel = 0.0f, leakFreq = 4000.0f, leakWander = 0.0f;
     int leakCount = 3;
+    float leakFollow = 0.0f; // how much the leaks follow the bellows' pressure (0 = not at all)
+    // the wind chests: a rush of air under every drawn stop's pipes, as strong as the wind (and the open pallets)
+    float chestLevel = 0.0f, chestTone = 0.4f; // tone 0 = a low rumble .. 1 = an airy hiss
     bool windRound = false; // blower noise from all sides (instead of one omni signal)
     // upper partials placed away from the pipe
     float partSpread = 0.0f, partSplit = 3.0f, partTurn = 0.0f; // deg, x fundamental, Hz
@@ -328,6 +331,13 @@ struct EngineParams
         sounds in the Saal goes through it into the room behind, and that room's late reverb comes
         back through the door (from the door's direction). A Saal with no sound of its own is then
         heard only through its door. */
+    // an open Saal: no ceiling, broken walls, ... (openGone, RoomSim.h)
+    struct Open
+    {
+        int shape = 0;
+        float amount = 1.0f;
+    };
+    std::array<Open, 4> opens{};
     struct Door
     {
         int to = -1;       // the Saal behind the door, -1 = no door
@@ -1235,6 +1245,7 @@ private:
     int numScheduled = 0;
     std::array<Leak, 8> leaks{};
     std::array<Leak, kNumStops * 2> stopLeaks{}; // each stop's own two, at its pipes
+    std::array<Leak, kNumStops> chests{};          // the wind chest under each stop's pipes
     std::vector<float> echoBuf, fxScratch;
     int echoWrite = 0;
     double echoDelay = -1.0; // smoothed delay (samples)

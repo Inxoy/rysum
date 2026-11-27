@@ -1128,6 +1128,17 @@ SaalView::SaalView(RysumProcessor &p) : proc(p)
         doorOpenR[(size_t)r]->setTooltip(rysum::tr(
             "Wie weit die T\xc3\xbcr offen ist: ein Schwellwerk aus Architektur (z. B. auf ein "
             "Pedal legen)"));
+        const auto openId = RysumProcessor::roomParamId(r, "Open");
+        fillChoices(openShape[(size_t)r], openId);
+        openShapeAtt[(size_t)r] = std::make_unique<ComboAtt>(proc.apvts, openId, openShape[(size_t)r]);
+        openShape[(size_t)r].setTooltip(rysum::tr(
+            "Der Saal unter freiem Himmel: ohne Decke (ein Hof), als Ruine (keine Decke, die W\xc3\xa4nde halb "
+            "eingest\xc3\xbcrzt), als Pavillon (ein Dach, keine W\xc3\xa4nde) oder als Feld (nur der Boden). Was fehlt, "
+            "wirft nichts zur\xc3\xbc" "ck: fr\xc3\xbche Reflexionen und Nachhall werden k\xc3\xbcrzer, im 3D-Saal ist der Himmel zu sehen."));
+        addAndMakeVisible(openShape[(size_t)r]);
+        openAmtR[(size_t)r] = &row(RysumProcessor::roomParamId(r, "OpenAmt").toRawUTF8(), rysum::tr("wie offen"));
+        openAmtR[(size_t)r]->setTooltip(rysum::tr("Wie weit der Saal offen ist (gleitend, wie die Raumtastatur): "
+                                                   "modulierbar \xe2\x80\x93 ein Dach, das sich \xc3\xb6" "ffnet."));
     }
     fillChoices(kbCh, "simKbCh");
     kbChAtt = std::make_unique<ComboAtt>(proc.apvts, "simKbCh", kbCh);
@@ -1462,7 +1473,7 @@ void SaalView::resized()
             if (x)
                 x->setBounds(fr);
     }
-    doorBox = r.removeFromBottom(32 + 2 * 28);
+    doorBox = r.removeFromBottom(32 + 3 * 28);
     r.removeFromBottom(6);
     {
         auto b = doorBox.withTrimmedTop(32);
@@ -1484,6 +1495,16 @@ void SaalView::resized()
         l2.removeFromLeft(6 + 150 + 8);
         if (kbGlideR != nullptr)
             kbGlideR->setBounds(l2.withHeight(26));
+        auto l3 = b.removeFromTop(28).withTrimmedBottom(4);
+        l3.removeFromLeft(64);
+        for (int q = 0; q < rysum::kNumRooms; ++q)
+        {
+            auto line = l3;
+            openShape[(size_t)q].setBounds(line.removeFromLeft(276));
+            line.removeFromLeft(8);
+            if (openAmtR[(size_t)q] != nullptr)
+                openAmtR[(size_t)q]->setBounds(line.withHeight(26));
+        }
     }
     planBox = r;
     plan.setBounds(r);
@@ -1645,6 +1666,9 @@ void SaalView::selectRoom(int r)
         doorWall[(size_t)q].setVisible(q == editRoom);
         if (doorOpenR[(size_t)q])
             doorOpenR[(size_t)q]->setVisible(q == editRoom);
+        openShape[(size_t)q].setVisible(q == editRoom);
+        if (openAmtR[(size_t)q])
+            openAmtR[(size_t)q]->setVisible(q == editRoom);
     }
     shapes.refresh();
     shapes.repaint();
@@ -2003,6 +2027,9 @@ void SaalView::paint(juce::Graphics &g)
                    juce::Justification::centredLeft);
         g.drawText(rysum::tr("Tasten"),
                    doorBox.withTrimmedTop(60).removeFromTop(24).removeFromLeft(60),
+                   juce::Justification::centredLeft);
+        g.drawText(rysum::tr("Offen"),
+                   doorBox.withTrimmedTop(88).removeFromTop(24).removeFromLeft(60),
                    juce::Justification::centredLeft);
     }
     g.setColour(col::mute);

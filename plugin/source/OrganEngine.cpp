@@ -373,6 +373,14 @@ void OrganEngine::prepare(double sampleRate, int maxBlockSize)
             L.s1 = L.s2 = L.amp = 0.0f;
             L.g1.fill(0.0f);
         }
+        for (size_t i = 0; i < chests.size(); ++i)
+        {
+            auto &L = chests[i];
+            L.freqMul = 0.85f + 0.3f * r.uni();
+            L.rng = XorShift((uint32_t)(i * 4447 + 211));
+            L.s1 = L.s2 = L.amp = 0.0f;
+            L.g1.fill(0.0f);
+        }
     }
     keyHeld.fill(false);
     keySustained.fill(false);
@@ -4034,6 +4042,13 @@ void OrganEngine::renderRoom(juce::AudioBuffer<float> &out, int n, const EngineP
             const auto &rk = p.roomKeys;
             T[(size_t)kSurfFloor] = 1.0f - juce::jlimit(0.0f, 1.0f, rk.floorDepth);
             T[(size_t)kSurfCeiling] = 1.0f - juce::jlimit(0.0f, 1.0f, rk.ceilingDepth);
+            // ... and what is open of the Saal for good (a courtyard, a ruin, a field)
+            {
+                const auto &op = p.opens[(size_t)juce::jlimit(0, 3, ri)];
+                if (op.shape > 0)
+                    for (int sfc = 0; sfc < kMaxSurf; ++sfc)
+                        T[(size_t)sfc] = juce::jmin(T[(size_t)sfc], 1.0f - openGone(op.shape, op.amount, sfc));
+            }
             for (int k = 0; k < juce::jmin(rk.numWalls, EngineParams::RoomKeys::kMax); ++k)
             {
                 const int wi = wallToward(ri, rk.wallAz[(size_t)k]);
@@ -4727,8 +4742,8 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
         L.s1 = L.s2 = 0.0f;
         L.g1.fill(0.0f);
     };
-    // one hissing spot at L.pos (already placed for this block), at a level
-    auto render = [&](Leak &L, float level)
+    // one hissing spot at L.pos (already placed for this block), at a level (chest: a low-passed rush, steadier)
+    auto render = [&](Leak &L, float level, bool chest = false)
     {
         L.g0 = L.g1;
         gainsFor(L.pos, L.g1.data());
@@ -4736,9 +4751,10 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
         for (auto &x : L.g1)
             x *= dg;
 
-        const float fc = juce::jmin(0.45f * (float)sr, fx.leakFreq * L.freqMul);
+        const float fc = juce::jmin(0.45f * (float)sr, chest ? 110.0f * std::exp2(5.0f * fx.chestTone) * L.freqMul
+                                                              : fx.leakFreq * L.freqMul);
         const float g = std::tan(juce::MathConstants<float>::pi * fc / (float)sr);
-        const float k = 1.0f / 3.0f; // Q 3
+        const float k = chest ? 1.3f : 1.0f / 3.0f; // Q 3 (a chest: broad)
         const float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
         const float lvl = 0.9f * level;
         for (int i = 0; i < n; ++i)
@@ -4747,8 +4763,17 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
             {
                 // a leak hisses unevenly: it swells, flutters, sometimes stops for a moment
                 const float u = L.rng.uni();
-                L.ampTarget = u < 0.12f ? 0.0f : 0.25f + 0.75f * L.rng.uni();
-                L.ampCount = (int)((0.04f + 0.7f * L.rng.uni() * L.rng.uni()) * (float)sr);
+                if (chest)
+                {
+                    // (a chest under pressure: a steady rush that swells a little)
+                    L.ampTarget = 0.75f + 0.25f * u;
+                    L.ampCount = (int)((0.3f + 0.9f * L.rng.uni()) * (float)sr);
+                }
+                else
+                {
+                    L.ampTarget = u < 0.12f ? 0.0f : 0.25f + 0.75f * L.rng.uni();
+                    L.ampCount = (int)((0.04f + 0.7f * L.rng.uni() * L.rng.uni()) * (float)sr);
+                }
             }
             L.amp += ampK * (L.ampTarget - L.amp);
             const float x = L.rng.bi();
@@ -4757,7 +4782,7 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
             const float v2 = L.s2 + a2 * L.s1 + a3 * v3;
             L.s1 = 2.0f * v1 - L.s1;
             L.s2 = 2.0f * v2 - L.s2;
-            buf[i] = v1 * k * L.amp * lvl;
+            buf[i] = (chest ? v2 : v1 * k) * L.amp * lvl;
             ramp[i] = buf[i] * (float)i;
         }
         {
@@ -4779,6 +4804,9 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
         }
     };
 
+    // the wind's pressure (the shared bellows; 1 without it): the chests follow it, the leaks as far as they are set to
+    const float press = juce::jlimit(0.0f, 1.2f, bellowsP);
+    const float leakPress = 1.0f - fx.leakFollow + fx.leakFollow * press;
     // the organ's leaks: spots of their own, wandering slowly
     const int count = juce::jlimit(1, (int)leaks.size(), fx.leakCount);
     for (int li = 0; li < (int)leaks.size(); ++li)
@@ -4791,7 +4819,7 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
         }
         L.pos.az =
             wrapAz(L.pos.az + L.dir * fx.leakWander * chunkSeconds * (0.6f + 0.4f * L.freqMul));
-        render(L, fx.leakLevel);
+        render(L, fx.leakLevel * leakPress);
     }
     // a stop's own leaks ("Pfeife" tab): two spots at its pipes, moving with them, hissing while
     // the stop is drawn and has wind
@@ -4807,8 +4835,35 @@ void OrganEngine::renderLeaks(juce::AudioBuffer<float> &out, int n, const Engine
             }
             const int key = (s * 17 + j * 23 + 5) % kNumKeys;
             L.pos = currentPosition(s, key, p);
-            render(L, level);
+            render(L, level * leakPress);
         }
+    // the wind chests: under each drawn stop's pipes (the middle of its lowest, middle and highest pipe, a little
+    // lower), rushing as hard as the wind is - and more, the more of its pallets are open
+    for (int s = 0; s < kNumStops; ++s)
+    {
+        auto &L = chests[(size_t)s];
+        const int sounding = juce::countNumberOfBits((juce::uint64)soundingMask[(size_t)s].load(std::memory_order_relaxed));
+        const float level = p.stopOn[(size_t)s] && fx.chestLevel > 0.0f
+                                ? fx.chestLevel * p.stopWind[(size_t)s] * press * (0.6f + 0.4f * juce::jmin(1.0f, (float)sounding / 6.0f))
+                                : 0.0f;
+        if (level <= 0.0001f)
+        {
+            silence(L);
+            continue;
+        }
+        float x = 0.0f, y = 0.0f, el = 0.0f, dist = 0.0f;
+        for (int key : {0, kNumKeys / 2, kNumKeys - 1})
+        {
+            const Pos q = currentPosition(s, key, p);
+            x += std::cos(juce::degreesToRadians(q.az));
+            y += std::sin(juce::degreesToRadians(q.az));
+            el += q.el / 3.0f;
+            dist += q.dist / 3.0f;
+        }
+        L.pos = {juce::radiansToDegrees(std::atan2(y, x)), juce::jlimit(-90.0f, 90.0f, el - 12.0f),
+                 juce::jlimit(kMinDist, kMaxDist, dist)};
+        render(L, 0.5f * level, true);
+    }
 }
 
 void OrganEngine::renderEchoes(juce::AudioBuffer<float> &out, int n, const EngineParams &p)

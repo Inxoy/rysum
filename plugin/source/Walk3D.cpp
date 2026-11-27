@@ -755,8 +755,14 @@ void Raster::shadeBand (int band)
                     const float dz = (right.z * rx + up.z * ry + fwd.z) / rayLen;
                     const float el = std::abs (std::asin (juce::jlimit (-1.0f, 1.0f, dz)));
                     l = fogTone * (0.55f + 0.45f * juce::jmax (0.0f, 1.0f - el / 0.56f));
+                    if (look.sky > 0.0f) l = juce::jmax (l, look.sky * (0.72f + 0.28f * juce::jmax (0.0f, dz)));
                 }
-                else l = skyRow;
+                else
+                {
+                    l = skyRow;
+                    // (an open Saal: the sky, a little brighter upwards)
+                    if (look.sky > 0.0f) l = juce::jmax (l, look.sky * (0.72f + 0.28f * (1.0f - (float) y / (float) h)));
+                }
             }
             else
             {

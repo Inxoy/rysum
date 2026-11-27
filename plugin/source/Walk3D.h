@@ -58,6 +58,7 @@ struct Look
     float wear = 0.0f;                      // traces of use: water stains on stone and plaster, stronger grain in wood, tarnish
     float cell = 0.0f;                      // how a dissolving surface breaks up: 0 = pixel by pixel (it fades), else pieces of this size (m)
     float rippleAmt = 0.0f;                 // knocks leave a ripple on the surfaces near them
+    float sky = 0.0f;                       // an open Saal: the vault becomes a sky this bright (0 = the dark vault)
     struct Ripple { V3 at; float age = 1.0f, strength = 0.0f; };   // age 0 .. 1 (gone)
     static constexpr int kMaxRipples = 4;
     std::array<Ripple, kMaxRipples> ripples {};
@@ -111,6 +112,7 @@ public:
     /** for the graphics card: the tint as the change from 1 (3), wear, piece size, ripple amount, number of ripples,
         and per ripple x, y, z (view space), age, strength */
     void lookForGpu (float* tint3, float* look4, float* ripples20) const noexcept;
+    float skyNow() const noexcept { return look.sky; }
     /** a material slot (0..31) used by the triangles below */
     void setMaterial (int slot, const Material& m);
 

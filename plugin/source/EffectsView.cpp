@@ -125,8 +125,15 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
                 &row("fxLeakCount", rysum::tr("Anzahl")),
                 &row("fxLeakFreq", rysum::tr("Tonh\xc3\xb6he")),
                 &row("fxLeakWander", rysum::tr("Wandern")),
-                nullptr,
-                nullptr};
+                &row("fxLeakFollow", rysum::tr("folgen dem Balg")),
+                &row("fxChestLevel", rysum::tr("Windladen-Rauschen"))};
+    leakRows[4]->setTooltip(rysum::tr("Wie sehr die Windlecks dem Winddruck folgen: leert sich der Balg (Lebendige Orgel), "
+                                      "zischen sie leiser, tritt der Kalkant, lauter."));
+    leakRows[5]->setTooltip(rysum::tr("Unter den Pfeifen jedes gezogenen Registers rauscht seine Windlade: so stark wie der Wind "
+                                      "(der Balg, der Registerwind), st\xc3\xa4rker, je mehr Ventile offen sind \xe2\x80\x93 aus der Richtung "
+                                      "seiner Pfeifen, etwas tiefer."));
+    chestTone = &row("fxChestTone", rysum::tr("Rauschen: Farbe"));
+    chestTone->setTooltip(rysum::tr("Die Farbe des Windladen-Rauschens: von einem tiefen Grollen zu einem luftigen Zischen."));
     windRound = &toggle("fxWindRound", rysum::tr("Gebl\xc3\xa4se ringsum"));
     windRound->setTooltip(
         rysum::tr("Das Gebl\xc3\xa4serauschen (Wind) kommt von allen Seiten statt als ein Signal."));
@@ -432,6 +439,8 @@ void EffectsView::resized()
     {
         auto b = body(leakBox);
         stack(b, leakRows);
+        if (chestTone != nullptr)
+            chestTone->setBounds(b.removeFromTop(30).withTrimmedBottom(2));
         b.removeFromTop(4);
         windRound->setBounds(b.removeFromTop(24).withWidth(150));
         b.removeFromTop(8);

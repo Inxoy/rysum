@@ -42,6 +42,7 @@ private:
     std::array<ParamRow *, 6> custRows{}, pathRows{}, crackRows{}, leakRows{}, partRows{},
         echoRows{};
     ParamRow *echoTime = nullptr;
+    ParamRow *chestTone = nullptr;
 
     juce::Rectangle<int> custBox, pathBox, crackBox, leakBox, partBox, echoBox;
     juce::Rectangle<int> partCompass, echoCompass, pathNote, crackNote, leakNote, partNote,

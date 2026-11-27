@@ -1408,6 +1408,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         F01("lookShake", "Stimmung Kamera bebt", 0.0f);
         F01("lookFocus", "Stimmung Sch\xc3\xa4rfentiefe", 0.0f);
     }
+    {
+        // the wind chests rush (Effekte, Windlecks), the leaks follow the bellows; a Saal can be open to the sky
+        auto pc = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(juce::roundToInt(v * 100)) + " %"; });
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxChestLevel", 1}, "Windladen-Rauschen",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pc));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxChestTone", 1}, "Windladen-Rauschen Farbe",
+                                                    NormalisableRange<float>(0, 1), 0.4f, pc));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"fxLeakFollow", 1}, "Windlecks folgen dem Balg",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pc));
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+        {
+            const String sn = "Saal " + String(r + 1) + " ";
+            l.add(std::make_unique<AudioParameterChoice>(
+                ParameterID{roomParamId(r, "Open"), 1}, sn + "offen",
+                StringArray{"geschlossen", "ohne Decke (Hof)", "Ruine", String::fromUTF8("Pavillon (ohne W\xc3\xa4nde)"),
+                            "Feld (nur Boden)"},
+                0));
+            l.add(std::make_unique<AudioParameterFloat>(ParameterID{roomParamId(r, "OpenAmt"), 1}, sn + "wie offen",
+                                                        NormalisableRange<float>(0, 1), 1.0f, pc));
+        }
+    }
     return l;
 }
 
@@ -1722,6 +1744,14 @@ RysumProcessor::RysumProcessor()
             ix.door[(size_t)r][2] = I(roomParamId(r, "DoorOpen"));
         }
         ix.kbGlide = I("simKbGlide");
+        ix.chestLevel = I("fxChestLevel");
+        ix.chestTone = I("fxChestTone");
+        ix.leakFollow = I("fxLeakFollow");
+        for (int r = 0; r < rysum::kNumRooms; ++r)
+        {
+            ix.open[(size_t)r][0] = I(roomParamId(r, "Open"));
+            ix.open[(size_t)r][1] = I(roomParamId(r, "OpenAmt"));
+        }
         ix.beatInstant = I("fxBeatInstant");
         ix.beatMode = I("fxBeatMode");
         roomKbChParam = apvts.getRawParameterValue("simKbCh");
@@ -2161,6 +2191,14 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         d.open = V(ix.door[(size_t)r][2]);
     }
     p.roomKeys.glide = V(ix.kbGlide); // (the held keys: processBlock)
+    p.fx.chestLevel = V(ix.chestLevel);
+    p.fx.chestTone = V(ix.chestTone);
+    p.fx.leakFollow = V(ix.leakFollow);
+    for (int r = 0; r < rysum::kNumRooms; ++r)
+    {
+        p.opens[(size_t)r].shape = juce::roundToInt(V(ix.open[(size_t)r][0]));
+        p.opens[(size_t)r].amount = V(ix.open[(size_t)r][1]);
+    }
     p.beatInstant = V(ix.beatInstant) > 0.5f;
     p.beatRatio = V(ix.beatMode) > 0.5f;
     return p;

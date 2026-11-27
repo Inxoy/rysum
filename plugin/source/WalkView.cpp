@@ -2378,6 +2378,7 @@ void WalkView::buildScene (float phys)
     look.wear = lk.wear;
     look.cell = lk.wallGrain < 0.05f ? 0.0f : 0.05f + 0.6f * lk.wallGrain;
     look.rippleAmt = lk.ripple;
+    // (the sky of an open Saal: as bright as the time of day says - the light off: a night sky)
     viewScale = (float) area.getWidth() / (float) juce::jmax (1, rast.width());
     const float fogDist = juce::jmax (12.0f, 1.5f * juce::jmax (r.W(), r.L()));      // (floor and ceiling stay readable to the far end)
     // (light off: what is far away sinks into the dark, not into a grey haze)
@@ -2454,12 +2455,25 @@ void WalkView::buildScene (float phys)
         for (auto& m : mats)
             if (m.kind == Material::glass || m.kind == Material::mirror || m.kind == Material::metal || (m.kind == Material::plain && m.gloss >= 1.0f))
                 m.gloss = juce::jmin (4.0f, m.gloss * (1.0f + 3.0f * lk.shine) + 0.6f * lk.shine);
-        if (lk.walls > 0.0f)
+        // (what is open of the Saal for good - a courtyard, a ruin, a field - is always gone; what the room keyboard
+        //  takes away as far as "Waende vergehen" says)
+        const auto& op = params.opens[0];
+        skyOpen = 0.0f;
+        if (lk.walls > 0.0f || op.shape > 0)
         {
-            auto gone = [&] (int surf) { return juce::jlimit (0.0f, 1.0f, proc.engine.wallGoneNow[0][(size_t) surf].load (std::memory_order_relaxed) * lk.walls); };
+            auto gone = [&] (int surf)
+            {
+                const float g = proc.engine.wallGoneNow[0][(size_t) surf].load (std::memory_order_relaxed);
+                return juce::jlimit (0.0f, 1.0f, juce::jmax (juce::jmin (g, openGone (op.shape, op.amount, surf)), g * lk.walls));
+            };
             mats[(size_t) kSlotFloor].gone = gone (kSurfFloor);
             mats[(size_t) kSlotCeiling].gone = gone (kSurfCeiling);
-            for (int i = 0; i < kMaxPlanVerts; ++i) mats[(size_t) (kSlotWall0 + i)].gone = gone (kSurfWall0 + i);
+            for (int i = 0; i < kMaxPlanVerts; ++i)
+            {
+                mats[(size_t) (kSlotWall0 + i)].gone = gone (kSurfWall0 + i);
+                skyOpen = juce::jmax (skyOpen, 0.8f * mats[(size_t) (kSlotWall0 + i)].gone);
+            }
+            skyOpen = juce::jmax (skyOpen, mats[(size_t) kSlotCeiling].gone);
         }
         if (testStep == 12)
             for (int sl : { (int) kSlotWall, (int) kSlotFloor, (int) kSlotCeiling, (int) kSlotModel })
@@ -2678,6 +2692,17 @@ void WalkView::buildScene (float phys)
             look.ripples = {};
             look.ripples[0] = { eye + V3 { -std::sin (ya) * 4.0f, std::cos (ya) * 4.0f, -1.0f }, 0.3f, 1.0f };
         }
+        if (skyOpen > 0.0f)
+        {
+            float sb = 0.78f;
+            if (lk.day > 0.0f)
+            {
+                float tint[3]; V3 d;
+                dayLight (lk.hour, d, tint);
+                sb = sb * (1.0f - lk.day) + lk.day * juce::jlimit (0.08f, 0.95f, 0.85f * (tint[0] + tint[1] + tint[2]) / 3.0f);
+            }
+            look.sky = skyOpen * (dark ? 0.05f : sb);
+        }
         rast.setLook (look);
         lamps.clear();
         const float pl = lk.pipeLight;
@@ -2759,6 +2784,7 @@ void WalkView::buildScene (float phys)
         rast.exportGpu (gpuFrame.verts, gpuFrame.mats);
         rast.lookForGpu (gpuFrame.tint, gpuFrame.look, gpuFrame.ripples.data());
         gpuFrame.focus[0] = 1.0f / juce::jmax (0.2f, focusNow);
+        gpuFrame.sky = rast.skyNow();
         gpuFrame.focus[1] = compareNow ? (testStep == 12 ? 1.0f : 0.0f) : lk.focus;
         gpuFrame.fogTone = rast.fogToneNow(); gpuFrame.fogInv = rast.fogInvNow();
         gpuFrame.grain = grainAmt; gpuFrame.frameNo = frame;

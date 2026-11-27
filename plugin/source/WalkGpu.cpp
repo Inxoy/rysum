@@ -55,6 +55,7 @@ uniform vec2 uView;         // the picture's size in pixels
 uniform ivec2 uFrame;       // the grain's offset of this frame
 uniform vec4 uPano;         // a face of the 360 degree picture (1 / 0), the z of its right, up and forward
 uniform vec3 uFocus;        // depth of field: 1 / the sharp distance, amount, the widest blur (pixels); amount 0 = off
+uniform float uSky;         // an open Saal: the sky's brightness (0 = the dark vault)
 out vec4 colour;
 
 float hash2 (int x, int y)
@@ -171,9 +172,13 @@ void main()
             float dz = (uPano.y * rx + uPano.z * ry + uPano.w) / rayLen;
             float el = abs (asin (clamp (dz, -1.0, 1.0)));
             l = uFog.x * (0.55 + 0.45 * max (0.0, 1.0 - el / 0.56));
+            if (uSky > 0.0) l = max (l, uSky * (0.72 + 0.28 * max (0.0, dz)));
         }
         else
+        {
             l = uFog.x * (0.55 + 0.45 * (1.0 - abs (floor (y) / uView.y - 0.5) * 2.0));     // the dark vault
+            if (uSky > 0.0) l = max (l, uSky * (0.72 + 0.28 * (1.0 - floor (y) / uView.y)));
+        }
     }
     else
     {
@@ -389,6 +394,7 @@ void GpuPicture::newOpenGLContextCreated()
     uRip = glGetUniformLocation (id, "uRip");
     uRipS = glGetUniformLocation (id, "uRipS");
     uFocus = glGetUniformLocation (id, "uFocus");
+    uSky = glGetUniformLocation (id, "uSky");
     // (depth of field: without it the picture is still whole)
     dofProgram = std::make_unique<juce::OpenGLShaderProgram> (context);
     if (dofProgram->addVertexShader (kDofVertex) && dofProgram->addFragmentShader (kDofFragment))
@@ -507,6 +513,7 @@ void GpuPicture::renderOpenGL()
         glUniform4fv (uRip, 4, rp);
         glUniform1fv (uRipS, 4, rs);
         glUniform3f (uFocus, drawing.focus[0], dof ? drawing.focus[1] : 0.0f, maxR);
+        glUniform1f (uSky, drawing.sky);
     }
 
     glBindVertexArray (vao);

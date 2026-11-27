@@ -306,7 +306,7 @@ private:
     float lookDt = 1.0f / 60.0f;              // (seconds since the last frame)
     std::array<Look::Ripple, Look::kMaxRipples> ripples {};
     int rippleNext = 0;
-    float shakeEnv = 0.0f, fogDensNow = 0.0f, shadowAmt = 0.0f, focusNow = 6.0f;
+    float shakeEnv = 0.0f, fogDensNow = 0.0f, shadowAmt = 0.0f, focusNow = 6.0f, skyOpen = 0.0f;
     double lookClock = 0.0;                   // (seconds, for the idle sway)
     struct Scene
     {

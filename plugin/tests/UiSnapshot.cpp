@@ -429,6 +429,36 @@ public:
                 run(30, {});
             }
             {
+                // an open Saal: a field at evening - no walls, no ceiling, the sky
+                auto topBright = [](const juce::Image &a)
+                {
+                    double s = 0;
+                    int n = 0;
+                    for (int y = 130; y < 200; y += 3)
+                        for (int x = 0; x < a.getWidth(); x += 6, ++n)
+                            s += a.getPixelAt(x, y).getBrightness();
+                    return s / juce::jmax(1, n);
+                };
+                const double before = topBright(snap());
+                setReal("simOpen", 4.0f);
+                setReal("lookDay", 1.0f);
+                setReal("lookHour", 17.0f);
+                run(150, {});
+                const auto field = snap();
+                shot("walk_look_open_field.png");
+                const double after = topBright(field);
+                say("Saal offen (Feld): walls and ceiling gone, the sky " + juce::String(before, 3) + " -> " + juce::String(after, 3),
+                    after > before + 0.05);
+                setReal("simOpen", 2.0f);
+                run(150, {});
+                snap();
+                shot("walk_look_open_ruin.png");
+                setReal("simOpen", 0.0f);
+                setReal("lookDay", 0.0f);
+                setReal("lookHour", 12.0f);
+                run(150, {});
+            }
+            {
                 // depth of field: looking at the near wall the pipes far off blur
                 wv.setPoseForTest(0.0f, -2.0f, 0.0f);
                 wv.setPitchForTest(-8.0f);

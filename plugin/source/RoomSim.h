@@ -22,6 +22,23 @@ constexpr int kMaxPlanVerts = 12;
 constexpr int kMaxSurf = 2 + kMaxPlanVerts;
 constexpr int kSurfFloor = 0, kSurfCeiling = 1, kSurfWall0 = 2;
 
+/** an open Saal (Saal page, "offen"): how much of a surface is missing - 0 closed, 1 courtyard (no ceiling),
+    2 ruin (no ceiling, walls half broken away), 3 pavilion (a roof, no walls), 4 field (only the ground); amount
+    0 .. 1 */
+inline float openGone (int shape, float amount, int surf) noexcept
+{
+    const float a = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+    const bool wall = surf >= kSurfWall0;
+    switch (shape)
+    {
+        case 1:  return surf == kSurfCeiling ? a : 0.0f;
+        case 2:  return surf == kSurfCeiling ? a : (wall ? 0.45f * a : 0.0f);
+        case 3:  return wall ? a : 0.0f;
+        case 4:  return surf == kSurfFloor ? 0.0f : a;
+        default: return 0.0f;
+    }
+}
+
 /** what a single surface can be made of (absorption as wall / as floor or ceiling, high damping).
     The first six are the Saal page's materials. */
 struct SurfMaterial

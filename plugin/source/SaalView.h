@@ -109,6 +109,10 @@ private:
     std::array<juce::ComboBox, rysum::kNumRooms> doorTo, doorWall;
     std::array<std::unique_ptr<ComboAtt>, rysum::kNumRooms> doorToAtt, doorWallAtt;
     std::array<ParamRow *, rysum::kNumRooms> doorOpenR{};
+    // an open Saal: courtyard, ruin, pavilion, field
+    std::array<juce::ComboBox, rysum::kNumRooms> openShape;
+    std::array<std::unique_ptr<ComboAtt>, rysum::kNumRooms> openShapeAtt;
+    std::array<ParamRow *, rysum::kNumRooms> openAmtR{};
     juce::ComboBox kbCh;
     std::unique_ptr<ComboAtt> kbChAtt;
     ParamRow *kbGlideR = nullptr;

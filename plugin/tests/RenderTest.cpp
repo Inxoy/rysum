@@ -4849,6 +4849,75 @@ int main(int argc, char **argv)
                 check(near(silent, 120.0f) && near(playing, 210.0f) && near(still, playing),
                       "3D Saal: the pipes turn with Ausrichtung and Drehung, a note goes on from where the pipe stands");
             }
+            {
+                // the wind chests rush under the drawn stops (no key needed), as strongly as the wind
+                auto chest = [&](float level, float stopWind)
+                {
+                    OrganEngine e;
+                    e.prepare(fsr, B);
+                    e.setLibrary(lib);
+                    EngineParams p;
+                    p.stopOn = {};
+                    p.stopOn[0] = true;
+                    p.outputMode = 1;
+                    p.wind = 0.0f;
+                    p.fx.chestLevel = level;
+                    p.stopWind[0] = stopWind;
+                    juce::AudioBuffer<float> b(4, B);
+                    double en = 0.0;
+                    long cnt = 0;
+                    for (int pos = 0; pos < (int)(1.0 * fsr); pos += B)
+                    {
+                        juce::MidiBuffer mb;
+                        e.process(b, mb, p);
+                        if (pos > (int)(0.3 * fsr))
+                            for (int i = 0; i < B; ++i, ++cnt)
+                                en += (double)b.getSample(0, i) * b.getSample(0, i);
+                    }
+                    return 10.0 * std::log10(en / juce::jmax(1L, cnt) + 1.0e-20);
+                };
+                const double off = chest(0.0f, 1.0f), full = chest(1.0f, 1.0f), weak = chest(1.0f, 0.3f);
+                std::cout << "wind chests: off " << off << " dB, on " << full << " dB, stop wind 30 % " << weak << " dB" << std::endl;
+                check(off < -100.0 && full > -60.0 && full - weak > 6.0,
+                      "Windladen-Rauschen: a rush under the drawn stop, following its wind");
+            }
+            {
+                // an open Saal reflects less: a field (only the ground) rings out far sooner than the closed Saal
+                auto tailAfter = [&](int shape)
+                {
+                    OrganEngine e;
+                    e.prepare(fsr, B);
+                    e.setLibrary(lib);
+                    EngineParams p;
+                    p.stopOn = {};
+                    p.stopOn[0] = true;
+                    p.outputMode = 1;
+                    p.room.on = true;
+                    p.room.tailModel = 1;
+                    p.opens[0].shape = shape;
+                    p.opens[0].amount = 1.0f;
+                    juce::AudioBuffer<float> b(4, B);
+                    double en = 0.0;
+                    for (int pos = 0; pos < (int)(3.0 * fsr); pos += B)
+                    {
+                        juce::MidiBuffer mb;
+                        if (pos == (int)(0.5 * fsr) / B * B)
+                            mb.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
+                        if (pos == (int)(1.5 * fsr) / B * B)
+                            mb.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+                        e.process(b, mb, p);
+                        if (pos > (int)(1.9 * fsr))
+                            for (int i = 0; i < B; ++i)
+                                en += (double)b.getSample(0, i) * b.getSample(0, i);
+                    }
+                    return 10.0 * std::log10(en + 1.0e-20);
+                };
+                const double closed = tailAfter(0), field = tailAfter(4), yard = tailAfter(1);
+                std::cout << "open Saal: the tail 0.4 .. 1.5 s after the note, closed " << closed << " dB, courtyard " << yard
+                          << " dB, field " << field << " dB" << std::endl;
+                check(field < closed - 10.0 && yard < closed && yard > field,
+                      "Saal offen: a courtyard rings out sooner than the closed Saal, a field sooner still");
+            }
         }
         if (std::getenv("RYSUM_ONLY_RADIATE") != nullptr) // (quick run, with RYSUM_ONLY_ROOM)
         {
