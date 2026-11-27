@@ -1,6 +1,6 @@
 # Builds the two release zips for GitHub (Windows, x64):
 #   Rysum-<tag>-win64.zip          the plugin (VST3), the standalone app and the scrambled samples
-#   Rysum-Konzert-<tag>-win64.zip  the listener app and the scrambled samples
+#   Rysum-Konzert-<tag>-win64.zip  the listener app, the listener as a VST3 (for venues) and the scrambled samples
 # The samples go in as "rysum-samples.rysum" (RysumPack: FLAC, scrambled) - never as WAVs.
 # Built in plugin/build-release without ASIO (the ASIO SDK's licence does not cover handing it out).
 #
@@ -23,11 +23,12 @@ if (-not (Test-Path (Join-Path $build "CMakeCache.txt"))) {
     cmake -S (Join-Path $root "plugin") -B $build -G "Visual Studio 17 2022" -A x64 -DRYSUM_DEV=OFF -DRYSUM_ASIO=OFF -DRYSUM_BUILD_TESTS=OFF
     if ($LASTEXITCODE -ne 0) { throw "configure failed" }
 }
-cmake --build $build --config Release --target Rysum_VST3 Rysum_Standalone RysumKonzert RysumPack
+cmake --build $build --config Release --target Rysum_VST3 Rysum_Standalone RysumKonzert RysumKonzertPlugin_VST3 RysumPack
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 $art = Join-Path $build "Rysum_artefacts\Release"
 $konz = Join-Path $build "RysumKonzert_artefacts\Release"
+$konzVst = Join-Path $build "RysumKonzertPlugin_artefacts\Release\VST3\Rysum Konzert.vst3"
 $pack = Join-Path $build "RysumPack_artefacts\Release\RysumPack.exe"
 
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
@@ -79,6 +80,16 @@ Your computer renders the organ itself, from where you stand in the 3D Saal - us
 Windows may warn that the program is from an unknown publisher (it is not signed):
 "More info" -> "Run anyway". The first time, allow it on the network when Windows asks.
 
+For a venue with its own loudspeakers and decoder: "Rysum Konzert.vst3" is the same listener as a
+plugin. Copy it into  C:\Program Files\Common Files\VST3\  and "rysum-samples.rysum" into
+Documents\Rysum\ (or next to the .vst3 folder). In Reaper: a track with 36 channels (Routing ->
+Track channels: 36), insert "Rysum Konzert" as an instrument, then your Ambisonics decoder after it
+(e.g. IEM AllRADecoder, order 5, AmbiX / SN3D). The plugin starts in "AmbiX 5"; the menu in its window
+also offers AmbiX 1-4, stereo, binaural and loudspeakers. Join and walk in its window as in the app
+(click into the 3D view first so the keys go to the plugin). Keep the track monitored or the
+transport running so the host keeps processing; if Reaper's "anticipative FX" makes it stutter,
+choose a longer delay.
+
 Player and listener must use the same version ($Tag).
 https://github.com/Inxoy/rysum
 "@
@@ -94,4 +105,4 @@ function New-Zip($name, $files, $readme) {
 }
 
 New-Zip "Rysum-$Tag-win64" @((Join-Path $art "VST3\Rysum.vst3"), (Join-Path $art "Standalone\Rysum.exe"), $arc) $readmePlugin
-New-Zip "Rysum-Konzert-$Tag-win64" @((Join-Path $konz "Rysum Konzert.exe"), $arc) $readmeKonzert
+New-Zip "Rysum-Konzert-$Tag-win64" @((Join-Path $konz "Rysum Konzert.exe"), $konzVst, $arc) $readmeKonzert

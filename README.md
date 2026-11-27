@@ -14,7 +14,8 @@ Ready-made builds are on the [Releases page](https://github.com/Inxoy/rysum/rele
 - **Rysum-…-win64.zip** – the plugin (VST3), the standalone app and the organ's samples. Copy
   `rysum-samples.rysum` into `Documents\Rysum\`, the folder `Rysum.vst3` into
   `C:\Program Files\Common Files\VST3\` (or start `Rysum.exe`).
-- **Rysum-Konzert-…-win64.zip** – only the listener app for concerts (unpack, start).
+- **Rysum-Konzert-…-win64.zip** – the listener for concerts: the app (unpack, start) and the same
+  listener as a VST3, `Rysum Konzert.vst3`, for venues that decode Ambisonics themselves.
 
 The samples come as one packed file, `rysum-samples.rysum`: the recordings as lossless FLAC, scrambled,
 read by the program in memory (nothing is unpacked to disk). It opens in no audio program – it is
@@ -706,6 +707,27 @@ program.
 - The address, delay, output and volume are remembered (in AppData, folder Rysum).
 - The player still uses the organ (standalone or plugin) and *Konzert … → Spielen*; player and
   listener app must come from the same version.
+
+#### Rysum Konzert as a plugin – for venues
+
+The app gives stereo, binaural or a loudspeaker layout of its own. A venue with its own speakers
+and Ambisonics decoder uses the listener as a VST3 instead: `Rysum Konzert.vst3` (in the Konzert zip,
+or the target `RysumKonzertPlugin_VST3`). It is the same window and the same listener, but the host
+gets every channel: AmbiX (ACN / SN3D) up to the 5th order, 36 channels.
+
+- Copy `Rysum Konzert.vst3` into `C:\Program Files\Common Files\VST3\` and `rysum-samples.rysum`
+  into `Documents\Rysum\` (or next to the `.vst3` folder).
+- Reaper: make a track with 36 channels (*Routing → Track channels: 36*), insert *Rysum Konzert*
+  as an instrument, and after it the decoder (for example IEM *AllRADecoder* or *SimpleDecoder*,
+  order 5). For a lower order, choose *AmbiX 1–4* in the plugin's menu and give the track
+  (order+1)² channels.
+- The plugin starts in *AmbiX 5*. Looking around in its 3D view turns the AmbiX scene, as in the
+  organ: leave the view facing the front (or the place one stands) for a fixed orientation.
+- It plays nothing of the host's: MIDI is ignored and it has no inputs (the player's *Eingang*
+  arrives over the network). There is no *Audio …* button; the host's audio settings apply.
+- The host must keep processing the track (monitored, or "Run FX when stopped"). If Reaper's
+  anticipative FX processing makes it stutter, choose a longer delay in the plugin.
+- Click into the 3D view before W A S D, so the keys go to the plugin and not to the host.
 
 ## 4. MIDI
 

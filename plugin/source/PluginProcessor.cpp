@@ -1517,7 +1517,9 @@ rysum::MasterSettings RysumProcessor::masterSettingsNow() const
 juce::AudioProcessor::BusesProperties RysumProcessor::makeBuses()
 {
     auto b = BusesProperties();
-#if RYSUM_FX
+#if RYSUM_KONZERT
+    // (a listener has no inputs: the player's input comes over the network)
+#elif RYSUM_FX
     b = b.withInput("Input", juce::AudioChannelSet::stereo(), true);
 #else
     b = b.withInput(juce::String::fromUTF8("Eingang"), juce::AudioChannelSet::stereo(), true)
@@ -2640,7 +2642,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     engine.tapSounds = concertRole == rysum::ConcertLink::Role::performer;
     if (!engine.tapSounds)
         engine.numTapped = 0;
-    if (concertRole == rysum::ConcertLink::Role::listener)
+    if (concertRole == rysum::ConcertLink::Role::listener || RYSUM_KONZERT)
         midi.clear();
 
     // notes that are MIDI buttons (pads mapped to a switch or to a button on screen) do not play
@@ -9147,12 +9149,28 @@ void RysumProcessor::writeFactoryPatches()
     marker.replaceWithText(juce::String(kFactoryVersion));
 }
 
+#if RYSUM_KONZERT
+namespace rysum
+{
+juce::AudioProcessorEditor *createKonzertEditor(RysumProcessor &);
+void setUpKonzertPlugin(RysumProcessor &);
+} // namespace rysum
+#endif
+
 juce::AudioProcessorEditor *RysumProcessor::createEditor()
 {
+#if RYSUM_KONZERT
+    return rysum::createKonzertEditor(*this);
+#else
     return new RysumEditor(*this);
+#endif
 }
 
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter()
 {
-    return new RysumProcessor();
+    auto *p = new RysumProcessor();
+#if RYSUM_KONZERT
+    rysum::setUpKonzertPlugin(*p);
+#endif
+    return p;
 }

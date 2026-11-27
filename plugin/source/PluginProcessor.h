@@ -25,6 +25,11 @@
 #else
 #define RYSUM_FX 0
 #endif
+// the listener as a plugin ("Rysum Konzert" VST3, source/KonzertPlugin.cpp): the same processor with
+// the listener's window, no inputs, and no MIDI from the host
+#ifndef RYSUM_KONZERT
+#define RYSUM_KONZERT 0
+#endif
 #include <deque>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>

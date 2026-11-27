@@ -305,6 +305,31 @@ if(RYSUM_BUILD_KONZERT)
     else()
         message(WARNING "Rysum Konzert: no samples at ${RYSUM_SAMPLES_DIR} - the app will look for them elsewhere")
     endif()
+
+    # The listener as a VST3 ("Rysum Konzert"), for a venue: in Reaper or another host, the host gets
+    # all the channels (AmbiX up to the 5th order, 36) and decodes them itself (source/KonzertPlugin.cpp).
+    if(RYSUM_DEV)
+        set(RYSUM_KONZERT_CODE Rys6)
+    else()
+        set(RYSUM_KONZERT_CODE Rys5)
+    endif()
+    juce_add_plugin(RysumKonzertPlugin
+        PRODUCT_NAME "${RYSUM_PRODUCT} Konzert"
+        COMPANY_NAME "Rysum"
+        BUNDLE_ID "${RYSUM_BUNDLE}.konzertplugin"
+        PLUGIN_MANUFACTURER_CODE Rysm
+        PLUGIN_CODE ${RYSUM_KONZERT_CODE}
+        FORMATS VST3
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        VST3_CATEGORIES Instrument Spatial
+        COPY_PLUGIN_AFTER_BUILD FALSE)
+    rysum_setup_plugin(RysumKonzertPlugin)
+    target_sources(RysumKonzertPlugin PRIVATE source/KonzertPlugin.cpp)
+    target_compile_definitions(RysumKonzertPlugin PRIVATE RYSUM_KONZERT=1)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -385,6 +410,13 @@ if(RYSUM_BUILD_TESTS)
         JucePlugin_IsMidiEffect=0 JucePlugin_EditorRequiresKeyboardFocus=0)
     target_link_libraries(RysumUiSnapshot PRIVATE RysumData rysum_mysofa rysum_mtsesp rysum_pffft
         juce::juce_audio_utils juce::juce_opengl juce::juce_audio_processors juce::juce_audio_formats juce::juce_dsp
+        juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+    # hosts the "Rysum Konzert" VST3 as Reaper would (36 channels) and listens to a player
+    juce_add_console_app(RysumKonzertHostTest PRODUCT_NAME "RysumKonzertHostTest")
+    target_sources(RysumKonzertHostTest PRIVATE tests/KonzertHostTest.cpp)
+    target_compile_definitions(RysumKonzertHostTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(RysumKonzertHostTest PRIVATE user32 gdi32 juce::juce_audio_processors juce::juce_gui_basics
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
     # the Vox humana through the whole plugin: RysumVoxRender <samples> <input.wav> <out folder> [seconds]
