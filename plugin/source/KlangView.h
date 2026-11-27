@@ -40,6 +40,10 @@ private:
     ParamRow *pitch = nullptr, *detune = nullptr, *tremRate = nullptr, *tremDepth = nullptr,
              *smear = nullptr, *release = nullptr, *doppler = nullptr, *distAmount = nullptr,
              *air = nullptr, *airInvert = nullptr;
+    // the Doppler shift as an instrument: how far, up and down apart, onto a grid
+    ParamRow *dopLimit = nullptr, *dopUp = nullptr, *dopDown = nullptr, *dopSnap = nullptr;
+    juce::ComboBox dopGrid;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dopGridAtt;
     juce::Label scalaReference, scalaReferenceValue;
     juce::TextButton *tremOn = nullptr, *freezeOn = nullptr, *midiOn = nullptr, *syncOn = nullptr,
                      *mpeOn = nullptr;

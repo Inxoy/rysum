@@ -247,6 +247,11 @@ struct EngineParams
 
     // distance
     float doppler = 1.0f; // 0 = off, 1 = physical, up to 4 = exaggerated
+    // the Doppler shift as an instrument: at most so many cents (softly; 1200 = as physics has it), towards
+    // the listener (up) and away (down) each by its own amount, and pulled onto a grid of intervals or the
+    // tuning's own notes (0 = gliding freely, 1 = from step to step)
+    float dopLimit = 1200.0f, dopUp = 1.0f, dopDown = 1.0f, dopSnap = 0.0f;
+    int dopGrid = 0; // 0 semitone, 1 whole tone, 2 minor third, 3 major third, 4 fourth, 5 fifth, 6 octave, 7 the tuning's notes
     float air = 0.5f;     // air absorption amount
     float airInvert =
         0.0f; // 0 = natural, 0.5 = the highs of distant pipes restored, 1 = exaggerated
@@ -734,6 +739,9 @@ public:
 
     /** ask the engine to play one pipe for ~1.5 s. Lock-free, UI thread. */
     void requestPreview(int stop, int key);
+    /** the Doppler shift in cents of a pipe whose distance changes at vr m/s, as the controls shape it (and,
+        einrasten, the step it rests on: kept until the shift has gone clearly nearer another) */
+    static float dopplerCents(float vr, int key, float &step, const EngineParams &p) noexcept;
 
     /** position of a pipe right now (base + motion), for the UI */
     Pos currentPosition(int stop, int key, const EngineParams &p) const noexcept;
@@ -846,6 +854,7 @@ private:
         WindChaos chaos;    // wind model 2: resonances, intermittent jet, hiss
         float chAir = 0.0f; // its own air filter
         float prevDist = -1.0f, dop = 1.0f, dopTarget = 1.0f;
+        float dopStep = 0.0f; // cents: the grid step the shift rests on (Doppler einrasten)
         float detuneRnd = 0.0f; // -1..1, fixed per pipe
         // modulation
         std::array<EnvState, kNumEnvs> menv{};

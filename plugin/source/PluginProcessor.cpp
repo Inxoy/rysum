@@ -1442,6 +1442,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
         l.add(std::make_unique<AudioParameterFloat>(ParameterID{"choreoAmt", 1}, "Choreografie Weite",
                                                     NormalisableRange<float>(0, 1), 1.0f, pc));
         l.add(std::make_unique<AudioParameterBool>(ParameterID{"choreoGo", 1}, "Choreografie los", false));
+        // the Doppler shift as an instrument: how far, up and down apart, onto a grid
+        auto cents = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return v >= 1199.5f ? String::fromUTF8("Oktave") : String(juce::roundToInt(v)) + " ct"; });
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"dopLimit", 1}, "Doppler Grenze",
+                                                    NormalisableRange<float>(5.0f, 1200.0f, 1.0f, 0.5f), 1200.0f, cents));
+        auto times = AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return v < 0.005f ? String("aus") : String(v, 2) + String::fromUTF8(" \xc3\x97"); });
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"dopUp", 1}, "Doppler hin",
+                                                    NormalisableRange<float>(0.0f, 4.0f, 0.01f), 1.0f, times));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"dopDown", 1}, "Doppler weg",
+                                                    NormalisableRange<float>(0.0f, 4.0f, 0.01f), 1.0f, times));
+        l.add(std::make_unique<AudioParameterChoice>(
+            ParameterID{"dopGrid", 1}, "Doppler Raster",
+            StringArray{"Halbton", "Ganzton", "kleine Terz", String::fromUTF8("gro\xc3\x9f" "e Terz"), "Quarte", "Quinte",
+                        "Oktave", "Stimmung"},
+            0));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"dopSnap", 1}, "Doppler einrasten",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pc));
     }
     return l;
 }
@@ -1640,6 +1658,11 @@ RysumProcessor::RysumProcessor()
         ix.jumpHard[(size_t)s] = I(jumpHardParamId(s));
     }
     ix.doppler = I("doppler");
+    ix.dop[0] = I("dopLimit");
+    ix.dop[1] = I("dopUp");
+    ix.dop[2] = I("dopDown");
+    ix.dop[3] = I("dopGrid");
+    ix.dop[4] = I("dopSnap");
     ix.air = I("air");
     ix.distAmount = I("distAmount");
     ix.temperament = I("temperament");
@@ -1927,6 +1950,11 @@ EngineParams RysumProcessor::readParams(const float *vals) const
         p.jumpHard[(size_t)s] = V(ix.jumpHard[(size_t)s]) > 0.5f;
     }
     p.doppler = V(ix.doppler);
+    p.dopLimit = V(ix.dop[0]);
+    p.dopUp = V(ix.dop[1]);
+    p.dopDown = V(ix.dop[2]);
+    p.dopGrid = juce::roundToInt(V(ix.dop[3]));
+    p.dopSnap = V(ix.dop[4]);
     p.air = V(ix.air);
     p.distAmount = V(ix.distAmount);
     p.tuning = tunings[(size_t)juce::jlimit(

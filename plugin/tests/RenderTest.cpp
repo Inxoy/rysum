@@ -396,6 +396,43 @@ static void testBinaural(const juce::File &sofa)
         check(std::abs(ild0) < 2.0 && ild90 < -6.0, "head rotation turns the scene");
 
         {
+            // the Doppler shift as an instrument: as before by default; a limit in cents; up and down apart; snapped
+            EngineParams dp;
+            float step = 0.0f;
+            const float phys = 1200.0f * std::log2(343.0f / (343.0f + 10.0f));
+            const float c0 = OrganEngine::dopplerCents(10.0f, 30, step, dp);
+            dp.doppler = 4.0f;
+            dp.dopLimit = 50.0f;
+            const float cLim = OrganEngine::dopplerCents(-30.0f, 30, step, dp);
+            dp.dopLimit = 1200.0f;
+            dp.doppler = 1.0f;
+            dp.dopUp = 0.0f;
+            dp.dopDown = 2.0f;
+            const float cUp = OrganEngine::dopplerCents(-10.0f, 30, step, dp), cDown = OrganEngine::dopplerCents(10.0f, 30, step, dp);
+            dp.dopUp = dp.dopDown = 1.0f;
+            dp.dopSnap = 1.0f;
+            dp.dopGrid = 0; // semitones
+            step = 0.0f;
+            const float s1 = OrganEngine::dopplerCents(20.0f, 30, step, dp);  // ~ -97 ct: onto -100
+            const float s2 = OrganEngine::dopplerCents(11.0f, 30, step, dp);  // ~ -55 ct: stays on -100 (just past the middle)
+            const float s3 = OrganEngine::dopplerCents(8.0f, 30, step, dp);   // ~ -40 ct: back to 0
+            dp.dopGrid = 7; // the tuning's notes: the key below sounds 10 ct high
+            dp.tuning.cents.fill(0.0f);
+            dp.tuning.cents[29] = 10.0f;
+            step = 0.0f;
+            const float s4 = OrganEngine::dopplerCents(20.0f, 30, step, dp);
+            dp.dopSnap = 0.5f;
+            const float s5 = OrganEngine::dopplerCents(20.0f, 30, step, dp);
+            std::cout << "Doppler: 10 m/s away " << c0 << " ct (physics " << phys << "); x4 at 30 m/s towards, at most 50 ct: "
+                      << cLim << "; up off / down x2: " << cUp << ", " << cDown << "; snapped to semitones: " << s1 << ", "
+                      << s2 << ", " << s3 << "; to the tuning's notes: " << s4 << ", half snapped " << s5 << std::endl;
+            check(std::abs(c0 - phys) < 0.01f && cLim > 40.0f && cLim <= 50.0f && cUp == 0.0f &&
+                      std::abs(cDown - 2.0f * phys) < 0.05f && s1 == -100.0f && s2 == -100.0f && s3 == 0.0f &&
+                      std::abs(s4 + 90.0f) < 0.01f && std::abs(s5 - 0.5f * (OrganEngine::dopplerCents(20.0f, 30, step, EngineParams{}) - 90.0f)) < 0.05f,
+                  "the Doppler as an instrument: limit, up and down apart, snapped to a grid and to the tuning's notes");
+        }
+
+        {
             // the full turn of the AmbiX out (looking around and up in the 3D view): a source encoded and then
             // turned is the source encoded where the turn puts it, at every order up to 5
             double worst = 0.0;

@@ -1289,10 +1289,65 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     {
         const float vr =
             juce::jlimit(-120.0f, 120.0f, (float)((pos.dist - v.prevDist) / blockSeconds));
-        v.dopTarget = juce::jlimit(0.5f, 2.0f, kSpeedOfSound / (kSpeedOfSound + p.doppler * vr));
+        v.dopTarget = std::exp2(dopplerCents(vr, v.key, v.dopStep, p) / 1200.0f);
     }
     v.prevDist = pos.dist;
     profMark(11);
+}
+
+float OrganEngine::dopplerCents(float vr, int key, float &step, const EngineParams &p) noexcept
+{
+    // as physics has it (times "Doppler"), within an octave either way
+    const float ratio = juce::jlimit(0.5f, 2.0f, kSpeedOfSound / juce::jmax(1.0f, kSpeedOfSound + p.doppler * vr));
+    float c = 1200.0f * std::log2(ratio);
+    // towards the listener (sharp) and away (flat), each by its own amount
+    c *= c > 0.0f ? p.dopUp : p.dopDown;
+    // at most so many cents: approached softly (1200 = the octave as before)
+    const float lim = juce::jlimit(1.0f, 1200.0f, p.dopLimit);
+    c = lim < 1199.5f ? lim * std::tanh(c / lim) : juce::jlimit(-1200.0f, 1200.0f, c);
+    if (p.dopSnap <= 0.0f)
+    {
+        step = 0.0f;
+        return c;
+    }
+    // einrasten: the nearest step of the grid, held until the shift has gone a tenth of a step past the
+    // middle (no flicker at the border)
+    if (p.dopGrid >= 7)
+    {
+        // the tuning's own notes: where key j sounds against this key (keys beyond the keyboard: an octave of one on it)
+        auto at = [&p](int j)
+        {
+            int jj = j;
+            while (jj < 0)
+                jj += 12;
+            while (jj >= kNumKeys)
+                jj -= 12;
+            return 100.0f * (float)j + p.tuning.cents[(size_t)jj];
+        };
+        const float here = at(key);
+        float best = step, bestD = std::abs(c - step) - 10.0f;
+        for (int j = key - 13; j <= key + 13; ++j)
+        {
+            const float s = at(j) - here, d = std::abs(c - s);
+            if (d < bestD)
+            {
+                bestD = d;
+                best = s;
+            }
+        }
+        step = best;
+    }
+    else
+    {
+        static const float grid[7]{100.0f, 200.0f, 300.0f, 400.0f, 500.0f, 700.0f, 1200.0f};
+        const float g = grid[juce::jlimit(0, 6, p.dopGrid)];
+        const float n = std::round(c / g) * g;
+        if (std::abs(c - n) < std::abs(c - step) - 0.1f * g)
+            step = n;
+        if (std::abs(step) > 1200.0f + 0.5f * g)
+            step = n;
+    }
+    return c + juce::jlimit(0.0f, 1.0f, p.dopSnap) * (step - c);
 }
 
 // ---------------------------------------------------------------------------
@@ -1507,6 +1562,7 @@ void OrganEngine::startVoice(int stop, int key, int previewSamples, int noteId)
     v->prevDist = -1.0f;
     v->dop = 1.0f;
     v->dopTarget = 1.0f;
+    v->dopStep = 0.0f;
     XorShift dr((uint32_t)(stop * 7919 + key * 104729 + 3));
     dr.next();
     v->detuneRnd = dr.bi();

@@ -190,7 +190,7 @@ int RysumProcessor::diceGroupOf(const juce::String &id) const
           "pipeFace",  "pipeSpin"})
         if (stopParam(p))
             return dgRaum;
-    if (id == "doppler" || id == "air" || id == "airInvert" || id == "distAmount" ||
+    if (id == "doppler" || id.startsWith("dop") || id == "air" || id == "airInvert" || id == "distAmount" ||
         id == "irDry" || id == "irWet" || id == "irEnvelop" || id == "irDirect")
         return dgRaum;
     // (not the room keyboard's channel - on a channel the organ plays on, its keys fall silent -

@@ -584,6 +584,13 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
 - *Entfernung · Doppler*: *Doppler* (pitch shift when a pipe's distance changes – with
   Ellipse or Drift; Sprünge never glide), *Entfernung → Lautstärke* (far pipes quieter),
   *Luft* (far pipes duller). Far pipes also send more into the Hall.
+  The Doppler as an instrument, for playing intonation with movement: *höchstens* (the shift never
+  goes past so many cents, approached softly; *Oktave* = as before), *hin (höher)* and *weg (tiefer)*
+  (how much a pipe coming towards you rises and one moving away falls, each on its own – 0 turns that
+  side off), and *einrasten* with its grid (*Halbton* … *Oktave*, or *Stimmung*: the notes of the
+  tuning itself, temperament or Scala file): 0 % glides freely, 100 % steps from one step to the next
+  (gliding briefly across, and staying on a step until the shift is a tenth of a step past the middle),
+  so a pipe flying past plays a scale. All of them can be modulated and automated.
 - *MIDI*: *MIDI-CC an* switches the fixed CC mapping (section 4); *Eigene Zuordnungen …*
   opens your own controller assignments (MIDI learn); *Bewegung im Tempo* locks all
   motion to the host tempo and song position (speeds count as written at 120 BPM; for

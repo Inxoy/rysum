@@ -1209,7 +1209,14 @@ produces a Doppler shift (\ui{Doppler}, factor $D_s\in[0,4]$, 1 = physical),
   v_r = \frac{\Delta r}{\Delta t},
 \end{equation}
 with the radial velocity $v_r$ limited to $\pm\SI{120}{m/s}$. Pipes that jump (below) never glide, so
-they have no Doppler. Far pipes also send relatively more to the room: the room send falls only with
+they have no Doppler. Since 27 November the shift can be played as intonation: in cents, $C = 1200\log_2 D$ is
+multiplied by \ui{hin} for $C > 0$ (approaching) and by \ui{weg} for $C < 0$, limited softly to $L$ = \ui{höchstens}
+by $L\tanh(C/L)$ (at $L$ = an octave, the clamp above), and pulled by \ui{einrasten} $s$ towards a step $S$ of a grid,
+$C + s\,(S - C)$: a fixed interval (semitone \ldots{} octave) or the tuning's own notes (key $j$ against the pipe's key $k$,
+$100(j-k) + t_j - t_k$ for the tuning's cents $t$). The step is held until the shift is a tenth of a step (for the tuning's
+notes \SI{10}{cents}) nearer another, so it does not flicker at the border; the voice's glide (a one-pole of $0.08$ per
+sample) carries it over. In the test, $-97$, $-55$ and $-40$ cents in a row go to the semitones $-100$, $-100$ and $0$, and
+with the key below tuned \SI{10}{cents} high the shift lands on $-90$. Far pipes also send relatively more to the room: the room send falls only with
 $0.35a$ instead of $a$.
 
 \subsection{Layouts}

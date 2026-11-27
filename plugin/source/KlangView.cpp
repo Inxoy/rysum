@@ -189,8 +189,28 @@ KlangView::KlangView(RysumProcessor &p) : proc(p)
                         "10 dB."));
 
     doppler = &row("doppler", "Doppler");
+    doppler->setTooltip(rysum::tr("Wie stark sich der Ton einer Pfeife hebt, die auf dich zukommt, und senkt, die sich entfernt "
+                                  "(1 = wie in der Luft)."));
+    dopLimit = &row("dopLimit", rysum::tr("h\xc3\xb6" "chstens"));
+    dopLimit->setTooltip(rysum::tr("Weiter als so viele Cent hebt oder senkt der Doppler den Ton nicht \xe2\x80\x93 "
+                                   "er n\xc3\xa4hert sich der Grenze sanft. Oktave = wie bisher."));
+    dopUp = &row("dopUp", rysum::tr("hin (h\xc3\xb6her)"));
+    dopUp->setTooltip(rysum::tr("Wie stark sich der Ton hebt, wenn die Pfeife auf dich zukommt (0 = gar nicht)."));
+    dopDown = &row("dopDown", rysum::tr("weg (tiefer)"));
+    dopDown->setTooltip(rysum::tr("Wie stark sich der Ton senkt, wenn die Pfeife sich entfernt (0 = gar nicht)."));
+    if (auto *choice = dynamic_cast<juce::AudioParameterChoice *>(proc.apvts.getParameter("dopGrid")))
+        for (int i = 0; i < choice->choices.size(); ++i)
+            dopGrid.addItem(rysum::tr(choice->choices[i]), i + 1);
+    dopGridAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(proc.apvts, "dopGrid", dopGrid);
+    dopGrid.setTooltip(rysum::tr("Worauf der Doppler einrastet: ein Intervall (Halbton \xe2\x80\xa6 Oktave) oder die T\xc3\xb6ne "
+                                 "der Stimmung selbst (Temperatur, Scala-Datei)."));
+    addAndMakeVisible(dopGrid);
+    dopSnap = &row("dopSnap", rysum::tr("einrasten"));
+    dopSnap->setTooltip(rysum::tr("0 % = der Ton gleitet frei, 100 % = er springt von Stufe zu Stufe des Rasters "
+                                  "(und gleitet kurz hin\xc3\xbc" "ber): eine Pfeife, die vorbeifliegt, spielt eine Tonleiter."));
     distAmount = &row("distAmount", rysum::tr("Entfernung \xe2\x86\x92 Lautst\xc3\xa4rke"));
-    air = &row("air", rysum::tr("Luft (H\xc3\xb6hen in der Ferne)"));
+    air = &row("air", rysum::tr("Luft"));
+    air->setTooltip(rysum::tr("Luft (H\xc3\xb6hen in der Ferne)"));
     airInvert = &row("airInvert", rysum::tr("Luft umkehren"));
     airInvert->setTooltip(
         rysum::tr("Gibt fernen Pfeifen die H\xc3\xb6hen zur\xc3\xbc"
@@ -411,11 +431,21 @@ void KlangView::resized()
     }
     {
         auto b = body(distBox);
-        doppler->setBounds(b.removeFromTop(38));
+        auto pair = [&b](juce::Component &l, juce::Component &r)
+        {
+            auto line = b.removeFromTop(38);
+            const int hw = (line.getWidth() - 14) / 2;
+            l.setBounds(line.removeFromLeft(hw));
+            line.removeFromLeft(14);
+            r.setBounds(line);
+        };
+        pair(*doppler, *dopLimit);
+        pair(*dopUp, *dopDown);
+        pair(dopGrid, *dopSnap);
+        dopGrid.setBounds(dopGrid.getBounds().withTrimmedTop(6).withHeight(26));
         distAmount->setBounds(b.removeFromTop(38));
-        air->setBounds(b.removeFromTop(38));
-        airInvert->setBounds(b.removeFromTop(38));
-        b.removeFromTop(16);
+        pair(*air, *airInvert);
+        b.removeFromTop(12);
         speakersButton.setBounds(b.removeFromTop(28).withWidth(230));
     }
     {
