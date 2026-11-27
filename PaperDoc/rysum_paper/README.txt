@@ -1,4 +1,4 @@
-Rysum - technical documentation (LaTeX), version 19 of 26 November 2026
+Rysum - technical documentation (LaTeX), version 20 of 27 November 2026
 
 Build (XeLaTeX is required for the plug-in's fonts):
    latexmk -xelatex main.tex
@@ -27,7 +27,7 @@ tests/          the logs of the test runs (Windows, Ryzen 5 2600X):
                 passed), uisnapshot.log (85 checks + all 181 patches of the folder, all passed), walk.log (48 checks,
                 47 passed: the walking check read this computer's pace x2.5), concert.log (20 checks, 19 passed: an
                 intermittent timing check of the input, passed in two reruns)
-main.pdf        compiled version (153 pages)
+main.pdf        compiled version (154 pages)
 
 New in version 12: the second recording session (30 October), the unstable wind's new mouth tone, several
 cores and the graphics card, built-in impulse responses, MIDI buttons, the dataset sampler, the 3D Saal as a
@@ -46,6 +46,10 @@ function (tuning, encoder, motion and layouts, the voice, degradation, partition
 room and its rotation per pipe, MagLS, crosstalk cancellation, AllRAD, the simulated room, Lucier, the output stage,
 modulation and the Verlauf, the living organ, spatial degradation, photographic operations, bodies and knocks, beats,
 echoes, the grain cloud, the reference tone, the Vox humana's glue and the clocks of Konzert), read off commit bfc83f3.
+
+New in version 20: lanes per note on a stop's controls and on timed paths (every pipe from its own key press),
+the wind chests, open Saele (courtyard, ruin, pavilion, field), painting materials onto the surfaces, shadows on the
+walls and from the lamps, the choreography, the Atmosphaere's named looks, and factory set 20 (Appendix B).
 
 New in version 19: the 3D Saal's Atmosphaere (time of day with shadows, coloured pipe light, rays and dust,
 light trails, a fog that follows the late reverb, visible doors, dissolving walls, traces of use, shine, ripples,

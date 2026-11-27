@@ -740,7 +740,7 @@ only gain entries at the end, because projects and patches store indices. Patche
 with the extension \fn{.rysum} in \fn{Documents/Rysum/Patches}. A patch contains everything that makes
 the sound -- stops, all sliders, pipe layouts and positions, muted pipes, modulation routings, drawn
 paths, Scala files and the path of a loaded impulse response -- but not the output format, the headphone
-settings or the samples folder, which belong to the session. A factory set (version~19, 189 patches,
+settings or the samples folder, which belong to the session. A factory set (version~20, 197 patches,
 Appendix~\ref{app:patches}) is written on first start; deleted factory patches stay deleted until a
 newer set is shipped. The room model of the 3D view belongs to the project, not to patches, with one exception: a patch saved
 while one of the six built-in rooms is loaded remembers that room and whether the light is off, and loading it loads the room
@@ -1719,6 +1719,11 @@ so nothing jumps as one steps past the corner. If no way is found (a strange pla
 used, \SI{30}{dB} down and low-passed at \SI{500}{Hz}. Only the direct sound is treated like this; the reflections still
 arrive from where they reach the listener. The 3D view shows how many sounding pipes are heard around a corner.
 
+\paragraph{Open Säle.} \ui{offen} (per Saal, under the door) takes surfaces away for good: a courtyard (the ceiling), a ruin (the ceiling,
+and $45\,\%$ of every wall), a pavilion (the walls), a field (all but the floor), times \ui{wie offen}. They join the room keyboard's targets
+(the smaller of the two keeps wins) and glide the same way, so the early reflections, the tail's RT by Sabine and the rebuilt convolution
+response follow; in the test the tail of a note \SIrange{0.4}{1.5}{s} after it is \SI{12}{dB} lower in a courtyard and \SI{23}{dB} in a field.
+In the 3D Saal what is open is gone whatever \ui{Wände vergehen} says, and the vault becomes a sky, as bright as the time of day.
 \paragraph{Doors.}\label{sec:doors} A Saal can have a door in one of its walls into another Saal (in the strip under the plan:
 \ui{Tür zu}, the wall, \ui{offen} $o\in[0,1]$). The door couples the two late reverbs. What is sent to the late reverb of Saal $r$, its
 sources' room sends, is also sent to the Saal $t$ behind the door, times $0.5\,o$. The W channel of $t$'s late reverb comes back through
@@ -1972,6 +1977,17 @@ dark), dust (260 motes drifting on a slow current, stirred by the Kalkant's trea
 the trails of pipes flying as bodies (32 points each). The \emph{depth of field} gathers 16 taps on a disc as wide as a pixel's circle of
 confusion ($0.06\,a\,f\,|1/d - 1/d_f|$, at most 1.2\,\% of the width), focused on the pipe under the cross or the middle of the view;
 on the card the scene is drawn into a picture of its own first.
+Shadows fall on the floor and the walls, from the sun and from the four strongest lamps: each pipe's axis is cast from the light (along it, for
+the sun) onto the first surface the rays meet, widened by the pipe's radius (for a lamp also by the ratio of the distances), as a darker patch
+of that surface (at most 1500 a frame, none over a door's opening). Eight named looks set the panel at once (\ui{Stimmung laden}), with the
+openness of the Saal and the light. \emph{Painting} (\textbf{B}): the material of the brush on the square metre under the cross; each surface
+then absorbs as the area-weighted mix of its material and its painted area (the plan carries the painted area and its mean absorption per
+surface; the tail's and the early reflections' keys include them) -- curtain over the front and back wall of a $14\times28\times11$\,m Saal took
+RT60 from 3.0 to 1.8\,s. The \emph{choreography} moves every pipe through a figure of $t \in [0,1]$ over \ui{Dauer}: each pipe runs
+$t_k = (t - 0.3\,k)/0.7$ for its place $k \in [0,1]$ on the keyboard, with the extent $e = \sin(\pi t_k)$ times \ui{Weite} (spiral: once round,
+up $60^\circ e$, in by $0.35e$; collapse: down towards $-70^\circ$; bloom: the distance $\times 2^{\mp 2e}$; whirl: $540^\circ e$; wave:
+$35^\circ e\sin 2\pi(2t - k)$; scatter: each its own way). It acts in the engine's position of every pipe, so the sound follows, and leaves the
+pipes flying as bodies alone; a test whirl took a pipe from $29^\circ$ to $-151^\circ$ and back to $29^\circ$.
 \textbf{K} puts a \emph{lantern} where the cross points (a hand's breadth short of the surface, at least \SI{15}{cm} above the floor; up to 16):
 in the dark each lights the room around it like a sounding pipe and shows a small flame (one lantern on the floor raised the mean brightness of a
 silent dark room from 0.121 to 0.164). \textbf{Shift+K} takes the nearest away, \textbf{Ctrl+K} all of them. The light and the lanterns are saved with the project.
@@ -2225,6 +2241,10 @@ that follow the pipes, making their positions audible. Everything is off by defa
         arrived.
   \item[Knistern] short crackles at every sounding pipe, which move with the pipe; density per pipe
         and length per crackle. After release the crackle fades within half a second.
+  \item[Windladen-Rauschen] under every drawn stop a band of noise (an SVF low-pass, cut-off $110 \cdot 2^{5c}$\,Hz for the colour $c$, slowly
+        swelling) at the middle of its lowest, middle and highest pipe, $12^\circ$ lower, at the level $\ell\,w_s\,P\,(0.6 + 0.4\min(1, n_s/6))$ for the
+        stop's wind $w_s$, the bellows' pressure $P$ and $n_s$ of its pipes sounding; in the test $-35$\,dB, \SI{10}{dB} less at 30\,\% stop wind.
+        \ui{folgen dem Balg} multiplies the leaks below by $1 - f + f P$.
   \item[Windlecks] up to eight hissing leaks in the wind system at fixed (optionally wandering) places,
         swelling and fluttering unevenly. \ui{Gebläse ringsum} spreads the blower around the listener.
   \item[Obertöne verteilen] above a split frequency (a multiple of each pipe's fundamental) the
@@ -2839,8 +2859,13 @@ held has its own course, so a chord whose notes came one after another has every
 be limited to one stop (\ui{nur} \emph{stop} instead of \ui{alle Register}); several such lanes, one per stop, crossfade between the stops in
 every note over seconds or minutes, for instance \ui{Pfeife: Registerwind} rising on the Gedackt while it falls on the Praestant, or the brightness of
 the Trompete opening while it moves away -- the vector synthesis of a few samplers of the 1980s, played with the stops of an organ. Loop, stretch,
-reverse, offset (a delay after the key), the variations and the spreading through the room work as before, on the note's time. Any other lane
-(a parameter, a timed path) has one value for the whole instrument and starts again with the last key pressed. In the lane a thin red line marks
+reverse, offset (a delay after the key), the variations and the spreading through the room work as before, on the note's time. A lane on a stop's \emph{control that also exists per pipe} -- its level, wind, the pipe's sound (\ui{Ansprache} \ldots{}
+\ui{Obertöne}), its grain cloud, how it radiates -- runs for every key on its own as well: the control keeps its value, and every pipe
+gets the curve at its own time against it, in the per-pipe target's units ($\Delta$dB$/36$ for the level, octaves of the ratio over 4 for
+\ui{Obertöne ab}, and so on). A \emph{timed path} per note puts every pipe at its own place on the path, from its own key press (the engine
+publishes these places, so the views show them). It is the pipe, not the voice, that restarts: a key struck again restarts its pipe's
+course, and the release of the earlier note moves with it. Any other lane (a parameter without a per-pipe target) has one value for the
+whole instrument and starts again with the last key pressed. (Projects whose per-note lanes sat on such controls now sound per pipe.) In the lane a thin red line marks
 how far the last key has got, the ruler's zero being the key press.
 
 \subsection{Pieces}
@@ -3399,6 +3424,24 @@ semitones).}
 \ui{Drehung}), doors between the Säle, the room keyboard and the source \ui{Schwebung} as a ratio. All are played with the hands;
 the spatial ones are heard best with an Ambisonics or binaural output (the omnidirectional channel hardly changes).}
 \label{tab:patches5}
+\end{table}
+
+\begin{table}[ht]
+\centering\footnotesize
+\begin{tabularx}{\linewidth}{@{}r>{\raggedright\arraybackslash}p{0.36\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+190 & Morgenandacht im Hof & an open courtyard at dawn, rays and dust; the mod wheel moves the sun from six to ten o'clock \\
+191 & Ruine im Nebel – Atem der Steine & a ruin in a fog that follows the reverb; the Kalkant treads, chests and leaks breathe with him \\
+192 & Mitternachtsmesse & the light off; the pipes light the nave in their colours, drift and leave trails \\
+193 & Feld bei Sonnenuntergang & only the ground: dry and near; the mod wheel sinks the sun \\
+194 & Der Wind erzählt (Pavillon) & a pavilion; wind chests and leaks follow the bellows, the mod wheel turns the rush from rumble to hiss \\
+195 & Tanzende Pfeifen & the figures on channel 2 (C1--B1) or J; the mod wheel widens them \\
+196 & Spirale über dem Hof & a courtyard at night, the spiral climbing into the sky \\
+197 & Verlassene Kirche & worn walls and dust; pipes fall, every knock ripples over the stones and shakes the view \\
+\bottomrule
+\end{tabularx}
+\caption{Factory patches of set 20 (190--197): the Atmosphäre of the 3D Saal, open Säle, the wind chests and the choreography.}
+\label{tab:patches6}
 \end{table}
 
 \section{Building and installing}

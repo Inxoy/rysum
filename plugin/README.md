@@ -480,6 +480,13 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
   (MIDI learn) or an envelope. A shut door is no door (the sound is exactly as without one). When
   you choose another Saal behind the door, the door shuts first and opens onto the new one. The
   plan shows the door as a gap with its leaf open as far as the door is.
+- **Offen** (same strip, per room): a Saal under the open sky – *ohne Decke (Hof)*, *Ruine* (no
+  ceiling, the walls half broken away), *Pavillon (ohne Wände)* or *Feld (nur Boden)*, and *wie offen*
+  (0–100 %, gliding like the room keyboard, modulatable: a roof that opens). What is missing reflects
+  nothing: it goes the same way as the room keyboard's walls (early reflections, the tail's RT by
+  Sabine, the convolution response rebuilt). In the 3D Saal the missing parts are gone and the sky
+  shows, as bright as the time of day. In the test a courtyard's tail is 12 dB below the closed
+  Saal's, a field's 23 dB.
 - **Raumtastatur** (room keyboard, same strip): a MIDI channel whose keys make no sound and play
   the room instead (*aus* by default). One hand plays notes, the other plays the room. The
   velocity says how far; *Gleiten* sets how fast it happens and goes back (0.01–10 s).
@@ -494,6 +501,8 @@ switches it on (the IR on the Raum page pauses meanwhile and comes back when it 
     anew without the surface in the background, a fraction of a second later. The plan shows it
     dashed in red.
   - C2–F2 (36–41): the floor, F#2–B2 (42–47): the ceiling.
+  - C1–B1 (24–35): the pipes dance a figure (*Choreografie*, below): every key one of the six
+    (repeating after F1), the velocity how far.
   - The source *Raumtastatur* in the modulation list follows how far the held keys pull, so the
     room keys can also open a door, widen the pipes or anything else.
   - Pipes that are bodies in the Saal (room motion) are not pulled.
@@ -601,7 +610,12 @@ follow the pipes. Everything is off in older patches.
 - *Knistern*: short crackles at every sounding pipe – they move with the pipe, so the ear finds
   it. *Dichte* per pipe (Hz), *Länge* of a crackle (ms).
 - *Windlecks*: up to eight hissing leaks at fixed places (they can wander). *Gebläse ringsum*:
-  the blower noise (*Wind* on the Spieltisch) comes from all sides instead of one signal.
+  the blower noise (*Wind* on the Spieltisch) comes from all sides instead of one signal. *folgen dem
+  Balg*: the leaks (the global ones and each stop's own) hiss as hard as the wind pressure of the shared
+  bellows (Lebendige Orgel) – softer as it empties, louder when the Kalkant treads (0 = as before).
+  *Windladen-Rauschen* (*Rauschen: Farbe*): under every drawn stop's pipes its wind chest rushes, from
+  the direction of its pipes a little lower, as strongly as the wind (the bellows, the stop's wind) and
+  more the more of its pallets are open; the colour goes from a low rumble to an airy hiss.
 - *Obertöne verteilen*: above *Trennung* (× the pipe's fundamental) each pipe's sound is moved
   sideways (randomly left or right per pipe) – the fundamental stays at the pipe. *Kreisen*
   turns the upper part around you.
@@ -772,7 +786,7 @@ The pipes look like what they are: the Gedackt as square wooden pipes with a mou
 front and a stopper on top, the Trompete as reed pipes - a round boot below and a long funnel
 widening up to its open top; the others as tin flue pipes.
 
-*Atmosphäre* (button in the row at the bottom) opens the look of the Saal: 23 controls in four columns,
+*Atmosphäre* (button in the row at the bottom) opens the look of the Saal: 26 controls in four columns,
 all off at first, each a plugin parameter (so modulation, scenes and the Verlauf move them; right-click
 a slider for its modulation). *Tageslicht* and *Uhrzeit*: the light's direction, colour and strength from
 the time of day (golden low morning sun from the right, white at noon, orange evening from the left,
@@ -797,6 +811,25 @@ surfaces near it. *Kamera schwankt*: the view sways more while walking and breat
 middle of the view) is sharp, nearer and further things blur. The graphics card and the processor draw
 all of it the same way (the GPU test compares them, including a frame with every effect on: 0.06 of 255).
 The rays, dust and trails lie over the picture and are not in the 360° recording.
+The shadows fall on the floor and the walls: from the sun of the time of day, and from the four
+strongest lamps – the lanterns, the sounding pipes in the dark or with *Pfeifenlicht* (at most 1500
+shadows a frame; none over the door's opening). *Stimmung laden …* (in the panel) sets a named look
+at once – *Klarer Blick* (all off), *Morgenandacht*, *Mittagslicht*, *Abendrot*, *Mitternachtsmesse*
+(the light off), *Ruine im Nebel* (an open ruin), *Hof unter Sternen*, *Verlassene Kirche*; what it
+does not name goes back to its start, and everything can be changed afterwards.
+
+*Choreografie* (*Dauer*, *Weite*, in the same panel): a figure all the pipes dance once and come back
+from – *Spirale aufwärts*, *Einsturz*, *Erblühen*, *Wirbel*, *Welle*, *Zerstreuen* –, every pipe a little
+later than the one below it, so it runs through the keyboard. **J** or *Los (J)* starts it, so does
+the switch *Choreografie los* (MIDI learn, a lane in the Verlauf: a bounce dances it the same) and
+C1–B1 on the room keyboard's channel. The sound moves with the pipes; pipes flying as bodies in the
+Saal are left out.
+
+**B** paints the material of the brush onto the square metre under the cross (walls, floor,
+ceiling of the Saal, not of a loaded model), **Shift+B** wipes it off, **Ctrl+B** takes the next
+material (*Stein*, *Putz*, *Holz*, *Glas*, *Vorhang*, *Spiegel*). The patch is seen, and heard: each
+surface absorbs as the area-weighted mix of its own material and its painted part (curtain over the
+whole front and back wall of a 14 × 28 × 11 m Saal: RT60 3.0 → 1.8 s). Saved with the project.
 
 *Immersiv* (button in the top row, or the key **I**): nothing but the picture. The 3D view fills
 the whole screen (the window goes to full screen for it and comes back afterwards), with no
