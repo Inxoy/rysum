@@ -1,11 +1,12 @@
 #include "SampleLibrary.h"
+#include "SampleArchive.h"
 
 namespace rysum
 {
 static std::shared_ptr<const Sample> readMono(juce::AudioFormatManager &fm, const juce::File &f,
                                               int fadeAfter = -1)
 {
-    std::unique_ptr<juce::AudioFormatReader> r(fm.createReaderFor(f));
+    auto r = SampleArchive::openAudio(fm, f); // (on disk, or in the packed archive)
     if (r == nullptr || r->lengthInSamples <= 0 || r->lengthInSamples > (1 << 26))
         return nullptr;
 
@@ -152,13 +153,20 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load(const juce::File &folder, juc
                                                    std::function<bool()> shouldExit)
 {
     auto jsonFile = folder.getChildFile("rysum_samples.json");
-    if (!jsonFile.existsAsFile())
+    // (no folder, but the packed archive "<folder>.rysum": its files appear under the folder's name)
+    if (!jsonFile.existsAsFile() && SampleArchive::archiveFor(folder).existsAsFile())
+        SampleArchive::mount(folder, error);
+    const auto packed = SampleArchive::find(jsonFile);
+    if (!jsonFile.existsAsFile() && packed == nullptr)
     {
         error = "rysum_samples.json not found in " + folder.getFullPathName();
         return nullptr;
     }
 
-    const juce::var root = juce::JSON::parse(jsonFile);
+    const juce::var root = packed != nullptr
+                               ? juce::JSON::parse(juce::String::fromUTF8(static_cast<const char *>(packed->getData()),
+                                                                          (int)packed->getSize()))
+                               : juce::JSON::parse(jsonFile);
     if (!root.isObject())
     {
         error = "rysum_samples.json could not be read";
@@ -362,7 +370,7 @@ std::unique_ptr<SampleLibrary> SampleLibrary::load(const juce::File &folder, juc
         for (auto &e : *irs)
         {
             const auto f = folder.getChildFile(e["file"].toString());
-            if (e["file"].toString().isNotEmpty() && f.existsAsFile())
+            if (e["file"].toString().isNotEmpty() && SampleArchive::exists(f))
                 lib->irs.push_back({e.hasProperty("name") ? e["name"].toString()
                                                           : f.getFileNameWithoutExtension(),
                                     f});

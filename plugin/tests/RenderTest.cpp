@@ -3,6 +3,7 @@
 //   RysumRenderTest <samples folder> <output folder>
 #include "Binaural.h"
 #include "Convolver.h"
+#include "SampleArchive.h"
 #include "Lucier.h"
 #include "LucierPiece.h"
 #include "OrganEngine.h"
@@ -2655,6 +2656,62 @@ int main(int argc, char **argv)
     check(lib != nullptr, "library loaded " + loadError);
     if (lib == nullptr)
         return 1;
+    {
+        // the samples packed into the scrambled archive (what releases ship): the same library, sample for
+        // sample, read in memory; the room's impulse responses too
+        const auto dir = outDir.getChildFile("archive");
+        dir.deleteRecursively();
+        dir.createDirectory();
+        const auto stand = dir.getChildFile("rysum-samples"); // (no such folder: only "rysum-samples.rysum")
+        juce::String packErr, err2;
+        const bool packed = SampleArchive::pack(folder, SampleArchive::archiveFor(stand), packErr);
+        juce::MemoryBlock head;
+        SampleArchive::archiveFor(stand).loadFileAsData(head);
+        // (no WAV header to be found anywhere in it)
+        bool riff = false;
+        for (size_t i = 0; i + 4 < head.getSize() && !riff; ++i)
+            riff = std::memcmp(static_cast<const char *>(head.getData()) + i, "RIFF", 4) == 0 ||
+                   std::memcmp(static_cast<const char *>(head.getData()) + i, "fLaC", 4) == 0;
+        std::unique_ptr<SampleLibrary> fromArc(packed ? SampleLibrary::load(stand, err2).release() : nullptr);
+        int same = 0, differ = 0;
+        if (fromArc != nullptr)
+            for (int s = 0; s < kNumStops; ++s)
+                for (int k = 0; k < kNumKeys; ++k)
+                {
+                    const auto &a = lib->pipes[(size_t)s][(size_t)k].sample, &b = fromArc->pipes[(size_t)s][(size_t)k].sample;
+                    if (a == nullptr && b == nullptr)
+                        continue;
+                    if (a != nullptr && b != nullptr && a->data == b->data && a->sampleRate == b->sampleRate)
+                        ++same;
+                    else
+                    {
+                        ++differ;
+                        std::cout << "  differs: stop " << s << " key " << k << " " << lib->pipes[(size_t)s][(size_t)k].file
+                                  << " sizes " << (a ? (int)a->data.size() : -1) << " / " << (b ? (int)b->data.size() : -1)
+                                  << " rates " << (a ? a->sampleRate : 0.0) << " / " << (b ? b->sampleRate : 0.0) << std::endl;
+                        if (a && b && a->data.size() == b->data.size())
+                        {
+                            float md = 0.0f;
+                            for (size_t i = 0; i < a->data.size(); ++i)
+                                md = juce::jmax(md, std::abs(a->data[i] - b->data[i]));
+                            std::cout << "  max difference " << md << std::endl;
+                        }
+                    }
+                }
+        juce::String irErr;
+        Convolver::Settings ist;
+        const bool irOk = fromArc != nullptr && !fromArc->irs.empty() &&
+                          Convolver::create(fromArc->irs.front().file, ist, irErr) != nullptr &&
+                          !fromArc->irs.front().file.existsAsFile();
+        std::cout << "sample archive: " << (head.getSize() >> 20) << " MB, " << same << " pipes identical, " << differ
+                  << " differ, " << (fromArc != nullptr ? (int)fromArc->irs.size() : 0) << " IRs (the first loads: "
+                  << (irOk ? "yes" : "no") << "), header found " << (riff ? "yes" : "no") << ", loaded " << (fromArc ? fromArc->loadedPipes : -1) << "/" << lib->loadedPipes << ", clicks " << (fromArc ? (int)fromArc->clicksDown.size() : -1) << "/" << (int)lib->clicksDown.size() << ", wind " << (fromArc ? (int)fromArc->wind.size() : -1) << "/" << (int)lib->wind.size() << " " << packErr << err2 << irErr << std::endl;
+        check(packed && !riff && fromArc != nullptr && same >= lib->loadedPipes && differ == 0 &&
+                  fromArc->loadedPipes == lib->loadedPipes && fromArc->clicksDown.size() == lib->clicksDown.size() &&
+                  fromArc->wind.size() == lib->wind.size() && irOk,
+              "the scrambled sample archive gives the same library, read in memory (no audio visible in the file)");
+        dir.deleteRecursively();
+    }
     if (std::getenv("RYSUM_LUCIER_DEMO") != nullptr)
     {
         // a demo for the ears: a slow chord progression while the generation grows from 1 to 20

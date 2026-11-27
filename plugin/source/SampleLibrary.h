@@ -99,7 +99,9 @@ public:
 
     static bool looksLikeSampleFolder(const juce::File &f)
     {
-        return f.getChildFile("rysum_samples.json").existsAsFile();
+        // (a folder, or the packed archive standing for it: "<folder>.rysum")
+        return f.getChildFile("rysum_samples.json").existsAsFile() ||
+               juce::File(f.getFullPathName() + ".rysum").existsAsFile();
     }
 };
 } // namespace rysum

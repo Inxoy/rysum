@@ -2962,7 +2962,11 @@ audience and imported room models other than the six built-in ones are not mirro
 
 \paragraph{The listener's program.} Listeners need neither the organ's controls nor MIDI: \emph{Rysum Konzert} (\fn{ListenerApp.cpp}) is a program of its
 own that is only the 3D Saal and a line to join a player -- address, \ui{Zuhören}/\ui{Verlassen}, delay, output, volume and the audio device --, shipped as a
-zip with the samples next to it (CMake target \fn{RysumKonzertZip}). A listener walks, looks, jumps and switches the light; the room and the Saal's
+zip with the samples next to it (CMake target \fn{RysumKonzertZip}, and the project's GitHub releases). The samples travel as one packed file,
+\fn{rysum-samples.rysum} (\fn{SampleArchive.*}, the tool \fn{RysumPack}): every file of the library, the audio as FLAC (copied as integers, so bit for
+bit: 142\,MB become 46\,MB), the whole scrambled with a keystream from a key in the program; mounted at start, its files appear under the folder's name in
+memory, and the sample library and the impulse responses read them from there -- nothing is written to disk. It is no copy protection, only no WAV to
+pick up; the render test packs the library, finds no audio header in the file and gets every pipe identical back. A listener walks, looks, jumps and switches the light; the room and the Saal's
 settings are the player's. The test (\code{RYSUM\_ONLY\_CONCERT}, \S\ref{sec:verification}) connects a player and a listener on the computer's own
 address and drives the listener from its own audio thread. Both sides must run the same version.
 

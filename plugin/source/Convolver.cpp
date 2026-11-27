@@ -1,4 +1,5 @@
 #include "Convolver.h"
+#include "SampleArchive.h"
 #include "Spatial.h"
 
 namespace rysum
@@ -95,7 +96,7 @@ std::unique_ptr<Convolver> Convolver::create(const juce::File &file, const Setti
 {
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
-    std::unique_ptr<juce::AudioFormatReader> r(fm.createReaderFor(file));
+    auto r = SampleArchive::openAudio(fm, file); // (the room's own IRs may be in the packed samples)
     if (r == nullptr)
     {
         error = "Datei nicht lesbar: " + file.getFileName();

@@ -7,6 +7,20 @@ placement in stereo or AmbiX up to 5th order, moving pipes and a degradation
 
 ![Rysum: the organ page](PaperDoc/rysum_paper/screens/ui_orgel.jpg)
 
+## Download (Windows)
+
+Ready-made builds are on the [Releases page](https://github.com/Inxoy/rysum/releases):
+
+- **Rysum-…-win64.zip** – the plugin (VST3), the standalone app and the organ's samples. Copy
+  `rysum-samples.rysum` into `Documents\Rysum\`, the folder `Rysum.vst3` into
+  `C:\Program Files\Common Files\VST3\` (or start `Rysum.exe`).
+- **Rysum-Konzert-…-win64.zip** – only the listener app for concerts (unpack, start).
+
+The samples come as one packed file, `rysum-samples.rysum`: the recordings as lossless FLAC, scrambled,
+read by the program in memory (nothing is unpacked to disk). It opens in no audio program – it is
+meant for playing this instrument, not for taking the recordings out of it. The builds are not signed:
+Windows may ask ("More info" → "Run anyway"). Player and listeners must use the same release.
+
 ## 1. Build (Windows, once)
 
 Needs: Visual Studio 2022 (workload "Desktop development with C++") and CMake.
@@ -59,7 +73,9 @@ builds and opens, but the seven sampled stops stay silent (the Vox humana, the s
 still work). If you have the library, the plugin finds it by itself in a folder `rysum-samples` at the root of the
 repository; if it is somewhere else, click **Samples-Ordner …** on the Spieltisch page and choose the folder that
 contains `rysum_samples.json`. The preparation script `scripts/rysum_preprocess.py` makes that folder from the raw
-recordings.
+recordings. Instead of the folder, the packed `rysum-samples.rysum` from a release works in the same places (next to
+the program, in `Documents\Rysum\`, at the repository's root); `RysumPack <folder>` makes one, and
+`scripts/make_release.ps1 -Tag vX` builds both release zips (without ASIO, whose SDK licence does not cover handing it out).
 
 ### Stereo
 Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.
@@ -677,8 +693,9 @@ renders the organ itself, from wherever they stand and walk in the 3D Saal, with
 
 Listeners do not need the organ itself: *Rysum Konzert* is a program of its own that is only the
 3D Saal and a line to join a player – nothing in it plays the organ (it opens no MIDI). The
-samples come with it: hand out the zip (build the target `RysumKonzertZip`; it holds the program
-and the folder `rysum-samples` next to it), unpack it anywhere and start the program.
+samples come with it: hand out the zip from the Releases page (or build the target `RysumKonzertZip`;
+it holds the program and the packed `rysum-samples.rysum` next to it), unpack it anywhere and start the
+program.
 
 - At the top: the player's address (an IP at home, `server/room` through a relay), the password,
   *Zuhören* / *Verlassen*, the delay (more = safer on an

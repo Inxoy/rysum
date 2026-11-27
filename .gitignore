@@ -54,3 +54,6 @@ newpics/
 *.rpp
 *.rpp-bak
 *.zip
+
+# release zips (scripts/make_release.ps1)
+release/

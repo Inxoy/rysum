@@ -155,7 +155,7 @@ endif()
 set(RYSUM_PLUGIN_SOURCES
     ${RYSUM_KERNEL_SOURCES}
     source/Lang.cpp
-    source/SampleLibrary.cpp
+    source/SampleLibrary.cpp source/SampleArchive.cpp
     source/OrganEngine.cpp
     source/OrganLive.cpp
     source/OrganBodies.cpp
@@ -249,9 +249,24 @@ if(RYSUM_BUILD_FX)
 endif()
 
 # ---------------------------------------------------------------------------
+# "RysumPack": packs the samples folder into the scrambled archive "rysum-samples.rysum" (FLAC,
+# lossless) that the plugin and the listener app read in memory - what releases ship instead of WAVs.
+# ---------------------------------------------------------------------------
+juce_add_console_app(RysumPack PRODUCT_NAME "RysumPack")
+target_sources(RysumPack PRIVATE source/PackSamplesMain.cpp source/SampleArchive.cpp)
+target_include_directories(RysumPack PRIVATE source)
+target_compile_definitions(RysumPack PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(RysumPack PRIVATE juce::juce_audio_formats juce::juce_core juce::juce_events
+    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+if(MSVC)
+    target_compile_options(RysumPack PRIVATE /utf-8)
+endif()
+
+# ---------------------------------------------------------------------------
 # "Rysum Konzert": the app for listeners (source/ListenerApp.cpp) - the 3D Saal and a line to join a
 # player, nothing to play with. The samples are copied next to it; the target RysumKonzertZip packs
-# program + samples into one zip to hand out. Turn off with -DRYSUM_BUILD_KONZERT=OFF.
+# the program and the scrambled sample archive into one zip to hand out. Turn off with
+# -DRYSUM_BUILD_KONZERT=OFF.
 # ---------------------------------------------------------------------------
 option(RYSUM_BUILD_KONZERT "Build the listener app 'Rysum Konzert'" ON)
 if(RYSUM_BUILD_KONZERT)
@@ -278,12 +293,15 @@ if(RYSUM_BUILD_KONZERT)
             COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different "${RYSUM_SAMPLES_DIR}"
                     "$<TARGET_FILE_DIR:RysumKonzert>/rysum-samples"
             COMMENT "Copying the samples next to the listener app")
+        # (the samples as the scrambled archive, never as WAVs)
         add_custom_target(RysumKonzertZip
+            COMMAND "$<TARGET_FILE:RysumPack>" "${RYSUM_SAMPLES_DIR}" "$<TARGET_FILE_DIR:RysumKonzert>/pack/rysum-samples.rysum"
+            COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:RysumKonzert>" "$<TARGET_FILE_DIR:RysumKonzert>/pack/"
             COMMAND ${CMAKE_COMMAND} -E tar cf "${CMAKE_BINARY_DIR}/${RYSUM_PRODUCT} Konzert.zip" --format=zip
-                    "$<TARGET_FILE_NAME:RysumKonzert>" rysum-samples
-            WORKING_DIRECTORY "$<TARGET_FILE_DIR:RysumKonzert>"
-            DEPENDS RysumKonzert
-            COMMENT "Packing the listener app with its samples")
+                    "$<TARGET_FILE_NAME:RysumKonzert>" rysum-samples.rysum
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:RysumKonzert>/pack"
+            DEPENDS RysumKonzert RysumPack
+            COMMENT "Packing the listener app with its scrambled samples")
     else()
         message(WARNING "Rysum Konzert: no samples at ${RYSUM_SAMPLES_DIR} - the app will look for them elsewhere")
     endif()
@@ -334,7 +352,7 @@ if(RYSUM_BUILD_TESTS)
         tests/RenderTest.cpp
         ${RYSUM_KERNEL_SOURCES}
         source/Lang.cpp
-        source/SampleLibrary.cpp
+        source/SampleLibrary.cpp source/SampleArchive.cpp
         source/OrganEngine.cpp
         source/OrganLive.cpp
         source/OrganBodies.cpp
@@ -359,7 +377,7 @@ if(RYSUM_BUILD_TESTS)
     target_sources(RysumUiSnapshot PRIVATE
         tests/UiSnapshot.cpp
         ${RYSUM_KERNEL_SOURCES}
-        source/Lang.cpp source/SampleLibrary.cpp source/OrganEngine.cpp source/OrganLive.cpp source/OrganBodies.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/Pano360.cpp source/PanoGpu.cpp source/SpatialMeta.cpp source/Audience.cpp source/ProcessorScenes.cpp source/ProcessorAutomation.cpp source/Concert.cpp source/PluginEditor.cpp
+        source/Lang.cpp source/SampleLibrary.cpp source/SampleArchive.cpp source/OrganEngine.cpp source/OrganLive.cpp source/OrganBodies.cpp source/Convolver.cpp source/Binaural.cpp source/RoomTail.cpp source/Lucier.cpp source/LucierPiece.cpp source/Speakers.cpp source/SofaGunzip.cpp source/PluginProcessor.cpp source/Pano360.cpp source/PanoGpu.cpp source/SpatialMeta.cpp source/Audience.cpp source/ProcessorScenes.cpp source/ProcessorAutomation.cpp source/Concert.cpp source/PluginEditor.cpp
         source/ConsoleView.cpp source/SpaceView.cpp source/KlangView.cpp source/ModView.cpp source/VerlaufView.cpp source/EffectsView.cpp source/SaalView.cpp source/MidiMapView.cpp source/OrganView.cpp source/SpeakerView.cpp source/Walk3D.cpp source/RoomModels.cpp source/WalkGpu.cpp source/WalkView.cpp source/WalkArrange.cpp source/WalkHands.cpp)
     target_include_directories(RysumUiSnapshot PRIVATE source)
     target_compile_definitions(RysumUiSnapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 JucePlugin_Build_Standalone=0
