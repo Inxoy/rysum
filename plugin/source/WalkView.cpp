@@ -829,6 +829,17 @@ bool WalkView::keyPressed (const juce::KeyPress& k)
             return true;
         }
         if ((kc == 'M' || kc == 'm') && mods.isAltDown()) { materialAll(); return true; }
+        if (kc == 'B' || kc == 'b')
+        {
+            // painting: B paints the cell under the cross, Shift+B wipes it off, Ctrl+B the next material
+            if (ctrlKey)
+            {
+                brush = (brush + 1) % kNumSurfMaterials;
+                say (rysum::tr ("Pinsel: ") + rysum::trText (juce::String::fromUTF8 (surfMaterial (brush).name)));
+            }
+            else paintHere (mods.isShiftDown());
+            return true;
+        }
         if (! ctrlKey && (kc == 'T' || kc == 't')) { whirl (mods.isShiftDown() ? 1.7f : 1.0f); return true; }
         if (! ctrlKey && (kc == 'P' || kc == 'p')) { setPause (! paused); return true; }
         if (! ctrlKey && (kc == 'H' || kc == 'h')) { leaveEars (! earsAway); return true; }
@@ -1635,6 +1646,123 @@ juce::String WalkView::surfaceName (const RoomParams& r, int surf) const
 }
 
 /** M: the surface under the cross gets the next material (after the last: as the sliders say again) */
+/** where the view meets a surface of the Saal, and where on it: u along a wall from its first corner (x on the floor
+    and ceiling), v up (y) */
+bool WalkView::surfaceHit (const RoomParams& r, V3 eye, int& surf, float& u, float& v) const
+{
+    const float ya = juce::degreesToRadians (yaw), pa = juce::degreesToRadians (juce::jlimit (-89.0f, 89.0f, pitch));
+    const V3 d { -std::sin (ya) * std::cos (pa), std::cos (ya) * std::cos (pa), std::sin (pa) };
+    float best = 1.0e30f;
+    surf = -1;
+    if (d.z < -1.0e-5f) { best = -eye.z / d.z; surf = kSurfFloor; }
+    else if (d.z > 1.0e-5f) { best = (r.H() - eye.z) / d.z; surf = kSurfCeiling; }
+    if (surf >= 0) { u = eye.x + d.x * best; v = eye.y + d.y * best; }
+    auto wall = [&] (float ax, float ay, float bx, float by, int index)
+    {
+        const float ex = bx - ax, ey = by - ay, len = std::sqrt (ex * ex + ey * ey);
+        if (len < 1.0e-3f) return;
+        const float nx = -ey / len, ny = ex / len;
+        const float dn = nx * d.x + ny * d.y;
+        if (dn > -1.0e-6f) return;
+        const float t = (nx * (eye.x - ax) + ny * (eye.y - ay)) / -dn;
+        if (t <= 0.0f || t >= best) return;
+        const float a = ((eye.x + d.x * t - ax) * ex + (eye.y + d.y * t - ay) * ey) / (len * len);
+        if (a < 0.0f || a > 1.0f) return;
+        best = t; surf = kSurfWall0 + index; u = a * len; v = eye.z + d.z * t;
+    };
+    const float W = r.W(), L = r.L();
+    if (r.box() || r.plan.n < 3) { wall (0, 0, W, 0, 0); wall (W, 0, W, L, 1); wall (W, L, 0, L, 2); wall (0, L, 0, 0, 3); }
+    else
+        for (int i = 0; i < r.plan.n; ++i)
+        {
+            const int j = (i + 1) % r.plan.n;
+            wall (r.plan.x[(size_t) i] * W, r.plan.y[(size_t) i] * L, r.plan.x[(size_t) j] * W, r.plan.y[(size_t) j] * L, i);
+        }
+    return surf >= 0;
+}
+
+void WalkView::paintHere (bool wipe)
+{
+    if (proc.getWalkMesh() != nullptr)
+    {
+        say (rysum::tr ("Malen: nur auf den Fl\xc3\xa4" "chen des Saals (ohne Modell)"));
+        return;
+    }
+    const auto r = roomNow();
+    int surf; float u, v;
+    if (! surfaceHit (r, eyeNow(), surf, u, v)) { say (rysum::tr ("Keine Fl\xc3\xa4" "che im Blick")); return; }
+    proc.paintCell (0, surf, (int) std::floor (u), (int) std::floor (v), wipe ? -1 : brush);
+    say ((wipe ? rysum::tr ("Abgewischt") : rysum::tr ("Gemalt: ") + rysum::trText (juce::String::fromUTF8 (surfMaterial (brush).name)))
+         + juce::String::fromUTF8 (" \xc2\xb7 ") + surfaceName (r, surf));
+    repaint();
+}
+
+/** the painted cells: each a patch of its material, a little in front of its surface */
+void WalkView::addPaint (const RoomParams& r)
+{
+    const auto& cells = proc.getPaint (0);
+    if (cells.empty()) return;
+    const float W = r.W(), L = r.L(), H = r.H();
+    const bool box = r.box() || r.plan.n < 3;
+    auto vt = [] (V3 p, V3 n, float u, float v) { Raster::Vert q; q.p = p; q.n = n; q.u = u; q.v = v; return q; };
+    // (the walls' lengths before this one: the texture runs on along the walls, as the Saal's own)
+    std::array<float, kMaxPlanVerts + 1> along {};
+    auto wallEnds = [&] (int w, float& ax, float& ay, float& bx, float& by)
+    {
+        if (box)
+        {
+            const float c[4][4] { { 0, 0, W, 0 }, { W, 0, W, L }, { W, L, 0, L }, { 0, L, 0, 0 } };
+            const int k = ((w % 4) + 4) % 4;
+            ax = c[k][0]; ay = c[k][1]; bx = c[k][2]; by = c[k][3];
+            return w < 4;
+        }
+        if (w >= r.plan.n) return false;
+        const int j = (w + 1) % r.plan.n;
+        ax = r.plan.x[(size_t) w] * W; ay = r.plan.y[(size_t) w] * L; bx = r.plan.x[(size_t) j] * W; by = r.plan.y[(size_t) j] * L;
+        return true;
+    };
+    {
+        const int nw = box ? 4 : r.plan.n;
+        for (int w = 0; w < nw; ++w)
+        {
+            float ax, ay, bx, by;
+            wallEnds (w, ax, ay, bx, by);
+            along[(size_t) w + 1] = along[(size_t) w] + std::hypot (bx - ax, by - ay);
+        }
+    }
+    for (const auto& c : cells)
+    {
+        const int slot = kSlotPaint0 + juce::jlimit (0, kNumSurfMaterials - 1, c.mat);
+        if (c.surf < kSurfWall0)
+        {
+            const bool top = c.surf == kSurfCeiling;
+            const float z = top ? H - 0.02f : 0.02f;
+            const float x0 = juce::jmax (0.0f, (float) c.iu), x1 = juce::jmin (W, (float) c.iu + 1.0f);
+            const float y0 = juce::jmax (0.0f, (float) c.iv), y1 = juce::jmin (L, (float) c.iv + 1.0f);
+            if (x1 <= x0 || y1 <= y0) continue;
+            const V3 n { 0, 0, top ? -1.0f : 1.0f };
+            const auto a = vt ({ x0, y0, z }, n, x0, y0), b = vt ({ x1, y0, z }, n, x1, y0), cc = vt ({ x1, y1, z }, n, x1, y1), d = vt ({ x0, y1, z }, n, x0, y1);
+            rast.triangle (a, b, cc, slot, 1.0f);
+            rast.triangle (a, cc, d, slot, 1.0f);
+            continue;
+        }
+        const int w = c.surf - kSurfWall0;
+        float ax, ay, bx, by;
+        if (! wallEnds (w, ax, ay, bx, by)) continue;
+        const float len = std::hypot (bx - ax, by - ay);
+        if (len < 1.0e-3f) continue;
+        const V3 t { (bx - ax) / len, (by - ay) / len, 0.0f }, n { -t.y, t.x, 0.0f };
+        const float u0 = juce::jmax (0.0f, (float) c.iu), u1 = juce::jmin (len, (float) c.iu + 1.0f);
+        const float v0 = juce::jmax (0.0f, (float) c.iv), v1 = juce::jmin (H, (float) c.iv + 1.0f);
+        if (u1 <= u0 || v1 <= v0) continue;
+        const V3 o = V3 { ax, ay, 0.0f } + n * 0.02f;
+        const float ua = along[(size_t) w];
+        auto at = [&] (float uu, float vv) { return vt (o + t * uu + V3 { 0, 0, vv }, n, ua + uu, vv); };
+        rast.triangle (at (u0, v0), at (u1, v0), at (u1, v1), slot, 1.0f);
+        rast.triangle (at (u0, v0), at (u1, v1), at (u0, v1), slot, 1.0f);
+    }
+}
+
 void WalkView::cycleMaterial()
 {
     if (aimSurf < 0)
@@ -2546,6 +2674,15 @@ void WalkView::buildScene (float phys)
         aimSurf = surfaceAhead (r, eye);
         const int aimSlot = aimSurf < 0 ? -1 : (aimSurf == kSurfFloor ? (int) kSlotFloor : (aimSurf == kSurfCeiling ? (int) kSlotCeiling : kSlotWall0 + aimSurf - kSurfWall0));
         for (const auto& t : roomTris) rast.triangle (t.a, t.b, t.c, t.slot, t.slot == aimSlot && ! panoCapturing ? t.tone * 1.1f : t.tone);
+        {
+            // the paint: every material its own slot, looking as it would as the whole wall
+            for (int m = 0; m < kNumSurfMaterials; ++m)
+            {
+                const auto& sm = surfMaterial (m);
+                rast.setMaterial (kSlotPaint0 + m, wallMaterial (sm.aw, sm.hi, r.scatter));
+            }
+            addPaint (r);
+        }
         if (showDoor)
         {
             RoomParams next = params.roomAt (dr.to);

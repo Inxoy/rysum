@@ -3526,6 +3526,9 @@ void RysumProcessor::setDrawnPlan(int room, const rysum::FloorPlan &f)
     // (the materials of the surfaces belong to the room: a new outline keeps them)
     auto g = f;
     g.surf = drawnPlans[(size_t)room].surf;
+    g.paintArea = drawnPlans[(size_t)room].paintArea;
+    g.paintLow = drawnPlans[(size_t)room].paintLow;
+    g.paintHigh = drawnPlans[(size_t)room].paintHigh;
     drawnPlans[(size_t)room] = g;
     engine.setDrawnPlan(room, g);
     ++changeCounter;
@@ -3542,6 +3545,70 @@ void RysumProcessor::setSurfaceMaterial(int room, int surf, int material)
     else
         d.surf[(size_t)surf] = m;
     engine.setDrawnPlan(room, d);
+    ++changeCounter;
+}
+
+void RysumProcessor::paintCell(int room, int surf, int iu, int iv, int material)
+{
+    if (room < 0 || room >= rysum::kNumRooms || surf < 0 || surf >= rysum::kMaxSurf)
+        return;
+    auto &cells = paints[(size_t)room];
+    auto it = std::find_if(cells.begin(), cells.end(), [&](const PaintCell &c) { return c.surf == surf && c.iu == iu && c.iv == iv; });
+    if (material < 0)
+    {
+        if (it == cells.end())
+            return;
+        cells.erase(it);
+    }
+    else
+    {
+        material = juce::jlimit(0, rysum::kNumSurfMaterials - 1, material);
+        if (it != cells.end())
+        {
+            if (it->mat == material)
+                return;
+            it->mat = material;
+        }
+        else if (cells.size() < 4000)
+            cells.push_back({surf, iu, iv, material});
+        else
+            return;
+    }
+    refreshPaint(room);
+}
+
+void RysumProcessor::clearPaint(int room)
+{
+    if (room < 0 || room >= rysum::kNumRooms || paints[(size_t)room].empty())
+        return;
+    paints[(size_t)room].clear();
+    refreshPaint(room);
+}
+
+/** the painted cells into the plan: per surface the painted area and its mean absorption (the engine mixes it) */
+void RysumProcessor::refreshPaint(int room)
+{
+    auto &d = drawnPlans[(size_t)room];
+    d.paintArea.fill(0.0f);
+    d.paintLow.fill(0.0f);
+    d.paintHigh.fill(0.0f);
+    for (const auto &c : paints[(size_t)room])
+    {
+        const auto &m = rysum::surfMaterial(c.mat);
+        const bool level = c.surf < rysum::kSurfWall0;
+        const float a = juce::jlimit(0.0f, 0.99f, level ? m.af : m.aw);
+        d.paintArea[(size_t)c.surf] += 1.0f;
+        d.paintLow[(size_t)c.surf] += a;
+        d.paintHigh[(size_t)c.surf] += juce::jlimit(0.0f, 0.99f, a + m.hi * (1.0f - a) * 0.6f);
+    }
+    for (int s = 0; s < rysum::kMaxSurf; ++s)
+        if (d.paintArea[(size_t)s] > 0.0f)
+        {
+            d.paintLow[(size_t)s] /= d.paintArea[(size_t)s];
+            d.paintHigh[(size_t)s] /= d.paintArea[(size_t)s];
+        }
+    engine.setDrawnPlan(room, d);
+    ++paintChanges;
     ++changeCounter;
 }
 
@@ -3617,6 +3684,16 @@ static rysum::FloorPlan planFromString(const juce::String &s)
     return f;
 }
 
+static juce::String paintString(const rysum::RoomParams &r)
+{
+    juce::String s;
+    for (int i = 0; i < rysum::kMaxSurf; ++i)
+        if (r.plan.paintArea[(size_t)i] > 0.0f)
+            s << "|p" << i << ":" << juce::roundToInt(r.plan.paintArea[(size_t)i]) << ":"
+              << juce::roundToInt(1000.0f * r.plan.paintLow[(size_t)i]);
+    return s;
+}
+
 static juce::String goneString(const rysum::RoomParams &r)
 {
     juce::String s;
@@ -3640,7 +3717,7 @@ juce::String RysumProcessor::roomKey(int room) const
            juce::String(juce::jmin(2, engine.roomOutOrder.load())) + "|" +
            juce::String(hostRate.load(), 0) +
            (r.box() ? juce::String() : "|" + juce::String(r.shape) + "|" + planString(r.plan)) +
-           (r.plan.anySurf() ? "|s" + surfString(r.plan) : juce::String()) + goneString(r) +
+           (r.plan.anySurf() ? "|s" + surfString(r.plan) : juce::String()) + goneString(r) + paintString(r) +
            // (Saal 1 with a model that is heard: the rays go through the model)
            (room == 0 && walkHear && getWalkAcoustics() != nullptr
                 ? "|m" + juce::String(getWalkAcoustics()->serial)
@@ -4511,6 +4588,16 @@ juce::ValueTree RysumProcessor::makeState(bool forPatch)
             // (compared without the materials: they are stored on their own)
             auto outline = drawnPlans[(size_t)r];
             outline.surf = rysum::FloorPlan::noSurf();
+            outline.paintArea = {};
+            outline.paintLow = {};
+            outline.paintHigh = {};
+            if (!paints[(size_t)r].empty())
+            {
+                juce::StringArray cells;
+                for (const auto &c : paints[(size_t)r])
+                    cells.add(juce::String(c.surf) + " " + juce::String(c.iu) + " " + juce::String(c.iv) + " " + juce::String(c.mat));
+                plans.setProperty("paint" + juce::String(r), cells.joinIntoString(","), nullptr);
+            }
             if (!(outline == rysum::defaultDrawnPlan()))
                 plans.setProperty("room" + juce::String(r), planString(drawnPlans[(size_t)r]),
                                   nullptr);
@@ -4650,6 +4737,27 @@ void RysumProcessor::applyState(juce::ValueTree state, bool forPatch)
             {
                 drawnPlans[(size_t)r].surf = surf;
                 engine.setDrawnPlan(r, drawnPlans[(size_t)r]);
+            }
+            // the painted parts (none stored: none)
+            {
+                std::vector<PaintCell> cells;
+                if (plans.isValid() && plans.hasProperty("paint" + juce::String(r)))
+                {
+                    juce::StringArray v;
+                    v.addTokens(plans["paint" + juce::String(r)].toString(), ",", {});
+                    for (auto &t : v)
+                    {
+                        juce::StringArray q;
+                        q.addTokens(t, " ", {});
+                        if (q.size() >= 4 && cells.size() < 4000)
+                            cells.push_back({juce::jlimit(0, rysum::kMaxSurf - 1, q[0].getIntValue()), q[1].getIntValue(),
+                                             q[2].getIntValue(), juce::jlimit(0, rysum::kNumSurfMaterials - 1, q[3].getIntValue())});
+                    }
+                }
+                const bool had = !paints[(size_t)r].empty();
+                paints[(size_t)r] = std::move(cells);
+                if (had || !paints[(size_t)r].empty())
+                    refreshPaint(r);
             }
         }
     }

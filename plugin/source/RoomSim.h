@@ -76,6 +76,9 @@ struct FloorPlan
     /** the material of every surface (an index for surfMaterial), -1 = as the Saal's sliders say
         (absorption walls / floor + ceiling, high damping). It travels with the plan. */
     std::array<int8_t, kMaxSurf> surf = noSurf();
+    /** painted parts (the 3D view's brush): per surface the painted area (m2) and its mean absorption, low and
+        high - the surface absorbs as the area-weighted mix of its own material and the paint */
+    std::array<float, kMaxSurf> paintArea{}, paintLow{}, paintHigh{};
     static constexpr std::array<int8_t, kMaxSurf> noSurf() noexcept
     {
         return {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
@@ -89,7 +92,7 @@ struct FloorPlan
     }
     bool operator==(const FloorPlan &o) const noexcept
     {
-        if (n != o.n || surf != o.surf)
+        if (n != o.n || surf != o.surf || paintArea != o.paintArea || paintLow != o.paintLow || paintHigh != o.paintHigh)
             return false;
         // Exact equality detects changes to stored coordinates, not geometric proximity.
         return std::equal(x.begin(), x.begin() + n, o.x.begin()) &&
@@ -162,6 +165,32 @@ struct BandAbsorption
 
 /** absorption of every single surface in the two bands (see kMaxSurf for the order). A surface
     without a material of its own follows the sliders (BandAbsorption). */
+/** a surface's area (m2): floor and ceiling, or a wall (the plan's edge, or a shoebox's side) */
+inline float surfaceArea(const RoomParams &r, int surf) noexcept
+{
+    const float W = r.W(), L = r.L(), H = r.H();
+    const bool box = r.box() || r.plan.n < 3;
+    if (surf < kSurfWall0)
+    {
+        if (box)
+            return W * L;
+        float a = 0.0f;
+        for (int i = 0; i < r.plan.n; ++i)
+        {
+            const int j = (i + 1) % r.plan.n;
+            a += r.plan.x[(size_t)i] * r.plan.y[(size_t)j] - r.plan.x[(size_t)j] * r.plan.y[(size_t)i];
+        }
+        return 0.5f * std::abs(a) * W * L;
+    }
+    const int w = surf - kSurfWall0;
+    if (box)
+        return (w % 2 == 0 ? W : L) * H;
+    if (w >= r.plan.n)
+        return 0.0f;
+    const int j = (w + 1) % r.plan.n;
+    return std::hypot((r.plan.x[(size_t)j] - r.plan.x[(size_t)w]) * W, (r.plan.y[(size_t)j] - r.plan.y[(size_t)w]) * L) * H;
+}
+
 struct SurfAbs
 {
     std::array<float, kMaxSurf> low{}, high{};
@@ -184,6 +213,14 @@ struct SurfAbs
                 const float a = juce::jlimit(0.0f, 0.99f, fl ? mat.af : mat.aw);
                 s.low[(size_t)i] = a;
                 s.high[(size_t)i] = juce::jlimit(0.0f, 0.99f, a + mat.hi * (1.0f - a) * 0.6f);
+            }
+            // (painted parts: the area-weighted mix)
+            if (r.plan.paintArea[(size_t)i] > 0.0f)
+            {
+                const float area = surfaceArea(r, i);
+                const float f = area > 1.0e-3f ? juce::jlimit(0.0f, 1.0f, r.plan.paintArea[(size_t)i] / area) : 0.0f;
+                s.low[(size_t)i] += f * (r.plan.paintLow[(size_t)i] - s.low[(size_t)i]);
+                s.high[(size_t)i] += f * (r.plan.paintHigh[(size_t)i] - s.high[(size_t)i]);
             }
             const float g = juce::jlimit(0.0f, 1.0f, r.gone[(size_t)i]);
             if (g > 0.0f)
@@ -232,6 +269,9 @@ inline float surfKey(const RoomParams &r) noexcept
     uint32_t h = 2166136261u;
     for (auto v : r.plan.surf)
         h = (h ^ (uint32_t)(v + 2)) * 16777619u;
+    for (int i = 0; i < kMaxSurf; ++i)
+        if (r.plan.paintArea[(size_t)i] > 0.0f)
+            h = (h ^ (uint32_t)(r.plan.paintArea[(size_t)i] * 10.0f + r.plan.paintLow[(size_t)i] * 1000.0f + (float)i * 7.0f)) * 16777619u;
     return (float)(h & 0xffffffu);
 }
 
@@ -423,6 +463,9 @@ inline void finishPlan(RoomParams &r, const FloorPlan &drawn) noexcept
     const auto surf = drawn.surf;
     r.plan = r.box() ? FloorPlan() : makeFloorPlan(r.shape, r.shapeAmt, drawn);
     r.plan.surf = surf; // (the materials belong to the room, whatever its shape)
+    r.plan.paintArea = drawn.paintArea;
+    r.plan.paintLow = drawn.paintLow;
+    r.plan.paintHigh = drawn.paintHigh;
 }
 
 /** does a polygon cross itself? (the drawn plan must not) */

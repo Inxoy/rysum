@@ -164,7 +164,8 @@ public:
     juce::String renderStats() const { return "raster + shade " + juce::String (rast.rasterMs, 1) + " ms, " + juce::String (rast.workerCount()) + " workers, " + juce::String (rast.trianglesDrawn) + " triangles"; }
 
 private:
-    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWood, kSlotGlass, kSlotWall0 = 8 };   // (kSlotWall0 + i: wall i, each with its own material; glass: the Vox humana)
+    enum Slot { kSlotWall = 0, kSlotFloor, kSlotCeiling, kSlotModel, kSlotMetal, kSlotDark, kSlotWood, kSlotGlass, kSlotWall0 = 8,
+                kSlotPaint0 = 24 };      // (kSlotPaint0 + m: the brush's material m, m < kNumSurfMaterials)   // (kSlotWall0 + i: wall i, each with its own material; glass: the Vox humana)
     /** the Vox humana: a glass pipe as long as the note it sings, wrapped in rings - its harmonics */
     void addVoxPipe (V3 bottom, float len, float rad, float faceAngle, float glowAmt, const float* rings);
     /** its eight voices at its place in the Saal (and their glows, as lamps) */
@@ -413,6 +414,15 @@ private:
     juce::TextButton actLook { juce::String::fromUTF8 ("Atmosph\xc3\xa4re") };
     juce::Rectangle<int> lookArea;
     void showLook (bool on);
+    // painting (B): the material under the cross, a cell of 1 m at a time
+    int brush = 4;                              // (an index for surfMaterial: the curtain)
+    bool surfaceHit (const RoomParams& r, V3 eye, int& surf, float& u, float& v) const;
+    void paintHere (bool wipe);
+    void addPaint (const RoomParams& r);
+public:
+    void paintForTest (bool wipe) { paintHere (wipe); }
+    void setBrushForTest (int m) { brush = m; }
+private:
 public:
     void setLookOpenForTest (bool on) { showLook (on); }
 private:

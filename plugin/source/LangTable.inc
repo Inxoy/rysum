@@ -1954,3 +1954,7 @@
 {"Feld (nur Boden)", "Field (only the ground)"},
 {"Der Saal unter freiem Himmel: ohne Decke (ein Hof), als Ruine (keine Decke, die W\xc3\xa4nde halb eingest\xc3\xbcrzt), als Pavillon (ein Dach, keine W\xc3\xa4nde) oder als Feld (nur der Boden). Was fehlt, wirft nichts zur\xc3\xbc" "ck: fr\xc3\xbche Reflexionen und Nachhall werden k\xc3\xbcrzer, im 3D-Saal ist der Himmel zu sehen.", "The Saal under the open sky: no ceiling (a courtyard), a ruin (no ceiling, the walls half fallen in), a pavilion (a roof, no walls) or a field (only the ground). What is missing reflects nothing: early reflections and reverb get shorter, in the 3D Saal the sky can be seen."},
 {"Wie weit der Saal offen ist (gleitend, wie die Raumtastatur): modulierbar \xe2\x80\x93 ein Dach, das sich \xc3\xb6" "ffnet.", "How far the Saal is open (gliding, like the room keyboard): can be modulated \xe2\x80\x93 a roof that opens."},
+{"Pinsel: ", "Brush: "},
+{"Gemalt: ", "Painted: "},
+{"Abgewischt", "Wiped off"},
+{"Malen: nur auf den Fl\xc3\xa4" "chen des Saals (ohne Modell)", "Painting: only on the Saal's surfaces (without a model)"},

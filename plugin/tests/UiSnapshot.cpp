@@ -459,6 +459,42 @@ public:
                 run(150, {});
             }
             {
+                // painting: B paints the cell under the cross; then whole walls in curtain - the reverb gets shorter
+                wv.setPoseForTest(0.0f, 0.0f, 0.0f);
+                wv.setPitchForTest(4.0f);
+                run(4, {});
+                const auto plain = snap();
+                wv.setBrushForTest(4); // Vorhang
+                wv.paintForTest(false);
+                const int one = (int)proc->getPaint(0).size();
+                const float rt0 = proc->engine.heard[0].rtLow.load();
+                const auto r0 = proc->readParams().roomAt(0);
+                for (int surf : {rysum::kSurfWall0 + 0, rysum::kSurfWall0 + 2})
+                    for (int iu = 0; iu < (int)std::ceil(r0.W()); ++iu)
+                        for (int iv = 0; iv < (int)std::ceil(r0.H()); ++iv)
+                            proc->paintCell(0, surf, iu, iv, 4);
+                run(60, {});
+                const float rt1 = proc->engine.heard[0].rtLow.load();
+                const auto painted = snap();
+                shot("walk_look_paint.png");
+                const double pc = changed(painted, plain);
+                say("Malen: B painted " + juce::String(one) + " cell, front and back walls in curtain: " + juce::String(pc, 1) +
+                        " % of the picture changes, RT60 " + juce::String(rt0, 2) + " -> " + juce::String(rt1, 2) + " s",
+                    one == 1 && pc > 5.0 && rt1 < rt0 * 0.85f);
+                // saved with the project and back
+                juce::MemoryBlock mbk;
+                proc->getStateInformation(mbk);
+                const int n = (int)proc->getPaint(0).size();
+                proc->clearPaint(0);
+                proc->setStateInformation(mbk.getData(), (int)mbk.getSize());
+                say("Malen: saved and loaded (" + juce::String((int)proc->getPaint(0).size()) + " of " + juce::String(n) + " cells)",
+                    (int)proc->getPaint(0).size() == n);
+                proc->clearPaint(0);
+                run(30, {});
+                wv.setPoseForTest(0.0f, -2.0f, 0.0f);
+                wv.setPitchForTest(-8.0f);
+            }
+            {
                 // depth of field: looking at the near wall the pipes far off blur
                 wv.setPoseForTest(0.0f, -2.0f, 0.0f);
                 wv.setPitchForTest(-8.0f);

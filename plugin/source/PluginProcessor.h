@@ -755,11 +755,27 @@ public:
     /** the material of one surface of a Saal (kSurfFloor, kSurfCeiling, kSurfWall0 + wall;
         material: an index for surfMaterial, -1 = as the sliders say) */
     void setSurfaceMaterial(int room, int surf, int material);
+    /** painting (the 3D view's brush): a cell of 1 m on a surface (u along a wall from its first corner / x on the
+        floor and ceiling, v up / y), with a material (an index for surfMaterial; -1 = wipe it off). Message thread. */
+    struct PaintCell
+    {
+        int surf = 0, iu = 0, iv = 0, mat = 0;
+    };
+    void paintCell(int room, int surf, int iu, int iv, int material);
+    void clearPaint(int room);
+    const std::vector<PaintCell> &getPaint(int room) const
+    {
+        return paints[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, room)];
+    }
+    int paintSerial() const noexcept { return paintChanges; }
     int getSurfaceMaterial(int room, int surf) const
     {
         return drawnPlans[(size_t)juce::jlimit(0, rysum::kNumRooms - 1, room)]
             .surf[(size_t)juce::jlimit(0, rysum::kMaxSurf - 1, surf)];
     }
+    std::array<std::vector<PaintCell>, rysum::kNumRooms> paints;
+    int paintChanges = 0;
+    void refreshPaint(int room);
     juce::File walkModelFile;
     bool walkZUp = false;
     bool walkDark = false; // the 3D view with the light off: the sounding pipes light the room
