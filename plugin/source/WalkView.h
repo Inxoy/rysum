@@ -419,9 +419,16 @@ private:
     bool surfaceHit (const RoomParams& r, V3 eye, int& surf, float& u, float& v) const;
     void paintHere (bool wipe);
     void addPaint (const RoomParams& r);
+    // shadows: every pipe of this frame (its axis), cast by the sun and the strongest lamps onto the floor and the walls
+    struct Caster { V3 bottom; float len, rad; };
+    std::vector<Caster> casters;
+    DoorCut cutNow;
+    int shadowQuads = 0;
+    void castShadows (const RoomParams& r, bool dark);
 public:
     void paintForTest (bool wipe) { paintHere (wipe); }
     void setBrushForTest (int m) { brush = m; }
+    int shadowQuadsForTest() const { return shadowQuads; }
 private:
 public:
     void setLookOpenForTest (bool on) { showLook (on); }

@@ -1697,6 +1697,139 @@ void WalkView::paintHere (bool wipe)
     repaint();
 }
 
+/** shadows: the pipes' axes cast onto the floor and the walls - by the sun of the time of day (along its direction)
+    and by the strongest lamps (the lanterns, the sounding pipes in the dark or with "Pfeifenlicht": from their place).
+    Each a darker patch of the surface it falls on; no more than 1500 of them. */
+void WalkView::castShadows (const RoomParams& r, bool dark)
+{
+    shadowQuads = 0;
+    struct Light { V3 at; bool point; float strength, reach; };
+    std::vector<Light> lights;
+    if (shadowAmt > 0.0f && ! dark) lights.push_back ({ rast.lightDirNow(), false, shadowAmt, 1.0e9f });
+    {
+        std::vector<const Raster::Lamp*> strong;
+        for (const auto& l : lamps) if (l.power > 0.08f) strong.push_back (&l);
+        std::sort (strong.begin(), strong.end(), [] (const Raster::Lamp* a, const Raster::Lamp* b) { return a->power > b->power; });
+        for (size_t i = 0; i < strong.size() && i < 4; ++i)
+            lights.push_back ({ strong[i]->at, true, juce::jlimit (0.0f, 0.6f, (dark ? 0.9f : 0.5f) * strong[i]->power), 2.5f * strong[i]->reach });
+    }
+    if (lights.empty() || casters.empty()) return;
+    const float W = r.W(), L = r.L(), H = r.H();
+    const bool box = r.box() || r.plan.n < 3;
+    // the walls: their ends and how far the texture has run before them
+    struct Wall { float ax, ay, bx, by, len, along; V3 t, n; };
+    std::vector<Wall> walls;
+    {
+        float along = 0.0f;
+        const int nw = box ? 4 : r.plan.n;
+        for (int w = 0; w < nw; ++w)
+        {
+            float ax, ay, bx, by;
+            if (box)
+            {
+                const float c[4][4] { { 0, 0, W, 0 }, { W, 0, W, L }, { W, L, 0, L }, { 0, L, 0, 0 } };
+                ax = c[w][0]; ay = c[w][1]; bx = c[w][2]; by = c[w][3];
+            }
+            else
+            {
+                const int j = (w + 1) % r.plan.n;
+                ax = r.plan.x[(size_t) w] * W; ay = r.plan.y[(size_t) w] * L; bx = r.plan.x[(size_t) j] * W; by = r.plan.y[(size_t) j] * L;
+            }
+            const float len = std::hypot (bx - ax, by - ay);
+            const V3 t = len > 1.0e-4f ? V3 { (bx - ax) / len, (by - ay) / len, 0.0f } : V3 { 1, 0, 0 };
+            walls.push_back ({ ax, ay, bx, by, len, along, t, { -t.y, t.x, 0.0f } });
+            along += len;
+        }
+    }
+    // the first surface a ray from p along d meets beyond p: -1 floor, else the wall's index; the point
+    auto hit = [&] (V3 p, V3 d, int& surf, V3& q)
+    {
+        float best = 1.0e30f;
+        surf = -2;
+        if (d.z < -1.0e-5f) { best = -p.z / d.z; surf = -1; }
+        for (int w = 0; w < (int) walls.size(); ++w)
+        {
+            const auto& wl = walls[(size_t) w];
+            const float dn = dot (wl.n, d);
+            if (dn > -1.0e-6f) continue;
+            const float t = (dot (wl.n, p) - (wl.n.x * wl.ax + wl.n.y * wl.ay)) / -dn;
+            if (t <= 0.0f || t >= best) continue;
+            const V3 x = p + d * t;
+            const float u = (x.x - wl.ax) * wl.t.x + (x.y - wl.ay) * wl.t.y;
+            if (u < 0.0f || u > wl.len || x.z < 0.0f || x.z > H) continue;
+            best = t; surf = w;
+        }
+        if (surf == -2) return false;
+        q = p + d * best;
+        return true;
+    };
+    auto vt = [] (V3 p, V3 n, float u, float v) { Raster::Vert q; q.p = p; q.n = n; q.u = u; q.v = v; return q; };
+    for (const auto& li : lights)
+        for (const auto& c : casters)
+        {
+            if (shadowQuads >= 1500) return;
+            const V3 top { c.bottom.x, c.bottom.y, c.bottom.z + c.len }, mid { c.bottom.x, c.bottom.y, c.bottom.z + 0.5f * c.len };
+            V3 dirB, dirT;
+            float spread = 1.0f;          // (a near lamp throws a wider shadow)
+            if (li.point)
+            {
+                const V3 e = mid - li.at;
+                const float dl = std::sqrt (dot (e, e));
+                if (dl < 0.35f || dl > li.reach) continue;           // (its own pipe, or too far to cast)
+                dirB = normalised (c.bottom - li.at); dirT = normalised (top - li.at);
+                spread = 1.0f;
+            }
+            else dirB = dirT = li.at * -1.0f;
+            int sb, st; V3 qb, qt;
+            if (! hit (c.bottom, dirB, sb, qb) || ! hit (top, dirT, st, qt) || sb != st) continue;
+            if (li.point)
+            {
+                const float d0 = std::sqrt (dot (c.bottom - li.at, c.bottom - li.at)), d1 = std::sqrt (dot (qb - li.at, qb - li.at));
+                spread = juce::jlimit (1.0f, 6.0f, d1 / juce::jmax (0.05f, d0));
+            }
+            const float tone = 1.0f - li.strength;
+            if (sb == -1)
+            {
+                // on the floor, a little above it
+                V3 sd { -(qt.y - qb.y), qt.x - qb.x, 0.0f };
+                const float sl = std::sqrt (sd.x * sd.x + sd.y * sd.y);
+                if (sl > 40.0f) continue;
+                sd = sl > 1.0e-4f ? sd * (c.rad * spread / sl) : V3 { c.rad * spread, 0, 0 };
+                const V3 nz { 0, 0, 1 }, lift { 0, 0, 0.004f };
+                auto fv = [&] (V3 p) { p = p + lift; return vt (p, nz, p.x, p.y); };
+                rast.triangle (fv (qb - sd), fv (qb + sd), fv (qt + sd), kSlotFloor, tone);
+                rast.triangle (fv (qb - sd), fv (qt + sd), fv (qt - sd), kSlotFloor, tone);
+            }
+            else
+            {
+                // on a wall, a little in front of it (not over the door's opening)
+                const auto& wl = walls[(size_t) sb];
+                auto uOf = [&] (V3 p) { return (p.x - wl.ax) * wl.t.x + (p.y - wl.ay) * wl.t.y; };
+                const float ub = uOf (qb), ut = uOf (qt);
+                if (sb == cutNow.wall)
+                {
+                    const float d0 = 0.5f * wl.len - cutNow.halfW, d1 = 0.5f * wl.len + cutNow.halfW;
+                    if (juce::jmax (ub, ut) > d0 && juce::jmin (ub, ut) < d1 && juce::jmin (qb.z, qt.z) < cutNow.height) continue;
+                }
+                // (the axis on the wall, widened across it)
+                const float du = ut - ub, dz = qt.z - qb.z, sl = std::sqrt (du * du + dz * dz);
+                if (sl > 40.0f) continue;
+                const float w = c.rad * spread;
+                const float pu = sl > 1.0e-4f ? -dz / sl * w : w, pz = sl > 1.0e-4f ? du / sl * w : 0.0f;
+                const V3 o = V3 { wl.ax, wl.ay, 0.0f } + wl.n * 0.012f;
+                auto at = [&] (float u, float z)
+                {
+                    u = juce::jlimit (0.0f, wl.len, u); z = juce::jlimit (0.0f, H, z);
+                    return vt (o + wl.t * u + V3 { 0, 0, z }, wl.n, wl.along + u, z);
+                };
+                const int slot = kSlotWall0 + juce::jlimit (0, kMaxPlanVerts - 1, sb);
+                rast.triangle (at (ub - pu, qb.z - pz), at (ub + pu, qb.z + pz), at (ut + pu, qt.z + pz), slot, tone);
+                rast.triangle (at (ub - pu, qb.z - pz), at (ut + pu, qt.z + pz), at (ut - pu, qt.z - pz), slot, tone);
+            }
+            ++shadowQuads;
+        }
+}
+
 /** the painted cells: each a patch of its material, a little in front of its surface */
 void WalkView::addPaint (const RoomParams& r)
 {
@@ -2661,6 +2794,7 @@ void WalkView::buildScene (float phys)
     {
         // "Tueren sichtbar": the door of Saal 1 to another Saal, an opening with the other Saal behind it
         DoorCut cut;
+        cutNow = {};
         const auto& dr = params.doors[0];
         const bool showDoor = lk.doors > 0.01f && dr.to > 0 && dr.to < kNumRooms;
         if (showDoor)
@@ -2670,6 +2804,7 @@ void WalkView::buildScene (float phys)
             cut.height = juce::jmin (2.6f, 0.8f * r.H());
         }
         buildRoomTris (r, roomTris, cut);
+        cutNow = cut;
         // (the surface the cross points at - the one M gives another material - a little lighter)
         aimSurf = surfaceAhead (r, eye);
         const int aimSlot = aimSurf < 0 ? -1 : (aimSurf == kSurfFloor ? (int) kSlotFloor : (aimSurf == kSurfCeiling ? (int) kSlotCeiling : kSlotWall0 + aimSurf - kSurfWall0));
@@ -2691,6 +2826,7 @@ void WalkView::buildScene (float phys)
     }
 
     panoStatic = panoCalls.size();          // (the 360° recording: up to here the room, kept only when it changes)
+    casters.clear();
     // the pipes, where Ambisonics puts them (as heard from the listener's place; you walk among them)
     const double now = proc.engine.timeSeconds.load();
     auto& glows = scene.glows;
@@ -2726,25 +2862,7 @@ void WalkView::buildScene (float phys)
             // the mouth towards the listener's place, turned by the pipe's Ausrichtung and Drehung (counter-clockwise from above)
             const float face = std::atan2 (homeP.y - c.y, homeP.x - c.x) + juce::degreesToRadians (proc.engine.facingShown (s, k));
             addPipe (bottom, len, rad, face, metalTone, dark ? gl + 0.025f : gl, s);    // (light off: the barest shimmer of their own)
-            if (shadowAmt > 0.0f && ! dark && bottom.z > 0.02f)
-            {
-                // its shadow on the floor: the pipe's axis cast along the light (a little above the floor)
-                const V3 L = rast.lightDirNow();
-                const V3 top { bottom.x, bottom.y, bottom.z + len };
-                auto cast = [&] (V3 p) { const float k = p.z / juce::jmax (0.05f, L.z); return V3 { p.x - L.x * k, p.y - L.y * k, 0.004f }; };
-                const V3 b0 = cast (bottom), b1 = cast (top);
-                V3 sd { -(b1.y - b0.y), b1.x - b0.x, 0.0f };
-                const float sl = std::sqrt (sd.x * sd.x + sd.y * sd.y);
-                sd = sl > 1.0e-4f ? sd * (rad / sl) : V3 { rad, 0, 0 };
-                if (sl < 40.0f)
-                {
-                    const V3 nz { 0, 0, 1 };
-                    auto fv = [&] (V3 p) { Raster::Vert q; q.p = p; q.n = nz; q.u = p.x; q.v = p.y; return q; };
-                    const float tone = 1.0f - shadowAmt;
-                    rast.triangle (fv (b0 - sd), fv (b0 + sd), fv (b1 + sd), kSlotFloor, tone);
-                    rast.triangle (fv (b0 - sd), fv (b1 + sd), fv (b1 - sd), kSlotFloor, tone);
-                }
-            }
+            if (bottom.z > 0.02f) casters.push_back ({ bottom, len, rad });     // (its shadow: below, once the lights are known)
             shown[(size_t) s][(size_t) k] = { { c.x, c.y, c.z + bob }, len, rad, true };
             if (gl > 0.02f) glows.push_back ({ { c.x, c.y, c.z + bob }, gl, len, s });
         }
@@ -2877,6 +2995,7 @@ void WalkView::buildScene (float phys)
         }
         rast.setLamps (lamps, dark ? kDarkRest : 1.0f);
     }
+    if (mesh == nullptr) castShadows (r, dark);
     updateAir (r, params, glows);
     {
         // "Schaerfentiefe": sharp is what you look at - the pipe under the cross, else what lies in the middle of the

@@ -375,6 +375,27 @@ public:
                 wv.setPitchForTest(-25.0f);
                 run(10, {});
                 shot("walk_look_shadows.png");
+                const int sunQuads = wv.shadowQuadsForTest();
+                // a low sun from the side throws the pipes' shadows up the far wall
+                setReal("lookHour", 6.2f);
+                wv.setPoseForTest(3.0f, 4.0f, 120.0f);
+                wv.setPitchForTest(5.0f);
+                run(10, {});
+                snap();
+                shot("walk_look_shadows_wall.png");
+                // in the dark the sounding pipes throw the shadows of the others
+                setReal("lookDay", 0.0f);
+                wv.setDarkForTest(true);
+                wv.setPoseForTest(0.0f, -2.0f, 0.0f);
+                wv.setPitchForTest(-8.0f);
+                run(10, {});
+                snap();
+                shot("walk_look_shadows_dark.png");
+                const int darkQuads = wv.shadowQuadsForTest();
+                wv.setDarkForTest(false);
+                say("Schatten: " + juce::String(sunQuads) + " cast by the morning sun, " + juce::String(darkQuads) +
+                        " by the sounding pipes in the dark",
+                    sunQuads > 20 && darkQuads > 20 && darkQuads <= 1500);
                 setReal("lookDay", 0.0f);
                 setReal("lookHour", 12.0f);
                 wv.setPoseForTest(0.0f, -2.0f, 0.0f);
