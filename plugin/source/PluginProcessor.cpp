@@ -2222,6 +2222,13 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     }
     std::swap(hits, prevHits);
     haveModVals = true;
+    // the controls whose lanes act per note: their value now (each pipe is set against it)
+    if (const auto *acv = autoActive.get(); acv != nullptr)
+        for (int i = 0; i < acv->view.numNote && i < (int)p.autoNoteBase.size(); ++i)
+        {
+            const int pi = acv->view.note[(size_t)i].param;
+            p.autoNoteBase[(size_t)i] = pi >= 0 && pi < N ? modVals[(size_t)pi] : 0.0f;
+        }
     if (prevHits.empty() && prevAutoHits.empty())
         return; // nothing global is modulated or automated: p already holds these values
 
@@ -2236,6 +2243,7 @@ void RysumProcessor::modulate(EngineParams &p, const float *src)
     q.noteClock = p.noteClock;
     q.lastKeyClock = p.lastKeyClock;
     q.autoView = p.autoView;
+    q.autoNoteBase = p.autoNoteBase;
     q.roomHarmonics = p.roomHarmonics;
     q.roomFollow = p.roomFollow;
     q.roomBaseAz = p.roomBaseAz;

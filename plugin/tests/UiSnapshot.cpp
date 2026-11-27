@@ -123,6 +123,51 @@ public:
         // saved and loaded again
         const auto back = autoFromTree(autoToTree(as));
         say("Verlauf per note: saved and loaded", back.lanes.size() == 1 && back.lanes[0].perNote && back.lanes[0].stop == sA);
+
+        // an ordinary control per note (a stop's Ausrichtung, which also exists per pipe) and a timed path per note:
+        // every pipe from its own key press
+        auto release = [&]
+        {
+            juce::MidiBuffer offs;
+            for (int n = 0; n < 128; ++n)
+                offs.addEvent(juce::MidiMessage::noteOff(1, n), 0);
+            st.clear();
+            proc->processBlock(st, offs);
+            run(3.0, {});
+        };
+        release();
+        as.lanes.clear();
+        AutoLane face;
+        face.paramId = RysumProcessor::pipeSndParamId("Face", sA);
+        face.perNote = true;
+        face.pts = {{0.0, 0.5f}, {4.0, 1.0f}};          // 0 .. +180 degrees in 4 beats
+        as.lanes.push_back(face);
+        setReal(RysumProcessor::motionParamId(sB), (float)Motion::Drawn);
+        AutoLane path;
+        path.paramId = autoPathLaneId(sB);
+        path.perNote = true;
+        path.pts = {{0.0, 0.0f}, {4.0, 1.0f}};
+        as.lanes.push_back(path);
+        proc->autoChanged();
+        proc->autoPublish();
+        run(0.5, {});
+        run(2.0, {60});
+        run(1.0, {67});
+        const int k60 = keyIndexForMidi(60), k67 = keyIndexForMidi(67);
+        const float f60 = proc->engine.facingShown(sA, k60), f67 = proc->engine.facingShown(sA, k67);
+        say("Verlauf per note on a control (Ausrichtung): key 1 faces " + juce::String(f60, 1) + " deg, key 2 " +
+                juce::String(f67, 1) + " deg (want 135 and 45), the control itself " +
+                juce::String(proc->apvts.getRawParameterValue(face.paramId)->load(), 1),
+            std::abs(f60 - 135.0f) < 6.0f && std::abs(f67 - 45.0f) < 6.0f);
+        const float p60 = proc->engine.pathPhaseShown(sB, k60), p67 = proc->engine.pathPhaseShown(sB, k67);
+        say("Verlauf per note on a timed path: key 1 at " + juce::String(p60, 3) + ", key 2 at " + juce::String(p67, 3) +
+                " of the path (want 3 : 1)",
+            p67 > 0.05f && std::abs(p60 / p67 - 3.0f) < 0.3f);
+        release();
+        setReal(RysumProcessor::motionParamId(sB), 0.0f);
+        as = AutoSet{};
+        proc->autoChanged();
+        proc->autoPublish();
     }
 
     /** RYSUM_ONLY_WALK: only the 3D view ("Begehen"), in several rooms and from several places

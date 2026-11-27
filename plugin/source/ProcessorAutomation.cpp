@@ -62,12 +62,35 @@ void RysumProcessor::autoPublish()
         if (acts(l) && (autoPipeTarget(l.paramId) >= 0 || autoPathStop(l.paramId) >= 0) &&
             !l.pts.empty() && (int)c->spatial.size() < kMaxAutoLanes)
             c->spatial.push_back(l);
+    // lanes "mit jedem Anschlag neu" on a stop's control with a per-pipe target: per pipe, in the engine
+    auto noteMapped = [this](const AutoLane &l, int &tgt, int &stop, bool &lg, float &sc)
+    {
+        return l.perNote && !l.pts.empty() && getParamIndex(l.paramId) >= 0 && autoNoteMapping(l.paramId, tgt, stop, lg, sc);
+    };
+    for (const auto &l : autoSet.lanes)
+    {
+        int tg, st; bool lg; float sc;
+        if (acts(l) && noteMapped(l, tg, st, lg, sc) && (int)c->spatial.size() < kMaxAutoLanes)
+            c->spatial.push_back(l);
+    }
     for (const auto &l : c->spatial)
     {
+        int tg, st; bool lg; float sc;
         if (const int t = autoPipeTarget(l.paramId); t >= 0)
             c->view.pipe[(size_t)c->view.numPipe++] = {&l, t};
         else if (const int s = autoPathStop(l.paramId); s >= 0 && c->view.path[(size_t)s] == nullptr)
             c->view.path[(size_t)s] = &l;
+        else if (noteMapped(l, tg, st, lg, sc) && c->view.numNote < kMaxAutoLanes)
+        {
+            auto &nl = c->view.note[(size_t)c->view.numNote++];
+            nl.lane = &l;
+            nl.target = tg;
+            nl.stop = st;
+            nl.logRatio = lg;
+            nl.scale = sc;
+            nl.param = getParamIndex(l.paramId);
+            nl.range = prmList[(size_t)nl.param]->getNormalisableRange();
+        }
     }
     for (int li = 0; li < (int)autoSet.lanes.size(); ++li)
     {
@@ -80,6 +103,10 @@ void RysumProcessor::autoPublish()
         cl.steps = autoSteps(p);
         cl.index = li;
         cl.lane = l;
+        {
+            int tg, st; bool lg; float sc;
+            cl.perPipe = noteMapped(l, tg, st, lg, sc);
+        }
         c->lanes.push_back(std::move(cl));
     }
     // the audio thread may still read one of the earlier ones: they stay alive here a while
@@ -121,6 +148,8 @@ void RysumProcessor::applyAutomation(const EngineParams &p)
         }
         if (autoFlag[t])
             continue; // two lanes on one parameter: the first one counts
+        if (L.perPipe)
+            continue; // (per note, per pipe: the engine plays it - the control keeps its own value)
         // ("mit jedem Anschlag neu": one value for the whole instrument - from the last key pressed)
         const float v = autoValue(L.lane, L.lane.perNote ? p.noteClock - p.lastKeyClock : p.autoBeats, L.steps);
         if (std::isnan(v))

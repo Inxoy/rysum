@@ -627,6 +627,10 @@ Pos OrganEngine::currentPosition(int stop, int key, const EngineParams &p) const
     const auto mode = (Motion)p.motionMode[(size_t)stop];
     const bool own = mode == Motion::Rotation || mode == Motion::Vertical || mode == Motion::Pendulum ||
                      mode == Motion::Drift;
+    // (a timed path per note: the pipe's own place on it)
+    if (mode == Motion::Drawn && pathPerNote[(size_t)stop].load(std::memory_order_relaxed))
+        return applyMotion(base, mode, (double)pathPhase[(size_t)stop][(size_t)key].load(std::memory_order_relaxed),
+                           p.motionDepth[(size_t)stop], (uint32_t)(stop * 101 + key * 7 + 1), shapeFor(stop, key, p));
     return applyMotion(base, mode, own ? pipePhase(stop, key) : motionPhase[(size_t)stop].load(),
                        p.motionDepth[(size_t)stop], (uint32_t)(stop * 101 + key * 7 + 1),
                        shapeFor(stop, key, p));
@@ -851,7 +855,7 @@ void OrganEngine::updateVoiceSpatial(Voice &v, const EngineParams &p, double blo
     Pos pos = currentPosition(v.stop, v.key, p);
     // Verlauf: per-pipe lanes, each pipe at its own moment of a gesture spreading through the room
     if (p.autoView != nullptr && p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist,
-                                                     v.stop, noteBeatsOf(v.key, p)))
+                                                     v.stop, noteBeatsOf(v.key, p), p.autoNoteBase.data()))
         anyMod = true;
     if (anyMod)
     {
@@ -4995,7 +4999,7 @@ Pos OrganEngine::displayPosition(int stop, int key, const EngineParams &p) const
         }
         if (p.autoView != nullptr &&
             p.autoView->addPipe(pm.data(), p.autoBeats, pos.az, pos.el, pos.dist, stop,
-                                noteBeatsOf(key, p)))
+                                noteBeatsOf(key, p), p.autoNoteBase.data()))
             any = true;
         if (!any)
             return pos;
@@ -6022,7 +6026,18 @@ void OrganEngine::processChunk(juce::AudioBuffer<float> &out, const juce::MidiBu
                                                      : p.autoBeats + blockSeconds * p.autoBeatRate);
             if (!std::isnan(u))
                 ph = getPath(s).pingPong ? 0.5 * (double)u : (double)u;
+            // ... and "mit jedem Anschlag neu": every pipe from its own key press
+            if (pl.perNote)
+                for (int k = 0; k < kNumKeys; ++k)
+                {
+                    const float uk = autoValue(pl, p.noteClock - keyClock[(size_t)k] + blockSeconds * p.noteBeatRate);
+                    if (!std::isnan(uk))
+                        pathPhase[(size_t)s][(size_t)k].store(getPath(s).pingPong ? 0.5f * uk : uk, std::memory_order_relaxed);
+                }
+            pathPerNote[(size_t)s].store(pl.perNote, std::memory_order_relaxed);
         }
+        else
+            pathPerNote[(size_t)s].store(false, std::memory_order_relaxed);
         if (std::abs(ph) > 1.0e7)
             ph = std::fmod(ph, 1000.0);
         // the silent pipes turn on at their stop's speed (Drehung), facing its Ausrichtung

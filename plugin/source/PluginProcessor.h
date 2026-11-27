@@ -1116,6 +1116,7 @@ private:
         struct Lane
         {
             int param = -1, steps = 0, index = 0; // index: in AutoSet::lanes
+            bool perPipe = false; // "mit jedem Anschlag neu" on a control with a per-pipe target: the engine plays it
             rysum::AutoLane lane;
         };
         std::vector<Lane> lanes;

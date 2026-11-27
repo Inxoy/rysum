@@ -239,6 +239,8 @@ struct EngineParams
     double noteBeatRate = 1.0, noteClock = 0.0, lastKeyClock = -1.0e9;
     // ... and what it plays besides the parameters: per-pipe lanes, timed paths (nullptr = none)
     const struct AutoEngineView *autoView = nullptr;
+    // the values now of the controls whose lanes act per note (AutoEngineView::note, same order; kMaxAutoLanes)
+    std::array<float, 16> autoNoteBase{};
 
     // distance
     float doppler = 1.0f; // 0 = off, 1 = physical, up to 4 = exaggerated
@@ -1116,6 +1118,13 @@ private:
     // where it stood when each key and the last key were pressed
     double noteClock = 0.0, lastKeyClock = -1.0e9;
     std::array<double, kNumKeys> keyClock{};
+    // a timed path "mit jedem Anschlag neu": every pipe at its own place on it (from its own key press), as the
+    // audio thread works it out - the views read it too (pathPerNote: the stop has such a lane now)
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> pathPhase{};
+    std::array<std::atomic<bool>, kNumStops> pathPerNote{};
+public:
+    float pathPhaseShown(int stop, int key) const noexcept { return pathPhase[(size_t)stop][(size_t)key].load(std::memory_order_relaxed); }
+private:
     // every pipe's own turn (Drehung), degrees: it goes on between its notes, so a pipe starts
     // where it stood (and the 3D Saal shows it turning); a sounding voice carries it on, else it
     // turns at its stop's speed. faceVoice: a voice carried it in the last slice

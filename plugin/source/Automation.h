@@ -347,6 +347,33 @@ inline double autoPipeTime(const AutoLane &l, double beats, float x, float y, fl
     return beats - (double)(run / juce::jmax(0.05f, l.waveSpeed));
 }
 
+/** "mit jedem Anschlag neu" on an ordinary control: the controls of a stop that have a per-pipe target (its level,
+    wind, the pipe's sound, its grain cloud, how it radiates). The lane then acts on every pipe from its own key press
+    instead of on the whole instrument: the pipe gets the difference between the curve and the control's value now,
+    in the target's units (logRatio: octaves etc. of the ratio). Returns false for any other control. */
+inline bool autoNoteMapping (const juce::String& id, int& target, int& stop, bool& logRatio, float& scale)
+{
+    int digits = 0;
+    while (digits < id.length() && juce::CharacterFunctions::isDigit (id[id.length() - 1 - digits])) ++digits;
+    if (digits == 0 || digits > 2) return false;
+    stop = id.getLastCharacters (digits).getIntValue();
+    if (stop < 0 || stop >= kNumStops) return false;
+    const auto key = id.dropLastCharacters (digits);
+    struct M { const char* key; int target; bool log; float scale; };
+    static const M map[] {
+        { "vol", tgtLevel, false, 36.0f },  { "swind", tgtWind, false, 1.0f },
+        { "pipeAtt", tgtAttack, false, 1.0f }, { "pipeSharp", tgtAttSharp, false, 1.0f }, { "pipeIso", tgtAttIso, false, 1.0f },
+        { "pipeRep", tgtAttRep, false, 1.0f }, { "pipePuff", tgtPuff, false, 1.0f }, { "pipeHiFreq", tgtHiFreq, true, 4.0f },
+        { "pipeHiGain", tgtHiGain, false, 24.0f }, { "pipeHiShape", tgtHiShape, false, 1.0f },
+        { "pipeWidth", tgtWidth, false, 1.0f }, { "pipeDirPat", tgtDirPat, false, 1.0f }, { "pipeFace", tgtFacing, false, 180.0f },
+        { "pipeSpin", tgtSpin, false, 4.0f }, { "pipeCrack", tgtCrackle, false, 1.0f },
+        { "cloudMix", tgtCloudMix, false, 1.0f }, { "cloudDens", tgtCloudDens, true, 3.0f }, { "cloudSpread", tgtCloudSpread, false, 180.0f },
+        { "cloudSize", tgtCloudSize, true, 3.0f }, { "cloudScatter", tgtCloudScatter, false, 150.0f } };
+    for (const auto& m : map)
+        if (key == m.key) { target = m.target; logRatio = m.log; scale = m.scale; return true; }
+    return false;
+}
+
 /** what the engine reads of the Verlauf (built on the message thread, immutable while the audio
     thread holds it) */
 struct AutoEngineView
@@ -358,16 +385,43 @@ struct AutoEngineView
     };
     std::array<PipeLane, kMaxAutoLanes> pipe{};
     int numPipe = 0;
+    // lanes "mit jedem Anschlag neu" on ordinary controls (autoNoteMapping): per pipe, the curve at the pipe's own
+    // time against the control's value now (the processor fills that in EngineParams::autoNoteBase, same order)
+    struct NoteLane
+    {
+        const AutoLane *lane = nullptr;
+        int target = 0, stop = 0, param = -1;
+        bool logRatio = false;
+        float scale = 1.0f;
+        juce::NormalisableRange<float> range;
+    };
+    std::array<NoteLane, kMaxAutoLanes> note{};
+    int numNote = 0;
     std::array<const AutoLane *, kNumStops> path{}; // timed path per stop, nullptr = none
 
     /** adds the per-pipe lanes to a pipe's modulation offsets; true if any acted. beats = the
         Verlauf's clock, noteBeats = the beats since this pipe's key was pressed (the clock of the
         lanes "mit jedem Anschlag neu") */
     bool addPipe(float *pm, double beats, float azDeg, float elDeg, float dist, int stop,
-                 double noteBeats) const noexcept
+                 double noteBeats, const float *noteBase = nullptr) const noexcept
     {
+        bool anyNote = false;
+        if (noteBase != nullptr)
+            for (int i = 0; i < numNote; ++i)
+            {
+                const auto &nl = note[(size_t)i];
+                if (nl.stop != stop)
+                    continue;
+                const float v = autoValue(*nl.lane, noteBeats);
+                if (std::isnan(v))
+                    continue;
+                const float real = nl.range.convertFrom0to1(juce::jlimit(0.0f, 1.0f, v)), base = noteBase[i];
+                const float d = nl.logRatio ? std::log2(juce::jmax(1.0e-6f, real) / juce::jmax(1.0e-6f, base)) : real - base;
+                pm[nl.target] += d / nl.scale;
+                anyNote = true;
+            }
         if (numPipe <= 0)
-            return false;
+            return anyNote;
         float x = 0.0f, y = 0.0f, z = 0.0f;
         autoPosToXyz(azDeg, elDeg, dist, x, y, z);
         bool any = false;
@@ -383,7 +437,7 @@ struct AutoEngineView
             pm[pl.target] += autoPipeOffset(v);
             any = true;
         }
-        return any;
+        return any || anyNote;
     }
 };
 

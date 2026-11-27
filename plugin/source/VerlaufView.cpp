@@ -480,9 +480,14 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
         info = juce::String::fromUTF8("SOLO \xc2\xb7 ") + info;
     else if (anySolo && !tempoL)
         info = rysum::tr("stumm (Solo) \xc2\xb7 ") + info;
+    // (per note: a per-pipe lane, a timed path and a stop's control with a per-pipe target run for every key on its own)
+    int mapT = -1, mapS = -1;
+    bool mapLog = false;
+    float mapScale = 1.0f;
+    const bool perPipeNote = l.perNote && (pipeT >= 0 || pathS >= 0 || autoNoteMapping(l.paramId, mapT, mapS, mapLog, mapScale));
     if (l.perNote && !tempoL)
-        info << (pipeT >= 0 ? rysum::tr(" \xc2\xb7 je Anschlag neu, jede Taste f\xc3\xbcr sich")
-                            : rysum::tr(" \xc2\xb7 je Anschlag neu"));
+        info << (perPipeNote ? rysum::tr(" \xc2\xb7 je Anschlag neu, jede Taste f\xc3\xbcr sich")
+                             : rysum::tr(" \xc2\xb7 je Anschlag neu"));
     if (l.loop)
         info << rysum::tr(" \xc2\xb7 Schleife ") << beatsText(l.length);
     if (l.reverse)
@@ -492,7 +497,7 @@ void VerlaufTimeline::paintLane(juce::Graphics &g, int li, juce::Rectangle<int> 
         info << juce::String::fromUTF8(" \xc2\xb7 \xc3\x97") << juce::String(l.speed, 2);
     g.drawText(info, ht.removeFromTop(14), juce::Justification::centredLeft, true);
     // the value right now
-    if (param >= 0)
+    if (param >= 0 && ! (perPipeNote && live))
     {
         const float an = P.getAutomatedNorm(param);
         const bool touched = P.isAutoTouched(param);
@@ -1760,10 +1765,11 @@ VerlaufView::VerlaufView(RysumProcessor &p) : proc(p)
     };
     // with every key the lane starts again: per pipe for every note on its own, else from the last key
     perNoteButton.setClickingTogglesState(true);
-    perNoteButton.setTooltip(rysum::tr("Die Spur beginnt mit jedem Anschlag von vorn, statt der Uhr zu folgen. Eine Spur \"je Pfeife\" l\xc3\xa4uft "
-        "f\xc3\xbcr jede Taste f\xc3\xbcr sich: jeder Ton hat seinen eigenen Verlauf (z. B. ein Register blendet je Ton langsam ein, ein anderes "
-        "aus \xe2\x80\x93 Vektorsynthese). Jede andere Spur beginnt mit der zuletzt gedr\xc3\xbc" "ckten Taste neu. Ihre Uhr l\xc3\xa4uft im Tempo, "
-        "auch wenn der Host steht."));
+    perNoteButton.setTooltip(rysum::tr("Die Spur beginnt mit jedem Anschlag von vorn, statt der Uhr zu folgen. F\xc3\xbcr jede Taste f\xc3\xbcr sich laufen: "
+        "Spuren \"je Pfeife\", Bahnen (jede Pfeife von ihrem eigenen Anschlag an auf ihrer Bahn) und die Regler eines Registers, die es auch je "
+        "Pfeife gibt (Lautst\xc3\xa4rke, Wind, der Klang der Pfeife, die Wolke, die Abstrahlung) \xe2\x80\x93 jeder Ton hat seinen eigenen Verlauf "
+        "(z. B. ein Register blendet je Ton langsam ein, ein anderes aus: Vektorsynthese). Jede andere Spur beginnt mit der zuletzt gedr\xc3\xbc" "ckten "
+        "Taste neu. Ihre Uhr l\xc3\xa4uft im Tempo, auch wenn der Host steht."));
     perNoteButton.onClick = [this]
     {
         if (!validLane(selLane) || set().lanes[(size_t)selLane].paramId == kAutoTempoId)
