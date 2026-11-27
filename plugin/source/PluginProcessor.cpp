@@ -1472,6 +1472,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
             StringArray{String::fromUTF8("Spieltisch (links \xe2\x86\x92 rechts)"), String::fromUTF8("tief \xe2\x86\x92 hoch"),
                         String::fromUTF8("hoch \xe2\x86\x92 tief"), String::fromUTF8("zuf\xc3\xa4llig")},
             0));
+        // the harmony moves the pipes: a sway at the beat each makes; pure intervals draw flying pipes together
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"beatSway", 1}, "Zittern mit der Schwebung",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pc));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID{"consForce", 1}, "Harmonie zieht an",
+                                                    NormalisableRange<float>(0, 1), 0.0f, pc));
     }
     return l;
 }
@@ -1678,6 +1683,8 @@ RysumProcessor::RysumProcessor()
     ix.arp[0] = I("stopArp");
     ix.arp[1] = I("stopArpRate");
     ix.arp[2] = I("stopArpOrder");
+    ix.harm[0] = I("beatSway");
+    ix.harm[1] = I("consForce");
     ix.air = I("air");
     ix.distAmount = I("distAmount");
     ix.temperament = I("temperament");
@@ -1973,6 +1980,8 @@ EngineParams RysumProcessor::readParams(const float *vals) const
     p.stopArp = juce::roundToInt(V(ix.arp[0]));
     p.stopArpRate = juce::roundToInt(V(ix.arp[1]));
     p.stopArpOrder = juce::roundToInt(V(ix.arp[2]));
+    p.beatSway = V(ix.harm[0]);
+    p.consForce = V(ix.harm[1]);
     p.air = V(ix.air);
     p.distAmount = V(ix.distAmount);
     p.tuning = tunings[(size_t)juce::jlimit(

@@ -654,6 +654,14 @@ follow the pipes. Everything is off in older patches.
   included (a meantone C major chord: 0.47 in every octave, its pure third alone 0). Per pipe the
   largest deviation from any other sounding pipe, global targets the largest of all. The motion
   *Schwebung* always turns with the beats in Hz.
+  *Zittern mit der Schwebung* (on top of any motion, flying pipes too): every sounding pipe sways
+  round a small circle at the very rate it beats – a slow beat rocks it slowly, a fast one makes it
+  tremble (smaller), a pure interval leaves it still (up to 12°, or 0.4 m for a flying pipe).
+  *Harmonie zieht an*: flying pipes (Schweben, Flug …) that sound together pull at each other – a
+  pure, simple interval (octave, fifth, a pure third) draws them to about a metre apart, a rough one
+  (a second, the tritone, a tempered third) pushes them away; where they come to rest, they stay, so
+  the swarm shows the harmony. (In the test a held octave's two pipes come closer, a minor second's
+  move apart.)
 - **Differenztöne** (resultant ghosts) – every two held pipes sound their difference tone
   (higher minus lower frequency), like the resultant with which organ builders suggest a 32′:
   a fifth gives the octave below its lower note, a pure third two octaves below the root of the

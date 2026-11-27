@@ -177,6 +177,15 @@ EffectsView::EffectsView(RysumProcessor &p) : proc(p)
                                    "jedes Intervall (in eine Oktave gelegt) vom n\xc3\xa4" "chsten reinen entfernt ist, in "
                                    "Cent \xe2\x80\x93 in jeder Lage gleich, f\xc3\xbcr jede Stimmung (0 = rein, 1 = "
                                    "50 Cent). Die Bewegung \xe2\x80\x9eSchwebung\xe2\x80\x9c dreht immer mit den Hz."));
+    beatSway = &row("beatSway", rysum::tr("Zittern mit der Schwebung"));
+    beatSway->setTooltip(rysum::tr("Jede klingende Pfeife schwankt im Takt ihrer eigenen Schwebung um ihren Platz, zu jeder "
+                                   "Bewegung dazu: langsame Schwebungen wiegen langsam, schnelle zittern, reine Intervalle "
+                                   "stehen still. Auch frei fliegende Pfeifen."));
+    consForce = &row("consForce", rysum::tr("Harmonie zieht an"));
+    consForce->setTooltip(rysum::tr("Frei im Saal fliegende Pfeifen (Schweben, Flug \xe2\x80\xa6), die zusammen klingen, "
+                                    "ziehen einander an, wenn ihr Intervall rein und einfach ist (Oktave, Quinte, reine Terz: "
+                                    "bis etwa einen Meter), und sto\xc3\x9f" "en einander ab, wenn es rau ist (Sekunde, Tritonus). "
+                                    "Wo sie hinkommen, bleiben sie: der Schwarm zeigt die Harmonie."));
     ghostRows = {&row("fxGhostLevel", rysum::tr("Lautst\xc3\xa4rke")),
                  &row("fxGhostPlace", rysum::tr("Ort (zwischen \xe2\x86\x92 unten)")),
                  &row("fxGhostCons", rysum::tr("nur Konsonanzen")),
@@ -478,6 +487,9 @@ void EffectsView::resized()
         beatSpeed->setBounds(b.removeFromTop(24));
         b.removeFromTop(4);
         beatMode->setBounds(b.removeFromTop(24));
+        b.removeFromTop(6);
+        beatSway->setBounds(b.removeFromTop(30));
+        consForce->setBounds(b.removeFromTop(30));
         b.removeFromTop(8);
         beatNote = b;
     }

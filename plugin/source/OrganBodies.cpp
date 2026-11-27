@@ -538,6 +538,32 @@ void OrganEngine::stepBodies (const EngineParams& p, double blockSeconds) noexce
                     }
                 }
 
+                // ---- the harmony: the pull of the pipes it sounds with (and where that leaves it, it stays)
+                if (consAny && ! held)
+                {
+                    const Vec3f& ca = consAcc[(size_t) s][(size_t) k];
+                    if (ca.x != 0.0f || ca.y != 0.0f || ca.z != 0.0f)
+                    {
+                        b.vx += (ca.x - 1.5f * b.vx * juce::jmin (1.0f, len3 (ca.x, ca.y, ca.z))) * h;
+                        b.vy += (ca.y - 1.5f * b.vy * juce::jmin (1.0f, len3 (ca.x, ca.y, ca.z))) * h;
+                        b.vz += ca.z * h;
+                        b.hx = b.x; b.hy = b.y; b.hz = b.z;
+                        b.rest = 0.0f;
+                    }
+                }
+                // ---- Zittern: swaying at its beat (as a body: so many metres round where it is)
+                {
+                    const float sa = swayAz[(size_t) s][(size_t) k].load (std::memory_order_relaxed);
+                    const float se = swayEl[(size_t) s][(size_t) k].load (std::memory_order_relaxed);
+                    const float tx = sa / 30.0f, tz = se / 30.0f;      // (12 degrees: 0.4 m)
+                    auto& was = swayDone[(size_t) s][(size_t) k];
+                    if (tx != was.x || tz != was.z)
+                    {
+                        b.x += tx - was.x; b.z += tz - was.z;
+                        was = { tx, 0.0f, tz };
+                    }
+                }
+
                 // ---- move, and meet the room
                 const float vMax = kMaxSpeed * 1.5f;
                 const float v = len3 (b.vx, b.vy, b.vz);

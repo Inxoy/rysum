@@ -57,6 +57,8 @@ private:
     juce::ComboBox* beatFrom = nullptr;
     juce::ComboBox* beatSpeed = nullptr;
     juce::ComboBox* beatMode = nullptr;
+    ParamRow* beatSway = nullptr;
+    ParamRow* consForce = nullptr;
     juce::ComboBox* dexMirror = nullptr;
     std::array<ParamRow*, 6> ghostRows {}, dexRows {}, expoRows {};
     juce::Rectangle<int> beatBox, ghostBox, dexBox, expoBox, beatNote, ghostNote, dexNote, expoNote;

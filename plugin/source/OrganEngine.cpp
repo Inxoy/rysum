@@ -126,6 +126,8 @@ OrganEngine::OrganEngine()
             baseDist[(size_t)s][(size_t)k] = pos[(size_t)k].dist;
             muted[(size_t)s][(size_t)k] = false;
             beatTurn[(size_t)s][(size_t)k] = 0.0f;
+            swayAz[(size_t)s][(size_t)k] = 0.0f;
+            swayEl[(size_t)s][(size_t)k] = 0.0f;
             wear[(size_t)s][(size_t)k] = 0.0f;
             pipeLen[(size_t)s][(size_t)k] = 1.0f;
         }
@@ -673,10 +675,49 @@ Pos OrganEngine::choreoAt(Pos q, int stop, int key, float t, int pat) const noex
 
 Pos OrganEngine::currentPosition(int stop, int key, const EngineParams &p) const noexcept
 {
-    // (a pipe flying as a body in the Saal is where its body is: the figure leaves it alone)
+    // (a pipe flying as a body in the Saal is where its body is: the figure leaves it alone, and it sways
+    //  as a body)
     if (isRoomMotion(p.motionMode[(size_t)stop]))
         return currentPositionBase(stop, key, p);
-    return choreoApply(currentPositionBase(stop, key, p), stop, key);
+    Pos q = choreoApply(currentPositionBase(stop, key, p), stop, key);
+    // Zittern: swaying at the beat it makes
+    const float sa = swayAz[(size_t)stop][(size_t)key].load(std::memory_order_relaxed);
+    const float se = swayEl[(size_t)stop][(size_t)key].load(std::memory_order_relaxed);
+    if (sa != 0.0f || se != 0.0f)
+    {
+        q.az = wrapAz(q.az + sa);
+        q.el = juce::jlimit(-90.0f, 90.0f, q.el + se);
+    }
+    return q;
+}
+
+float OrganEngine::consonance(float f1, float f2) noexcept
+{
+    if (!(f1 > 1.0f && f2 > 1.0f))
+        return 0.0f;
+    if (f1 > f2)
+        std::swap(f1, f2);
+    // the simplest pair of partials that nearly coincide (n f1 ~ m f2), and how fast it beats
+    int bestNm = 1000;
+    float beat = 0.0f;
+    for (int m = 1; m <= 6; ++m)
+    {
+        const int nn = (int)std::lround((double)m * f2 / f1);
+        if (nn < 1 || nn > 8 || nn * m >= bestNm)
+            continue;
+        const float b = std::abs((float)nn * f1 - (float)m * f2);
+        if (b < 35.0f)
+        {
+            bestNm = nn * m;
+            beat = b;
+        }
+    }
+    // simple (unison, octave, fifth 1; fourth 0.5; major third 0.3 ...) and pure (beating slowly)
+    const float simple = bestNm < 1000 ? juce::jmin(1.0f, 6.0f / (float)bestNm) : 0.0f;
+    const float pure = simple * std::exp(-beat / 4.0f);
+    // rough: not simple, or beating fast (a tritone, a second, a tempered third)
+    const float rough = 1.0f - simple * std::exp(-beat / 8.0f);
+    return juce::jlimit(-1.0f, 1.0f, 1.5f * pure - 0.5f * rough);
 }
 
 Pos OrganEngine::currentPositionBase(int stop, int key, const EngineParams &p) const noexcept
@@ -3110,8 +3151,19 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
     bool beatRouted = false;
     for (const auto &r : p.mod.routes)
         beatRouted = beatRouted || (r.src == srcBeat && r.amount != 0.0f);
-    if (!anyBeatMotion && !ghostsOn && !beatRouted && ghostsNow.load() == 0)
+    const bool swayOn = p.beatSway > 0.0f, consOn = p.consForce > 0.0f;
+    if (consAny)
+        for (auto &row : consAcc)
+            row.fill({});
+    consAny = false;
+    if (!anyBeatMotion && !ghostsOn && !beatRouted && ghostsNow.load() == 0 && !swayOn && !consOn)
     {
+        for (int s = 0; s < kNumStops; ++s)
+            for (int kk = 0; kk < kNumKeys; ++kk)
+            {
+                swayAz[(size_t)s][(size_t)kk].store(0.0f, std::memory_order_relaxed);
+                swayEl[(size_t)s][(size_t)kk].store(0.0f, std::memory_order_relaxed);
+            }
         // nothing listens: no pairs to compare
         for (auto &v : voices)
         {
@@ -3157,6 +3209,27 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
             {
                 A.beatT = juce::jmax(A.beatT, beat);
                 B.beatT = juce::jmax(B.beatT, beat);
+            }
+            // Harmonie: two flying pipes sounding together pull at each other (a pure simple interval
+            // draws them to a metre or so apart, a rough one pushes them away)
+            if (consOn && A.held && B.held && (A.stop != B.stop || A.key != B.key))
+            {
+                Vec3f pa, pb;
+                if (bodyAt(A.stop, A.key, pa) && bodyAt(B.stop, B.key, pb) && isRoomMotion(p.motionMode[(size_t)A.stop]) &&
+                    isRoomMotion(p.motionMode[(size_t)B.stop]))
+                {
+                    const float c = consonance(f1, f2);
+                    const float dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
+                    const float d = juce::jmax(0.05f, std::sqrt(dx * dx + dy * dy + dz * dz));
+                    // attraction: towards a metre apart (closer: apart again); repulsion: fading over ~8 m
+                    const float a = c > 0.0f ? 4.0f * p.consForce * c * juce::jlimit(-1.0f, 1.0f, (d - 1.0f) / 2.0f)
+                                             : 4.0f * p.consForce * c / (1.0f + d / 4.0f);
+                    auto &ca = consAcc[(size_t)A.stop][(size_t)A.key];
+                    auto &cb = consAcc[(size_t)B.stop][(size_t)B.key];
+                    ca.x += a * dx / d; ca.y += a * dy / d; ca.z += 0.3f * a * dz / d;
+                    cb.x -= a * dx / d; cb.y -= a * dy / d; cb.z -= 0.3f * a * dz / d;
+                    consAny = true;
+                }
             }
             if (p.beatRatio)
             {
@@ -3219,6 +3292,17 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
                          : juce::jlimit(0.0f, 1.0f, std::log2(1.0f + v.beatHz) / 5.044f); // 32 Hz = 1
         maxBeat = juce::jmax(maxBeat, v.beatHz);
         maxDev = juce::jmax(maxDev, v.devC);
+        if (swayOn && v.held)
+        {
+            // Zittern: the pipe sways round a small circle at the beat it makes - pure (no beat) stands still,
+            // fast beats tremble (smaller)
+            auto &ph = swayPhase[(size_t)v.stop][(size_t)v.key];
+            ph += juce::MathConstants<float>::twoPi * juce::jmin(v.beatHz, 30.0f) * (float)blockSeconds;
+            ph -= juce::MathConstants<float>::twoPi * std::floor(ph / juce::MathConstants<float>::twoPi);
+            const float amp = 12.0f * p.beatSway * juce::jmin(1.0f, v.beatHz / 0.5f) / (1.0f + v.beatHz / 10.0f);
+            swayAz[(size_t)v.stop][(size_t)v.key].store(amp * std::cos(ph), std::memory_order_relaxed);
+            swayEl[(size_t)v.stop][(size_t)v.key].store(0.5f * amp * std::sin(ph), std::memory_order_relaxed);
+        }
         if (anyBeatMotion && (Motion)p.motionMode[(size_t)v.stop] == Motion::Beat && v.held)
         {
             auto &t = beatTurn[(size_t)v.stop][(size_t)v.key];
@@ -3235,6 +3319,30 @@ void OrganEngine::updateBeats(const EngineParams &p, double blockSeconds) noexce
             v.beatNorm = 0.0f;
             v.devC = 0.0f;
         }
+    // (a pipe that no longer sounds - or sways no more - comes to rest)
+    {
+        std::array<uint64_t, kNumStops> on{};
+        if (swayOn)
+            for (int i = 0; i < nv; ++i)
+            {
+                const auto &v = voices[(size_t)idx[i]];
+                if (v.held)
+                    on[(size_t)v.stop] |= (uint64_t)1 << v.key;
+            }
+        for (int s = 0; s < kNumStops; ++s)
+            for (int kk = 0; kk < kNumKeys; ++kk)
+                if (((on[(size_t)s] >> kk) & 1u) == 0u)
+                {
+                    auto &a = swayAz[(size_t)s][(size_t)kk];
+                    auto &e = swayEl[(size_t)s][(size_t)kk];
+                    const float av = a.load(std::memory_order_relaxed), ev = e.load(std::memory_order_relaxed);
+                    if (av != 0.0f || ev != 0.0f)
+                    {
+                        a.store(std::abs(av) < 0.01f ? 0.0f : av * 0.9f, std::memory_order_relaxed);
+                        e.store(std::abs(ev) < 0.01f ? 0.0f : ev * 0.9f, std::memory_order_relaxed);
+                    }
+                }
+    }
     beatMaxNow = maxBeat;
     devMaxNow = maxDev;
 

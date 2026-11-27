@@ -2344,6 +2344,16 @@ targets the largest of all), as $\log_2(1+\delta)/\log_2 51$, so 0 is pure and 1
 and it works for any tuning, a Scala file or MTS-ESP included, because it reads the frequencies the pipes are given. The render test
 plays a meantone C major triad in three octaves: the source is 0.470 in each (fifth and minor third \SI{5.4}{cents} narrow), against
 1.0 and 0.74 with beats in Hz, and a pure third alone gives 0. The motion \ui{Schwebung} always turns with the beats in Hz.
+
+Two controls since 27~November let the harmony move the pipes on top of any motion. \ui{Zittern mit der Schwebung} $z$ turns every
+sounding pipe round a small circle at its own beat $b$: a phase $\varphi$ grows by $2\pi b\,\Delta t$, and the pipe is moved by
+$A\cos\varphi$ in azimuth and $\tfrac12 A\sin\varphi$ in elevation, $A = 12^\circ z\,\min(1, b/0.5)/(1 + b/10)$ -- pure intervals stand
+still, fast beats tremble with less; a flying pipe is moved by $A/30$ metres in the Saal (in the test a beating meantone minor third
+sways by \SI{6.7}{\degree}). \ui{Harmonie zieht an} $F$ pulls flying pipes that sound together: for a pair with the coinciding partials $n,m$
+and their beat $b$ (as above), the simplicity $\sigma = \min(1, 6/nm)$ gives the consonance
+$c = 1.5\,\sigma e^{-b/4} - 0.5\,(1 - \sigma e^{-b/8})$ in $[-1, 1]$ (fifth and octave 1, a pure third $0.1$, a tempered third $-0.47$,
+a minor second $-0.31$, the tritone $-0.49$). Each of the two is accelerated towards the other by $4Fc\,\mathrm{clamp}((d-1)/2)$\,m/s$^2$
+when $c > 0$ (so they settle a metre apart) and away by $4Fc/(1 + d/4)$ when $c < 0$, and rests where that leaves it.
 \ui{Schwebungen aus} chooses between the tuning as it is meant (ideal frequencies) and the pipes as recorded, which are
 only accurate to about $\pm5$ cents, so that even the pure thirds beat a little. Figure~\ref{fig:beats} shows the
 rates this rule gives in ¼-comma meantone and, for comparison, in equal temperament.

@@ -276,6 +276,10 @@ struct EngineParams
         pair's interval (folded into an octave) is from the nearest pure interval, in cents: the
         same in every register and for any tuning */
     bool beatRatio = false;
+    // the harmony moves the pipes: every sounding pipe sways at the beat it makes (slow beats a slow sway,
+    // fast ones a tremble, pure intervals stand still; 0..1), and flying pipes that sound together are drawn
+    // together when their interval is pure and simple and pushed apart when it is rough (0..1)
+    float beatSway = 0.0f, consForce = 0.0f;
     float ghostLevel = 0.0f; // difference tones of sounding pairs (linear, 0 = off)
     float ghostPlace = 0.3f; // 0 = between the two pipes .. 1 = deep below the listener
     float ghostCons =
@@ -1634,6 +1638,20 @@ public:
     void applyPhotoFx(float *const *ch, int outputMode, int n, const EngineParams &p) noexcept;
     /** "Schwebung" motion: how far every pipe has turned so far (degrees) */
     std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> beatTurn;
+    // Zittern: every sounding pipe's sway now (degrees: azimuth, elevation; the flying ones as metres from it)
+    std::array<std::array<std::atomic<float>, kNumKeys>, kNumStops> swayAz, swayEl;
+    std::array<std::array<float, kNumKeys>, kNumStops> swayPhase{};
+    // Harmonie: the pull of the others on every flying pipe (m/s^2), from the last block's pairs
+    std::array<std::array<Vec3f, kNumKeys>, kNumStops> consAcc{};
+    bool consAny = false;
+    std::array<std::array<Vec3f, kNumKeys>, kNumStops> swayDone{}; // (the sway already given to each body)
+    /** the pull of the harmony on a flying pipe now (tests, the view) */
+    Vec3f consPullOf(int stop, int key) const noexcept
+    {
+        return consAcc[(size_t)stop][(size_t)key];
+    }
+    /** consonance of two pipes from their frequencies: +1 a pure simple interval .. -1 a rough one */
+    static float consonance(float f1, float f2) noexcept;
     std::atomic<int> ghostsNow{0};       // difference tones sounding (for tests / display)
     std::atomic<float> beatMaxNow{0.0f}; // fastest beat right now (Hz)
     std::atomic<float> devMaxNow{0.0f};  // ratio mode: the largest deviation right now (cents)

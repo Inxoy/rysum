@@ -1340,6 +1340,41 @@ public:
                         juce::String(a0, 0) + " -> " + juce::String(aMid, 0) + " -> " + juce::String(aEnd, 0) + " deg",
                     running && turned(aMid, a0) > 30.0f && turned(aEnd, a0) < (pass == 0 ? 1.0f : 8.0f));
             }
+            {
+                // the harmony pulls (the stop still hovers): a held octave draws its two pipes together, a held
+                // minor second pushes its two apart
+                setReal("consForce", 1.0f);
+                auto apart = [&](int m1, int m2)
+                {
+                    Vec3f a, b;
+                    if (!proc->engine.bodyAt(0, keyIndexForMidi(m1), a) || !proc->engine.bodyAt(0, keyIndexForMidi(m2), b))
+                        return -1.0f;
+                    return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+                };
+                auto holdFor = [&](int m1, int m2, float &before, float &after)
+                {
+                    before = apart(m1, m2);
+                    run(300, {m1, m2});
+                    after = apart(m1, m2);
+                    juce::MidiBuffer off;
+                    off.addEvent(juce::MidiMessage::noteOff(1, m1), 0);
+                    off.addEvent(juce::MidiMessage::noteOff(1, m2), 0);
+                    juce::AudioBuffer<float> ob(juce::jmax(2, proc->getTotalNumInputChannels(), proc->getTotalNumOutputChannels()),
+                                                512);
+                    ob.clear();
+                    proc->processBlock(ob, off);
+                    run(60, {});
+                };
+                float o0, o1, s0, s1;
+                holdFor(48, 60, o0, o1);
+                holdFor(55, 56, s0, s1);
+                setReal("consForce", 0.0f);
+                say("harmony attracts: a held octave's hovering pipes " + juce::String(o0, 2) + " -> " + juce::String(o1, 2) +
+                        " m apart, a minor second's " + juce::String(s0, 2) + " -> " + juce::String(s1, 2) + " m",
+                    o0 > 0.0f && o1 < o0 - 0.3f && s1 > s0 + 0.3f);
+                wv.callHome();
+                run(400, {});
+            }
             setReal(RysumProcessor::motionParamId(0), modeWas);
             run(30, {});
         }

@@ -2167,6 +2167,55 @@ static void testRoomsAndSpread(std::shared_ptr<const SampleLibrary> lib)
               "stop arpeggio: the pulled stops join a held chord at the tempo (building up, up and down, round, one at a time, "
               "high to low)");
     }
+
+    {
+        // the harmony moves the pipes: how consonant two pipes are, and a sway at the beat each makes
+        const float cFifth = OrganEngine::consonance(200.0f, 300.0f), cOct = OrganEngine::consonance(200.0f, 400.0f),
+                    cEtFifth = OrganEngine::consonance(200.0f, 299.66f), cThird = OrganEngine::consonance(200.0f, 250.0f),
+                    cEtThird = OrganEngine::consonance(400.0f, 503.97f), cSecond = OrganEngine::consonance(200.0f, 211.89f),
+                    cTri = OrganEngine::consonance(200.0f, 282.84f);
+        std::cout << "consonance: fifth " << cFifth << ", octave " << cOct << ", equal fifth " << cEtFifth << ", pure third "
+                  << cThird << ", equal third " << cEtThird << ", minor second " << cSecond << ", tritone " << cTri << std::endl;
+        check(cFifth > 0.9f && cOct > 0.9f && cEtFifth > 0.5f && cThird > 0.0f && cEtThird < 0.0f && cSecond < -0.3f &&
+                  cTri < -0.3f,
+              "consonance: pure simple intervals attract, rough ones repel (an equal third repels, a pure one attracts)");
+
+        auto swayRange = [&](float amount, int stopKey)
+        {
+            OrganEngine e;
+            e.prepare(sr, B);
+            e.setLibrary(lib);
+            EngineParams p;
+            p.stopOn = {};
+            p.stopOn[0] = true;
+            p.clickLevel = 0;
+            p.beatSway = amount;
+            juce::AudioBuffer<float> b(2, B);
+            float lo = 1.0e9f, hi = -1.0e9f;
+            const int total = (int)(3.0 * sr / B);
+            for (int k = 0; k < total; ++k)
+            {
+                juce::MidiBuffer mb;
+                if (k == 0)
+                    for (int n : {48, 51}) // a minor third: it beats in the organ's meantone
+                        mb.addEvent(juce::MidiMessage::noteOn(1, n, (juce::uint8)100), 0);
+                e.process(b, mb, p);
+                if ((double)k * B / sr > 1.0)
+                {
+                    const float az = e.currentPosition(0, stopKey, p).az;
+                    lo = juce::jmin(lo, az);
+                    hi = juce::jmax(hi, az);
+                }
+            }
+            return hi - lo;
+        };
+        const int k48b = keyIndexForMidi(48), k60b = keyIndexForMidi(60);
+        const float still = swayRange(0.0f, k48b), sway = swayRange(1.0f, k48b), quiet = swayRange(1.0f, k60b);
+        std::cout << "sway with the beating: a pipe of a minor third moves " << sway << " deg (off: " << still
+                  << "), a silent pipe " << quiet << " deg" << std::endl;
+        check(still < 0.01f && sway > 3.0f && quiet < 0.01f, "sway with the beating: a beating pipe sways, a silent one and "
+                                                              "the switch off leave it still");
+    }
     // a muted pipe is skipped: in turn, the first note would go to the Praestant - muted there, it
     // goes to the Gedackt
     std::array<uint64_t, kNumStops> m4{};
