@@ -46,9 +46,9 @@ static void testEncoder()
     check(std::abs(g[6] - 0.5 * (3 * std::sin(el) * std::sin(el) - 1)) < 1e-5,
           "ACN6 = (3 sin^2 el - 1)/2");
 
-    // SN3D orthogonality: mean over the sphere of Y_i*Y_j = delta_ij / (2l+1)
-    const int N = 200;
-    double M[36][36]{};
+    // SN3D orthogonality: mean over the sphere of Y_i*Y_j = delta_ij / (2l+1), up to the 7th order
+    const int N = 240;
+    std::vector<std::array<double, 64>> M(64);
     double wsum = 0;
     for (int a = 0; a < N; ++a)
         for (int b = 0; b < N; ++b)
@@ -57,22 +57,22 @@ static void testEncoder()
                 -180.0f + 360.0f * (static_cast<float>(a) + 0.5f) / static_cast<float>(N);
             const double u = -1.0 + 2.0 * (b + 0.5) / N; // sin(el) uniform -> equal area
             const float eld = (float)juce::radiansToDegrees(std::asin(u));
-            encodeAmbiX(azd, eld, 5, g);
-            for (int i = 0; i < 36; ++i)
-                for (int j = 0; j < 36; ++j)
-                    M[i][j] += (double)g[i] * g[j];
+            encodeAmbiX(azd, eld, 7, g);
+            for (int i = 0; i < 64; ++i)
+                for (int j = 0; j < 64; ++j)
+                    M[(size_t)i][(size_t)j] += (double)g[i] * g[j];
             wsum += 1;
         }
     double maxErr = 0;
-    for (int i = 0; i < 36; ++i)
-        for (int j = 0; j < 36; ++j)
+    for (int i = 0; i < 64; ++i)
+        for (int j = 0; j < 64; ++j)
         {
             const int l = (int)std::floor(std::sqrt((double)i));
             const double expect = i == j ? 1.0 / (2 * l + 1) : 0.0;
-            maxErr = std::max(maxErr, std::abs(M[i][j] / wsum - expect));
+            maxErr = std::max(maxErr, std::abs(M[(size_t)i][(size_t)j] / wsum - expect));
         }
     check(maxErr < 2e-3,
-          "SN3D orthogonality up to order 5 (max err " + juce::String(maxErr, 5) + ")");
+          "SN3D orthogonality up to order 7 (max err " + juce::String(maxErr, 5) + ")");
 
     float s[2];
     encodeStereo(90.0f, s);
@@ -435,15 +435,15 @@ static void testBinaural(const juce::File &sofa)
 
         {
             // the full turn of the AmbiX out (looking around and up in the 3D view): a source encoded and then
-            // turned is the source encoded where the turn puts it, at every order up to 5
+            // turned is the source encoded where the turn puts it, at every order up to 7
             double worst = 0.0;
             juce::Random rr(7);
-            for (int trial = 0; trial < 40; ++trial)
+            for (int trial = 0; trial < 56; ++trial)
             {
-                const int order = 1 + trial % 5;
+                const int order = 1 + trial % 7;
                 const float yaw = rr.nextFloat() * 360.0f - 180.0f, pitch = rr.nextFloat() * 170.0f - 85.0f;
                 const float az = rr.nextFloat() * 360.0f - 180.0f, elv = rr.nextFloat() * 170.0f - 85.0f;
-                float m[AmbiRotator::kSize], in[36], out[36], want[36];
+                float m[AmbiRotator::kSize], in[64], out[64], want[64];
                 AmbiRotator::matrices(yaw, pitch, order, m);
                 encodeAmbiX(az, elv, order, in);
                 AmbiRotator::apply(m, order, in, out);
@@ -483,7 +483,7 @@ static void testBinaural(const juce::File &sofa)
                     for (int i = 0; i < 256; ++i)
                         vsYaw = std::max(vsYaw, (double)std::abs(s1[(size_t)c][(size_t)i] - s2[(size_t)c][(size_t)i]));
             }
-            std::cout << "AmbiX turn (yaw and pitch, orders 1-5): worst error " << worst
+            std::cout << "AmbiX turn (yaw and pitch, orders 1-7): worst error " << worst
                       << ", against the yaw rotator " << vsYaw << std::endl;
             check(worst < 1.0e-4 && vsYaw < 1.0e-4, "the AmbiX turn with looking up and down is exact at every order");
         }
@@ -1989,6 +1989,68 @@ static void testPipeTargets(std::shared_ptr<const SampleLibrary> lib)
     check(std::abs(dLow - lowRef) < 0.5 && std::abs(dHigh - highRef) > 0.5, "per-pipe Verfall");
 }
 
+// ---------------- AmbiX up to the 7th order ----------------
+// a held note, the pipe hovering: rendered at AmbiX 5 (36 channels) and AmbiX 7 (64), the 7th order's
+// first 36 channels are the 5th order's (Ambisonics orders nest), and orders 6 and 7 carry sound too
+static void testHighOrders(std::shared_ptr<const SampleLibrary> lib)
+{
+    const double sr = 48000.0;
+    const int B = 256;
+    auto renderAt = [&](int order, std::array<double, 8> &perOrder) -> juce::AudioBuffer<float>
+    {
+        OrganEngine e;
+        e.prepare(sr, B);
+        e.setLibrary(lib);
+        EngineParams p;
+        p.stopOn = {};
+        p.stopOn[0] = true;
+        p.clickLevel = 0;
+        p.releaseClick = 0;
+        p.wind = 0;
+        p.stopPull = 0;
+        p.outputMode = order;
+        const int nch = (order + 1) * (order + 1);
+        const int blocks = (int)(1.5 * sr / B);
+        juce::AudioBuffer<float> all(nch, blocks * B), b(nch, B);
+        perOrder.fill(0.0);
+        for (int k = 0; k < blocks; ++k)
+        {
+            juce::MidiBuffer mb;
+            if (k == 2)
+                mb.addEvent(juce::MidiMessage::noteOn(1, 64, (juce::uint8)100), 0);
+            b.clear();
+            e.process(b, mb, p);
+            for (int c = 0; c < nch; ++c)
+            {
+                all.copyFrom(c, k * B, b, c, 0, B);
+                const double r = b.getRMSLevel(c, 0, B);
+                perOrder[(size_t)(int)std::floor(std::sqrt((double)c) + 1e-9)] += r * r;
+            }
+        }
+        return all;
+    };
+    std::array<double, 8> e5{}, e7{};
+    const auto a5 = renderAt(5, e5);
+    const auto a7 = renderAt(7, e7);
+    double diff = 0.0, ref = 0.0;
+    for (int c = 0; c < 36; ++c)
+        for (int i = 0; i < a5.getNumSamples(); ++i)
+        {
+            diff = std::max(diff, (double)std::abs(a5.getSample(c, i) - a7.getSample(c, i)));
+            ref = std::max(ref, (double)std::abs(a5.getSample(c, i)));
+        }
+    juce::String levels;
+    for (int o = 0; o <= 7; ++o)
+        levels << " " << juce::String(std::sqrt(e7[(size_t)o]), 4);
+    std::cout << "AmbiX 7: energy per order" << levels << ", the first 36 channels against AmbiX 5: " << diff
+              << " (peak " << ref << ")" << std::endl;
+    check(ref > 0.01 && diff < 1.0e-4 * ref + 1.0e-6, "AmbiX 7's first 36 channels are AmbiX 5's");
+    bool all = true;
+    for (int o = 0; o <= 7; ++o)
+        all = all && e7[(size_t)o] > 1.0e-6;
+    check(all, "AmbiX 7: every order up to 7 carries the pipe");
+}
+
 static void testRoomsAndSpread(std::shared_ptr<const SampleLibrary> lib)
 {
     const double sr = 48000.0;
@@ -2784,6 +2846,7 @@ int main(int argc, char **argv)
     }
     if (std::getenv("RYSUM_ONLY_ROOMS") != nullptr)
     {
+        testHighOrders(lib);
         testRoomsAndSpread(lib);
         std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string(failures))
                   << std::endl;
@@ -3777,6 +3840,7 @@ int main(int argc, char **argv)
 
         testLucier(lib);
         testInput(lib);
+        testHighOrders(lib);
         testRoomsAndSpread(lib);
         testKalkantPatch(lib, outDir);
         testPipeTargets(lib);

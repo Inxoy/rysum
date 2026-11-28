@@ -1,4 +1,4 @@
-// Hosts the "Rysum Konzert" VST3 the way a venue's Reaper would: 36 output channels (AmbiX 5),
+// Hosts the "Rysum Konzert" VST3 the way a venue's Reaper would: 64 output channels (AmbiX 7),
 // joins a player on this computer (RysumUiSnapshot with RYSUM_CONCERT_SERVE=port) and checks that
 // the sound comes out on every order. Its window is opened once and written as a picture.
 //   RysumKonzertHostTest <Rysum Konzert.vst3> <out folder> [port]
@@ -82,16 +82,28 @@ int main(int argc, char **argv)
     check(inst != nullptr, "the host loads it" + (err.isNotEmpty() ? " (" + err + ")" : juce::String()));
     if (inst == nullptr)
         return 1;
+    // (RYSUM_KONZERT_ORDER: the order asked for, 7 by default - 64 channels)
+    const int order = juce::jlimit(1, 7, juce::SystemStats::getEnvironmentVariable("RYSUM_KONZERT_ORDER", "7").getIntValue());
+    const int nch = (order + 1) * (order + 1);
+    check(inst->getTotalNumOutputChannels() == 64,
+          "it offers 64 output channels (" + juce::String(inst->getTotalNumOutputChannels()) + ")");
     auto layout = inst->getBusesLayout();
     if (layout.outputBuses.size() > 0)
-        layout.outputBuses.getReference(0) = juce::AudioChannelSet::ambisonic(5);
-    check(inst->setBusesLayout(layout), "it takes a 36-channel AmbiX 5 output");
-    check(inst->getTotalNumOutputChannels() == 36, "36 output channels (" + juce::String(inst->getTotalNumOutputChannels()) + ")");
-    juce::String outChoice;
+        layout.outputBuses.getReference(0) = juce::AudioChannelSet::ambisonic(order);
+    check(inst->setBusesLayout(layout), "it takes a " + juce::String(nch) + "-channel AmbiX " + juce::String(order) + " output");
+    check(inst->getTotalNumOutputChannels() == nch,
+          juce::String(nch) + " output channels (" + juce::String(inst->getTotalNumOutputChannels()) + ")");
+    juce::AudioProcessorParameter *outParam = nullptr;
     for (auto *p : inst->getParameters())
         if (p->getName(64) == "Ausgabe")
-            outChoice = p->getCurrentValueAsText();
-    check(outChoice == "AmbiX 5", "it starts in AmbiX 5 (" + outChoice + ")");
+            outParam = p;
+    const juce::String startChoice = outParam != nullptr ? outParam->getCurrentValueAsText() : juce::String();
+    check(startChoice == "AmbiX 5", "it starts in AmbiX 5 (" + startChoice + ")");
+    const juce::String want = "AmbiX " + juce::String(order);
+    if (outParam != nullptr)
+        outParam->setValueNotifyingHost(outParam->getValueForText(want));
+    const juce::String nowChoice = outParam != nullptr ? outParam->getCurrentValueAsText() : juce::String();
+    check(nowChoice == want, "the menu has " + want + " (" + nowChoice + ")");
 
     inst->prepareToPlay(sr, bs);
     // its window, once, on the screen (a VST3 window is the plugin's own native window: the host cannot
@@ -125,8 +137,8 @@ int main(int argc, char **argv)
         check(false, "its window opens");
 
     // play in real time for a while, as a host does; the host's own MIDI must not play it
-    juce::AudioBuffer<float> buf(36, bs);
-    std::array<double, 6> energy{}; // per order
+    juce::AudioBuffer<float> buf(nch, bs);
+    std::array<double, 8> energy{}; // per order
     const double seconds = 22.0;
     const auto blocks = (long long)(seconds * sr / bs);
     const double start = juce::Time::getMillisecondCounterHiRes();
@@ -140,13 +152,13 @@ int main(int argc, char **argv)
         buf.clear();
         inst->processBlock(buf, midi);
         if (k < (long long)(0.8 * sr / bs))
-            for (int c = 0; c < 36; ++c)
+            for (int c = 0; c < nch; ++c)
                 hostNoteEnergy += buf.getRMSLevel(c, 0, bs);
-        for (int c = 0; c < 36; ++c)
+        for (int c = 0; c < nch; ++c)
         {
-            const int order = (int)std::floor(std::sqrt((double)c) + 1e-9);
+            const int o = (int)std::floor(std::sqrt((double)c) + 1e-9);
             const double r = buf.getRMSLevel(c, 0, bs);
-            energy[(size_t)order] += r * r;
+            energy[(size_t)o] += r * r;
         }
         const double due = start + (double)(k + 1) * bs / sr * 1000.0;
         while (juce::Time::getMillisecondCounterHiRes() < due)
@@ -154,10 +166,10 @@ int main(int argc, char **argv)
     }
     check(hostNoteEnergy < 1e-6, "a note from the host does not play (" + juce::String(hostNoteEnergy, 8) + ")");
     juce::String levels;
-    for (int o = 0; o <= 5; ++o)
+    for (int o = 0; o <= order; ++o)
         levels << "order " << o << ": " << juce::String(std::sqrt(energy[(size_t)o] / (double)blocks), 6) << "   ";
     std::cout << "  " << levels << std::endl;
-    for (int o = 0; o <= 5; ++o)
+    for (int o = 0; o <= order; ++o)
         check(energy[(size_t)o] > 1e-6, "the player's sound comes out on order " + juce::String(o));
     inst->releaseResources();
     inst.reset();

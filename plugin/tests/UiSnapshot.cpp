@@ -2115,6 +2115,28 @@ public:
                 say("AmbiX out: the scene at " + juce::String(a0, 1) + " deg, with the head turned 90 deg left at " +
                         juce::String(a1, 1) + " deg (turned " + juce::String(turned, 1) + ", expected -90)",
                     l0 > 1.0e-6 && l1 > 1.0e-6 && std::abs(turned + 90.0) < 5.0);
+                // the menu's AmbiX 6 and 7 (at its end) are those orders - not binaural or the loudspeakers,
+                // whose positions their orders share - and the others keep their meaning
+                {
+                    auto orderFor = [&](int choice)
+                    {
+                        setReal("output", (float)choice);
+                        return proc->readParams().outputMode;
+                    };
+                    const int o6 = orderFor(RysumProcessor::outputOfAmbixOrder(6));
+                    const int o7 = orderFor(RysumProcessor::outputOfAmbixOrder(7));
+                    const int o5 = orderFor(5);
+                    const int oBin = orderFor(RysumProcessor::kBinauralOutput);
+                    const int oSpk = orderFor(RysumProcessor::kSpeakerOutput);
+                    const auto *ch = dynamic_cast<juce::AudioParameterChoice *>(proc->apvts.getParameter("output"));
+                    say("AmbiX out: the menu's AmbiX 6 and 7 render orders " + juce::String(o6) + " and " + juce::String(o7) +
+                            ", AmbiX 5 " + juce::String(o5) + ", binaural its decoder's " + juce::String(oBin) +
+                            ", loudspeakers their decoder's " + juce::String(oSpk),
+                        o6 == 6 && o7 == 7 && o5 == 5 && oBin == 1 + juce::roundToInt(proc->apvts.getRawParameterValue("binOrder")->load()) &&
+                            oSpk >= 1 && oSpk <= 5 && ch != nullptr &&
+                            ch->choices[RysumProcessor::outputOfAmbixOrder(7)] == "AmbiX 7" &&
+                            ch->choices[RysumProcessor::kBinauralOutput] == "Binaural");
+                }
                 setReal("output", 0.0f);
             }
         }

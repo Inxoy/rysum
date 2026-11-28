@@ -108,10 +108,13 @@ public:
 
     Result run(const juce::String &name, int outChannels)
     {
-        juce::AudioProcessor::BusesLayout lay;
-        lay.outputBuses.add(outChannels == 2 ? juce::AudioChannelSet::stereo()
-                                             : juce::AudioChannelSet::ambisonic(5));
-        proc->setBusesLayout(lay);
+        // (the processor's own layout with the output changed: a layout without its inputs is refused)
+        auto lay = proc->getBusesLayout();
+        lay.outputBuses.getReference(0) = outChannels == 2    ? juce::AudioChannelSet::stereo()
+                                          : outChannels == 64 ? juce::AudioChannelSet::ambisonic(7)
+                                                              : juce::AudioChannelSet::ambisonic(5);
+        if (!proc->setBusesLayout(lay))
+            std::cout << "(the layout with " << outChannels << " channels was refused)" << std::endl;
         proc->setRateAndBufferSizeDetails(48000.0, block);
         proc->prepareToPlay(48000.0, block);
         pump(50);
@@ -418,6 +421,24 @@ public:
             loadIr(irFoa);
             run("ambi5_move_ir", 36);
         }
+        if (want("ambi7_move_ir"))
+        {
+            // 7th order (64 channels): the output choice "AmbiX 7"
+            resetParams();
+            allStops(true);
+            set("output", (float)RysumProcessor::outputOfAmbixOrder(7));
+            set("irOrder", 4);
+            loadIr(irFoa);
+            run("ambi7_move_ir", 64);
+        }
+        if (want("ambi7_saal"))
+        {
+            resetParams();
+            allStops(true);
+            set("output", (float)RysumProcessor::outputOfAmbixOrder(7));
+            set("simOn", 1);
+            run("ambi7_saal", 64);
+        }
         if (want("binaural3_ir"))
         {
             resetParams();
@@ -453,6 +474,14 @@ public:
             set("simOrder", 2);
             set("simTail", -60.0f);
             run("ambi3_saal_er", 36);
+        }
+        if (want("ambi5_saal"))
+        {
+            resetParams();
+            allStops(true);
+            set("output", 5);
+            set("simOn", 1);
+            run("ambi5_saal", 36);
         }
         if (want("binaural3_saal"))
         {

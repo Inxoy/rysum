@@ -85,14 +85,14 @@ private:
 
 /** turns an AmbiX (ACN / SN3D) scene as a head turns that looks around: the head turned by +yaw degrees (to
    the left) and then tilted by +pitch degrees (looking up) turns the scene by the inverse - a source in front
-   moves to the right and down. Every order up to 5 (the rotation of each band by the recursion of Ivanic and
+   moves to the right and down. Every order up to 7 (the rotation of each band by the recursion of Ivanic and
    Ruedenberg, which holds for SN3D as for N3D: the two differ by a factor per band). The turn glides from the
    last call's over the block. Used on the AmbiX outputs while the 3D view is open. */
 class AmbiRotator
 {
 public:
-    static constexpr int kMaxOrder = 5;
-    static constexpr int kSize = 286; // sum of (2l + 1)^2 for l = 0..5
+    static constexpr int kMaxOrder = 7;
+    static constexpr int kSize = 680; // sum of (2l + 1)^2 for l = 0..7
     static constexpr int bandOffset(int l) noexcept
     {
         return l <= 0 ? 0 : bandOffset(l - 1) + (2 * l - 1) * (2 * l - 1);
@@ -119,6 +119,8 @@ private:
     float lastYaw = 0.0f, lastPitch = 0.0f;
     float m0[kSize]{}, m1[kSize]{};
 };
+static_assert(AmbiRotator::bandOffset(AmbiRotator::kMaxOrder + 1) == AmbiRotator::kSize, "the bands' matrices fill kSize");
+static_assert(AmbiRotator::kMaxOrder >= kMaxOrder, "the rotator turns every order the plugin sends out");
 
 /** real-time part: uniformly partitioned convolution (block 128, PFFFT, the older partitions
    computed spread over the block) of up to 36 Ambisonics channels into two ears, plus a rotation

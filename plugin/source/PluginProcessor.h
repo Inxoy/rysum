@@ -522,6 +522,19 @@ public:
         7; // "Lautsprecher": AllRAD decoding to a loudspeaker layout
     static constexpr int kTransauralOutput =
         8; // "Transaural": binaural over two loudspeakers, crosstalk cancelled
+    static constexpr int kAmbiX6Output = 9; // "AmbiX 6", then "AmbiX 7" (added later, at the end)
+    /** the AmbiX order of an output choice: 0 = stereo, 1..7, -1 = binaural, loudspeakers, transaural */
+    static constexpr int ambixOrderOf(int choice) noexcept
+    {
+        return choice >= 0 && choice <= 5 ? choice
+               : choice >= kAmbiX6Output && choice <= kAmbiX6Output + 1 ? choice - kAmbiX6Output + 6
+                                                                         : -1;
+    }
+    /** the output choice of an AmbiX order (0 = stereo) */
+    static constexpr int outputOfAmbixOrder(int order) noexcept
+    {
+        return order <= 5 ? order : kAmbiX6Output + order - 6;
+    }
     bool isSpeakers() const
     {
         return juce::roundToInt(output->load()) == kSpeakerOutput;

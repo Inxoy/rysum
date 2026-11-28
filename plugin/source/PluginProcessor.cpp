@@ -72,7 +72,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RysumProcessor::createLayout
     l.add(std::make_unique<AudioParameterChoice>(
         ParameterID{"output", 1}, "Ausgabe",
         StringArray{"Stereo", "AmbiX 1", "AmbiX 2", "AmbiX 3", "AmbiX 4", "AmbiX 5", "Binaural",
-                    "Lautsprecher", "Transaural (2 LS)"},
+                    "Lautsprecher", "Transaural (2 LS)", "AmbiX 6", "AmbiX 7"},
         0));
     // loudspeakers: AllRAD decoding of this order to the layout set up on the page "Lautsprecher"
     l.add(std::make_unique<AudioParameterChoice>(
@@ -1525,7 +1525,9 @@ juce::AudioProcessor::BusesProperties RysumProcessor::makeBuses()
     b = b.withInput(juce::String::fromUTF8("Eingang"), juce::AudioChannelSet::stereo(), true)
             .withInput("Sidechain", juce::AudioChannelSet::stereo(), true);
 #endif
-    return b.withOutput("Output", juce::AudioChannelSet::ambisonic(kMaxOrder), true);
+    // (the instrument's default stays 5th order, 36 channels, so projects keep their pins; the listener
+    //  plugin offers all 64 for a venue's decoder - either takes any count from 1 to 64)
+    return b.withOutput("Output", juce::AudioChannelSet::ambisonic(RYSUM_KONZERT ? kMaxOrder : 5), true);
 }
 
 RysumProcessor::RysumProcessor()
@@ -2018,12 +2020,16 @@ EngineParams RysumProcessor::readParams(const float *vals) const
     p.freezeRelease = V(ix.freezeRelease);
     p.sync = V(ix.motionSync) > 0.5f;
     p.masterGain = dbToGain(V(ix.master));
-    p.outputMode = juce::roundToInt(V(ix.output));
-    if (p.outputMode == kBinauralOutput || p.outputMode == kTransauralOutput)
+    // (the menu's position decides once: AmbiX 6 and 7 sit at the end, and their orders are other
+    //  outputs' positions)
+    const int outChoice = juce::roundToInt(V(ix.output));
+    if (outChoice == kBinauralOutput || outChoice == kTransauralOutput)
         p.outputMode =
             1 + juce::roundToInt(binOrderParam->load()); // processBlock uses the decoder's order
-    if (p.outputMode == kSpeakerOutput)
+    else if (outChoice == kSpeakerOutput)
         p.outputMode = spkOrderNow.load(); // processBlock uses the decoder's order
+    else
+        p.outputMode = juce::jmax(0, ambixOrderOf(outChoice));
     p.clickLevel = V(ix.click);
     p.clickBlend = V(ix.clickBlend);
     p.releaseClick = V(ix.releaseClick);
@@ -3198,7 +3204,7 @@ void RysumProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBu
     //      headphones below hear it (the room included). The view closed: it glides back to the front.
     if (!binaural && !speakers && params.outputMode > 0)
     {
-        int order = juce::jmin(params.outputMode, 5);
+        int order = juce::jmin(params.outputMode, kMaxOrder);
         while (order > 0 && (order + 1) * (order + 1) > buffer.getNumChannels())
             --order; // (a host bus with fewer channels: only the orders it carries)
         const bool view = engine.viewWalkOn.load();
@@ -4480,7 +4486,9 @@ rysum::Convolver::Settings RysumProcessor::currentIrSettings() const
     s.stereoOut = out == 0;
     s.outOrder = juce::jlimit(
         1, kMaxOrder,
-        out == 0 ? 1 : juce::jmin(out, 1 + (int)apvts.getRawParameterValue("irOrder")->load()));
+        out == 0 ? 1
+                 : juce::jmin(ambixOrderOf(out) > 0 ? ambixOrderOf(out) : kMaxOrder,
+                              1 + (int)apvts.getRawParameterValue("irOrder")->load()));
     s.envelop = irEnvelopParam->load();
     s.direct = irDirectParam->load();
     s.hostRate = hostRate.load() > 0 ? hostRate.load() : 48000.0;

@@ -85,7 +85,8 @@ plugin. Copy it into  C:\Program Files\Common Files\VST3\  and "rysum-samples.ry
 Documents\Rysum\ (or next to the .vst3 folder). In Reaper: a track with 36 channels (Routing ->
 Track channels: 36), insert "Rysum Konzert" as an instrument, then your Ambisonics decoder after it
 (e.g. IEM AllRADecoder, order 5, AmbiX / SN3D). The plugin starts in "AmbiX 5"; the menu in its window
-also offers AmbiX 1-4, stereo, binaural and loudspeakers. Join and walk in its window as in the app
+also offers AmbiX 1-4, AmbiX 6 and 7 (at the end of the list; 49 / 64 track channels), stereo,
+binaural and loudspeakers. Join and walk in its window as in the app
 (click into the 3D view first so the keys go to the plugin). Keep the track monitored or the
 transport running so the host keeps processing; if Reaper's "anticipative FX" makes it stutter,
 choose a longer delay.

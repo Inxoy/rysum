@@ -106,7 +106,7 @@ quarter-comma meantone. All $7\times41=287$ pipes of its seven stops were record
 cut, aligned and analysed by a dedicated preprocessing pipeline and are played back by a
 real-time engine written in C++ with JUCE. The instrument is not a faithful
 \enquote{virtual organ} only: every pipe is an independent sound source that can be placed and
-moved in space -- in stereo, in Ambisonics up to fifth order (36 channels, AmbiX) or binaurally for
+moved in space -- in stereo, in Ambisonics up to seventh order (64 channels, AmbiX) or binaurally for
 headphones -- inside a measured or simulated room. The wind supply of a stop can be starved, which
 detunes, darkens and destabilises the pipes and, in an \enquote{unstable} wind model, makes their
 edge tones audible. A degradation section (grain, bit depth, sample rate, wind wobble, dropouts)
@@ -484,7 +484,7 @@ to the stable one in the same host. Third-party code is limited to libmysofa \ci
 The binary embeds fonts, the stop-knob and keyboard photographs, a grain texture, the FABIAN HRIR
 set (\S\ref{sec:binaural}) and the weights of the \ui{Vox humana} (\fn{vox\_humana.nrv2}, \SI{3.4}{MB}, \S\ref{sec:vox}), whose engine is the
 plug-in's own C++ code and needs no machine-learning library at run time. A third program, \emph{Rysum Konzert}, is built from the same sources: only
-the 3D Saal and a line to join a player, for listeners (\S\ref{sec:konzert}).
+the 3D Saal and a line to join a player, for listeners (\S\ref{sec:konzert}), also as a VST3 for venues.
 
 \subsection{Source structure}
 {\footnotesize
@@ -677,9 +677,14 @@ recomputed, and gains are ramped linearly across the slice. MIDI events split th
 start sample-accurately. Up to 384 pipe voices and 48 noise voices can sound at once; when the pool is
 full, the oldest releasing voice (else the oldest voice) is stolen.
 
-The plug-in declares its output bus as fifth-order Ambisonics (36 channels). In \ui{Stereo},
-\ui{Binaural} and \ui{Transaural} mode only channels 1/2 carry signal; in AmbiX mode the order 1--5 is selected in the
-interface, and the interface warns when the host track has fewer channels than needed.
+The plug-in declares its output bus as fifth-order Ambisonics (36 channels), so host projects keep their pins, and
+accepts up to 64; the listener plug-in (\S\ref{sec:konzert}) declares 64. In \ui{Stereo},
+\ui{Binaural} and \ui{Transaural} mode only channels 1/2 carry signal; in AmbiX mode the order 1--7 is selected in the
+interface (\ui{AmbiX 6} and \ui{7} at the end of the menu, so saved patches keep their outputs), and the interface warns when
+the host track has fewer channels than needed. The orders nest: the first 36 channels of a seventh-order render equal the
+fifth-order render sample for sample, so a seventh-order signal feeds a lower-order decoder unchanged. Image-source
+reflections stay at up to third order; the direct sound of every pipe uses all orders (about 15\,\% more audio-thread load
+at seventh than at fifth order).
 
 \begin{figure}[t]
 \centering
@@ -2970,6 +2975,14 @@ pick up; the render test packs the library, finds no audio header in the file an
 settings are the player's. The test (\code{RYSUM\_ONLY\_CONCERT}, \S\ref{sec:verification}) connects a player and a listener on the computer's own
 address and drives the listener from its own audio thread. Both sides must run the same version.
 
+\paragraph{The listener as a plug-in.} For a venue with its own loudspeakers and decoder the same listener is also a VST3,
+\emph{Rysum Konzert} (\fn{KonzertPlugin.cpp}; the window \fn{ListenerView.h} is shared with the program): the processor built with
+\code{RYSUM\_KONZERT}, without inputs (the player's input arrives over the network), ignoring the host's MIDI, with a
+64-channel output bus. In a host such as Reaper the track carries the AmbiX signal up to the seventh order to the venue's decoder;
+the plug-in starts in \ui{AmbiX 5}. A host test (\fn{KonzertHostTest.cpp}) loads the built VST3 as a host would, asks for
+64 channels and \ui{AmbiX 7}, joins a player on the computer's own address and finds the player's chord on all eight orders,
+while a note from the host stays silent.
+
 \paragraph{Password, voice and relay (since 27~November).} A concert can have a password. It never travels: the player sends every listener that connects
 a random 16-byte challenge first, the listener's hello carries SHA-256 of the challenge and the password (UTF-8), and the player compares it with its own
 (the hash is the plug-in's own, checked against the FIPS test vector); a wrong answer is refused with a reason the listener shows, and ten wrong answers
@@ -3114,7 +3127,7 @@ much (the speed of the decoders, measured on a different machine).
 \toprule
 Subsystem & Result \\
 \midrule
-AmbiX encoder & SN3D orthogonality up to order 5, max.\ error $1.2\times10^{-4}$; ACN\,4 and ACN\,6 match the closed forms; stereo +90° = left, centre equal power \\
+AmbiX encoder & SN3D orthogonality up to order 7, max.\ error $1.6\times10^{-4}$; a seventh-order render's first 36 channels equal the fifth-order render exactly; ACN\,4 and ACN\,6 match the closed forms; stereo +90° = left, centre equal power \\
 Binaural (MagLS) & band error vs.\ measured FABIAN HRTFs: 2.28\,dB rms (order 1), 0.98\,dB (order 3), 0.81\,dB (order 5); worst ITD error \SI{15}{\micro s} at order 3; decoder equals direct convolution to \SI{-133}{dB}; diffuse field per ear \SI{-3.07}{dB}; 44.1/96\,kHz designs within 0.04\,dB; 5th-order decoder $12\times$ real time \\
 IR convolver & direct sound of a rotated IR found; early reflections turn with the pipe; diffuse tail energies $\times(2l+1)/W$ = 1.05, 1.04, 1.00 for $l=1,2,3$; $W$/$Y$ correlation $-0.04$ \\
 Motion & all continuous modes move without steps (max.\ \SI{0.22}{\degree} per update); jumps hold still between jumps; ellipse near/far distances and tilt as specified; drawn paths, spread and ping-pong correct; hard vs.\ glided jumps at 150\,Hz: \SI{-33}{dB} vs.\ \SI{-58}{dB} energy above 8\,kHz \\

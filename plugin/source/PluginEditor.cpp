@@ -1272,7 +1272,8 @@ void RysumContent::paint(juce::Graphics &g)
                spk = out == RysumProcessor::kSpeakerOutput;
     auto dec = proc.getSpeakerDecoder();
     const int spkCh = dec != nullptr ? dec->numOutChannels : 0;
-    const int needed = out == 0 || bin ? 2 : spk ? spkCh : (out + 1) * (out + 1);
+    const int ambiOrder = juce::jmax(0, RysumProcessor::ambixOrderOf(out));
+    const int needed = out == 0 || bin ? 2 : spk ? spkCh : (ambiOrder + 1) * (ambiOrder + 1);
     const int have = proc.getTotalNumOutputChannels();
     juce::String o = bin ? (proc.binauralReady() ? juce::String(tr ? rysum::tr("2 LS") : "2 ch HRTF")
                                                  : juce::String::fromUTF8("HRTF \xe2\x80\xa6"))

@@ -806,7 +806,7 @@ void AmbiRotator::process(float *const *ch, int n, int order, float yawDeg, floa
     matrices(y0, p0, order, m0);
     if (!still)
         matrices(yawDeg, pitchDeg, order, m1);
-    float x[36], a[36], b[36];
+    float x[(kMaxOrder + 1) * (kMaxOrder + 1)], a[(kMaxOrder + 1) * (kMaxOrder + 1)], b[(kMaxOrder + 1) * (kMaxOrder + 1)];
     const int nch = (order + 1) * (order + 1);
     for (int i = 0; i < n; ++i)
     {

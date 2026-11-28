@@ -3345,7 +3345,7 @@ void WalkView::drawOver (juce::Graphics& g)
     }
     // (AmbiX out turns with the view too: the hint only for stereo and loudspeakers)
     const int outNow = juce::roundToInt (proc.apvts.getRawParameterValue ("output")->load());
-    if (! proc.isBinaural() && ! (outNow >= 1 && outNow <= 5))
+    if (! proc.isBinaural() && RysumProcessor::ambixOrderOf (outNow) <= 0)
     {
         g.setColour (col::rubric.brighter (0.2f));
         g.drawText (rysum::tr("Die Kopfdrehung ist nur bei Kopfh\xc3\xb6rer-Ausgabe (binaural) zu h\xc3\xb6ren; Gehen \xc3\xbc" "berall."),

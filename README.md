@@ -2,7 +2,7 @@
 
 Sample-based plugin of the Rysum organ (c. 1457, ¼-comma meantone, a′ ≈ 444.5 Hz),
 7 stops, short octave C/E – a″ (41 keys), with a key-click/noise layer, per-pipe
-placement in stereo or AmbiX up to 5th order, moving pipes and a degradation
+placement in stereo or AmbiX up to 7th order, moving pipes and a degradation
 ("Verfall") section.
 
 ![Rysum: the organ page](PaperDoc/rysum_paper/screens/ui_orgel.jpg)
@@ -83,15 +83,19 @@ Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.
 
 ### Ambisonics (AmbiX, ACN/SN3D)
 1. Set the track to enough channels: click the track's **Route** button →
-   *Track channels*: 4 (1st order), 9, 16, 25 or **36 (5th order)**.
+   *Track channels*: 4 (1st order), 9, 16, 25, **36 (5th order)**, 49 or 64 (7th order).
 2. In the plugin choose the output format in the dropdown at the top right (Stereo or
-   AmbiX 1.–5. Ordnung). Next to it you see how many channels that needs; it turns white
-   with a warning if the track has fewer.
+   AmbiX 1–7; AmbiX 6 and 7 are at the end of the list). Next to it you see how many channels
+   that needs; it turns white with a warning if the track has fewer.
 3. Decode after the plugin, e.g. IEM *BinauralDecoder* (headphones) or *AllRADecoder*
    (speakers) – the format is the same as the IEM suite (ACN order, SN3D).
 
-The plugin's output bus is declared as 5th-order Ambisonics (36 ch). In stereo
-and binaural mode only channels 1/2 carry sound.
+The plugin's output bus is declared as 5th-order Ambisonics (36 ch), so projects keep their
+pins; it accepts up to 64 channels where the host offers them (the listener plugin *Rysum Konzert*
+declares 64). The orders nest: the first 36 channels of AmbiX 7 are exactly AmbiX 5, so a 7th-order
+signal can feed a lower-order decoder as it is. AmbiX 7 costs about 15 % more CPU than AmbiX 5
+(the room's reflections stay at up to 3rd order, the direct sound of each pipe uses all orders).
+In stereo and binaural mode only channels 1/2 carry sound.
 
 ### Binaural (headphones) – also in Ableton and the standalone app
 Output "Binaural (Kopfhörer)". The plugin renders Ambisonics internally and decodes it to
@@ -713,14 +717,14 @@ program.
 The app gives stereo, binaural or a loudspeaker layout of its own. A venue with its own speakers
 and Ambisonics decoder uses the listener as a VST3 instead: `Rysum Konzert.vst3` (in the Konzert zip,
 or the target `RysumKonzertPlugin_VST3`). It is the same window and the same listener, but the host
-gets every channel: AmbiX (ACN / SN3D) up to the 5th order, 36 channels.
+gets every channel: AmbiX (ACN / SN3D) up to the 7th order, 64 channels.
 
 - Copy `Rysum Konzert.vst3` into `C:\Program Files\Common Files\VST3\` and `rysum-samples.rysum`
   into `Documents\Rysum\` (or next to the `.vst3` folder).
 - Reaper: make a track with 36 channels (*Routing → Track channels: 36*), insert *Rysum Konzert*
   as an instrument, and after it the decoder (for example IEM *AllRADecoder* or *SimpleDecoder*,
-  order 5). For a lower order, choose *AmbiX 1–4* in the plugin's menu and give the track
-  (order+1)² channels.
+  order 5). For another order, choose it in the plugin's menu (*AmbiX 1–5*, and *AmbiX 6* / *7*
+  at the end of the list) and give the track (order+1)² channels: 49 or 64 for 6th / 7th order.
 - The plugin starts in *AmbiX 5*. Looking around in its 3D view turns the AmbiX scene, as in the
   organ: leave the view facing the front (or the place one stands) for a fixed orientation.
 - It plays nothing of the host's: MIDI is ignored and it has no inputs (the player's *Eingang*

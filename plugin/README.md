@@ -2,7 +2,7 @@
 
 Sample-based plugin of the Rysum organ (c. 1457, ¼-comma meantone, a′ ≈ 444.5 Hz),
 7 stops, short octave C/E – a″ (41 keys), with a key-click/noise layer, per-pipe
-placement in stereo or AmbiX up to 5th order, moving pipes and a degradation
+placement in stereo or AmbiX up to 7th order, moving pipes and a degradation
 ("Verfall") section.
 
 ## 1. Build (Windows, once)
@@ -65,15 +65,19 @@ Output "Stereo" (dropdown at the top right). The plugin writes to channels 1/2.
 
 ### Ambisonics (AmbiX, ACN/SN3D)
 1. Set the track to enough channels: click the track's **Route** button →
-   *Track channels*: 4 (1st order), 9, 16, 25 or **36 (5th order)**.
+   *Track channels*: 4 (1st order), 9, 16, 25, **36 (5th order)**, 49 or 64 (7th order).
 2. In the plugin choose the output format in the dropdown at the top right (Stereo or
-   AmbiX 1.–5. Ordnung). Next to it you see how many channels that needs; it turns white
-   with a warning if the track has fewer.
+   AmbiX 1–7; AmbiX 6 and 7 are at the end of the list). Next to it you see how many channels
+   that needs; it turns white with a warning if the track has fewer.
 3. Decode after the plugin, e.g. IEM *BinauralDecoder* (headphones) or *AllRADecoder*
    (speakers) – the format is the same as the IEM suite (ACN order, SN3D).
 
-The plugin's output bus is declared as 5th-order Ambisonics (36 ch). In stereo
-and binaural mode only channels 1/2 carry sound.
+The plugin's output bus is declared as 5th-order Ambisonics (36 ch), so projects keep their
+pins; it accepts up to 64 channels where the host offers them (the listener plugin *Rysum Konzert*
+declares 64). The orders nest: the first 36 channels of AmbiX 7 are exactly AmbiX 5, so a 7th-order
+signal can feed a lower-order decoder as it is. AmbiX 7 costs about 15 % more CPU than AmbiX 5
+(the room's reflections stay at up to 3rd order, the direct sound of each pipe uses all orders).
+In stereo and binaural mode only channels 1/2 carry sound.
 
 ### Binaural (headphones) – also in Ableton and the standalone app
 Output "Binaural (Kopfhörer)". The plugin renders Ambisonics internally and decodes it to
